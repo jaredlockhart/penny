@@ -7,12 +7,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Set working directory
 WORKDIR /app
 
-# Copy project files
+# Copy dependency files and source
 COPY pyproject.toml ./
 COPY penny/ ./penny/
 
-# Install dependencies with uv
-RUN uv pip install --system websockets httpx python-dotenv pydantic sqlmodel
+# Install package and dependencies from pyproject.toml
+RUN uv pip install --system .
 
 # Run the agent
 CMD ["python", "-m", "penny.agent"]
