@@ -17,6 +17,7 @@ class Config:
     ollama_api_url: str
     ollama_model: str
     log_level: str
+    db_path: str
 
     @classmethod
     def load(cls) -> "Config":
@@ -42,6 +43,7 @@ class Config:
         ollama_api_url = os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434")
         ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
         log_level = os.getenv("LOG_LEVEL", "INFO")
+        db_path = os.getenv("DB_PATH", "/app/data/penny.db")
 
         return cls(
             signal_number=signal_number,
@@ -49,6 +51,7 @@ class Config:
             ollama_api_url=ollama_api_url,
             ollama_model=ollama_model,
             log_level=log_level,
+            db_path=db_path,
         )
 
 

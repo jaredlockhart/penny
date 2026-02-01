@@ -10,6 +10,7 @@ from typing import Any
 import websockets
 
 from penny.config import Config, setup_logging
+from penny.memory import Database, Message
 from penny.ollama import OllamaClient
 from penny.signal import SignalClient
 
@@ -24,6 +25,11 @@ class PennyAgent:
         self.config = config
         self.signal_client = SignalClient(config.signal_api_url, config.signal_number)
         self.ollama_client = OllamaClient(config.ollama_api_url, config.ollama_model)
+
+        # Initialize database
+        self.db = Database(config.db_path)
+        self.db.create_tables()
+
         self.running = True
 
         # Setup signal handlers for graceful shutdown
@@ -34,6 +40,32 @@ class PennyAgent:
         """Handle shutdown signals."""
         logger.info("Received shutdown signal, stopping agent...")
         self.running = False
+
+    def log_message(self, direction: str, sender: str, recipient: str, content: str, chunk_index: int | None = None) -> None:
+        """
+        Log a message to the database.
+
+        Args:
+            direction: "incoming" or "outgoing"
+            sender: Phone number of sender
+            recipient: Phone number of recipient
+            content: Message content
+            chunk_index: Optional chunk index for streaming responses
+        """
+        try:
+            with self.db.get_session() as session:
+                message = Message(
+                    direction=direction,
+                    sender=sender,
+                    recipient=recipient,
+                    content=content,
+                    chunk_index=chunk_index,
+                )
+                session.add(message)
+                session.commit()
+                logger.debug("Logged %s message: %s -> %s", direction, sender, recipient)
+        except Exception as e:
+            logger.error("Failed to log message: %s", e)
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -66,6 +98,9 @@ class PennyAgent:
 
             logger.info("Received message from %s: %s", sender, content)
 
+            # Log incoming message
+            self.log_message("incoming", sender, self.config.signal_number, content)
+
             # Send typing indicator
             await self.signal_client.send_typing(sender, True)
 
@@ -92,6 +127,9 @@ class PennyAgent:
 
                                 logger.debug("Sending chunk %d: %s...", chunk_count, part[:50])
                                 await self.signal_client.send_message(sender, part)
+
+                                # Log outgoing chunk
+                                self.log_message("outgoing", self.config.signal_number, sender, part, chunk_count)
                                 chunk_count += 1
 
                                 # Turn typing indicator back on for next chunk
@@ -102,15 +140,18 @@ class PennyAgent:
                     await self.signal_client.send_typing(sender, False)
                     logger.debug("Sending final chunk: %s...", buffer[:50])
                     await self.signal_client.send_message(sender, buffer)
+
+                    # Log final chunk
+                    self.log_message("outgoing", self.config.signal_number, sender, buffer, chunk_count)
                     chunk_count += 1
 
                 logger.info("Sent %d chunks to %s", chunk_count, sender)
 
             except Exception as e:
                 logger.error("Error during streaming generation: %s", e)
-                await self.signal_client.send_message(
-                    sender, "Sorry, I encountered an error generating a response."
-                )
+                error_msg = "Sorry, I encountered an error generating a response."
+                await self.signal_client.send_message(sender, error_msg)
+                self.log_message("outgoing", self.config.signal_number, sender, error_msg)
 
             # Stop typing indicator
             await self.signal_client.send_typing(sender, False)
