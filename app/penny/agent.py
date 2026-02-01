@@ -10,18 +10,20 @@ from typing import Any
 import websockets
 
 from penny.config import Config, setup_logging
+from penny.ollama import OllamaClient
 from penny.signal import SignalClient
 
 logger = logging.getLogger(__name__)
 
 
 class PennyAgent:
-    """Simple agent that echoes Signal messages."""
+    """AI agent that responds via Ollama."""
 
     def __init__(self, config: Config):
         """Initialize the agent with configuration."""
         self.config = config
         self.signal_client = SignalClient(config.signal_api_url, config.signal_number)
+        self.ollama_client = OllamaClient(config.ollama_api_url, config.ollama_model)
         self.running = True
 
         # Setup signal handlers for graceful shutdown
@@ -64,16 +66,22 @@ class PennyAgent:
 
             logger.info("Received message from %s: %s", sender, content)
 
-            # Echo the message back
-            echo_response = f"Echo: {content}"
-            logger.info("Sending echo response to %s: %s", sender, echo_response)
+            # Generate response using Ollama
+            logger.info("Generating response with Ollama...")
+            response = await self.ollama_client.generate(content)
 
-            success = await self.signal_client.send_message(sender, echo_response)
+            if response is None:
+                logger.error("Failed to generate response from Ollama")
+                response = "Sorry, I'm having trouble generating a response right now."
+
+            logger.info("Sending response to %s: %s...", sender, response[:50])
+
+            success = await self.signal_client.send_message(sender, response)
 
             if success:
-                logger.info("Successfully sent echo response")
+                logger.info("Successfully sent response")
             else:
-                logger.error("Failed to send echo response")
+                logger.error("Failed to send response")
 
         except Exception as e:
             logger.exception("Error handling message: %s", e)
@@ -132,8 +140,9 @@ class PennyAgent:
 
     async def run(self) -> None:
         """Run the agent."""
-        logger.info("Starting Penny echo agent...")
+        logger.info("Starting Penny AI agent...")
         logger.info("Signal number: %s", self.config.signal_number)
+        logger.info("Ollama model: %s", self.config.ollama_model)
 
         try:
             await self.listen_for_messages()
@@ -144,6 +153,7 @@ class PennyAgent:
         """Clean shutdown of resources."""
         logger.info("Shutting down agent...")
         await self.signal_client.close()
+        await self.ollama_client.close()
         logger.info("Agent shutdown complete")
 
 
