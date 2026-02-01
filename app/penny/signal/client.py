@@ -74,6 +74,36 @@ class SignalClient:
                 )
             return False
 
+    async def send_typing(self, recipient: str, typing: bool) -> bool:
+        """
+        Send a typing indicator to a recipient.
+
+        Args:
+            recipient: Phone number to send typing indicator to
+            typing: True for "typing started", False for "typing stopped"
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            url = f"{self.api_url}/v1/typing-indicator/{self.phone_number}"
+            payload = {"recipient": recipient}
+
+            logger.debug("Sending typing indicator to %s: %s", recipient, "started" if typing else "stopped")
+
+            # PUT to start typing, DELETE to stop
+            method = "PUT" if typing else "DELETE"
+            response = await self.http_client.request(method, url, json=payload)
+
+            response.raise_for_status()
+
+            return True
+
+        except httpx.HTTPError as e:
+            logger.warning("Failed to send typing indicator: %s", e)
+            # Don't fail hard on typing indicators - they're not critical
+            return False
+
     @staticmethod
     def parse_envelope(envelope_data: dict) -> SignalEnvelope | None:
         """

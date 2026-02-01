@@ -66,6 +66,9 @@ class PennyAgent:
 
             logger.info("Received message from %s: %s", sender, content)
 
+            # Send typing indicator
+            await self.signal_client.send_typing(sender, True)
+
             # Generate response using Ollama
             logger.info("Generating response with Ollama...")
             response = await self.ollama_client.generate(content)
@@ -73,6 +76,9 @@ class PennyAgent:
             if response is None:
                 logger.error("Failed to generate response from Ollama")
                 response = "Sorry, I'm having trouble generating a response right now."
+
+            # Stop typing indicator
+            await self.signal_client.send_typing(sender, False)
 
             logger.info("Sending response to %s: %s...", sender, response[:50])
 
