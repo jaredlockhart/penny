@@ -86,6 +86,69 @@ class OllamaClient:
             logger.exception("Unexpected error during generation: %s", e)
             return None
 
+    async def generate_stream(self, prompt: str):
+        """
+        Generate a completion as a stream of text chunks.
+
+        Args:
+            prompt: The prompt to generate from
+
+        Yields:
+            Text chunks as they are generated
+        """
+        try:
+            import json
+
+            url = f"{self.api_url}/api/generate"
+
+            # Create streaming request
+            request = GenerateRequest(
+                model=self.model,
+                prompt=prompt,
+                stream=True,
+            )
+
+            logger.debug("Sending streaming request to Ollama: %s", url)
+            logger.debug("Prompt length: %d chars", len(prompt))
+
+            async with self.http_client.stream(
+                "POST",
+                url,
+                json=request.model_dump(),
+            ) as response:
+                response.raise_for_status()
+
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+
+                    try:
+                        data = json.loads(line)
+                        chunk = data.get("response", "")
+                        if chunk:
+                            yield chunk
+
+                        # Check if done
+                        if data.get("done", False):
+                            logger.info("Stream completed")
+                            break
+
+                    except json.JSONDecodeError as e:
+                        logger.warning("Failed to parse stream chunk: %s", e)
+                        continue
+
+        except httpx.HTTPError as e:
+            logger.error("Ollama streaming API error: %s", e)
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(
+                    "Response status: %d, body: %s",
+                    e.response.status_code,
+                    e.response.text,
+                )
+
+        except Exception as e:
+            logger.exception("Unexpected error during streaming generation: %s", e)
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self.http_client.aclose()
