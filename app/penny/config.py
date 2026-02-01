@@ -14,6 +14,8 @@ class Config:
 
     signal_number: str
     signal_api_url: str
+    ollama_api_url: str
+    ollama_model: str
     log_level: str
 
     @classmethod
@@ -37,11 +39,15 @@ class Config:
 
         # Optional fields with defaults
         signal_api_url = os.getenv("SIGNAL_API_URL", "http://localhost:8080")
+        ollama_api_url = os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434")
+        ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
         log_level = os.getenv("LOG_LEVEL", "INFO")
 
         return cls(
             signal_number=signal_number,
             signal_api_url=signal_api_url,
+            ollama_api_url=ollama_api_url,
+            ollama_model=ollama_model,
             log_level=log_level,
         )
 
