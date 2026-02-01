@@ -41,6 +41,35 @@ class PennyAgent:
         logger.info("Received shutdown signal, stopping agent...")
         self.running = False
 
+    def _build_context(self, history: list, current_message: str) -> str:
+        """
+        Build conversation context from history.
+
+        Args:
+            history: List of Message objects from database
+            current_message: The current incoming message
+
+        Returns:
+            Formatted context string for Ollama
+        """
+        context_parts = ["You are Penny, a helpful AI assistant communicating via Signal messages."]
+
+        if history:
+            context_parts.append("\nRecent conversation history:")
+            for msg in history:
+                # Skip the current message if it's already in history (shouldn't be, but just in case)
+                if msg.direction == "incoming":
+                    context_parts.append(f"User: {msg.content}")
+                else:
+                    # For outgoing chunks, only include non-chunk messages or first chunk
+                    if msg.chunk_index is None or msg.chunk_index == 0:
+                        context_parts.append(f"Penny: {msg.content}")
+
+        context_parts.append(f"\nUser: {current_message}")
+        context_parts.append("Penny:")
+
+        return "\n".join(context_parts)
+
     def log_message(self, direction: str, sender: str, recipient: str, content: str, chunk_index: int | None = None) -> None:
         """
         Log a message to the database.
@@ -104,13 +133,18 @@ class PennyAgent:
             # Send typing indicator
             await self.signal_client.send_typing(sender, True)
 
+            # Build context from conversation history
+            history = self.db.get_conversation_history(sender, self.config.signal_number, limit=20)
+            context = self._build_context(history, content)
+
             # Generate response using Ollama streaming
             logger.info("Generating streaming response with Ollama...")
+            logger.debug("Context length: %d chars", len(context))
             buffer = ""
             chunk_count = 0
 
             try:
-                async for chunk in self.ollama_client.generate_stream(content):
+                async for chunk in self.ollama_client.generate_stream(context):
                     buffer += chunk
 
                     # Send accumulated text when we hit a newline or paragraph break
