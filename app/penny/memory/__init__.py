@@ -1,6 +1,5 @@
 """Memory module for Penny - message logging and storage."""
 
-from penny.memory.context import build_context
 from penny.memory.database import Database
 from penny.memory.models import Memory, Message, MessageDirection, Task, TaskStatus
 
@@ -11,5 +10,4 @@ __all__ = [
     "Task",
     "MessageDirection",
     "TaskStatus",
-    "build_context",
 ]
