@@ -7,6 +7,7 @@ from penny.agentic.models import ChatMessage, ControllerResponse, MessageRole
 from penny.agentic.tool_executor import ToolExecutor
 from penny.ollama import OllamaClient
 from penny.tools import ToolCall, ToolRegistry
+from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,11 @@ class AgenticController:
         tools = self.tool_registry.get_ollama_tools()
         logger.debug("Using %d tools", len(tools))
 
+        # Collect image attachments from tool results
+        attachments: list[str] = []
+        # Track tools that have been called to prevent repeat loops
+        called_tools: set[str] = set()
+
         # Agentic loop
         for step in range(self.max_steps):
             logger.info("Agentic step %d/%d", step + 1, self.max_steps)
@@ -119,12 +125,29 @@ class AgenticController:
                     tool_name = function.get("name", "")
                     arguments = function.get("arguments", {})
 
+                    # Skip tools that have already been called
+                    if tool_name in called_tools:
+                        logger.info("Skipping repeat call to tool: %s", tool_name)
+                        result_str = "tool already called, do not call it again. write your response now."
+                        messages.append(
+                            ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict()
+                        )
+                        continue
+
                     logger.info("Executing tool: %s", tool_name)
+                    called_tools.add(tool_name)
 
                     tool_call = ToolCall(tool=tool_name, arguments=arguments)
                     tool_result = await self.tool_executor.execute(tool_call)
 
-                    result_str = f"Error: {tool_result.error}" if tool_result.error else str(tool_result.result)
+                    if tool_result.error:
+                        result_str = f"Error: {tool_result.error}"
+                    elif isinstance(tool_result.result, SearchResult):
+                        result_str = tool_result.result.text
+                        if tool_result.result.image_base64:
+                            attachments.append(tool_result.result.image_base64)
+                    else:
+                        result_str = str(tool_result.result)
                     logger.debug("Tool result: %s", result_str[:200])
 
                     messages.append(
@@ -148,7 +171,7 @@ class AgenticController:
                 logger.info("Extracted thinking text (length: %d)", len(thinking))
 
             logger.info("Got final answer (length: %d)", len(content))
-            return ControllerResponse(answer=content, thinking=thinking)
+            return ControllerResponse(answer=content, thinking=thinking, attachments=attachments)
 
         # Max steps reached
         logger.warning("Max steps reached without final answer")

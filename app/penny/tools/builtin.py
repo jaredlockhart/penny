@@ -1,72 +1,126 @@
 """Built-in tools."""
 
+import asyncio
+import base64
+import logging
 import time
+from functools import partial
+from typing import Any
 
+import httpx
+from duckduckgo_search import DDGS
 from perplexity import Perplexity
 
+from penny.constants import (
+    IMAGE_DOWNLOAD_TIMEOUT,
+    IMAGE_MAX_RESULTS,
+    NO_RESULTS_TEXT,
+    PERPLEXITY_PRESET,
+)
 from penny.tools.base import Tool
+from penny.tools.models import SearchResult
+
+logger = logging.getLogger(__name__)
 
 
-class PerplexitySearchTool(Tool):
-    """Tool for searching the web using Perplexity AI."""
+class SearchTool(Tool):
+    """Combined search tool: Perplexity for text, DuckDuckGo for images, run in parallel."""
 
-    name = "perplexity_search"
+    name = "search"
     description = (
-        "Search the web for current information using Perplexity AI. "
-        "Use this when you need up-to-date information, facts, news, or "
-        "answers to questions that require real-time data or information "
-        "beyond your training data."
+        "Search the web for information and a relevant image. "
+        "Use this for every message to research your answer. "
+        "Returns search results text and attaches a relevant image."
     )
     parameters = {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "The search query or question to ask Perplexity",
+                "description": "The search query",
             }
         },
         "required": ["query"],
     }
 
-    def __init__(self, api_key: str, db=None):
-        """
-        Initialize the tool with Perplexity API key.
-
-        Args:
-            api_key: Perplexity API key
-            db: Optional Database instance for logging searches
-        """
-        self.client = Perplexity(api_key=api_key)
+    def __init__(self, perplexity_api_key: str, db=None):
+        self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
 
-    async def execute(self, query: str, **kwargs) -> str:
-        """
-        Execute a search using Perplexity.
+    async def execute(self, query: str, **kwargs) -> Any:
+        """Run Perplexity text search and DuckDuckGo image search in parallel."""
+        text_result, image_result = await asyncio.gather(
+            self._search_text(query),
+            self._search_image(query),
+            return_exceptions=True,
+        )
 
-        Args:
-            query: The search query
+        # Handle text result
+        if isinstance(text_result, Exception):
+            text = f"Error performing search: {text_result}"
+        else:
+            text = text_result
 
-        Returns:
-            Search results as a string
-        """
-        try:
-            start = time.time()
+        # Handle image result
+        if isinstance(image_result, Exception) or image_result is None:
+            return SearchResult(text=text)
 
-            response = self.client.responses.create(
-                preset="pro-search",
+        return SearchResult(text=text, image_base64=image_result)
+
+    async def _search_text(self, query: str) -> str:
+        """Search via Perplexity."""
+        start = time.time()
+
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            partial(
+                self.perplexity.responses.create,
+                preset=PERPLEXITY_PRESET,
                 input=query,
+            ),
+        )
+
+        duration_ms = int((time.time() - start) * 1000)
+        result = response.output_text if response.output_text else NO_RESULTS_TEXT
+
+        if self.db:
+            self.db.log_search(query=query, response=result, duration_ms=duration_ms)
+
+        return result
+
+    async def _search_image(self, query: str) -> str | None:
+        """Search for an image via DuckDuckGo and return base64 data."""
+        try:
+            loop = asyncio.get_running_loop()
+            results = await loop.run_in_executor(
+                None, partial(DDGS().images, query, max_results=IMAGE_MAX_RESULTS)
             )
 
-            duration_ms = int((time.time() - start) * 1000)
-            result = response.output_text if response.output_text else "No results found"
+            if not results:
+                return None
 
-            if self.db:
-                self.db.log_search(
-                    query=query,
-                    response=result,
-                    duration_ms=duration_ms,
-                )
+            async with httpx.AsyncClient(
+                timeout=IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True
+            ) as client:
+                for result in results:
+                    image_url = result.get("image", "")
+                    if not image_url:
+                        continue
+                    try:
+                        resp = await client.get(image_url)
+                        resp.raise_for_status()
+                        content_type = resp.headers.get("content-type", "")
+                        if "image" not in content_type:
+                            continue
+                        image_b64 = base64.b64encode(resp.content).decode()
+                        mime = content_type.split(";")[0].strip()
+                        return f"data:{mime};base64,{image_b64}"
+                    except httpx.HTTPError:
+                        logger.debug("Failed to download image: %s", image_url)
+                        continue
 
-            return result
+            return None
         except Exception as e:
-            return f"Error performing search: {str(e)}"
+            logger.warning("Image search failed: %s", e)
+            return None

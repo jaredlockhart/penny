@@ -10,13 +10,14 @@ Penny is a personal AI agent built with simplicity and privacy in mind. It runs 
 
 **How it works:**
 
-You send a message on Signal. Penny searches the web via Perplexity, then responds in a casual, lowercase style. If you reply to one of Penny's messages, it rebuilds the conversation thread for context.
+You send a message on Signal. Penny searches the web via Perplexity and finds a relevant image via DuckDuckGo — both in parallel — then responds in a casual, lowercase style with the image attached. If you reply to one of Penny's messages, it rebuilds the conversation thread for context.
 
 **Key Features:**
 - **Perplexity Search**: Every response is grounded in a web search — Penny never answers from model knowledge alone
+- **Image Attachments**: Every response includes a relevant image from DuckDuckGo, sent as a Signal attachment (degrades gracefully if unavailable)
 - **Thread-Based Context**: Quote-reply to continue a conversation; Penny walks the message chain to rebuild history
 - **Full Logging**: Every Ollama prompt, Perplexity search, and user/agent message is logged to SQLite
-- **Agentic Loop**: Multi-step reasoning with tool calling (up to 5 steps)
+- **Agentic Loop**: Multi-step reasoning with tool calling (up to 5 steps), with duplicate tool call protection
 
 ## Architecture
 
@@ -52,8 +53,9 @@ You send a message on Signal. Penny searches the web via Perplexity, then respon
         │    Listener   │
         │  - Agentic    │
         │    Loop       │
-        │  - Perplexity │
-        │    Search     │
+        │  - Search     │
+        │    (Perplexity│
+        │    + DDG img) │
         │  - SQLite     │
         │    Logging    │
         └───────────────┘
@@ -64,9 +66,9 @@ You send a message on Signal. Penny searches the web via Perplexity, then respon
 1. User sends Signal message (or quote-replies to a previous response)
 2. If quote-reply: look up the quoted message, walk the parent chain to build thread history
 3. Log incoming message (linked to parent if replying)
-4. Run agentic loop: Ollama calls Perplexity search tool, gets results, generates response
+4. Run agentic loop: Ollama calls search tool, which runs Perplexity (text) and DuckDuckGo (images) in parallel
 5. Log outgoing message (linked to incoming)
-6. Send response back via Signal
+6. Send response back via Signal with image attachment (if available)
 
 ### Design Decisions
 
@@ -86,7 +88,7 @@ Penny stores three types of log data in SQLite:
 - Thinking/reasoning trace (if model supports it)
 - Call duration in milliseconds
 
-**SearchLog**: Every Perplexity search
+**SearchLog**: Every Perplexity search (image searches are not logged separately)
 - Query text, response text, call duration
 
 **MessageLog**: Every user message and agent response

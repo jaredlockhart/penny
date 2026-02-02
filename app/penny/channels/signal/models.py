@@ -77,6 +77,7 @@ class SendMessageRequest(BaseModel):
     message: str
     number: str
     recipients: list[str]
+    base64_attachments: list[str] | None = None
 
 
 class SendMessageResponse(BaseModel):

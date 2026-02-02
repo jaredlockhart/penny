@@ -32,3 +32,6 @@ class ControllerResponse(BaseModel):
     thinking: str | None = Field(
         default=None, description="Optional thinking/reasoning trace from the model"
     )
+    attachments: list[str] = Field(
+        default_factory=list, description="Base64-encoded image attachments"
+    )

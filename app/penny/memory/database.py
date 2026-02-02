@@ -4,7 +4,7 @@ import json
 import logging
 from pathlib import Path
 
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from penny.agentic.models import MessageRole
 from penny.constants import MessageDirection
@@ -144,15 +144,16 @@ class Database:
     def get_unsummarized_messages(self) -> list[MessageLog]:
         """Get all outgoing messages that have a parent but no summary yet."""
         with self.get_session() as session:
-            return (
-                session.query(MessageLog)
-                .filter(
-                    MessageLog.direction == MessageDirection.OUTGOING,
-                    MessageLog.parent_id.isnot(None),
-                    MessageLog.parent_summary.is_(None),
-                )
-                .order_by(MessageLog.timestamp.asc())
-                .all()
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.direction == MessageDirection.OUTGOING,
+                        MessageLog.parent_id.isnot(None),
+                        MessageLog.parent_summary.is_(None),
+                    )
+                    .order_by(MessageLog.timestamp.asc())
+                ).all()
             )
 
     def set_parent_summary(self, message_id: int, summary: str) -> None:

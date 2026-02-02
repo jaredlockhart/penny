@@ -5,6 +5,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class SearchResult(BaseModel):
+    """Result from a search tool containing text and optional image."""
+
+    text: str
+    image_base64: str | None = None
+
+
 class ToolCall(BaseModel):
     """A tool call from the model."""
 

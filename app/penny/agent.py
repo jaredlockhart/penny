@@ -17,7 +17,7 @@ from penny.memory import Database
 from penny.ollama import OllamaClient
 from penny.agentic.models import MessageRole
 from penny.constants import SUMMARIZE_PROMPT, SYSTEM_PROMPT, MessageDirection
-from penny.tools import PerplexitySearchTool, ToolRegistry
+from penny.tools import SearchTool, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,8 @@ class PennyAgent:
 
         tool_registry = ToolRegistry()
         if config.perplexity_api_key:
-            tool_registry.register(PerplexitySearchTool(api_key=config.perplexity_api_key, db=self.db))
-            logger.info("Perplexity search tool registered")
+            tool_registry.register(SearchTool(perplexity_api_key=config.perplexity_api_key, db=self.db))
+            logger.info("Search tool registered (Perplexity + image search)")
         else:
             logger.warning("No PERPLEXITY_API_KEY configured - agent will have no tools")
 
@@ -88,7 +88,9 @@ class PennyAgent:
 
                 answer = response.answer.strip() if response.answer else "Sorry, I couldn't generate a response."
                 self.db.log_message(MessageDirection.OUTGOING, self.config.signal_number, answer, parent_id=incoming_id)
-                await self.channel.send_message(message.sender, answer)
+                await self.channel.send_message(
+                    message.sender, answer, attachments=response.attachments or None
+                )
             finally:
                 await self.channel.send_typing(message.sender, False)
 

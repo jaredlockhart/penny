@@ -32,7 +32,9 @@ class SignalChannel(MessageChannel):
         self.http_client = httpx.AsyncClient(timeout=30.0)
         logger.info("Initialized Signal channel: url=%s, number=%s", api_url, phone_number)
 
-    async def send_message(self, recipient: str, message: str) -> bool:
+    async def send_message(
+        self, recipient: str, message: str, attachments: list[str] | None = None
+    ) -> bool:
         """Send a message via Signal."""
         # Validate message is not empty
         if not message or not message.strip():
@@ -45,6 +47,7 @@ class SignalChannel(MessageChannel):
                 message=message,
                 number=self.phone_number,
                 recipients=[recipient],
+                base64_attachments=attachments if attachments else None,
             )
 
             logger.debug("Sending to %s: %s", url, request.model_dump())
