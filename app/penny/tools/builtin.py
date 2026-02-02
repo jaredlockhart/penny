@@ -1,7 +1,6 @@
 """Built-in tools."""
 
 from datetime import datetime
-from typing import Any
 
 from perplexity import Perplexity
 
@@ -11,21 +10,9 @@ from penny.tools.base import Tool
 class GetCurrentTimeTool(Tool):
     """Get the current date and time."""
 
-    @property
-    def name(self) -> str:
-        return "get_current_time"
-
-    @property
-    def description(self) -> str:
-        return "Get the current date and time in ISO format. Use this when the user asks about the current time or date."
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        # No parameters needed
-        return {
-            "type": "object",
-            "properties": {},
-        }
+    name = "get_current_time"
+    description = "Get the current date and time in ISO format. Use this when the user asks about the current time or date."
+    parameters = {"type": "object", "properties": {}}
 
     async def execute(self, **kwargs) -> str:
         """Get current time."""
@@ -35,6 +22,24 @@ class GetCurrentTimeTool(Tool):
 class StoreMemoryTool(Tool):
     """Tool for storing long-term memories."""
 
+    name = "store_memory"
+    description = (
+        "Store a long-term memory, fact, preference, or rule that should be remembered "
+        "across all conversations. Use this for: user names, preferences, behavioral rules, "
+        "or any important information that should persist. Examples: 'My name is Jared', "
+        "'Always speak in lowercase', 'User prefers concise answers'."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {
+                "type": "string",
+                "description": "The fact, preference, or rule to remember",
+            }
+        },
+        "required": ["memory"],
+    }
+
     def __init__(self, db):
         """
         Initialize the tool with database access.
@@ -43,32 +48,6 @@ class StoreMemoryTool(Tool):
             db: Database instance for storing memories
         """
         self.db = db
-
-    @property
-    def name(self) -> str:
-        return "store_memory"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Store a long-term memory, fact, preference, or rule that should be remembered "
-            "across all conversations. Use this for: user names, preferences, behavioral rules, "
-            "or any important information that should persist. Examples: 'My name is Jared', "
-            "'Always speak in lowercase', 'User prefers concise answers'."
-        )
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "memory": {
-                    "type": "string",
-                    "description": "The fact, preference, or rule to remember",
-                }
-            },
-            "required": ["memory"],
-        }
 
     async def execute(self, memory: str, **kwargs) -> str:
         """
@@ -87,6 +66,24 @@ class StoreMemoryTool(Tool):
 class PerplexitySearchTool(Tool):
     """Tool for searching the web using Perplexity AI."""
 
+    name = "perplexity_search"
+    description = (
+        "Search the web for current information using Perplexity AI. "
+        "Use this when you need up-to-date information, facts, news, or "
+        "answers to questions that require real-time data or information "
+        "beyond your training data."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The search query or question to ask Perplexity",
+            }
+        },
+        "required": ["query"],
+    }
+
     def __init__(self, api_key: str):
         """
         Initialize the tool with Perplexity API key.
@@ -95,32 +92,6 @@ class PerplexitySearchTool(Tool):
             api_key: Perplexity API key
         """
         self.client = Perplexity(api_key=api_key)
-
-    @property
-    def name(self) -> str:
-        return "perplexity_search"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Search the web for current information using Perplexity AI. "
-            "Use this when you need up-to-date information, facts, news, or "
-            "answers to questions that require real-time data or information "
-            "beyond your training data."
-        )
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query or question to ask Perplexity",
-                }
-            },
-            "required": ["query"],
-        }
 
     async def execute(self, query: str, **kwargs) -> str:
         """
@@ -147,6 +118,28 @@ class PerplexitySearchTool(Tool):
 class CreateTaskTool(Tool):
     """Tool for creating deferred tasks."""
 
+    name = "create_task"
+    description = (
+        "Create a task to work on later. Use this when you need to use other tools "
+        "(like search, time, memory) but want to defer the work. After creating a task, "
+        "you should respond to the user acknowledging that you'll work on it. "
+        "The task will be processed in the background."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "description": {
+                "type": "string",
+                "description": "What needs to be done in this task",
+            },
+            "acknowledgment": {
+                "type": "string",
+                "description": "Brief casual message to send to user (5-10 words, lowercase)",
+            }
+        },
+        "required": ["description", "acknowledgment"],
+    }
+
     def __init__(self, db, agent):
         """
         Initialize with database and agent reference.
@@ -157,36 +150,6 @@ class CreateTaskTool(Tool):
         """
         self.db = db
         self.agent = agent
-
-    @property
-    def name(self) -> str:
-        return "create_task"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Create a task to work on later. Use this when you need to use other tools "
-            "(like search, time, memory) but want to defer the work. After creating a task, "
-            "you should respond to the user acknowledging that you'll work on it. "
-            "The task will be processed in the background."
-        )
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "description": "What needs to be done in this task",
-                },
-                "acknowledgment": {
-                    "type": "string",
-                    "description": "Brief casual message to send to user (5-10 words, lowercase)",
-                }
-            },
-            "required": ["description", "acknowledgment"],
-        }
 
     async def execute(self, description: str, acknowledgment: str, **kwargs) -> str:
         """
@@ -206,6 +169,13 @@ class CreateTaskTool(Tool):
 class ListTasksTool(Tool):
     """Tool for listing pending tasks."""
 
+    name = "list_tasks"
+    description = (
+        "List all pending tasks that need to be worked on. "
+        "Use this when idle to see if there's work to do."
+    )
+    parameters = {"type": "object", "properties": {}}
+
     def __init__(self, db):
         """
         Initialize with database.
@@ -214,24 +184,6 @@ class ListTasksTool(Tool):
             db: Database instance
         """
         self.db = db
-
-    @property
-    def name(self) -> str:
-        return "list_tasks"
-
-    @property
-    def description(self) -> str:
-        return (
-            "List all pending tasks that need to be worked on. "
-            "Use this when idle to see if there's work to do."
-        )
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {},
-        }
 
     async def execute(self, **kwargs) -> str:
         """
@@ -253,6 +205,26 @@ class ListTasksTool(Tool):
 class CompleteTaskTool(Tool):
     """Tool for marking tasks as complete."""
 
+    name = "complete_task"
+    description = (
+        "Mark a task as completed with the final result. "
+        "The result will be sent to the user who requested the task."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "task_id": {
+                "type": "integer",
+                "description": "ID of the task to complete",
+            },
+            "result": {
+                "type": "string",
+                "description": "Final answer/result to send to user",
+            }
+        },
+        "required": ["task_id", "result"],
+    }
+
     def __init__(self, db):
         """
         Initialize with database.
@@ -261,34 +233,6 @@ class CompleteTaskTool(Tool):
             db: Database instance
         """
         self.db = db
-
-    @property
-    def name(self) -> str:
-        return "complete_task"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Mark a task as completed with the final result. "
-            "The result will be sent to the user who requested the task."
-        )
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "integer",
-                    "description": "ID of the task to complete",
-                },
-                "result": {
-                    "type": "string",
-                    "description": "Final answer/result to send to user",
-                }
-            },
-            "required": ["task_id", "result"],
-        }
 
     async def execute(self, task_id: int, result: str, **kwargs) -> str:
         """

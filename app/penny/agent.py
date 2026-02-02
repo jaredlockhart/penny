@@ -13,6 +13,7 @@ import websockets
 from penny.agentic import AgenticController
 from penny.channels import MessageChannel, SignalChannel
 from penny.config import Config, setup_logging
+from penny.constants import ErrorMessages, SystemPrompts
 from penny.memory import Database
 from penny.memory.models import MessageDirection
 from penny.ollama import OllamaClient
@@ -69,14 +70,14 @@ class PennyAgent:
             ollama_client=self.ollama_client,
             tool_registry=self.message_registry,
             db=self.db,
-            max_steps=5,  # Messages should be quick
+            max_steps=self.config.message_max_steps,
         )
 
         self.task_controller = AgenticController(
             ollama_client=self.ollama_client,
             tool_registry=self.task_registry,
             db=self.db,
-            max_steps=10,  # Tasks can use more steps
+            max_steps=self.config.task_max_steps,
         )
 
         # Track last message time for idle detection
@@ -158,35 +159,29 @@ class PennyAgent:
             try:
                 # Get conversation history
                 history = self.db.get_conversation_history(
-                    message.sender, self.config.signal_number, limit=20
+                    message.sender,
+                    self.config.signal_number,
+                    limit=self.config.conversation_history_limit,
                 )
 
                 # Run agentic loop using message controller (only has store_memory and create_task)
-                # Pass system prompt to clarify task creation behavior
                 response = await self.message_controller.run(
                     history,
                     message.content,
-                    system_prompt=(
-                        "You have only two tools: store_memory and create_task. "
-                        "If the user asks something that requires real-time information (current time, weather, "
-                        "web search, etc.) or any tool you don't have, you MUST use create_task. "
-                        "Only answer directly if you can answer from long-term memories or conversation history "
-                        "WITHOUT needing any external tools or current information."
-                    ),
+                    system_prompt=SystemPrompts.MESSAGE_HANDLER,
                 )
 
                 # Get answer with fallback
                 answer = response.answer.strip() if response.answer else ""
                 if not answer:
-                    answer = "Sorry, I couldn't generate a response."
+                    answer = ErrorMessages.NO_RESPONSE
 
                 # Send response using shared helper
                 await self._send_response(message.sender, answer, response.thinking)
 
             except Exception as e:
                 logger.exception("Error processing message: %s", e)
-                error_msg = "Sorry, I encountered an error processing your message."
-                await self._send_response(message.sender, error_msg)
+                await self._send_response(message.sender, ErrorMessages.PROCESSING_ERROR)
 
         except Exception as e:
             logger.exception("Error handling message: %s", e)
@@ -249,10 +244,10 @@ class PennyAgent:
 
         while self.running:
             try:
-                # Check if we've been idle for 5+ seconds
+                # Check if we've been idle
                 idle_time = time.time() - self.last_message_time
 
-                if idle_time >= 5.0:
+                if idle_time >= self.config.idle_timeout_seconds:
                     # Check database directly for pending tasks (avoid model call if empty)
                     pending_tasks = self.db.get_pending_tasks()
 
@@ -262,16 +257,11 @@ class PennyAgent:
                         # Track task IDs before processing
                         pending_task_ids = {task.id for task in pending_tasks}
 
-                        # Run task controller with prompt to work on tasks
-                        # Model has access to: store_memory, get_current_time, list_tasks, complete_task, perplexity_search
-                        idle_prompt = (
-                            "You have pending tasks. Use list_tasks to see them, "
-                            "then work on them using available tools. "
-                            "When complete, use complete_task with the final answer."
-                        )
-
+                        # Run task controller to work on tasks
                         try:
-                            response = await self.task_controller.run([], idle_prompt)
+                            response = await self.task_controller.run(
+                                [], SystemPrompts.TASK_PROCESSOR
+                            )
                             logger.info("Task processing response: %s", response.answer[:100])
 
                             # Check for newly completed tasks and send results to requester
@@ -314,12 +304,12 @@ class PennyAgent:
                     else:
                         logger.debug("No pending tasks, skipping model call")
 
-                # Check every second
-                await asyncio.sleep(1.0)
+                # Check periodically
+                await asyncio.sleep(self.config.task_check_interval)
 
             except Exception as e:
                 logger.exception("Error in task processor: %s", e)
-                await asyncio.sleep(5.0)
+                await asyncio.sleep(self.config.idle_timeout_seconds)
 
         logger.info("Task processor stopped")
 

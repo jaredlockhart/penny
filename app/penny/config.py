@@ -12,14 +12,32 @@ from dotenv import load_dotenv
 class Config:
     """Application configuration loaded from .env file."""
 
+    # Signal/messaging configuration
     signal_number: str
     signal_api_url: str
+
+    # Ollama configuration
     ollama_api_url: str
     ollama_model: str
+
+    # API keys
     perplexity_api_key: str | None
+
+    # Logging configuration
     log_level: str
+
+    # Database configuration
     db_path: str
+
+    # Optional fields with defaults
     log_file: str | None = None
+
+    # Agent runtime configuration
+    message_max_steps: int = 5
+    task_max_steps: int = 10
+    idle_timeout_seconds: float = 5.0
+    task_check_interval: float = 1.0
+    conversation_history_limit: int = 20
 
     @classmethod
     def load(cls) -> "Config":
