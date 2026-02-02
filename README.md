@@ -100,41 +100,6 @@ Penny uses a **dual-context system** with separate tool registries:
 - **Communication**: WebSocket for receiving (real-time), REST for sending (simple)
 - **Parallel Execution**: Message listener and task processor run concurrently via asyncio.gather()
 
-## Agentic Controller
-
-### Core Loop Design
-
-The `AgenticController` implements a multi-step reasoning loop with tool calling:
-
-```
-1. Initialize
-   - Receives OllamaClient, ToolRegistry, database, and max_steps
-   - Creates ToolExecutor for executing tool calls
-
-2. Run agentic loop (receives conversation history from agent)
-   a. Build message list:
-      - Add optional system prompt (for special instructions)
-      - Add long-term memories as system message
-      - Add conversation history (incoming/outgoing messages)
-      - Add current user message
-   b. Loop until answer or max steps:
-      - Call Ollama with messages and available tools
-      - If response has tool_calls:
-        * Execute each tool via ToolExecutor
-        * Add tool results as TOOL messages
-        * Continue loop
-      - If response is text:
-        * Extract answer and optional thinking trace
-        * Return ControllerResponse
-   c. Handle errors with fallback messages
-   d. Return timeout message if max steps reached
-
-3. Tool execution handled by ToolExecutor:
-   - Looks up tool by name in registry
-   - Executes tool with provided arguments
-   - Returns result or error message
-```
-
 ## Key Features
 
 ### Automatic History Compactification
