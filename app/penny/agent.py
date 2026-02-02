@@ -1,4 +1,4 @@
-"""Main agent loop for Penny - Simple Signal echo test."""
+"""Main agent loop for Penny - Tool-based task system."""
 
 import asyncio
 import json
@@ -6,25 +6,31 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime
 from typing import Any
 
 import websockets
 
 from penny.agentic import AgenticController
-from penny.agentic.models import ClassificationResult, MessageClassification
 from penny.channels import MessageChannel, SignalChannel
 from penny.config import Config, setup_logging
 from penny.memory import Database
-from penny.memory.models import MessageDirection, TaskStatus
+from penny.memory.models import MessageDirection
 from penny.ollama import OllamaClient
-from penny.tools import GetCurrentTimeTool, PerplexitySearchTool, StoreMemoryTool, ToolRegistry
+from penny.tools import (
+    CompleteTaskTool,
+    CreateTaskTool,
+    GetCurrentTimeTool,
+    ListTasksTool,
+    PerplexitySearchTool,
+    StoreMemoryTool,
+    ToolRegistry,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class PennyAgent:
-    """AI agent that responds via Ollama."""
+    """AI agent that responds via Ollama with tool-based task management."""
 
     def __init__(self, config: Config, channel: MessageChannel | None = None):
         """Initialize the agent with configuration."""
@@ -36,24 +42,41 @@ class PennyAgent:
         self.db = Database(config.db_path)
         self.db.create_tables()
 
-        # Initialize tools
-        self.tool_registry = ToolRegistry()
-        self.tool_registry.register(GetCurrentTimeTool())
-        self.tool_registry.register(StoreMemoryTool(db=self.db))
+        # Auto-discover user number from first message
+        self.user_number = None
 
-        # Register Perplexity search tool if API key is configured
+        # Message handler registry: store_memory and create_task (static)
+        self.message_registry = ToolRegistry()
+        self.message_registry.register(StoreMemoryTool(db=self.db))
+        self.message_registry.register(CreateTaskTool(db=self.db, agent=self))
+
+        # Task processor registry: all task-related tools
+        self.task_registry = ToolRegistry()
+        self.task_registry.register(StoreMemoryTool(db=self.db))
+        self.task_registry.register(GetCurrentTimeTool())
+        self.task_registry.register(ListTasksTool(db=self.db))
+        self.task_registry.register(CompleteTaskTool(db=self.db))
+
+        # Add Perplexity search if configured
         if config.perplexity_api_key:
-            self.tool_registry.register(PerplexitySearchTool(api_key=config.perplexity_api_key))
-            logger.info("Registered Perplexity search tool")
+            self.task_registry.register(PerplexitySearchTool(api_key=config.perplexity_api_key))
+            logger.info("Perplexity search tool registered for task processing")
         else:
             logger.info("Perplexity API key not configured, skipping search tool")
 
-        # Initialize agentic controller
-        self.controller = AgenticController(
+        # Create separate controllers for each context
+        self.message_controller = AgenticController(
             ollama_client=self.ollama_client,
-            tool_registry=self.tool_registry,
+            tool_registry=self.message_registry,
             db=self.db,
-            max_steps=5,
+            max_steps=5,  # Messages should be quick
+        )
+
+        self.task_controller = AgenticController(
+            ollama_client=self.ollama_client,
+            tool_registry=self.task_registry,
+            db=self.db,
+            max_steps=10,  # Tasks can use more steps
         )
 
         # Track last message time for idle detection
@@ -70,39 +93,21 @@ class PennyAgent:
         logger.info("Received shutdown signal, stopping agent...")
         self.running = False
 
-    async def _process_query(self, recipient: str, query: str, error_context: str = "message") -> str:
+    async def _send_response(
+        self, recipient: str, answer: str, thinking: str | None = None
+    ) -> None:
         """
-        Process a query through the agentic controller and send response.
+        Send a response to a user with typing indicators and proper formatting.
 
         Args:
-            recipient: Phone number to send response to
-            query: The query/task to process
-            error_context: Context string for error messages ("message" or "task")
-
-        Returns:
-            The final answer text
-
-        Raises:
-            Exception: Re-raises any exceptions after handling
+            recipient: Phone number to send to
+            answer: Response text to send
+            thinking: Optional thinking text (logged only on first chunk)
         """
+        # Start typing indicator
+        await self.channel.send_typing(recipient, True)
+
         try:
-            # Get conversation history
-            history = self.db.get_conversation_history(recipient, self.config.signal_number, limit=20)
-            logger.debug("Got %d history messages for %s", len(history), error_context)
-
-            # Run agentic loop
-            response = await self.controller.run(history, query)
-            logger.info(
-                "Controller response - answer length: %d, thinking: %s",
-                len(response.answer),
-                "present" if response.thinking else "None",
-            )
-
-            # Get answer with fallback
-            answer = response.answer.strip() if response.answer else ""
-            if not answer:
-                answer = f"Sorry, I couldn't {'generate a response' if error_context == 'message' else 'complete that task'}."
-
             # Split answer by newlines and send each line separately
             lines = [line.strip() for line in answer.split("\n") if line.strip()]
             for idx, line in enumerate(lines):
@@ -113,54 +118,11 @@ class PennyAgent:
                     recipient,
                     line,
                     chunk_index=idx,
-                    thinking=response.thinking if idx == 0 else None,
+                    thinking=thinking if idx == 0 else None,
                 )
-
-            return answer
-
-        except Exception as e:
-            logger.exception("Error processing %s: %s", error_context, e)
-            error_msg = f"Sorry, I encountered an error {'processing your message' if error_context == 'message' else 'working on that task'}."
-            await self.channel.send_message(recipient, error_msg)
-            self.db.log_message(
-                MessageDirection.OUTGOING.value,
-                self.config.signal_number,
-                recipient,
-                error_msg,
-            )
-            raise
-
-    async def _classify_and_acknowledge(
-        self, message_content: str, sender: str
-    ) -> ClassificationResult:
-        """
-        Classify message and generate acknowledgment in a single pass.
-
-        Args:
-            message_content: The message to classify
-            sender: Phone number of sender (for getting history)
-
-        Returns:
-            ClassificationResult with classification and optional acknowledgment
-        """
-        # Get conversation history for context
-        history = self.db.get_conversation_history(sender, self.config.signal_number, limit=20)
-
-        # Use controller's classify method which includes full context (memories, history, etc.)
-        content = await self.controller.classify(history, message_content)
-
-        if content.startswith("TASK:"):
-            # Extract acknowledgment after "TASK:"
-            acknowledgment = content[5:].strip()
-            return ClassificationResult(
-                classification=MessageClassification.TASK,
-                acknowledgment=acknowledgment if acknowledgment else "i'll work on that for you",
-            )
-        else:
-            return ClassificationResult(
-                classification=MessageClassification.IMMEDIATE,
-                acknowledgment=None,
-            )
+        finally:
+            # Always stop typing indicator
+            await self.channel.send_typing(recipient, False)
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -177,6 +139,11 @@ class PennyAgent:
 
             logger.info("Received message from %s: %s", message.sender, message.content)
 
+            # Auto-discover user number from first message
+            if self.user_number is None:
+                self.user_number = message.sender
+                logger.info("Auto-discovered user number: %s", self.user_number)
+
             # Update last message time for idle detection
             self.last_message_time = time.time()
 
@@ -188,36 +155,38 @@ class PennyAgent:
                 message.content,
             )
 
-            # Send typing indicator immediately
-            await self.channel.send_typing(message.sender, True)
-
-            # Classify message and get acknowledgment in one pass
-            result = await self._classify_and_acknowledge(message.content, message.sender)
-            logger.info("Message classified as: %s", result.classification.value)
-
-            if result.classification == MessageClassification.TASK:
-                # Create task and send acknowledgment
-                task = self.db.create_task(message.content, message.sender)
-                await self.channel.send_message(message.sender, result.acknowledgment)
-                self.db.log_message(
-                    MessageDirection.OUTGOING.value,
-                    self.config.signal_number,
-                    message.sender,
-                    result.acknowledgment,
-                )
-                logger.info("Created task %d and acknowledged with: %s", task.id, result.acknowledgment)
-                # Stop typing indicator
-                await self.channel.send_typing(message.sender, False)
-                return
-
-            # Process immediate question
             try:
-                await self._process_query(message.sender, message.content, error_context="message")
-            except Exception:
-                pass  # Error already logged and handled
-            finally:
-                # Always stop typing indicator
-                await self.channel.send_typing(message.sender, False)
+                # Get conversation history
+                history = self.db.get_conversation_history(
+                    message.sender, self.config.signal_number, limit=20
+                )
+
+                # Run agentic loop using message controller (only has store_memory and create_task)
+                # Pass system prompt to clarify task creation behavior
+                response = await self.message_controller.run(
+                    history,
+                    message.content,
+                    system_prompt=(
+                        "You have only two tools: store_memory and create_task. "
+                        "If the user asks something that requires real-time information (current time, weather, "
+                        "web search, etc.) or any tool you don't have, you MUST use create_task. "
+                        "Only answer directly if you can answer from long-term memories or conversation history "
+                        "WITHOUT needing any external tools or current information."
+                    ),
+                )
+
+                # Get answer with fallback
+                answer = response.answer.strip() if response.answer else ""
+                if not answer:
+                    answer = "Sorry, I couldn't generate a response."
+
+                # Send response using shared helper
+                await self._send_response(message.sender, answer, response.thinking)
+
+            except Exception as e:
+                logger.exception("Error processing message: %s", e)
+                error_msg = "Sorry, I encountered an error processing your message."
+                await self._send_response(message.sender, error_msg)
 
         except Exception as e:
             logger.exception("Error handling message: %s", e)
@@ -284,27 +253,66 @@ class PennyAgent:
                 idle_time = time.time() - self.last_message_time
 
                 if idle_time >= 5.0:
-                    # Get pending tasks
-                    tasks = self.db.get_pending_tasks()
+                    # Check database directly for pending tasks (avoid model call if empty)
+                    pending_tasks = self.db.get_pending_tasks()
 
-                    if tasks:
-                        task = tasks[0]  # Process first task
-                        logger.info("Processing task %d: %s", task.id, task.content[:50])
+                    if pending_tasks:
+                        logger.info("Found %d pending task(s), processing...", len(pending_tasks))
 
-                        # Mark as in progress
-                        self.db.update_task_status(
-                            task.id, TaskStatus.IN_PROGRESS.value, started_at=datetime.utcnow()
+                        # Track task IDs before processing
+                        pending_task_ids = {task.id for task in pending_tasks}
+
+                        # Run task controller with prompt to work on tasks
+                        # Model has access to: store_memory, get_current_time, list_tasks, complete_task, perplexity_search
+                        idle_prompt = (
+                            "You have pending tasks. Use list_tasks to see them, "
+                            "then work on them using available tools. "
+                            "When complete, use complete_task with the final answer."
                         )
 
-                        # Process task and mark complete
                         try:
-                            answer = await self._process_query(task.requester, task.content, error_context="task")
-                            self.db.complete_task(task.id, answer)
-                            logger.info("Task %d completed successfully", task.id)
-                        except Exception:
-                            # Error already logged and sent by _process_query
-                            error_msg = "Sorry, I encountered an error working on that task."
-                            self.db.complete_task(task.id, error_msg)
+                            response = await self.task_controller.run([], idle_prompt)
+                            logger.info("Task processing response: %s", response.answer[:100])
+
+                            # Check for newly completed tasks and send results to requester
+                            from penny.memory.models import Task, TaskStatus
+
+                            with self.db.get_session() as session:
+                                completed_tasks = (
+                                    session.query(Task)
+                                    .filter(
+                                        Task.id.in_(pending_task_ids),
+                                        Task.status == TaskStatus.COMPLETED.value,
+                                    )
+                                    .all()
+                                )
+
+                                logger.info(
+                                    "Found %d completed tasks from %d pending",
+                                    len(completed_tasks),
+                                    len(pending_task_ids),
+                                )
+
+                                for task in completed_tasks:
+                                    logger.info(
+                                        "Task %d - status: %s, result: %s",
+                                        task.id,
+                                        task.status,
+                                        "present" if task.result else "missing",
+                                    )
+                                    if task.result:
+                                        logger.info(
+                                            "Sending task %d result to %s",
+                                            task.id,
+                                            task.requester,
+                                        )
+                                        # Send task result using shared helper
+                                        await self._send_response(task.requester, task.result)
+
+                        except Exception as e:
+                            logger.exception("Error during task processing: %s", e)
+                    else:
+                        logger.debug("No pending tasks, skipping model call")
 
                 # Check every second
                 await asyncio.sleep(1.0)
