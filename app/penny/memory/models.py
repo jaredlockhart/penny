@@ -25,3 +25,16 @@ class Memory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     content: str = Field(index=True)  # The memory text
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class Task(SQLModel, table=True):
+    """Deferred task that Penny will work on during idle time."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    content: str = Field(index=True)  # The task description
+    status: str = Field(default="pending", index=True)  # pending/in_progress/completed
+    requester: str = Field(index=True)  # Phone number of requester
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    result: Optional[str] = None  # Final result text

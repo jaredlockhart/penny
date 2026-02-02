@@ -5,11 +5,14 @@ import json
 import logging
 import signal
 import sys
+import time
+from datetime import datetime
 from typing import Any
 
 import websockets
 
 from penny.agentic import AgenticController
+from penny.agentic.models import ChatMessage, MessageRole
 from penny.channels import MessageChannel, SignalChannel
 from penny.config import Config, setup_logging
 from penny.memory import Database
@@ -52,6 +55,9 @@ class PennyAgent:
             max_steps=5,
         )
 
+        # Track last message time for idle detection
+        self.last_message_time = time.time()
+
         self.running = True
 
         # Setup signal handlers for graceful shutdown
@@ -62,6 +68,55 @@ class PennyAgent:
         """Handle shutdown signals."""
         logger.info("Received shutdown signal, stopping agent...")
         self.running = False
+
+    async def _classify_and_acknowledge(self, message_content: str) -> tuple[str, str | None]:
+        """
+        Classify message and generate acknowledgment in a single pass.
+
+        Args:
+            message_content: The message to classify
+
+        Returns:
+            Tuple of (classification, acknowledgment) where acknowledgment is None for immediate messages
+        """
+        prompt = """Classify this message and generate an acknowledgment if needed.
+
+Message: "{message}"
+
+If it's a TASK (something to do later), respond with:
+TASK: [brief casual acknowledgment, 5-10 words, lowercase]
+
+If it's IMMEDIATE (needs instant answer), respond with:
+IMMEDIATE
+
+Examples:
+- "What time is it?" -> IMMEDIATE
+- "Can you look up the weather in Tokyo?" -> TASK: i'll look that up for you
+- "What's 2+2?" -> IMMEDIATE
+- "Please find out who won the superbowl" -> TASK: i'll find that out
+- "Remember my name is Jared" -> IMMEDIATE
+- "Search for the best pizza places" -> TASK: i'll search for that"""
+
+        messages = [
+            ChatMessage(
+                role=MessageRole.USER,
+                content=prompt.format(message=message_content),
+            ).to_dict()
+        ]
+
+        try:
+            response = await self.ollama_client.chat(messages=messages, tools=[])
+            content = response.get("message", {}).get("content", "").strip()
+
+            if content.startswith("TASK:"):
+                # Extract acknowledgment after "TASK:"
+                acknowledgment = content[5:].strip()
+                return ("task", acknowledgment if acknowledgment else "i'll work on that for you")
+            else:
+                return ("immediate", None)
+        except Exception as e:
+            logger.error("Error classifying message: %s", e)
+            return ("immediate", None)  # Default to immediate on error
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -78,11 +133,30 @@ class PennyAgent:
 
             logger.info("Received message from %s: %s", message.sender, message.content)
 
+            # Update last message time for idle detection
+            self.last_message_time = time.time()
+
             # Log incoming message
             self.db.log_message("incoming", message.sender, self.config.signal_number, message.content)
 
-            # Send typing indicator
+            # Send typing indicator immediately
             await self.channel.send_typing(message.sender, True)
+
+            # Classify message and get acknowledgment in one pass
+            classification, acknowledgment = await self._classify_and_acknowledge(message.content)
+            logger.info("Message classified as: %s", classification)
+
+            if classification == "task":
+                # Create task and send acknowledgment
+                task = self.db.create_task(message.content, message.sender)
+                await self.channel.send_message(message.sender, acknowledgment)
+                self.db.log_message(
+                    "outgoing", self.config.signal_number, message.sender, acknowledgment
+                )
+                logger.info("Created task %d and acknowledged with: %s", task.id, acknowledgment)
+                # Stop typing indicator
+                await self.channel.send_typing(message.sender, False)
+                return
 
             try:
                 # Get conversation history
@@ -179,6 +253,77 @@ class PennyAgent:
 
         logger.info("Message listener stopped")
 
+    async def process_tasks(self) -> None:
+        """Background task processor that works on tasks during idle time."""
+        logger.info("Starting background task processor...")
+
+        while self.running:
+            try:
+                # Check if we've been idle for 5+ seconds
+                idle_time = time.time() - self.last_message_time
+
+                if idle_time >= 5.0:
+                    # Get pending tasks
+                    tasks = self.db.get_pending_tasks()
+
+                    if tasks:
+                        task = tasks[0]  # Process first task
+                        logger.info("Processing task %d: %s", task.id, task.content[:50])
+
+                        # Mark as in progress
+                        self.db.update_task_status(
+                            task.id, "in_progress", started_at=datetime.utcnow()
+                        )
+
+                        try:
+                            # Get conversation history for context
+                            history = self.db.get_conversation_history(
+                                task.requester, self.config.signal_number, limit=20
+                            )
+
+                            # Run agentic loop
+                            response = await self.controller.run(history, task.content)
+                            answer = (
+                                response.answer.strip()
+                                if response.answer
+                                else "I couldn't complete that task."
+                            )
+
+                            # Send result (split by lines)
+                            lines = [line.strip() for line in answer.split("\n") if line.strip()]
+                            for idx, line in enumerate(lines):
+                                await self.channel.send_message(task.requester, line)
+                                self.db.log_message(
+                                    "outgoing",
+                                    self.config.signal_number,
+                                    task.requester,
+                                    line,
+                                    chunk_index=idx,
+                                    thinking=response.thinking if idx == 0 else None,
+                                )
+
+                            # Mark complete
+                            self.db.complete_task(task.id, answer)
+                            logger.info("Task %d completed successfully", task.id)
+
+                        except Exception as e:
+                            logger.exception("Error processing task %d: %s", task.id, e)
+                            error_msg = "Sorry, I encountered an error working on that task."
+                            await self.channel.send_message(task.requester, error_msg)
+                            self.db.log_message(
+                                "outgoing", self.config.signal_number, task.requester, error_msg
+                            )
+                            self.db.complete_task(task.id, error_msg)
+
+                # Check every second
+                await asyncio.sleep(1.0)
+
+            except Exception as e:
+                logger.exception("Error in task processor: %s", e)
+                await asyncio.sleep(5.0)
+
+        logger.info("Task processor stopped")
+
     async def run(self) -> None:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
@@ -186,7 +331,11 @@ class PennyAgent:
         logger.info("Ollama model: %s", self.config.ollama_model)
 
         try:
-            await self.listen_for_messages()
+            # Start both message listener and task processor in parallel
+            await asyncio.gather(
+                self.listen_for_messages(),
+                self.process_tasks(),
+            )
         finally:
             await self.shutdown()
 

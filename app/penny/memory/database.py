@@ -129,3 +129,85 @@ class Database:
         with self.get_session() as session:
             memories = session.query(Memory).order_by(Memory.created_at).all()
             return list(memories)
+
+    def create_task(self, content: str, requester: str):
+        """
+        Create a new pending task.
+
+        Args:
+            content: The task description
+            requester: Phone number of the requester
+
+        Returns:
+            The created Task object
+        """
+        from penny.memory.models import Task
+
+        with self.get_session() as session:
+            task = Task(content=content, requester=requester)
+            session.add(task)
+            session.commit()
+            session.refresh(task)
+            logger.info("Created task %d: %s", task.id, content[:50])
+            return task
+
+    def get_pending_tasks(self) -> list:
+        """
+        Get all pending tasks ordered by creation time.
+
+        Returns:
+            List of Task objects with status="pending"
+        """
+        from penny.memory.models import Task
+
+        with self.get_session() as session:
+            tasks = (
+                session.query(Task)
+                .filter(Task.status == "pending")
+                .order_by(Task.created_at)
+                .all()
+            )
+            return list(tasks)
+
+    def update_task_status(self, task_id: int, status: str, started_at=None) -> None:
+        """
+        Update task status.
+
+        Args:
+            task_id: ID of the task to update
+            status: New status (pending/in_progress/completed)
+            started_at: Optional datetime when task started
+        """
+        from datetime import datetime
+
+        from penny.memory.models import Task
+
+        with self.get_session() as session:
+            task = session.get(Task, task_id)
+            if task:
+                task.status = status
+                if started_at:
+                    task.started_at = started_at
+                session.commit()
+                logger.info("Updated task %d status to %s", task_id, status)
+
+    def complete_task(self, task_id: int, result: str) -> None:
+        """
+        Mark task as completed with result.
+
+        Args:
+            task_id: ID of the task to complete
+            result: Final result text
+        """
+        from datetime import datetime
+
+        from penny.memory.models import Task
+
+        with self.get_session() as session:
+            task = session.get(Task, task_id)
+            if task:
+                task.status = "completed"
+                task.completed_at = datetime.utcnow()
+                task.result = result
+                session.commit()
+                logger.info("Completed task %d", task_id)
