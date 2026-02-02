@@ -94,7 +94,7 @@ class OllamaClient:
             prompt: The prompt to generate from
 
         Yields:
-            Text chunks as they are generated
+            Dict with 'type' ('thinking' or 'response') and 'content' (text chunk)
         """
         try:
             import json
@@ -124,9 +124,16 @@ class OllamaClient:
 
                     try:
                         data = json.loads(line)
-                        chunk = data.get("response", "")
-                        if chunk:
-                            yield chunk
+
+                        # Check for thinking chunk (from thinking models)
+                        thinking_chunk = data.get("thinking", "")
+                        if thinking_chunk:
+                            yield {"type": "thinking", "content": thinking_chunk}
+
+                        # Check for response chunk
+                        response_chunk = data.get("response", "")
+                        if response_chunk:
+                            yield {"type": "response", "content": response_chunk}
 
                         # Check if done
                         if data.get("done", False):
