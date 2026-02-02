@@ -5,7 +5,14 @@ import logging
 import httpx
 from pydantic import ValidationError
 
-from penny.ollama.models import GenerateRequest, GenerateResponse
+from penny.ollama.models import (
+    ChunkType,
+    GenerateRequest,
+    GenerateResponse,
+    OllamaStreamResponse,
+    ResponseLine,
+    StreamChunk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,23 +132,22 @@ class OllamaClient:
 
                     try:
                         data = json.loads(line)
+                        chunk = OllamaStreamResponse.model_validate(data)
 
                         # Check for thinking chunk (from thinking models)
-                        thinking_chunk = data.get("thinking", "")
-                        if thinking_chunk:
-                            yield {"type": "thinking", "content": thinking_chunk}
+                        if chunk.thinking:
+                            yield StreamChunk(type=ChunkType.THINKING, content=chunk.thinking)
 
                         # Check for response chunk
-                        response_chunk = data.get("response", "")
-                        if response_chunk:
-                            yield {"type": "response", "content": response_chunk}
+                        if chunk.response:
+                            yield StreamChunk(type=ChunkType.RESPONSE, content=chunk.response)
 
                         # Check if done
-                        if data.get("done", False):
+                        if chunk.done:
                             logger.info("Stream completed")
                             break
 
-                    except json.JSONDecodeError as e:
+                    except (json.JSONDecodeError, ValidationError) as e:
                         logger.warning("Failed to parse stream chunk: %s", e)
                         continue
 
@@ -176,16 +182,13 @@ class OllamaClient:
         first_line = True
 
         async for chunk_data in self.generate_stream(prompt):
-            chunk_type = chunk_data["type"]
-            chunk_content = chunk_data["content"]
-
-            if chunk_type == "thinking":
+            if chunk_data.type == ChunkType.THINKING:
                 # Accumulate thinking internally
-                self.last_thinking += chunk_content
+                self.last_thinking += chunk_data.content
 
-            elif chunk_type == "response":
+            elif chunk_data.type == ChunkType.RESPONSE:
                 # Accumulate response
-                response_buffer += chunk_content
+                response_buffer += chunk_data.content
 
                 # Yield complete lines when we hit newlines
                 if "\n" in response_buffer:
@@ -196,13 +199,13 @@ class OllamaClient:
                     for line in parts[:-1]:
                         if line.strip():  # Only yield non-empty lines
                             thinking = self.last_thinking.strip() if first_line and self.last_thinking else None
-                            yield {"line": line, "thinking": thinking}
+                            yield ResponseLine(line=line, thinking=thinking)
                             first_line = False
 
         # Yield any remaining buffer
         if response_buffer.strip():
             thinking = self.last_thinking.strip() if first_line and self.last_thinking else None
-            yield {"line": response_buffer, "thinking": thinking}
+            yield ResponseLine(line=response_buffer, thinking=thinking)
 
     async def close(self) -> None:
         """Close the HTTP client."""

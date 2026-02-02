@@ -5,7 +5,7 @@ import logging
 import httpx
 from pydantic import ValidationError
 
-from penny.signal.models import SendMessageRequest, SignalEnvelope
+from penny.signal.models import IncomingMessage, SendMessageRequest, SignalEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ class SignalClient:
             return None
 
     @staticmethod
-    def extract_message_content(envelope_data: dict) -> tuple[str, str] | None:
+    def extract_message_content(envelope_data: dict) -> IncomingMessage | None:
         """
         Extract sender and message content from an envelope.
 
@@ -131,7 +131,7 @@ class SignalClient:
             envelope_data: Raw envelope dict from WebSocket
 
         Returns:
-            Tuple of (sender, content) or None if envelope should be ignored
+            IncomingMessage or None if envelope should be ignored
         """
         # Parse envelope
         envelope = SignalClient.parse_envelope(envelope_data)
@@ -154,7 +154,7 @@ class SignalClient:
             logger.debug("Ignoring empty message from %s", sender)
             return None
 
-        return (sender, content)
+        return IncomingMessage(sender=sender, content=content)
 
     def get_websocket_url(self) -> str:
         """
