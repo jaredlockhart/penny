@@ -132,37 +132,53 @@ class PennyAgent:
             # Always stop typing indicator
             await self.channel.send_typing(recipient, False)
 
-    async def _compactify_history(self) -> None:
+    async def _compactify_combined(self) -> None:
         """
-        Summarize recent conversation history and store as a message.
+        Consolidate both memories and recent conversation turns into a single summary.
+        Writes the combined result back to memories.
         Called during extended dormancy to maintain long-term context efficiently.
         """
         if not self.user_number:
-            logger.debug("No user number yet, skipping history compactification")
+            logger.debug("No user number yet, skipping compactification")
             return
 
         try:
-            logger.info("Starting history compactification...")
+            logger.info("Starting combined compactification...")
 
-            # Get last N messages from the conversation for summarization
+            # Get all existing memories
+            memories = self.db.get_all_memories()
+
+            # Get recent conversation history for summarization
             messages = self.db.get_conversation_history(
                 self.user_number,
                 self.config.signal_number,
                 limit=self.config.history_compaction_limit,
             )
 
-            if len(messages) < self.config.history_compaction_min_messages:
-                logger.info("Too few messages to compactify (%d messages)", len(messages))
+            # Check if we have enough content to compactify
+            if len(memories) == 0 and len(messages) < self.config.history_compaction_min_messages:
+                logger.info("Not enough content to compactify (0 memories, %d messages)", len(messages))
                 return
 
-            # Build a text representation of the conversation
-            conversation_text = "Recent conversation history:\n\n"
-            for msg in messages:
-                role = MessageRole.USER.value if msg.direction == MessageDirection.INCOMING.value else MessageRole.ASSISTANT.value
-                conversation_text += f"{role}: {msg.content}\n"
+            # Build combined text representation
+            combined_text = ""
 
-            # Create summarization prompt using constant
-            summary_prompt = f"{SystemPrompts.HISTORY_SUMMARIZATION}\n\n{conversation_text}"
+            # Add memories section if any exist
+            if memories:
+                combined_text += "Existing long-term memories:\n\n"
+                for memory in memories:
+                    combined_text += f"- {memory.content}\n"
+                combined_text += "\n"
+
+            # Add conversation history section if enough messages
+            if len(messages) >= self.config.history_compaction_min_messages:
+                combined_text += "Recent conversation history:\n\n"
+                for msg in messages:
+                    role = MessageRole.USER.value if msg.direction == MessageDirection.INCOMING.value else MessageRole.ASSISTANT.value
+                    combined_text += f"{role}: {msg.content}\n"
+
+            # Create combined summarization prompt
+            summary_prompt = f"{SystemPrompts.MEMORY_SUMMARIZATION}\n\nConsolidate the following memories and recent conversation into a single concise summary:\n\n{combined_text}"
 
             # Use Ollama to generate summary
             messages_for_ollama = [
@@ -174,62 +190,19 @@ class PennyAgent:
             summary = response.content.strip()
 
             if summary:
-                # Store summary as a message with timestamp
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                summary_content = f"[CONVERSATION_SUMMARY {timestamp}]\n{summary}"
-                self.db.log_message(
-                    MessageDirection.OUTGOING.value,
-                    self.config.signal_number,
-                    self.user_number,
-                    summary_content,
-                )
-                logger.info("History compactification completed, stored %d character summary", len(summary))
-            else:
-                logger.warning("Failed to generate history summary")
-
-        except Exception as e:
-            logger.exception("Error during history compactification: %s", e)
-
-    async def _compactify_memories(self) -> None:
-        """
-        Summarize all memories into a single compact memory.
-        Called during idle time when multiple memories exist.
-        """
-        try:
-            memories = self.db.get_all_memories()
-
-            if len(memories) <= 1:
-                logger.debug("Only %d memory, no compactification needed", len(memories))
-                return
-
-            logger.info("Starting memory compactification (%d memories)...", len(memories))
-
-            # Build text representation of all memories
-            memories_text = "Current memories:\n\n"
-            for memory in memories:
-                memories_text += f"- {memory.content}\n"
-
-            # Create summarization prompt
-            summary_prompt = f"{SystemPrompts.MEMORY_SUMMARIZATION}\n\n{memories_text}"
-
-            # Use Ollama to generate summary
-            messages = [
-                ChatMessage(role=MessageRole.USER, content=summary_prompt).to_dict()
-            ]
-
-            response_dict = await self.ollama_client.chat(messages=messages, tools=[])
-            response = ChatResponse(**response_dict)
-            summary = response.content.strip()
-
-            if summary:
-                # Replace all memories with summary
+                # Replace all memories with the combined summary
                 self.db.compact_memories(summary)
-                logger.info("Memory compactification completed, %d memories -> 1 summary", len(memories))
+                logger.info(
+                    "Combined compactification completed: %d memories + %d conversation turns -> 1 summary (%d chars)",
+                    len(memories),
+                    len(messages),
+                    len(summary)
+                )
             else:
-                logger.warning("Failed to generate memory summary")
+                logger.warning("Failed to generate combined summary")
 
         except Exception as e:
-            logger.exception("Error during memory compactification: %s", e)
+            logger.exception("Error during combined compactification: %s", e)
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -443,22 +416,15 @@ class PennyAgent:
                             await self._send_response(task.requester, ErrorMessages.PROCESSING_ERROR)
                     else:
                         # No pending tasks - check if we should compactify
-
-                        # Memory compactification: if multiple memories exist, compact them
-                        memories = self.db.get_all_memories()
-                        if len(memories) > 1 and idle_time >= self.config.history_compaction_idle_seconds:
-                            logger.info("Dormant for %.0f seconds, compactifying %d memories", idle_time, len(memories))
-                            await self._compactify_memories()
-
-                        # History compactification: after configured new messages
                         time_since_compaction = time.time() - self.last_compaction_time
 
+                        # Combined compactification: consolidate memories + recent conversation
                         if (self.messages_since_compaction >= self.config.history_compaction_min_new_messages
                             and idle_time >= self.config.history_compaction_idle_seconds
                             and time_since_compaction >= self.config.history_compaction_idle_seconds):
-                            logger.info("Dormant for %.0f seconds with %d+ messages, compactifying history",
+                            logger.info("Dormant for %.0f seconds with %d+ messages, running combined compactification",
                                       idle_time, self.config.history_compaction_min_new_messages)
-                            await self._compactify_history()
+                            await self._compactify_combined()
                             self.last_compaction_time = time.time()
                             self.messages_since_compaction = 0
                         else:

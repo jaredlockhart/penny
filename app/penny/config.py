@@ -37,7 +37,7 @@ class Config:
     task_max_steps: int = 10
     idle_timeout_seconds: float = 5.0
     task_check_interval: float = 1.0
-    conversation_history_limit: int = 10  # Number of conversation turns (not individual chunks)
+    conversation_history_limit: int = 5  # Number of conversation turns (not individual chunks)
     history_compaction_limit: int = 500
     history_compaction_idle_seconds: float = 30.0
     history_compaction_min_messages: int = 10
