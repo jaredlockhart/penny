@@ -14,7 +14,7 @@ from penny.channels import MessageChannel, SignalChannel
 from penny.config import Config, setup_logging
 from penny.memory import Database
 from penny.ollama import OllamaClient
-from penny.tools import GetCurrentTimeTool, StoreMemoryTool, ToolRegistry
+from penny.tools import GetCurrentTimeTool, PerplexitySearchTool, StoreMemoryTool, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,13 @@ class PennyAgent:
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(GetCurrentTimeTool())
         self.tool_registry.register(StoreMemoryTool(db=self.db))
+
+        # Register Perplexity search tool if API key is configured
+        if config.perplexity_api_key:
+            self.tool_registry.register(PerplexitySearchTool(api_key=config.perplexity_api_key))
+            logger.info("Registered Perplexity search tool")
+        else:
+            logger.info("Perplexity API key not configured, skipping search tool")
 
         # Initialize agentic controller
         self.controller = AgenticController(

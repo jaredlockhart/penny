@@ -1,7 +1,7 @@
 """Tools for agentic capabilities."""
 
 from penny.tools.base import Tool, ToolRegistry
-from penny.tools.builtin import GetCurrentTimeTool, StoreMemoryTool
+from penny.tools.builtin import GetCurrentTimeTool, PerplexitySearchTool, StoreMemoryTool
 from penny.tools.models import ToolCall, ToolDefinition, ToolResult
 
 __all__ = [
@@ -12,4 +12,5 @@ __all__ = [
     "ToolResult",
     "GetCurrentTimeTool",
     "StoreMemoryTool",
+    "PerplexitySearchTool",
 ]

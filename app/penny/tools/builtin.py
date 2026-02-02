@@ -3,6 +3,8 @@
 from datetime import datetime
 from typing import Any
 
+from perplexity import Perplexity
+
 from penny.tools.base import Tool
 
 
@@ -80,3 +82,63 @@ class StoreMemoryTool(Tool):
         """
         self.db.store_memory(memory)
         return f"Stored memory: {memory}"
+
+
+class PerplexitySearchTool(Tool):
+    """Tool for searching the web using Perplexity AI."""
+
+    def __init__(self, api_key: str):
+        """
+        Initialize the tool with Perplexity API key.
+
+        Args:
+            api_key: Perplexity API key
+        """
+        self.client = Perplexity(api_key=api_key)
+
+    @property
+    def name(self) -> str:
+        return "perplexity_search"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Search the web for current information using Perplexity AI. "
+            "Use this when you need up-to-date information, facts, news, or "
+            "answers to questions that require real-time data or information "
+            "beyond your training data."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query or question to ask Perplexity",
+                }
+            },
+            "required": ["query"],
+        }
+
+    async def execute(self, query: str, **kwargs) -> str:
+        """
+        Execute a search using Perplexity.
+
+        Args:
+            query: The search query
+
+        Returns:
+            Search results as a string
+        """
+        try:
+            response = self.client.responses.create(
+                preset="pro-search",
+                input=query,
+            )
+            if response.output_text:
+                return response.output_text
+            return "No results found"
+        except Exception as e:
+            return f"Error performing search: {str(e)}"
