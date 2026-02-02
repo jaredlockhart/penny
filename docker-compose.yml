@@ -13,6 +13,8 @@ services:
     build: ./app
     restart: unless-stopped
     volumes:
+      - ./app/penny:/app/penny
+      - ./app/pyproject.toml:/app/pyproject.toml
       - ./data:/app/data
       - ./.env:/app/.env
     environment:

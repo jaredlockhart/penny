@@ -4,15 +4,22 @@ FROM python:3.12-slim
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Disable __pycache__
+ENV PYTHONDONTWRITEBYTECODE=1
+
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files and source
+# Copy dependency files and install dependencies (cached layer)
 COPY pyproject.toml ./
+RUN uv pip install --system -r pyproject.toml && \
+    uv pip install --system ruff ty
+
+# Copy source
 COPY penny/ ./penny/
 
-# Install package and dependencies from pyproject.toml
-RUN uv pip install --system .
+# Install the package itself
+RUN uv pip install --system --no-deps .
 
 # Run the agent
-CMD ["python", "-m", "penny.agent"]
+CMD ["python", "-m", "penny.penny"]

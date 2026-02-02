@@ -2,7 +2,6 @@
 
 from pydantic import BaseModel
 
-
 # TODO: Add Discord-specific models here
 # Examples:
 # - DiscordMessage

@@ -22,7 +22,9 @@ class DiscordChannel(MessageChannel):
         # TODO: Initialize Discord client
         logger.info("Initialized Discord channel")
 
-    async def send_message(self, recipient: str, message: str) -> bool:
+    async def send_message(
+        self, recipient: str, message: str, attachments: list[str] | None = None
+    ) -> bool:
         """Send a message via Discord."""
         # TODO: Implement Discord message sending
         # recipient could be a channel ID or user ID

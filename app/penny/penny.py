@@ -11,12 +11,12 @@ from typing import Any
 import websockets
 
 from penny.agentic import AgenticController
+from penny.agentic.models import MessageRole
 from penny.channels import MessageChannel, SignalChannel
 from penny.config import Config, setup_logging
-from penny.memory import Database
-from penny.ollama import OllamaClient
-from penny.agentic.models import MessageRole
 from penny.constants import SUMMARIZE_PROMPT, SYSTEM_PROMPT, MessageDirection
+from penny.database import Database
+from penny.ollama import OllamaClient
 from penny.tools import SearchTool, ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,9 @@ class PennyAgent:
 
         tool_registry = ToolRegistry()
         if config.perplexity_api_key:
-            tool_registry.register(SearchTool(perplexity_api_key=config.perplexity_api_key, db=self.db))
+            tool_registry.register(
+                SearchTool(perplexity_api_key=config.perplexity_api_key, db=self.db)
+            )
             logger.info("Search tool registered (Perplexity + image search)")
         else:
             logger.warning("No PERPLEXITY_API_KEY configured - agent will have no tools")
@@ -75,7 +77,9 @@ class PennyAgent:
                 parent_id, history = self.db.get_thread_context(message.quoted_text)
 
             # Log incoming message linked to parent
-            incoming_id = self.db.log_message(MessageDirection.INCOMING, message.sender, message.content, parent_id=parent_id)
+            incoming_id = self.db.log_message(
+                MessageDirection.INCOMING, message.sender, message.content, parent_id=parent_id
+            )
 
             await self.channel.send_typing(message.sender, True)
             try:
@@ -86,8 +90,17 @@ class PennyAgent:
                     on_step=lambda _: self.channel.send_typing(message.sender, True),
                 )
 
-                answer = response.answer.strip() if response.answer else "Sorry, I couldn't generate a response."
-                self.db.log_message(MessageDirection.OUTGOING, self.config.signal_number, answer, parent_id=incoming_id)
+                answer = (
+                    response.answer.strip()
+                    if response.answer
+                    else "Sorry, I couldn't generate a response."
+                )
+                self.db.log_message(
+                    MessageDirection.OUTGOING,
+                    self.config.signal_number,
+                    answer,
+                    parent_id=incoming_id,
+                )
                 await self.channel.send_message(
                     message.sender, answer, attachments=response.attachments or None
                 )
@@ -122,7 +135,7 @@ class PennyAgent:
 
                             asyncio.create_task(self.handle_message(envelope))
 
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             logger.debug("WebSocket receive timeout, continuing...")
                             continue
 
@@ -168,6 +181,7 @@ class PennyAgent:
                     logger.info("No longer idle, pausing summarization")
                     break
 
+                assert msg.id is not None
                 thread = self.db._walk_thread(msg.id)
                 if len(thread) < 2:
                     # Single message, just mark it with empty summary to skip next time
@@ -176,17 +190,22 @@ class PennyAgent:
 
                 # Format thread for summarization
                 thread_text = "\n".join(
-                    f"{MessageRole.USER if m.direction == MessageDirection.INCOMING else MessageRole.ASSISTANT}: {m.content}"
+                    "{}: {}".format(
+                        MessageRole.USER
+                        if m.direction == MessageDirection.INCOMING
+                        else MessageRole.ASSISTANT,
+                        m.content,
+                    )
                     for m in thread
                 )
 
                 try:
-                    response = await self.ollama_client.generate(
-                        f"{SUMMARIZE_PROMPT}{thread_text}"
-                    )
+                    response = await self.ollama_client.generate(f"{SUMMARIZE_PROMPT}{thread_text}")
                     summary = response.content.strip()
                     self.db.set_parent_summary(msg.id, summary)
-                    logger.info("Summarized thread for message %d (length: %d)", msg.id, len(summary))
+                    logger.info(
+                        "Summarized thread for message %d (length: %d)", msg.id, len(summary)
+                    )
                 except Exception as e:
                     logger.error("Failed to summarize thread for message %d: %s", msg.id, e)
 

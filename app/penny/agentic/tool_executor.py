@@ -63,7 +63,7 @@ class ToolExecutor:
                 id=tool_call.id,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Tool execution timeout: %s", tool_call.tool)
             return ToolResult(
                 tool=tool_call.tool,

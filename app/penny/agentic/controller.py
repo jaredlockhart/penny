@@ -114,13 +114,15 @@ class AgenticController:
 
             # Check for tool calls
             if response.has_tool_calls:
-                logger.info("Model requested %d tool call(s)", len(response.message.tool_calls))
+                logger.info(
+                    "Model requested %d tool call(s)", len(response.message.tool_calls or [])
+                )
 
                 # Add assistant message to history
                 messages.append(response.message.model_dump())
 
                 # Execute each tool call
-                for ollama_tool_call in response.message.tool_calls:
+                for ollama_tool_call in response.message.tool_calls or []:
                     function = ollama_tool_call.get("function", {})
                     tool_name = function.get("name", "")
                     arguments = function.get("arguments", {})
@@ -128,7 +130,9 @@ class AgenticController:
                     # Skip tools that have already been called
                     if tool_name in called_tools:
                         logger.info("Skipping repeat call to tool: %s", tool_name)
-                        result_str = "tool already called, do not call it again. write your response now."
+                        result_str = (
+                            "tool already called, do not call it again. write your response now."
+                        )
                         messages.append(
                             ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict()
                         )
@@ -161,9 +165,7 @@ class AgenticController:
 
             if not content:
                 logger.error("Model returned empty content!")
-                return ControllerResponse(
-                    answer="Sorry, the model generated an empty response."
-                )
+                return ControllerResponse(answer="Sorry, the model generated an empty response.")
 
             thinking = response.thinking or response.message.thinking
 

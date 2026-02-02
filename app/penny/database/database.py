@@ -8,7 +8,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from penny.agentic.models import MessageRole
 from penny.constants import MessageDirection
-from penny.memory.models import MessageLog, PromptLog, SearchLog
+from penny.database.models import MessageLog, PromptLog, SearchLog
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +149,10 @@ class Database:
                     select(MessageLog)
                     .where(
                         MessageLog.direction == MessageDirection.OUTGOING,
-                        MessageLog.parent_id.isnot(None),
-                        MessageLog.parent_summary.is_(None),
+                        MessageLog.parent_id.isnot(None),  # type: ignore[unresolved-attribute]
+                        MessageLog.parent_summary.is_(None),  # type: ignore[unresolved-attribute]
                     )
-                    .order_by(MessageLog.timestamp.asc())
+                    .order_by(MessageLog.timestamp.asc())  # type: ignore[unresolved-attribute]
                 ).all()
             )
 
@@ -181,17 +181,18 @@ class Database:
             The matching MessageLog, or None
         """
         with self.get_session() as session:
-            return (
-                session.query(MessageLog)
-                .filter(
+            return session.exec(
+                select(MessageLog)
+                .where(
                     MessageLog.direction == MessageDirection.OUTGOING,
                     MessageLog.content == content,
                 )
-                .order_by(MessageLog.timestamp.desc())
-                .first()
-            )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+            ).first()
 
-    def get_thread_context(self, quoted_text: str) -> tuple[int | None, list[tuple[str, str]] | None]:
+    def get_thread_context(
+        self, quoted_text: str
+    ) -> tuple[int | None, list[tuple[str, str]] | None]:
         """
         Look up a quoted message and return its id and conversation context.
         Uses the cached summary if available, otherwise walks the parent chain.
@@ -208,12 +209,20 @@ class Database:
             return None, None
 
         if parent_msg.parent_summary:
-            history = [(MessageRole.SYSTEM, f"Previous conversation summary: {parent_msg.parent_summary}")]
+            history = [
+                (MessageRole.SYSTEM, f"Previous conversation summary: {parent_msg.parent_summary}")
+            ]
             logger.info("Using cached thread summary for context")
         else:
+            assert parent_msg.id is not None
             thread = self._walk_thread(parent_msg.id)
             history = [
-                (MessageRole.USER if m.direction == MessageDirection.INCOMING else MessageRole.ASSISTANT, m.content)
+                (
+                    MessageRole.USER
+                    if m.direction == MessageDirection.INCOMING
+                    else MessageRole.ASSISTANT,
+                    m.content,
+                )
                 for m in thread
             ]
             logger.info("Built thread history with %d messages", len(history))

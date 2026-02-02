@@ -112,21 +112,23 @@ cp .env.example .env
 # Edit .env with your settings
 
 # 2. Start the agent
-docker-compose up --build
+make up
 ```
 
-### docker-compose.yml
+### Make Commands
 
-```yaml
-services:
-  penny:
-    build: .
-    network_mode: host
-    volumes:
-      - ./data:/app/data
-      - ./.env:/app/.env
-    restart: unless-stopped
+```bash
+make up          # Build and start all services (foreground)
+make kill        # Tear down containers and remove local images
+make check       # Format, lint, and typecheck (modifies files)
+make ci          # Same as check but read-only (no modifications)
+make fmt         # Format with ruff
+make lint        # Lint with ruff
+make fix         # Format + autofix lint issues
+make typecheck   # Type check with ty
 ```
+
+All dev tool commands run in temporary Docker containers via `docker-compose run --rm`, with source volume-mounted so changes write back to the host filesystem.
 
 ## Configuration
 

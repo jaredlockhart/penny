@@ -69,11 +69,12 @@ class SignalChannel(MessageChannel):
 
         except httpx.HTTPError as e:
             logger.error("Failed to send Signal message: %s", e)
-            if hasattr(e, "response") and e.response is not None:
+            resp = getattr(e, "response", None)
+            if resp is not None:
                 logger.error(
                     "Response status: %d, body: %s",
-                    e.response.status_code,
-                    e.response.text,
+                    resp.status_code,
+                    resp.text,
                 )
             return False
 
@@ -83,7 +84,9 @@ class SignalChannel(MessageChannel):
             url = f"{self.api_url}/v1/typing-indicator/{self.phone_number}"
             request = TypingIndicatorRequest(recipient=recipient)
 
-            logger.debug("Sending typing indicator to %s: %s", recipient, "started" if typing else "stopped")
+            logger.debug(
+                "Sending typing indicator to %s: %s", recipient, "started" if typing else "stopped"
+            )
 
             method = HttpMethod.PUT if typing else HttpMethod.DELETE
             response = await self.http_client.request(method.value, url, json=request.model_dump())

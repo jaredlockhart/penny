@@ -47,8 +47,9 @@ class SearchTool(Tool):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
 
-    async def execute(self, query: str, **kwargs) -> Any:
+    async def execute(self, **kwargs) -> Any:
         """Run Perplexity text search and DuckDuckGo image search in parallel."""
+        query: str = kwargs["query"]
         text_result, image_result = await asyncio.gather(
             self._search_text(query),
             self._search_image(query),

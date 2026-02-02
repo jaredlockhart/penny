@@ -108,7 +108,7 @@ def setup_logging(log_level: str, log_file: str | None = None) -> None:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        file_handler = logging.FileHandler(log_file, mode='a')
+        file_handler = logging.FileHandler(log_file, mode="a")
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 

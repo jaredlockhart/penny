@@ -19,8 +19,8 @@ dependencies = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "ruff>=0.8.0",
     "ty>=0.1.0",
 ]
@@ -41,12 +41,15 @@ select = [
     "C4",  # flake8-comprehensions
     "SIM", # flake8-simplify
 ]
-ignore = []
+ignore = [
+    "N815",  # camelCase field names required by Signal API
+]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 
-[tool.ty]
-# ty configuration
-strict = true
+[tool.ty.environment]
+python = "/usr/local/bin/python"
+
+[tool.ty.rules]

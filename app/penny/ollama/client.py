@@ -60,9 +60,9 @@ class OllamaClient:
             duration_ms = int((time.time() - start) * 1000)
 
             # Convert raw response to dict then parse with pydantic
-            if hasattr(raw, 'model_dump'):
+            if hasattr(raw, "model_dump"):
                 raw_dict = raw.model_dump()
-            elif hasattr(raw, '__dict__'):
+            elif hasattr(raw, "__dict__"):
                 raw_dict = dict(raw)
             else:
                 raw_dict = dict(raw)
@@ -73,7 +73,7 @@ class OllamaClient:
             thinking = response.thinking or response.message.thinking
 
             if response.has_tool_calls:
-                logger.info("Received %d tool call(s)", len(response.message.tool_calls))
+                logger.info("Received %d tool call(s)", len(response.message.tool_calls or []))
             if thinking:
                 logger.debug("Model thinking: %s", thinking[:200])
 
