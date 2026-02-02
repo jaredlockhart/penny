@@ -140,23 +140,26 @@ class PennyAgent:
 
             logger.info("Received message from %s: %s", message.sender, message.content)
 
-            # Auto-discover user number from first message
-            if self.user_number is None:
-                self.user_number = message.sender
-                logger.info("Auto-discovered user number: %s", self.user_number)
-
-            # Update last message time for idle detection
-            self.last_message_time = time.time()
-
-            # Log incoming message
-            self.db.log_message(
-                MessageDirection.INCOMING.value,
-                message.sender,
-                self.config.signal_number,
-                message.content,
-            )
+            # Start typing indicator immediately
+            await self.channel.send_typing(message.sender, True)
 
             try:
+                # Auto-discover user number from first message
+                if self.user_number is None:
+                    self.user_number = message.sender
+                    logger.info("Auto-discovered user number: %s", self.user_number)
+
+                # Update last message time for idle detection
+                self.last_message_time = time.time()
+
+                # Log incoming message
+                self.db.log_message(
+                    MessageDirection.INCOMING.value,
+                    message.sender,
+                    self.config.signal_number,
+                    message.content,
+                )
+
                 # Get conversation history
                 history = self.db.get_conversation_history(
                     message.sender,
@@ -176,7 +179,7 @@ class PennyAgent:
                 if not answer:
                     answer = ErrorMessages.NO_RESPONSE
 
-                # Send response using shared helper
+                # Send response using shared helper (it will manage typing indicator)
                 await self._send_response(message.sender, answer, response.thinking)
 
             except Exception as e:
@@ -252,57 +255,67 @@ class PennyAgent:
                     pending_tasks = self.db.get_pending_tasks()
 
                     if pending_tasks:
-                        logger.info("Found %d pending task(s), processing...", len(pending_tasks))
+                        # Process first pending task with full requester context
+                        task = pending_tasks[0]
+                        logger.info("Processing task %d: %s", task.id, task.content[:50])
 
-                        # Track task IDs before processing
-                        pending_task_ids = {task.id for task in pending_tasks}
-
-                        # Run task controller to work on tasks
                         try:
-                            response = await self.task_controller.run(
-                                [], SystemPrompts.TASK_PROCESSOR
+                            # Get requester's conversation history for full context
+                            history = self.db.get_conversation_history(
+                                task.requester,
+                                self.config.signal_number,
+                                limit=self.config.conversation_history_limit,
                             )
-                            logger.info("Task processing response: %s", response.answer[:100])
 
-                            # Check for newly completed tasks and send results to requester
+                            # Run task controller with full context (history + memories)
+                            # Include task ID so it can complete the task
+                            task_prompt = f"Task ID {task.id}: {task.content}"
+                            await self.task_controller.run(
+                                history,
+                                task_prompt,
+                                system_prompt=SystemPrompts.TASK_PROCESSOR,
+                            )
+
+                            # Check if task was completed
                             from penny.memory.models import Task, TaskStatus
 
                             with self.db.get_session() as session:
-                                completed_tasks = (
-                                    session.query(Task)
-                                    .filter(
-                                        Task.id.in_(pending_task_ids),
-                                        Task.status == TaskStatus.COMPLETED.value,
-                                    )
-                                    .all()
-                                )
+                                completed_task = session.get(Task, task.id)
 
-                                logger.info(
-                                    "Found %d completed tasks from %d pending",
-                                    len(completed_tasks),
-                                    len(pending_task_ids),
-                                )
+                                if completed_task and completed_task.status == TaskStatus.COMPLETED.value:
+                                    logger.info("Task %d completed, generating response", task.id)
 
-                                for task in completed_tasks:
-                                    logger.info(
-                                        "Task %d - status: %s, result: %s",
-                                        task.id,
-                                        task.status,
-                                        "present" if task.result else "missing",
+                                    # Re-process through message controller with full context
+                                    # This ensures the final response has proper context
+                                    final_history = self.db.get_conversation_history(
+                                        task.requester,
+                                        self.config.signal_number,
+                                        limit=self.config.conversation_history_limit,
                                     )
-                                    if task.result:
-                                        logger.info(
-                                            "Sending task %d result to %s",
-                                            task.id,
-                                            task.requester,
-                                        )
-                                        # Send task result using shared helper
-                                        await self._send_response(task.requester, task.result)
+
+                                    # Create a prompt from system perspective that includes the task result
+                                    # This gets added as a USER message, so frame it as system info
+                                    completion_prompt = (
+                                        f"[SYSTEM: You completed the background task '{completed_task.content}'. "
+                                        f"Your findings: {completed_task.result}. "
+                                        f"Now respond to the user with this information in a natural way.]"
+                                    )
+
+                                    final_response = await self.message_controller.run(
+                                        final_history,
+                                        completion_prompt,
+                                        system_prompt=None,  # Use default system prompt
+                                    )
+
+                                    answer = final_response.answer.strip() if final_response.answer else completed_task.result
+                                    await self._send_response(task.requester, answer, final_response.thinking)
+                                else:
+                                    logger.warning("Task %d did not complete", task.id)
 
                         except Exception as e:
-                            logger.exception("Error during task processing: %s", e)
+                            logger.exception("Error processing task %d: %s", task.id, e)
                     else:
-                        logger.debug("No pending tasks, skipping model call")
+                        logger.debug("No pending tasks, skipping")
 
                 # Check periodically
                 await asyncio.sleep(self.config.task_check_interval)

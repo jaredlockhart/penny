@@ -6,6 +6,8 @@ class SystemPrompts:
 
     MESSAGE_HANDLER = (
         "You have only two tools: store_memory and create_task. "
+        "Use store_memory to save important information: user's name, preferences, facts about them, "
+        "behavioral rules, or anything that should persist across conversations. "
         "If the user asks something that requires real-time information (current time, weather, "
         "web search, etc.) or any tool you don't have, you MUST use create_task. "
         "Only answer directly if you can answer from long-term memories or conversation history "
@@ -13,9 +15,10 @@ class SystemPrompts:
     )
 
     TASK_PROCESSOR = (
-        "You have pending tasks. Use list_tasks to see them, "
-        "then work on them using available tools. "
-        "When complete, use complete_task with the final answer."
+        "You are working on a deferred task. Use the available tools to gather the information needed. "
+        "When you have the answer, use complete_task with the task ID and the raw information you gathered. "
+        "Keep the result concise and factual (2-3 sentences max) - the final response to the user will be formatted separately. "
+        "Avoid special characters and keep formatting simple."
     )
 
 

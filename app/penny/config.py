@@ -37,7 +37,7 @@ class Config:
     task_max_steps: int = 10
     idle_timeout_seconds: float = 5.0
     task_check_interval: float = 1.0
-    conversation_history_limit: int = 20
+    conversation_history_limit: int = 200
 
     @classmethod
     def load(cls) -> "Config":
