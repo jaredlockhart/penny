@@ -60,3 +60,10 @@ class SendMessageResponse(BaseModel):
     """Response from sending a Signal message."""
 
     timestamp: int | None = None
+
+
+class IncomingMessage(BaseModel):
+    """Extracted incoming message from Signal."""
+
+    sender: str
+    content: str

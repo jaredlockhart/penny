@@ -59,11 +59,11 @@ class PennyAgent:
                 # Turn off typing indicator before sending
                 await self.signal_client.send_typing(sender, False)
 
-                logger.debug("Sending chunk %d: %s...", chunk_count, chunk["line"][:50])
-                await self.signal_client.send_message(sender, chunk["line"])
+                logger.debug("Sending chunk %d: %s...", chunk_count, chunk.line[:50])
+                await self.signal_client.send_message(sender, chunk.line)
 
                 # Log to database (thinking included in first chunk)
-                self.db.log_message("outgoing", self.config.signal_number, sender, chunk["line"], chunk_count, thinking=chunk["thinking"])
+                self.db.log_message("outgoing", self.config.signal_number, sender, chunk.line, chunk_count, thinking=chunk.thinking)
                 chunk_count += 1
 
                 # Turn typing indicator back on for next chunk
@@ -86,29 +86,28 @@ class PennyAgent:
         """
         try:
             # Extract message content from envelope
-            result = self.signal_client.extract_message_content(envelope_data)
-            if result is None:
+            message = self.signal_client.extract_message_content(envelope_data)
+            if message is None:
                 return
 
-            sender, content = result
-            logger.info("Received message from %s: %s", sender, content)
+            logger.info("Received message from %s: %s", message.sender, message.content)
 
             # Log incoming message
-            self.db.log_message("incoming", sender, self.config.signal_number, content)
+            self.db.log_message("incoming", message.sender, self.config.signal_number, message.content)
 
             # Send typing indicator
-            await self.signal_client.send_typing(sender, True)
+            await self.signal_client.send_typing(message.sender, True)
 
             try:
                 # Build context from conversation history
-                history = self.db.get_conversation_history(sender, self.config.signal_number, limit=20)
-                context = build_context(history, content)
+                history = self.db.get_conversation_history(message.sender, self.config.signal_number, limit=20)
+                context = build_context(history, message.content)
 
                 # Stream and send response
-                await self._stream_and_send_response(sender, context)
+                await self._stream_and_send_response(message.sender, context)
             finally:
                 # Always stop typing indicator
-                await self.signal_client.send_typing(sender, False)
+                await self.signal_client.send_typing(message.sender, False)
 
         except Exception as e:
             logger.exception("Error handling message: %s", e)
