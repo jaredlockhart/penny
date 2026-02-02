@@ -21,6 +21,12 @@ class SystemPrompts:
         "Avoid special characters and keep formatting simple."
     )
 
+    HISTORY_SUMMARIZATION = (
+        "Summarize the key points, facts, preferences, and context from this conversation. "
+        "Include important details that would help maintain continuity in future conversations. "
+        "Keep it concise but informative (3-5 paragraphs max)."
+    )
+
 
 class ErrorMessages:
     """User-facing error messages."""
