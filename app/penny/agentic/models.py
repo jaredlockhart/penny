@@ -32,3 +32,21 @@ class ControllerResponse(BaseModel):
     thinking: str | None = Field(
         default=None, description="Optional thinking/reasoning trace from the model"
     )
+
+
+class MessageClassification(str, Enum):
+    """Classification of user messages for routing."""
+
+    TASK = "task"
+    IMMEDIATE = "immediate"
+
+
+class ClassificationResult(BaseModel):
+    """Result of message classification."""
+
+    classification: MessageClassification = Field(
+        description="Whether the message is a task or immediate question"
+    )
+    acknowledgment: str | None = Field(
+        default=None, description="Acknowledgment message for tasks, None for immediate"
+    )

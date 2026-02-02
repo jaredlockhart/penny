@@ -1,9 +1,25 @@
 """SQLModel models for Penny's memory."""
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
+
+
+class MessageDirection(str, Enum):
+    """Direction of message flow."""
+
+    INCOMING = "incoming"
+    OUTGOING = "outgoing"
+
+
+class TaskStatus(str, Enum):
+    """Status of a task in its lifecycle."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
 
 
 class Message(SQLModel, table=True):
@@ -32,7 +48,7 @@ class Task(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     content: str = Field(index=True)  # The task description
-    status: str = Field(default="pending", index=True)  # pending/in_progress/completed
+    status: str = Field(default=TaskStatus.PENDING.value, index=True)
     requester: str = Field(index=True)  # Phone number of requester
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     started_at: Optional[datetime] = None
