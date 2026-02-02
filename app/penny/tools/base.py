@@ -9,26 +9,9 @@ from penny.tools.models import ToolDefinition
 class Tool(ABC):
     """Abstract base class for tools."""
 
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Tool name."""
-        pass
-
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        """Tool description for the model."""
-        pass
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        """
-        JSON schema for tool parameters.
-
-        Override to define required/optional parameters.
-        """
-        return {"type": "object", "properties": {}}
+    name: str
+    description: str
+    parameters: dict[str, Any] = {"type": "object", "properties": {}}
 
     @abstractmethod
     async def execute(self, **kwargs) -> Any:
