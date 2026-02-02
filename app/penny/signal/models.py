@@ -1,6 +1,15 @@
 """Pydantic models for Signal API message structures."""
 
+from enum import Enum
+
 from pydantic import BaseModel, Field
+
+
+class HttpMethod(str, Enum):
+    """HTTP methods for API requests."""
+
+    PUT = "PUT"
+    DELETE = "DELETE"
 
 
 class DataMessage(BaseModel):
@@ -67,3 +76,9 @@ class IncomingMessage(BaseModel):
 
     sender: str
     content: str
+
+
+class TypingIndicatorRequest(BaseModel):
+    """Request to send a typing indicator."""
+
+    recipient: str

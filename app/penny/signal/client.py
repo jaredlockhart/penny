@@ -5,7 +5,13 @@ import logging
 import httpx
 from pydantic import ValidationError
 
-from penny.signal.models import IncomingMessage, SendMessageRequest, SignalEnvelope
+from penny.signal.models import (
+    HttpMethod,
+    IncomingMessage,
+    SendMessageRequest,
+    SignalEnvelope,
+    TypingIndicatorRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +93,13 @@ class SignalClient:
         """
         try:
             url = f"{self.api_url}/v1/typing-indicator/{self.phone_number}"
-            payload = {"recipient": recipient}
+            request = TypingIndicatorRequest(recipient=recipient)
 
             logger.debug("Sending typing indicator to %s: %s", recipient, "started" if typing else "stopped")
 
             # PUT to start typing, DELETE to stop
-            method = "PUT" if typing else "DELETE"
-            response = await self.http_client.request(method, url, json=payload)
+            method = HttpMethod.PUT if typing else HttpMethod.DELETE
+            response = await self.http_client.request(method.value, url, json=request.model_dump())
 
             response.raise_for_status()
 
