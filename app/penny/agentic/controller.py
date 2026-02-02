@@ -79,78 +79,22 @@ class AgenticController:
         logger.debug("Built %d messages from history", len(messages))
         return messages
 
-    async def classify(self, history: list, current_message: str) -> str:
-        """
-        Classify a message as TASK or IMMEDIATE with acknowledgment.
-
-        Uses the same context building as run() but without tools.
-
-        Args:
-            history: Conversation history (Message objects)
-            current_message: Current user message
-
-        Returns:
-            Classification response from model (e.g., "TASK: acknowledgment" or "IMMEDIATE")
-        """
-        # Build the classification prompt that includes the message
-        classification_text = f"""Classify this message and generate an acknowledgment if needed.
-
-Message: "{current_message}"
-
-If it's a TASK (something to do later, requires search/lookup), respond with:
-TASK: [brief casual acknowledgment, 5-10 words, lowercase]
-
-If it's IMMEDIATE (instant answer, no lookup needed), respond with:
-IMMEDIATE
-
-Examples:
-- "What time is it?" -> IMMEDIATE
-- "Can you look up the weather in Tokyo?" -> TASK: i'll look that up for you
-- "What's 2+2?" -> IMMEDIATE
-- "Who stars in starfleet academy?" -> TASK: i'll find that out for you
-- "Please find out who won the superbowl" -> TASK: i'll find that out
-- "Remember my name is Jared" -> IMMEDIATE
-- "What's the capital of France?" -> TASK: i'll look that up
-- "Search for the best pizza places" -> TASK: i'll search for that"""
-
-        messages = []
-
-        # Add long-term memories if any exist (for context about response style, etc.)
-        memories = self.db.get_all_memories()
-        if memories:
-            memory_text = "Long-term memories:\n" + "\n".join(f"- {m.content}" for m in memories)
-            messages.append(
-                ChatMessage(role=MessageRole.SYSTEM, content=memory_text).to_dict()
-            )
-
-        # Add classification task as user message
-        messages.append(
-            ChatMessage(role=MessageRole.USER, content=classification_text).to_dict()
-        )
-
-        # Call model without tools
-        try:
-            response = await self.ollama.chat(messages=messages, tools=[])
-            content = response.get("message", {}).get("content", "").strip()
-            logger.debug("Classification response: %s", content)
-            return content
-        except Exception as e:
-            logger.error("Error classifying message: %s", e)
-            return "IMMEDIATE"  # Default to immediate on error
-
-    async def run(self, history: list, current_message: str) -> ControllerResponse:
+    async def run(
+        self, history: list, current_message: str, system_prompt: str | None = None
+    ) -> ControllerResponse:
         """
         Run the agentic loop with tool calling.
 
         Args:
             history: Conversation history (Message objects)
             current_message: Current user message
+            system_prompt: Optional system prompt for special instructions
 
         Returns:
             ControllerResponse with answer and optional thinking
         """
         # Build messages
-        messages = self._build_messages(history, current_message)
+        messages = self._build_messages(history, current_message, system_prompt)
 
         # Get tools in Ollama format
         tools = self.tool_registry.get_ollama_tools()

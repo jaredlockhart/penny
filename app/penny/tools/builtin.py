@@ -142,3 +142,164 @@ class PerplexitySearchTool(Tool):
             return "No results found"
         except Exception as e:
             return f"Error performing search: {str(e)}"
+
+
+class CreateTaskTool(Tool):
+    """Tool for creating deferred tasks."""
+
+    def __init__(self, db, agent):
+        """
+        Initialize with database and agent reference.
+
+        Args:
+            db: Database instance
+            agent: PennyAgent instance (for accessing user_number)
+        """
+        self.db = db
+        self.agent = agent
+
+    @property
+    def name(self) -> str:
+        return "create_task"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Create a task to work on later. Use this when you need to use other tools "
+            "(like search, time, memory) but want to defer the work. After creating a task, "
+            "you should respond to the user acknowledging that you'll work on it. "
+            "The task will be processed in the background."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "What needs to be done in this task",
+                },
+                "acknowledgment": {
+                    "type": "string",
+                    "description": "Brief casual message to send to user (5-10 words, lowercase)",
+                }
+            },
+            "required": ["description", "acknowledgment"],
+        }
+
+    async def execute(self, description: str, acknowledgment: str, **kwargs) -> str:
+        """
+        Create a task.
+
+        Args:
+            description: Task description
+            acknowledgment: Message to acknowledge task creation
+
+        Returns:
+            Confirmation with acknowledgment to send
+        """
+        task = self.db.create_task(description, self.agent.user_number)
+        return f"Task {task.id} created. Send this to user: {acknowledgment}"
+
+
+class ListTasksTool(Tool):
+    """Tool for listing pending tasks."""
+
+    def __init__(self, db):
+        """
+        Initialize with database.
+
+        Args:
+            db: Database instance
+        """
+        self.db = db
+
+    @property
+    def name(self) -> str:
+        return "list_tasks"
+
+    @property
+    def description(self) -> str:
+        return (
+            "List all pending tasks that need to be worked on. "
+            "Use this when idle to see if there's work to do."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+        }
+
+    async def execute(self, **kwargs) -> str:
+        """
+        List pending tasks.
+
+        Returns:
+            List of pending tasks with IDs and descriptions
+        """
+        tasks = self.db.get_pending_tasks()
+        if not tasks:
+            return "No pending tasks"
+
+        result = "Pending tasks:\n"
+        for task in tasks:
+            result += f"- Task {task.id}: {task.content} (from {task.requester})\n"
+        return result
+
+
+class CompleteTaskTool(Tool):
+    """Tool for marking tasks as complete."""
+
+    def __init__(self, db):
+        """
+        Initialize with database.
+
+        Args:
+            db: Database instance
+        """
+        self.db = db
+
+    @property
+    def name(self) -> str:
+        return "complete_task"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Mark a task as completed with the final result. "
+            "The result will be sent to the user who requested the task."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "integer",
+                    "description": "ID of the task to complete",
+                },
+                "result": {
+                    "type": "string",
+                    "description": "Final answer/result to send to user",
+                }
+            },
+            "required": ["task_id", "result"],
+        }
+
+    async def execute(self, task_id: int, result: str, **kwargs) -> str:
+        """
+        Complete a task.
+
+        Args:
+            task_id: Task ID
+            result: Final result
+
+        Returns:
+            Confirmation
+        """
+        self.db.complete_task(task_id, result)
+        return f"Task {task_id} completed. Result will be sent to user: {result}"
