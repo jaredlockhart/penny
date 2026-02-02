@@ -6,17 +6,20 @@ import logging
 import signal
 import sys
 import time
+from datetime import datetime
 from typing import Any
 
 import websockets
 
 from penny.agentic import AgenticController
+from penny.agentic.models import ChatMessage, MessageRole
 from penny.channels import MessageChannel, SignalChannel
 from penny.config import Config, setup_logging
 from penny.constants import ErrorMessages, SystemPrompts
 from penny.memory import Database
 from penny.memory.models import MessageDirection
 from penny.ollama import OllamaClient
+from penny.ollama.models import ChatResponse
 from penny.tools import (
     CompleteTaskTool,
     CreateTaskTool,
@@ -83,6 +86,9 @@ class PennyAgent:
         # Track last message time for idle detection
         self.last_message_time = time.time()
 
+        # Track last compaction time to avoid repeated summarization
+        self.last_compaction_time = time.time()
+
         self.running = True
 
         # Setup signal handlers for graceful shutdown
@@ -124,6 +130,64 @@ class PennyAgent:
         finally:
             # Always stop typing indicator
             await self.channel.send_typing(recipient, False)
+
+    async def _compactify_history(self) -> None:
+        """
+        Summarize recent conversation history and store as a message.
+        Called during extended dormancy to maintain long-term context efficiently.
+        """
+        if not self.user_number:
+            logger.debug("No user number yet, skipping history compactification")
+            return
+
+        try:
+            logger.info("Starting history compactification...")
+
+            # Get last N messages from the conversation for summarization
+            messages = self.db.get_conversation_history(
+                self.user_number,
+                self.config.signal_number,
+                limit=self.config.history_compaction_limit,
+            )
+
+            if len(messages) < self.config.history_compaction_min_messages:
+                logger.info("Too few messages to compactify (%d messages)", len(messages))
+                return
+
+            # Build a text representation of the conversation
+            conversation_text = "Recent conversation history:\n\n"
+            for msg in messages:
+                role = MessageRole.USER.value if msg.direction == MessageDirection.INCOMING.value else MessageRole.ASSISTANT.value
+                conversation_text += f"{role}: {msg.content}\n"
+
+            # Create summarization prompt using constant
+            summary_prompt = f"{SystemPrompts.HISTORY_SUMMARIZATION}\n\n{conversation_text}"
+
+            # Use Ollama to generate summary
+            messages_for_ollama = [
+                ChatMessage(role=MessageRole.USER, content=summary_prompt).to_dict()
+            ]
+
+            response_dict = await self.ollama_client.chat(messages=messages_for_ollama, tools=[])
+            response = ChatResponse(**response_dict)
+            summary = response.content.strip()
+
+            if summary:
+                # Store summary as a message with timestamp
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                summary_content = f"[CONVERSATION_SUMMARY {timestamp}]\n{summary}"
+                self.db.log_message(
+                    MessageDirection.OUTGOING.value,
+                    self.config.signal_number,
+                    self.user_number,
+                    summary_content,
+                )
+                logger.info("History compactification completed, stored %d character summary", len(summary))
+            else:
+                logger.warning("Failed to generate history summary")
+
+        except Exception as e:
+            logger.exception("Error during history compactification: %s", e)
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -315,7 +379,19 @@ class PennyAgent:
                         except Exception as e:
                             logger.exception("Error processing task %d: %s", task.id, e)
                     else:
-                        logger.debug("No pending tasks, skipping")
+                        # No pending tasks - check if we should compactify history
+                        # Only compactify if:
+                        # 1. Been idle long enough
+                        # 2. Haven't compacted recently (avoid repeated compaction)
+                        time_since_compaction = time.time() - self.last_compaction_time
+
+                        if idle_time >= self.config.history_compaction_idle_seconds and time_since_compaction >= self.config.history_compaction_idle_seconds:
+                            logger.info("Dormant for %.0f seconds with no tasks, compactifying history", idle_time)
+                            await self._compactify_history()
+                            self.last_compaction_time = time.time()
+                        else:
+                            logger.debug("No pending tasks, idle=%.0fs, since_compaction=%.0fs",
+                                       idle_time, time_since_compaction)
 
                 # Check periodically
                 await asyncio.sleep(self.config.task_check_interval)

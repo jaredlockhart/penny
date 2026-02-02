@@ -68,3 +68,39 @@ class ResponseLine(BaseModel):
 
     line: str
     thinking: str | None = None
+
+
+class ChatResponseMessage(BaseModel):
+    """Message object from chat response."""
+
+    role: str
+    content: str = ""
+    tool_calls: list[dict[str, Any]] | None = None
+    thinking: str | None = None
+
+    class Config:
+        populate_by_name = True
+
+
+class ChatResponse(BaseModel):
+    """Response from Ollama chat API."""
+
+    message: ChatResponseMessage
+    thinking: str | None = None
+    done: bool = True
+    model: str | None = None
+    created_at: str | None = None
+
+    class Config:
+        populate_by_name = True
+        extra = "allow"  # Allow additional fields from Ollama
+
+    @property
+    def content(self) -> str:
+        """Get message content."""
+        return self.message.content
+
+    @property
+    def has_tool_calls(self) -> bool:
+        """Check if response has tool calls."""
+        return bool(self.message.tool_calls)
