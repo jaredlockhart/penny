@@ -113,6 +113,6 @@ See the [`discord/`](./discord/) directory for a starter template with TODOs for
 ## Notes
 
 - The `recipient` parameter is platform-specific (could be phone number, user ID, channel ID, etc.)
-- The `IncomingMessage` model is generic with just `sender` and `content` fields
+- The `IncomingMessage` model has `sender`, `content`, and optional `quoted_text` fields
 - Platform-specific models and logic should be kept in their respective `models.py` files
 - Each channel implementation is self-contained in its own subdirectory
