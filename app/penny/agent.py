@@ -83,13 +83,14 @@ class PennyAgent:
                 logger.debug("Got %d history messages", len(history))
 
                 # Run agentic loop to get final answer
-                answer, thinking = await self.controller.run(history, message.content)
+                response = await self.controller.run(history, message.content)
                 logger.info("Received from controller - answer length: %d, thinking: %s",
-                           len(answer) if answer else 0,
-                           "present" if thinking else "None")
+                           len(response.answer),
+                           "present" if response.thinking else "None")
 
                 # Ensure we have a non-empty answer
-                if not answer or not answer.strip():
+                answer = response.answer.strip() if response.answer else ""
+                if not answer:
                     answer = "Sorry, I couldn't generate a response."
 
                 # Split answer by newlines and send each line separately
@@ -103,7 +104,7 @@ class PennyAgent:
                         message.sender,
                         line,
                         chunk_index=idx,
-                        thinking=thinking if idx == 0 else None,
+                        thinking=response.thinking if idx == 0 else None,
                     )
 
             except Exception as e:

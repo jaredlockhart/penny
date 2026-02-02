@@ -3,6 +3,7 @@
 import json
 import logging
 
+from penny.agentic.models import ChatMessage, ControllerResponse, MessageRole
 from penny.agentic.tool_executor import ToolExecutor
 from penny.ollama import OllamaClient
 from penny.tools import ToolCall, ToolRegistry
@@ -52,22 +53,26 @@ class AgenticController:
         memories = self.db.get_all_memories()
         if memories:
             memory_text = "Long-term memories:\n" + "\n".join(f"- {m.content}" for m in memories)
-            messages.append({"role": "system", "content": memory_text})
+            messages.append(
+                ChatMessage(role=MessageRole.SYSTEM, content=memory_text).to_dict()
+            )
 
         # Add history
         for msg in history:
-            role = "user" if msg.direction == "incoming" else "assistant"
+            role = MessageRole.USER if msg.direction == "incoming" else MessageRole.ASSISTANT
             # Only add first chunk to avoid duplication
             if msg.chunk_index is None or msg.chunk_index == 0:
-                messages.append({"role": role, "content": msg.content})
+                messages.append(ChatMessage(role=role, content=msg.content).to_dict())
 
         # Add current message
-        messages.append({"role": "user", "content": current_message})
+        messages.append(
+            ChatMessage(role=MessageRole.USER, content=current_message).to_dict()
+        )
 
         logger.debug("Built %d messages from history", len(messages))
         return messages
 
-    async def run(self, history: list, current_message: str) -> tuple[str, str | None]:
+    async def run(self, history: list, current_message: str) -> ControllerResponse:
         """
         Run the agentic loop with tool calling.
 
@@ -76,7 +81,7 @@ class AgenticController:
             current_message: Current user message
 
         Returns:
-            Tuple of (final answer string, thinking text or None)
+            ControllerResponse with answer and optional thinking
         """
         # Build messages
         messages = self._build_messages(history, current_message)
@@ -94,7 +99,9 @@ class AgenticController:
                 response = await self.ollama.chat(messages=messages, tools=tools)
             except Exception as e:
                 logger.error("Error calling Ollama: %s", e)
-                return "Sorry, I encountered an error communicating with the model.", None
+                return ControllerResponse(
+                    answer="Sorry, I encountered an error communicating with the model."
+                )
 
             message = response.get("message", {})
 
@@ -129,7 +136,9 @@ class AgenticController:
                     logger.debug("Tool result: %s", result_str[:200])
 
                     # Add tool result to messages
-                    messages.append({"role": "tool", "content": result_str})
+                    messages.append(
+                        ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict()
+                    )
 
                 # Continue loop to get final answer
                 continue
@@ -139,7 +148,9 @@ class AgenticController:
 
             if not content:
                 logger.error("Model returned empty content!")
-                return "Sorry, the model generated an empty response.", None
+                return ControllerResponse(
+                    answer="Sorry, the model generated an empty response."
+                )
 
             # Extract thinking if present - check multiple possible locations
             thinking = (
@@ -155,8 +166,10 @@ class AgenticController:
                            list(response.keys()), list(message.keys()))
 
             logger.info("Got final answer (length: %d)", len(content))
-            return content, thinking
+            return ControllerResponse(answer=content, thinking=thinking)
 
         # Max steps reached
         logger.warning("Max steps reached without final answer")
-        return "Sorry, I couldn't complete that request within the allowed steps.", None
+        return ControllerResponse(
+            answer="Sorry, I couldn't complete that request within the allowed steps."
+        )
