@@ -158,12 +158,12 @@ class Database:
         Returns:
             List of Task objects with status="pending"
         """
-        from penny.memory.models import Task
+        from penny.memory.models import Task, TaskStatus
 
         with self.get_session() as session:
             tasks = (
                 session.query(Task)
-                .filter(Task.status == "pending")
+                .filter(Task.status == TaskStatus.PENDING.value)
                 .order_by(Task.created_at)
                 .all()
             )
@@ -201,12 +201,12 @@ class Database:
         """
         from datetime import datetime
 
-        from penny.memory.models import Task
+        from penny.memory.models import Task, TaskStatus
 
         with self.get_session() as session:
             task = session.get(Task, task_id)
             if task:
-                task.status = "completed"
+                task.status = TaskStatus.COMPLETED.value
                 task.completed_at = datetime.utcnow()
                 task.result = result
                 session.commit()

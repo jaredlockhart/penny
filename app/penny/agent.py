@@ -12,10 +12,16 @@ from typing import Any
 import websockets
 
 from penny.agentic import AgenticController
-from penny.agentic.models import ChatMessage, MessageRole
+from penny.agentic.models import (
+    ChatMessage,
+    ClassificationResult,
+    MessageClassification,
+    MessageRole,
+)
 from penny.channels import MessageChannel, SignalChannel
 from penny.config import Config, setup_logging
 from penny.memory import Database
+from penny.memory.models import MessageDirection, TaskStatus
 from penny.ollama import OllamaClient
 from penny.tools import GetCurrentTimeTool, PerplexitySearchTool, StoreMemoryTool, ToolRegistry
 
@@ -69,7 +75,7 @@ class PennyAgent:
         logger.info("Received shutdown signal, stopping agent...")
         self.running = False
 
-    async def _classify_and_acknowledge(self, message_content: str) -> tuple[str, str | None]:
+    async def _classify_and_acknowledge(self, message_content: str) -> ClassificationResult:
         """
         Classify message and generate acknowledgment in a single pass.
 
@@ -77,24 +83,26 @@ class PennyAgent:
             message_content: The message to classify
 
         Returns:
-            Tuple of (classification, acknowledgment) where acknowledgment is None for immediate messages
+            ClassificationResult with classification and optional acknowledgment
         """
         prompt = """Classify this message and generate an acknowledgment if needed.
 
 Message: "{message}"
 
-If it's a TASK (something to do later), respond with:
+If it's a TASK (something to do later, requires search/lookup), respond with:
 TASK: [brief casual acknowledgment, 5-10 words, lowercase]
 
-If it's IMMEDIATE (needs instant answer), respond with:
+If it's IMMEDIATE (instant answer, no lookup needed), respond with:
 IMMEDIATE
 
 Examples:
 - "What time is it?" -> IMMEDIATE
 - "Can you look up the weather in Tokyo?" -> TASK: i'll look that up for you
 - "What's 2+2?" -> IMMEDIATE
+- "Who stars in starfleet academy?" -> TASK: i'll find that out for you
 - "Please find out who won the superbowl" -> TASK: i'll find that out
 - "Remember my name is Jared" -> IMMEDIATE
+- "What's the capital of France?" -> TASK: i'll look that up
 - "Search for the best pizza places" -> TASK: i'll search for that"""
 
         messages = [
@@ -111,12 +119,21 @@ Examples:
             if content.startswith("TASK:"):
                 # Extract acknowledgment after "TASK:"
                 acknowledgment = content[5:].strip()
-                return ("task", acknowledgment if acknowledgment else "i'll work on that for you")
+                return ClassificationResult(
+                    classification=MessageClassification.TASK,
+                    acknowledgment=acknowledgment if acknowledgment else "i'll work on that for you",
+                )
             else:
-                return ("immediate", None)
+                return ClassificationResult(
+                    classification=MessageClassification.IMMEDIATE,
+                    acknowledgment=None,
+                )
         except Exception as e:
             logger.error("Error classifying message: %s", e)
-            return ("immediate", None)  # Default to immediate on error
+            return ClassificationResult(
+                classification=MessageClassification.IMMEDIATE,
+                acknowledgment=None,
+            )  # Default to immediate on error
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -137,23 +154,31 @@ Examples:
             self.last_message_time = time.time()
 
             # Log incoming message
-            self.db.log_message("incoming", message.sender, self.config.signal_number, message.content)
+            self.db.log_message(
+                MessageDirection.INCOMING.value,
+                message.sender,
+                self.config.signal_number,
+                message.content,
+            )
 
             # Send typing indicator immediately
             await self.channel.send_typing(message.sender, True)
 
             # Classify message and get acknowledgment in one pass
-            classification, acknowledgment = await self._classify_and_acknowledge(message.content)
-            logger.info("Message classified as: %s", classification)
+            result = await self._classify_and_acknowledge(message.content)
+            logger.info("Message classified as: %s", result.classification.value)
 
-            if classification == "task":
+            if result.classification == MessageClassification.TASK:
                 # Create task and send acknowledgment
                 task = self.db.create_task(message.content, message.sender)
-                await self.channel.send_message(message.sender, acknowledgment)
+                await self.channel.send_message(message.sender, result.acknowledgment)
                 self.db.log_message(
-                    "outgoing", self.config.signal_number, message.sender, acknowledgment
+                    MessageDirection.OUTGOING.value,
+                    self.config.signal_number,
+                    message.sender,
+                    result.acknowledgment,
                 )
-                logger.info("Created task %d and acknowledged with: %s", task.id, acknowledgment)
+                logger.info("Created task %d and acknowledged with: %s", task.id, result.acknowledgment)
                 # Stop typing indicator
                 await self.channel.send_typing(message.sender, False)
                 return
@@ -180,7 +205,7 @@ Examples:
                     await self.channel.send_message(message.sender, line)
                     # Log each line to database, but only include thinking on the first one
                     self.db.log_message(
-                        "outgoing",
+                        MessageDirection.OUTGOING.value,
                         self.config.signal_number,
                         message.sender,
                         line,
@@ -192,7 +217,12 @@ Examples:
                 logger.exception("Error in message handling: %s", e)
                 error_msg = "Sorry, I encountered an error processing your message."
                 await self.channel.send_message(message.sender, error_msg)
-                self.db.log_message("outgoing", self.config.signal_number, message.sender, error_msg)
+                self.db.log_message(
+                    MessageDirection.OUTGOING.value,
+                    self.config.signal_number,
+                    message.sender,
+                    error_msg,
+                )
 
             finally:
                 # Always stop typing indicator
@@ -272,7 +302,7 @@ Examples:
 
                         # Mark as in progress
                         self.db.update_task_status(
-                            task.id, "in_progress", started_at=datetime.utcnow()
+                            task.id, TaskStatus.IN_PROGRESS.value, started_at=datetime.utcnow()
                         )
 
                         try:
@@ -294,7 +324,7 @@ Examples:
                             for idx, line in enumerate(lines):
                                 await self.channel.send_message(task.requester, line)
                                 self.db.log_message(
-                                    "outgoing",
+                                    MessageDirection.OUTGOING.value,
                                     self.config.signal_number,
                                     task.requester,
                                     line,
@@ -311,7 +341,10 @@ Examples:
                             error_msg = "Sorry, I encountered an error working on that task."
                             await self.channel.send_message(task.requester, error_msg)
                             self.db.log_message(
-                                "outgoing", self.config.signal_number, task.requester, error_msg
+                                MessageDirection.OUTGOING.value,
+                                self.config.signal_number,
+                                task.requester,
+                                error_msg,
                             )
                             self.db.complete_task(task.id, error_msg)
 
