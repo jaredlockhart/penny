@@ -71,13 +71,6 @@ class SendMessageResponse(BaseModel):
     timestamp: int | None = None
 
 
-class IncomingMessage(BaseModel):
-    """Extracted incoming message from Signal."""
-
-    sender: str
-    content: str
-
-
 class TypingIndicatorRequest(BaseModel):
     """Request to send a typing indicator."""
 
