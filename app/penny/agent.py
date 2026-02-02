@@ -10,7 +10,7 @@ from typing import Any
 import websockets
 
 from penny.config import Config, setup_logging
-from penny.memory import Database, Message
+from penny.memory import Database, build_context
 from penny.ollama import OllamaClient
 from penny.signal import SignalClient
 
@@ -40,63 +40,6 @@ class PennyAgent:
         """Handle shutdown signals."""
         logger.info("Received shutdown signal, stopping agent...")
         self.running = False
-
-    def _build_context(self, history: list, current_message: str) -> str:
-        """
-        Build conversation context from history.
-
-        Args:
-            history: List of Message objects from database
-            current_message: The current incoming message
-
-        Returns:
-            Formatted context string for Ollama
-        """
-        context_parts = ["You are Penny, a helpful AI assistant communicating via Signal messages."]
-
-        if history:
-            context_parts.append("\nRecent conversation history:")
-            for msg in history:
-                # Skip the current message if it's already in history (shouldn't be, but just in case)
-                if msg.direction == "incoming":
-                    context_parts.append(f"User: {msg.content}")
-                else:
-                    # For outgoing chunks, only include non-chunk messages or first chunk
-                    if msg.chunk_index is None or msg.chunk_index == 0:
-                        context_parts.append(f"Penny: {msg.content}")
-
-        context_parts.append(f"\nUser: {current_message}")
-        context_parts.append("Penny:")
-
-        return "\n".join(context_parts)
-
-    def log_message(self, direction: str, sender: str, recipient: str, content: str, chunk_index: int | None = None, thinking: str | None = None) -> None:
-        """
-        Log a message to the database.
-
-        Args:
-            direction: "incoming" or "outgoing"
-            sender: Phone number of sender
-            recipient: Phone number of recipient
-            content: Message content
-            chunk_index: Optional chunk index for streaming responses
-            thinking: Optional LLM reasoning text for thinking models
-        """
-        try:
-            with self.db.get_session() as session:
-                message = Message(
-                    direction=direction,
-                    sender=sender,
-                    recipient=recipient,
-                    content=content,
-                    chunk_index=chunk_index,
-                    thinking=thinking,
-                )
-                session.add(message)
-                session.commit()
-                logger.debug("Logged %s message: %s -> %s", direction, sender, recipient)
-        except Exception as e:
-            logger.error("Failed to log message: %s", e)
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -130,14 +73,14 @@ class PennyAgent:
             logger.info("Received message from %s: %s", sender, content)
 
             # Log incoming message
-            self.log_message("incoming", sender, self.config.signal_number, content)
+            self.db.log_message("incoming", sender, self.config.signal_number, content)
 
             # Send typing indicator
             await self.signal_client.send_typing(sender, True)
 
             # Build context from conversation history
             history = self.db.get_conversation_history(sender, self.config.signal_number, limit=20)
-            context = self._build_context(history, content)
+            context = build_context(history, content)
 
             # Generate response using Ollama streaming
             logger.info("Generating streaming response with Ollama...")
@@ -175,7 +118,7 @@ class PennyAgent:
                                     await self.signal_client.send_message(sender, part)
 
                                     # Log outgoing chunk (don't include thinking yet, wait for final chunk)
-                                    self.log_message("outgoing", self.config.signal_number, sender, part, chunk_count)
+                                    self.db.log_message("outgoing", self.config.signal_number, sender, part, chunk_count)
                                     chunk_count += 1
 
                                     # Turn typing indicator back on for next chunk
@@ -189,7 +132,7 @@ class PennyAgent:
 
                     # Log final chunk with thinking (if any)
                     thinking_text = thinking_buffer.strip() if thinking_buffer.strip() else None
-                    self.log_message("outgoing", self.config.signal_number, sender, response_buffer, chunk_count, thinking=thinking_text)
+                    self.db.log_message("outgoing", self.config.signal_number, sender, response_buffer, chunk_count, thinking=thinking_text)
                     chunk_count += 1
 
                 logger.info("Sent %d chunks to %s", chunk_count, sender)
@@ -198,7 +141,7 @@ class PennyAgent:
                 logger.error("Error during streaming generation: %s", e)
                 error_msg = "Sorry, I encountered an error generating a response."
                 await self.signal_client.send_message(sender, error_msg)
-                self.log_message("outgoing", self.config.signal_number, sender, error_msg)
+                self.db.log_message("outgoing", self.config.signal_number, sender, error_msg)
 
             # Stop typing indicator
             await self.signal_client.send_typing(sender, False)

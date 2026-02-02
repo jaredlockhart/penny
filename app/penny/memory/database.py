@@ -60,3 +60,41 @@ class Database:
 
             # Reverse to get chronological order (oldest first)
             return list(reversed(messages))
+
+    def log_message(
+        self,
+        direction: str,
+        sender: str,
+        recipient: str,
+        content: str,
+        chunk_index: int | None = None,
+        thinking: str | None = None,
+    ) -> None:
+        """
+        Log a message to the database.
+
+        Args:
+            direction: "incoming" or "outgoing"
+            sender: Phone number of sender
+            recipient: Phone number of recipient
+            content: Message content
+            chunk_index: Optional chunk index for streaming responses
+            thinking: Optional LLM reasoning text for thinking models
+        """
+        from penny.memory.models import Message
+
+        try:
+            with self.get_session() as session:
+                message = Message(
+                    direction=direction,
+                    sender=sender,
+                    recipient=recipient,
+                    content=content,
+                    chunk_index=chunk_index,
+                    thinking=thinking,
+                )
+                session.add(message)
+                session.commit()
+                logger.debug("Logged %s message: %s -> %s", direction, sender, recipient)
+        except Exception as e:
+            logger.error("Failed to log message: %s", e)
