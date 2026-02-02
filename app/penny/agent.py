@@ -41,6 +41,42 @@ class PennyAgent:
         logger.info("Received shutdown signal, stopping agent...")
         self.running = False
 
+    async def _stream_and_send_response(self, sender: str, context: str) -> None:
+        """
+        Stream response from Ollama and send chunks to Signal.
+
+        Args:
+            sender: Phone number of the recipient
+            context: Conversation context to send to Ollama
+        """
+        logger.info("Generating streaming response with Ollama...")
+        logger.debug("Context length: %d chars", len(context))
+        chunk_count = 0
+
+        try:
+            # Stream response lines from Ollama
+            async for chunk in self.ollama_client.stream_response(context):
+                # Turn off typing indicator before sending
+                await self.signal_client.send_typing(sender, False)
+
+                logger.debug("Sending chunk %d: %s...", chunk_count, chunk["line"][:50])
+                await self.signal_client.send_message(sender, chunk["line"])
+
+                # Log to database (thinking included in first chunk)
+                self.db.log_message("outgoing", self.config.signal_number, sender, chunk["line"], chunk_count, thinking=chunk["thinking"])
+                chunk_count += 1
+
+                # Turn typing indicator back on for next chunk
+                await self.signal_client.send_typing(sender, True)
+
+            logger.info("Sent %d chunks to %s", chunk_count, sender)
+
+        except Exception as e:
+            logger.error("Error during streaming generation: %s", e)
+            error_msg = "Sorry, I encountered an error generating a response."
+            await self.signal_client.send_message(sender, error_msg)
+            self.db.log_message("outgoing", self.config.signal_number, sender, error_msg)
+
     async def handle_message(self, envelope_data: dict) -> None:
         """
         Process an incoming Signal message.
@@ -49,27 +85,12 @@ class PennyAgent:
             envelope_data: Signal message envelope from WebSocket
         """
         try:
-            # Parse envelope using SignalClient
-            envelope = self.signal_client.parse_envelope(envelope_data)
-            if envelope is None:
+            # Extract message content from envelope
+            result = self.signal_client.extract_message_content(envelope_data)
+            if result is None:
                 return
 
-            logger.debug("Processing envelope from: %s", envelope.envelope.source)
-
-            # Check if this is a data message (not typing indicator, etc.)
-            if envelope.envelope.dataMessage is None:
-                logger.debug("Ignoring non-data message")
-                return
-
-            sender = envelope.envelope.source
-            content = envelope.envelope.dataMessage.message.strip()
-
-            logger.info("Extracted - sender: %s, content: '%s'", sender, content)
-
-            if not content:
-                logger.debug("Ignoring empty message from %s", sender)
-                return
-
+            sender, content = result
             logger.info("Received message from %s: %s", sender, content)
 
             # Log incoming message
@@ -78,73 +99,16 @@ class PennyAgent:
             # Send typing indicator
             await self.signal_client.send_typing(sender, True)
 
-            # Build context from conversation history
-            history = self.db.get_conversation_history(sender, self.config.signal_number, limit=20)
-            context = build_context(history, content)
-
-            # Generate response using Ollama streaming
-            logger.info("Generating streaming response with Ollama...")
-            logger.debug("Context length: %d chars", len(context))
-            response_buffer = ""
-            thinking_buffer = ""
-            chunk_count = 0
-
             try:
-                async for chunk_data in self.ollama_client.generate_stream(context):
-                    chunk_type = chunk_data["type"]
-                    chunk_content = chunk_data["content"]
+                # Build context from conversation history
+                history = self.db.get_conversation_history(sender, self.config.signal_number, limit=20)
+                context = build_context(history, content)
 
-                    if chunk_type == "thinking":
-                        # Accumulate thinking but don't send to Signal
-                        thinking_buffer += chunk_content
-
-                    elif chunk_type == "response":
-                        # Accumulate response and send to Signal
-                        response_buffer += chunk_content
-
-                        # Send accumulated text when we hit a newline or paragraph break
-                        if "\n" in response_buffer:
-                            # Split on newlines, keep the last incomplete part in buffer
-                            parts = response_buffer.split("\n")
-                            response_buffer = parts[-1]  # Keep last part (might be incomplete)
-
-                            # Send all complete parts
-                            for part in parts[:-1]:
-                                if part.strip():  # Only send non-empty lines
-                                    # Turn off typing indicator before sending
-                                    await self.signal_client.send_typing(sender, False)
-
-                                    logger.debug("Sending chunk %d: %s...", chunk_count, part[:50])
-                                    await self.signal_client.send_message(sender, part)
-
-                                    # Log outgoing chunk (don't include thinking yet, wait for final chunk)
-                                    self.db.log_message("outgoing", self.config.signal_number, sender, part, chunk_count)
-                                    chunk_count += 1
-
-                                    # Turn typing indicator back on for next chunk
-                                    await self.signal_client.send_typing(sender, True)
-
-                # Send any remaining response buffer
-                if response_buffer.strip():
-                    await self.signal_client.send_typing(sender, False)
-                    logger.debug("Sending final chunk: %s...", response_buffer[:50])
-                    await self.signal_client.send_message(sender, response_buffer)
-
-                    # Log final chunk with thinking (if any)
-                    thinking_text = thinking_buffer.strip() if thinking_buffer.strip() else None
-                    self.db.log_message("outgoing", self.config.signal_number, sender, response_buffer, chunk_count, thinking=thinking_text)
-                    chunk_count += 1
-
-                logger.info("Sent %d chunks to %s", chunk_count, sender)
-
-            except Exception as e:
-                logger.error("Error during streaming generation: %s", e)
-                error_msg = "Sorry, I encountered an error generating a response."
-                await self.signal_client.send_message(sender, error_msg)
-                self.db.log_message("outgoing", self.config.signal_number, sender, error_msg)
-
-            # Stop typing indicator
-            await self.signal_client.send_typing(sender, False)
+                # Stream and send response
+                await self._stream_and_send_response(sender, context)
+            finally:
+                # Always stop typing indicator
+                await self.signal_client.send_typing(sender, False)
 
         except Exception as e:
             logger.exception("Error handling message: %s", e)

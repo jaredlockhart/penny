@@ -122,6 +122,40 @@ class SignalClient:
             logger.debug("Envelope data: %s", envelope_data)
             return None
 
+    @staticmethod
+    def extract_message_content(envelope_data: dict) -> tuple[str, str] | None:
+        """
+        Extract sender and message content from an envelope.
+
+        Args:
+            envelope_data: Raw envelope dict from WebSocket
+
+        Returns:
+            Tuple of (sender, content) or None if envelope should be ignored
+        """
+        # Parse envelope
+        envelope = SignalClient.parse_envelope(envelope_data)
+        if envelope is None:
+            return None
+
+        logger.debug("Processing envelope from: %s", envelope.envelope.source)
+
+        # Check if this is a data message (not typing indicator, etc.)
+        if envelope.envelope.dataMessage is None:
+            logger.debug("Ignoring non-data message")
+            return None
+
+        sender = envelope.envelope.source
+        content = envelope.envelope.dataMessage.message.strip()
+
+        logger.info("Extracted - sender: %s, content: '%s'", sender, content)
+
+        if not content:
+            logger.debug("Ignoring empty message from %s", sender)
+            return None
+
+        return (sender, content)
+
     def get_websocket_url(self) -> str:
         """
         Get the WebSocket URL for receiving messages.
