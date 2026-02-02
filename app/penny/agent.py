@@ -70,7 +70,7 @@ class PennyAgent:
 
         return "\n".join(context_parts)
 
-    def log_message(self, direction: str, sender: str, recipient: str, content: str, chunk_index: int | None = None) -> None:
+    def log_message(self, direction: str, sender: str, recipient: str, content: str, chunk_index: int | None = None, thinking: str | None = None) -> None:
         """
         Log a message to the database.
 
@@ -80,6 +80,7 @@ class PennyAgent:
             recipient: Phone number of recipient
             content: Message content
             chunk_index: Optional chunk index for streaming responses
+            thinking: Optional LLM reasoning text for thinking models
         """
         try:
             with self.db.get_session() as session:
@@ -89,6 +90,7 @@ class PennyAgent:
                     recipient=recipient,
                     content=content,
                     chunk_index=chunk_index,
+                    thinking=thinking,
                 )
                 session.add(message)
                 session.commit()
@@ -140,43 +142,54 @@ class PennyAgent:
             # Generate response using Ollama streaming
             logger.info("Generating streaming response with Ollama...")
             logger.debug("Context length: %d chars", len(context))
-            buffer = ""
+            response_buffer = ""
+            thinking_buffer = ""
             chunk_count = 0
 
             try:
-                async for chunk in self.ollama_client.generate_stream(context):
-                    buffer += chunk
+                async for chunk_data in self.ollama_client.generate_stream(context):
+                    chunk_type = chunk_data["type"]
+                    chunk_content = chunk_data["content"]
 
-                    # Send accumulated text when we hit a newline or paragraph break
-                    if "\n" in buffer:
-                        # Split on newlines, keep the last incomplete part in buffer
-                        parts = buffer.split("\n")
-                        buffer = parts[-1]  # Keep last part (might be incomplete)
+                    if chunk_type == "thinking":
+                        # Accumulate thinking but don't send to Signal
+                        thinking_buffer += chunk_content
 
-                        # Send all complete parts
-                        for part in parts[:-1]:
-                            if part.strip():  # Only send non-empty lines
-                                # Turn off typing indicator before sending
-                                await self.signal_client.send_typing(sender, False)
+                    elif chunk_type == "response":
+                        # Accumulate response and send to Signal
+                        response_buffer += chunk_content
 
-                                logger.debug("Sending chunk %d: %s...", chunk_count, part[:50])
-                                await self.signal_client.send_message(sender, part)
+                        # Send accumulated text when we hit a newline or paragraph break
+                        if "\n" in response_buffer:
+                            # Split on newlines, keep the last incomplete part in buffer
+                            parts = response_buffer.split("\n")
+                            response_buffer = parts[-1]  # Keep last part (might be incomplete)
 
-                                # Log outgoing chunk
-                                self.log_message("outgoing", self.config.signal_number, sender, part, chunk_count)
-                                chunk_count += 1
+                            # Send all complete parts
+                            for part in parts[:-1]:
+                                if part.strip():  # Only send non-empty lines
+                                    # Turn off typing indicator before sending
+                                    await self.signal_client.send_typing(sender, False)
 
-                                # Turn typing indicator back on for next chunk
-                                await self.signal_client.send_typing(sender, True)
+                                    logger.debug("Sending chunk %d: %s...", chunk_count, part[:50])
+                                    await self.signal_client.send_message(sender, part)
 
-                # Send any remaining buffer
-                if buffer.strip():
+                                    # Log outgoing chunk (don't include thinking yet, wait for final chunk)
+                                    self.log_message("outgoing", self.config.signal_number, sender, part, chunk_count)
+                                    chunk_count += 1
+
+                                    # Turn typing indicator back on for next chunk
+                                    await self.signal_client.send_typing(sender, True)
+
+                # Send any remaining response buffer
+                if response_buffer.strip():
                     await self.signal_client.send_typing(sender, False)
-                    logger.debug("Sending final chunk: %s...", buffer[:50])
-                    await self.signal_client.send_message(sender, buffer)
+                    logger.debug("Sending final chunk: %s...", response_buffer[:50])
+                    await self.signal_client.send_message(sender, response_buffer)
 
-                    # Log final chunk
-                    self.log_message("outgoing", self.config.signal_number, sender, buffer, chunk_count)
+                    # Log final chunk with thinking (if any)
+                    thinking_text = thinking_buffer.strip() if thinking_buffer.strip() else None
+                    self.log_message("outgoing", self.config.signal_number, sender, response_buffer, chunk_count, thinking=thinking_text)
                     chunk_count += 1
 
                 logger.info("Sent %d chunks to %s", chunk_count, sender)

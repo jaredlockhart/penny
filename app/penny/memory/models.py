@@ -16,3 +16,4 @@ class Message(SQLModel, table=True):
     recipient: str = Field(index=True)  # Phone number
     content: str
     chunk_index: Optional[int] = Field(default=None)  # For streaming chunks
+    thinking: Optional[str] = Field(default=None)  # LLM reasoning for thinking models
