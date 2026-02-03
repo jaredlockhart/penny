@@ -15,7 +15,10 @@ You send a message on Signal. Penny searches the web via Perplexity and finds a 
 **Key Features:**
 - **Perplexity Search**: Every response is grounded in a web search — Penny never answers from model knowledge alone
 - **Image Attachments**: Every response includes a relevant image from DuckDuckGo, sent as a Signal attachment (degrades gracefully if unavailable)
+- **Source URLs**: URLs extracted from Perplexity search results and annotations, presented as a Sources list so the model picks the most relevant one
 - **Thread-Based Context**: Quote-reply to continue a conversation; Penny walks the message chain to rebuild history
+- **Spontaneous Continuation**: Penny randomly continues idle conversations by searching for something new about the topic (configurable idle timeout and interval)
+- **Thread Summarization**: Background task summarizes idle threads via Ollama and caches the summary for future context
 - **Full Logging**: Every Ollama prompt, Perplexity search, and user/agent message is logged to SQLite
 - **Agent Loop**: Multi-step reasoning with tool calling (up to 5 steps), with duplicate tool call protection
 - **Search Result Cleaning**: Regex-based stripping of markdown and citations from Perplexity results before they reach the LLM
@@ -53,11 +56,15 @@ You send a message on Signal. Penny searches the web via Perplexity and finds a 
         │               │
         │  - Message    │
         │    Listener   │
-        │  - Agent    │
+        │  - Agent      │
         │    Loop       │
         │  - Search     │
         │    (Perplexity│
         │    + DDG img) │
+        │  - Spontaneous│
+        │    Continuation│
+        │  - Thread     │
+        │    Summarizer │
         │  - SQLite     │
         │    Logging    │
         └───────────────┘
@@ -68,9 +75,10 @@ You send a message on Signal. Penny searches the web via Perplexity and finds a 
 1. User sends Signal message (or quote-replies to a previous response)
 2. If quote-reply: look up the quoted message, walk the parent chain to build thread history
 3. Log incoming message (linked to parent if replying)
-4. Run agent loop: Ollama calls search tool, which runs Perplexity (text) and DuckDuckGo (images) in parallel
+4. Run agent loop: Ollama calls search tool, which runs Perplexity (text) and DuckDuckGo (images) in parallel. Search results include extracted source URLs for the model to reference.
 5. Log outgoing message (linked to incoming)
 6. Send response back via Signal with image attachment (if available)
+7. Background: when idle, summarize threads and optionally continue dangling conversations
 
 ### Design Decisions
 
@@ -96,6 +104,7 @@ Penny stores three types of log data in SQLite:
 **MessageLog**: Every user message and agent response
 - Direction (incoming/outgoing), sender, content
 - Parent ID (foreign key to self) for threading quote-replies
+- Parent summary (cached thread summary for context reconstruction)
 
 ## Setup & Running
 
@@ -122,8 +131,7 @@ make up
 ```bash
 make up          # Build and start all services (foreground)
 make kill        # Tear down containers and remove local images
-make check       # Format, lint, and typecheck (modifies files)
-make ci          # Same as check but read-only (no modifications)
+make check       # Format check (read-only), lint, and typecheck
 make fmt         # Format with ruff
 make lint        # Lint with ruff
 make fix         # Format + autofix lint issues
@@ -149,6 +157,10 @@ PERPLEXITY_API_KEY="your-api-key"
 
 # Agent behavior (optional, defaults shown)
 MESSAGE_MAX_STEPS=5
+SUMMARIZE_IDLE_SECONDS=30
+CONTINUE_IDLE_SECONDS=1800
+CONTINUE_MIN_SECONDS=1800
+CONTINUE_MAX_SECONDS=10800
 ```
 
 **Required:**
@@ -163,6 +175,10 @@ MESSAGE_MAX_STEPS=5
 - `LOG_FILE`: Log file path (default: none)
 - `PERPLEXITY_API_KEY`: API key for web search (without this, the agent has no tools)
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
+- `SUMMARIZE_IDLE_SECONDS`: Idle time before summarizing threads (default: 30)
+- `CONTINUE_IDLE_SECONDS`: Idle time before spontaneous continuation is eligible (default: 1800)
+- `CONTINUE_MIN_SECONDS`: Minimum random delay between continuation attempts (default: 1800)
+- `CONTINUE_MAX_SECONDS`: Maximum random delay between continuation attempts (default: 10800)
 
 ## Inspiration
 
