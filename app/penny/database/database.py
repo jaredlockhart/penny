@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -15,6 +16,21 @@ logger = logging.getLogger(__name__)
 
 class Database:
     """Database manager for Penny's memory."""
+
+    @staticmethod
+    def _strip_formatting(text: str) -> str:
+        """Strip markdown formatting for storage/lookup.
+
+        Signal converts **bold**/etc. to native formatting, so quotes come back
+        as plain text. We store plain text to enable reliable matching.
+        """
+        # Remove bold/italic markers
+        text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
+        # Remove strikethrough (both ~~ and ~)
+        text = re.sub(r"~{1,2}(.+?)~{1,2}", r"\1", text)
+        # Remove monospace
+        text = re.sub(r"`(.+?)`", r"\1", text)
+        return text
 
     def __init__(self, db_path: str):
         """
@@ -124,6 +140,10 @@ class Database:
         Returns:
             The id of the created message, or None on failure
         """
+        # Strip formatting from outgoing messages for reliable quote matching
+        if direction == MessageDirection.OUTGOING:
+            content = self._strip_formatting(content)
+
         try:
             with self.get_session() as session:
                 log = MessageLog(
@@ -202,18 +222,23 @@ class Database:
         Find the most recent outgoing message matching the given content.
         Used to look up which agent response a user is quoting.
 
+        Signal truncates quoted text, so we use prefix matching (startswith).
+
         Args:
             content: The quoted text to search for
 
         Returns:
             The matching MessageLog, or None
         """
+        # Strip formatting from quoted text to match stored plain text
+        content = self._strip_formatting(content)
+
         with self.get_session() as session:
             return session.exec(
                 select(MessageLog)
                 .where(
                     MessageLog.direction == MessageDirection.OUTGOING,
-                    MessageLog.content == content,
+                    MessageLog.content.startswith(content),
                 )
                 .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
             ).first()

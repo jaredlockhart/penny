@@ -34,7 +34,7 @@ class Config:
 
     # Agent runtime configuration
     message_max_steps: int = 5
-    summarize_idle_seconds: float = 30.0
+    summarize_idle_seconds: float = 300.0
 
     # Ollama retry configuration
     ollama_max_retries: int = 3
@@ -122,3 +122,15 @@ def setup_logging(log_level: str, log_file: str | None = None) -> None:
         root_logger.addHandler(file_handler)
 
         root_logger.info("Logging to file: %s", log_file)
+
+    # Silence noisy third-party loggers
+    for name in (
+        "httpcore",
+        "httpx",
+        "websockets",
+        "perplexity",
+        "duckduckgo_search",
+        "primp",
+        "rquest",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)

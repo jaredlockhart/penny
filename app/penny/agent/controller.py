@@ -1,8 +1,6 @@
 """Agent controller loop using Ollama SDK."""
 
 import logging
-import re
-from collections.abc import Callable
 from datetime import UTC, datetime
 
 from penny.agent.models import ChatMessage, ControllerResponse, MessageRole
@@ -35,22 +33,6 @@ class AgentController:
         self.tool_registry = tool_registry
         self.tool_executor = ToolExecutor(tool_registry)
         self.max_steps = max_steps
-
-    @staticmethod
-    def _clean_search_results(raw_text: str) -> str:
-        """Strip markdown formatting and citations from raw search results."""
-        text = raw_text
-        # Remove citations like [web:1], [page:2], [conversation_history:0]
-        text = re.sub(r"\[[\w:]+(?::\d+)?\]", "", text)
-        # Remove markdown headings
-        text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-        # Remove markdown bold/italic
-        text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
-        # Remove markdown bullet points
-        text = re.sub(r"^[-*]\s+", "", text, flags=re.MULTILINE)
-        # Collapse multiple blank lines
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
 
     def _build_messages(
         self,
@@ -89,7 +71,6 @@ class AgentController:
         current_message: str,
         system_prompt: str | None = None,
         history: list[tuple[str, str]] | None = None,
-        on_step: Callable | None = None,
     ) -> ControllerResponse:
         """
         Run the agent loop with tool calling.
@@ -98,7 +79,6 @@ class AgentController:
             current_message: Current user message
             system_prompt: Optional system prompt for special instructions
             history: Optional list of (role, content) tuples for conversation history
-            on_step: Optional callback called at the start of each iteration
 
         Returns:
             ControllerResponse with answer and optional thinking
@@ -120,10 +100,6 @@ class AgentController:
         for step in range(self.max_steps):
             logger.info("Agent step %d/%d", step + 1, self.max_steps)
 
-            # Call step callback if provided (e.g., to refresh typing indicator)
-            if on_step:
-                await on_step(step)
-
             # Get model response
             try:
                 response = await self.ollama.chat(messages=messages, tools=tools)
@@ -139,8 +115,8 @@ class AgentController:
                     "Model requested %d tool call(s)", len(response.message.tool_calls or [])
                 )
 
-                # Add assistant message to history
-                messages.append(response.message.model_dump())
+                # Add assistant message to history (excludes thinking)
+                messages.append(response.message.to_input_message())
 
                 # Execute each tool call
                 for ollama_tool_call in response.message.tool_calls or []:
@@ -167,12 +143,13 @@ class AgentController:
                     if tool_result.error:
                         result_str = f"Error: {tool_result.error}"
                     elif isinstance(tool_result.result, SearchResult):
-                        result_str = self._clean_search_results(tool_result.result.text)
+                        result_str = tool_result.result.text
                         if tool_result.result.urls:
                             source_urls.extend(tool_result.result.urls)
                             result_str += f"\n\nSources:\n{'\n'.join(tool_result.result.urls)}"
                         if tool_result.result.image_base64:
                             attachments.append(tool_result.result.image_base64)
+                        result_str += "\n\nNow write your response based on these results."
                     else:
                         result_str = str(tool_result.result)
                     logger.debug("Tool result: %s", result_str[:200])

@@ -58,8 +58,13 @@ class OllamaClient:
                 logger.debug(
                     "Sending chat request to Ollama (attempt %d/%d)", attempt + 1, self.max_retries
                 )
+                logger.debug("Prompt messages: %s", messages)
 
                 start = time.time()
+
+                # Snapshot messages before the call so the log captures
+                # exactly what was sent, not the mutated list.
+                messages_snapshot = list(messages)
 
                 raw = await self.client.chat(
                     model=self.model,
@@ -81,13 +86,15 @@ class OllamaClient:
                 if thinking:
                     logger.debug("Model thinking: %s", thinking[:200])
 
-                logger.debug("Response content length: %d", len(response.content))
+                logger.debug("Response content: %s", response.content)
+                if response.has_tool_calls:
+                    logger.debug("Response tool calls: %s", response.message.tool_calls)
 
                 # Log to database
                 if self.db:
                     self.db.log_prompt(
                         model=self.model,
-                        messages=messages,
+                        messages=messages_snapshot,
                         response=raw_dict,
                         tools=tools,
                         thinking=thinking,

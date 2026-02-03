@@ -94,6 +94,13 @@ class ChatResponseMessage(BaseModel):
     class Config:
         populate_by_name = True
 
+    def to_input_message(self) -> dict[str, Any]:
+        """Convert to input message format for Ollama (excludes thinking)."""
+        msg: dict[str, Any] = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            msg["tool_calls"] = [tc.model_dump() for tc in self.tool_calls]
+        return msg
+
 
 class ChatResponse(BaseModel):
     """Response from Ollama chat API."""

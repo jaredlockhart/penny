@@ -1,6 +1,7 @@
 """Signal implementation of MessageChannel."""
 
 import logging
+import re
 
 import httpx
 from pydantic import ValidationError
@@ -32,6 +33,26 @@ class SignalChannel(MessageChannel):
         self.http_client = httpx.AsyncClient(timeout=30.0)
         logger.info("Initialized Signal channel: url=%s, number=%s", api_url, phone_number)
 
+    @staticmethod
+    def _format_for_signal(text: str) -> str:
+        """Format text for signal-cli-rest-api.
+
+        signal-cli-rest-api supports markdown-style formatting:
+        - **bold** for bold
+        - *italic* for italic
+        - ~strikethrough~ for strikethrough (single tilde, not double)
+        - `monospace` for monospace
+        """
+        # Convert ~~strikethrough~~ to ~strikethrough~ (markdown uses double, signal uses single)
+        text = re.sub(r"~~(.+?)~~", r"~\1~", text)
+        # Remove markdown headings (keep the text)
+        text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+        # Convert markdown links [text](url) to just text (url)
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
+        # Collapse multiple blank lines
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
     async def send_message(
         self, recipient: str, message: str, attachments: list[str] | None = None
     ) -> bool:
@@ -40,6 +61,9 @@ class SignalChannel(MessageChannel):
         if not message or not message.strip():
             logger.error("Attempted to send empty message to %s", recipient)
             raise ValueError("Cannot send empty or whitespace-only message")
+
+        # Format for signal-cli-rest-api (supports markdown-style formatting)
+        message = self._format_for_signal(message)
 
         try:
             url = f"{self.api_url}/v2/send"
@@ -50,7 +74,7 @@ class SignalChannel(MessageChannel):
                 base64_attachments=attachments if attachments else None,
             )
 
-            logger.debug("Sending to %s: %s", url, request.model_dump())
+            logger.debug("Sending to %s: %s", url, request)
 
             response = await self.http_client.post(
                 url,

@@ -66,6 +66,15 @@ class PennyAgent:
         logger.info("Received shutdown signal, stopping agent...")
         self.running = False
 
+    async def _typing_loop(self, recipient: str, interval: float = 4.0) -> None:
+        """Send typing indicators on a loop until cancelled."""
+        try:
+            while True:
+                await self.channel.send_typing(recipient, True)
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            pass
+
     async def handle_message(self, envelope_data: dict) -> None:
         """Process an incoming message through the agent controller."""
         try:
@@ -88,13 +97,12 @@ class PennyAgent:
                 MessageDirection.INCOMING, message.sender, message.content, parent_id=parent_id
             )
 
-            await self.channel.send_typing(message.sender, True)
+            typing_task = asyncio.create_task(self._typing_loop(message.sender))
             try:
                 response = await self.controller.run(
                     current_message=message.content,
                     system_prompt=SYSTEM_PROMPT,
                     history=history,
-                    on_step=lambda _: self.channel.send_typing(message.sender, True),
                 )
 
                 answer = (
@@ -112,6 +120,7 @@ class PennyAgent:
                     message.sender, answer, attachments=response.attachments or None
                 )
             finally:
+                typing_task.cancel()
                 await self.channel.send_typing(message.sender, False)
 
         except Exception as e:
@@ -269,27 +278,30 @@ class PennyAgent:
             ]
 
             try:
-                await self.channel.send_typing(recipient, True)
-                response = await self.controller.run(
-                    current_message=CONTINUE_PROMPT,
-                    system_prompt=SYSTEM_PROMPT,
-                    history=history,
-                )
+                typing_task = asyncio.create_task(self._typing_loop(recipient))
+                try:
+                    response = await self.controller.run(
+                        current_message=CONTINUE_PROMPT,
+                        system_prompt=SYSTEM_PROMPT,
+                        history=history,
+                    )
 
-                answer = response.answer.strip() if response.answer else None
-                if not answer:
-                    continue
+                    answer = response.answer.strip() if response.answer else None
+                    if not answer:
+                        continue
 
-                self.db.log_message(
-                    MessageDirection.OUTGOING,
-                    self.config.signal_number,
-                    answer,
-                    parent_id=leaf.id,
-                )
-                await self.channel.send_message(
-                    recipient, answer, attachments=response.attachments or None
-                )
-                await self.channel.send_typing(recipient, False)
+                    self.db.log_message(
+                        MessageDirection.OUTGOING,
+                        self.config.signal_number,
+                        answer,
+                        parent_id=leaf.id,
+                    )
+                    await self.channel.send_message(
+                        recipient, answer, attachments=response.attachments or None
+                    )
+                finally:
+                    typing_task.cancel()
+                    await self.channel.send_typing(recipient, False)
             except Exception as e:
                 logger.exception("Error in spontaneous continuation: %s", e)
 

@@ -23,6 +23,8 @@ You send a message on Signal. Penny searches the web via Perplexity and finds a 
 - **Agent Loop**: Multi-step reasoning with tool calling (up to 5 steps), with duplicate tool call protection
 - **Search Result Cleaning**: Regex-based stripping of markdown and citations from Perplexity results before they reach the LLM
 - **Retry on Failure**: Ollama client retries up to 3 times on transient errors (e.g. malformed tool call JSON)
+- **Signal Text Formatting**: Supports bold, italic, strikethrough, and monospace via `text_mode: "styled"`
+- **Quote-Reply Context**: Handles Signal's markdown stripping and quote truncation for reliable thread reconstruction
 
 ## Architecture
 
@@ -175,10 +177,39 @@ CONTINUE_MAX_SECONDS=10800
 - `LOG_FILE`: Log file path (default: none)
 - `PERPLEXITY_API_KEY`: API key for web search (without this, the agent has no tools)
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
-- `SUMMARIZE_IDLE_SECONDS`: Idle time before summarizing threads (default: 30)
+- `SUMMARIZE_IDLE_SECONDS`: Idle time before summarizing threads (default: 300)
 - `CONTINUE_IDLE_SECONDS`: Idle time before spontaneous continuation is eligible (default: 1800)
 - `CONTINUE_MIN_SECONDS`: Minimum random delay between continuation attempts (default: 1800)
 - `CONTINUE_MAX_SECONDS`: Maximum random delay between continuation attempts (default: 10800)
+
+## Technical Notes
+
+### Signal Formatting
+
+signal-cli-rest-api supports markdown-style text formatting, but requires `text_mode: "styled"` in the request body:
+- `**bold**` → **bold**
+- `*italic*` → *italic*
+- `~strikethrough~` → ~~strikethrough~~ (note: single tilde, not double)
+- `` `monospace` `` → `monospace`
+
+### Quote-Reply Thread Reconstruction
+
+When a user quote-replies to a Penny message, Signal:
+1. Converts markdown to native formatting (so `**bold**` becomes plain bold)
+2. Strips all formatting when including the quoted text in the reply envelope
+3. Truncates the quoted text (often to ~100 characters)
+
+To reliably look up the original message:
+- Outgoing messages are stored with markdown stripped
+- Quoted text is stripped before lookup
+- Lookup uses prefix matching (`startswith`) instead of exact match
+
+### Performance
+
+With `gpt-oss:20b` and the current simplified prompt, typical response times are:
+- Tool call decisions: 2-4 seconds
+- Final answer generation: 5-24 seconds
+- Total end-to-end: 10-34 seconds per message
 
 ## Inspiration
 

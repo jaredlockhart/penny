@@ -12,6 +12,10 @@ class SearchResult(BaseModel):
     image_base64: str | None = None
     urls: list[str] = Field(default_factory=list)
 
+    def __str__(self) -> str:
+        image_summary = f"<image {len(self.image_base64)} chars>" if self.image_base64 else "None"
+        return f"SearchResult(text={self.text}, urls={self.urls}, image_base64={image_summary})"
+
 
 class ToolCall(BaseModel):
     """A tool call from the model."""

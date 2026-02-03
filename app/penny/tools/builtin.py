@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import logging
+import re
 import time
 from datetime import UTC, datetime
 from functools import partial
@@ -18,6 +19,7 @@ from penny.constants import (
     IMAGE_MAX_RESULTS,
     NO_RESULTS_TEXT,
     PERPLEXITY_PRESET,
+    URL_BLOCKLIST_DOMAINS,
 )
 from penny.tools.base import Tool
 from penny.tools.models import SearchResult
@@ -48,6 +50,22 @@ class SearchTool(Tool):
     def __init__(self, perplexity_api_key: str, db=None):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
+
+    @staticmethod
+    def _clean_text(raw_text: str) -> str:
+        """Strip markdown formatting and citations from Perplexity results."""
+        text = raw_text
+        # Remove citations like [web:1], [page:2], [conversation_history:0]
+        text = re.sub(r"\[[\w:]+(?::\d+)?\]", "", text)
+        # Remove markdown headings
+        text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+        # Remove markdown bold/italic
+        text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
+        # Remove markdown bullet points
+        text = re.sub(r"^[-*]\s+", "", text, flags=re.MULTILINE)
+        # Collapse multiple blank lines
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     async def execute(self, **kwargs) -> Any:
         """Run Perplexity text search and DuckDuckGo image search in parallel."""
@@ -89,20 +107,30 @@ class SearchTool(Tool):
         )
 
         duration_ms = int((time.time() - start) * 1000)
-        result = response.output_text if response.output_text else NO_RESULTS_TEXT
+        raw_text = response.output_text if response.output_text else NO_RESULTS_TEXT
+        result = self._clean_text(raw_text)
 
-        # Extract citation URLs from response
-        urls: list[str] = []
+        # Extract the most-cited URL from response annotations
+        url_counts: dict[str, int] = {}
         for output in response.output:
             if isinstance(output, SearchResultsOutputItem):
                 for r in output.results:
-                    if r.url and r.url not in urls:
-                        urls.append(r.url)
+                    if r.url:
+                        url_counts.setdefault(r.url, 0)
             elif isinstance(output, MessageOutputItem):
                 for part in output.content:
                     for ann in part.annotations or []:
-                        if ann.url and ann.url not in urls:
-                            urls.append(ann.url)
+                        if ann.url:
+                            url_counts[ann.url] = url_counts.get(ann.url, 0) + 1
+
+        urls: list[str] = []
+        if url_counts:
+            filtered = {
+                u: c
+                for u, c in url_counts.items()
+                if not any(domain in u for domain in URL_BLOCKLIST_DOMAINS)
+            }
+            urls = sorted(filtered, key=filtered.get, reverse=True)[:5]  # type: ignore[arg-type]
 
         if self.db:
             self.db.log_search(query=query, response=result, duration_ms=duration_ms)

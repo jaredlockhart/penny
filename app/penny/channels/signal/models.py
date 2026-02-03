@@ -78,6 +78,18 @@ class SendMessageRequest(BaseModel):
     number: str
     recipients: list[str]
     base64_attachments: list[str] | None = None
+    text_mode: str | None = "styled"  # Enable markdown-style formatting
+
+    def __str__(self) -> str:
+        attachments = (
+            [f"<{len(a)} chars>" for a in self.base64_attachments]
+            if self.base64_attachments
+            else None
+        )
+        return (
+            f"SendMessageRequest(message={self.message!r}, number={self.number}, "
+            f"recipients={self.recipients}, base64_attachments={attachments})"
+        )
 
 
 class SendMessageResponse(BaseModel):
