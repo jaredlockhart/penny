@@ -127,7 +127,7 @@ class AgentController:
                     if tool_name in called_tools:
                         logger.info("Skipping repeat call to tool: %s", tool_name)
                         result_str = (
-                            "tool already called, do not call it again. write your response now."
+                            "Tool already called. DO NOT search again. Write your response NOW."
                         )
                         messages.append(
                             ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict()
@@ -149,7 +149,9 @@ class AgentController:
                             result_str += f"\n\nSources:\n{'\n'.join(tool_result.result.urls)}"
                         if tool_result.result.image_base64:
                             attachments.append(tool_result.result.image_base64)
-                        result_str += "\n\nNow write your response based on these results."
+                        result_str += (
+                            "\n\nDO NOT search again. Write your response NOW using these results."
+                        )
                     else:
                         result_str = str(tool_result.result)
                     logger.debug("Tool result: %s", result_str[:200])
