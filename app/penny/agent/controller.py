@@ -3,6 +3,7 @@
 import logging
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from penny.agent.models import ChatMessage, ControllerResponse, MessageRole
 from penny.agent.tool_executor import ToolExecutor
@@ -71,6 +72,8 @@ class AgentController:
         messages = []
 
         if system_prompt:
+            now = datetime.now(UTC).strftime("%A, %B %d, %Y at %I:%M %p UTC")
+            system_prompt = f"Current date and time: {now}\n\n{system_prompt}"
             messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_prompt).to_dict())
 
         if history:
@@ -107,8 +110,9 @@ class AgentController:
         tools = self.tool_registry.get_ollama_tools()
         logger.debug("Using %d tools", len(tools))
 
-        # Collect image attachments from tool results
+        # Collect image attachments and source URLs from tool results
         attachments: list[str] = []
+        source_urls: list[str] = []
         # Track tools that have been called to prevent repeat loops
         called_tools: set[str] = set()
 
@@ -164,6 +168,9 @@ class AgentController:
                         result_str = f"Error: {tool_result.error}"
                     elif isinstance(tool_result.result, SearchResult):
                         result_str = self._clean_search_results(tool_result.result.text)
+                        if tool_result.result.urls:
+                            source_urls.extend(tool_result.result.urls)
+                            result_str += f"\n\nSources:\n{'\n'.join(tool_result.result.urls)}"
                         if tool_result.result.image_base64:
                             attachments.append(tool_result.result.image_base64)
                     else:
@@ -187,6 +194,10 @@ class AgentController:
 
             if thinking:
                 logger.info("Extracted thinking text (length: %d)", len(thinking))
+
+            # Append a source URL if the model didn't include one
+            if source_urls and "http" not in content:
+                content += "\n\n" + source_urls[0]
 
             logger.info("Got final answer (length: %d)", len(content))
             return ControllerResponse(answer=content, thinking=thinking, attachments=attachments)

@@ -10,6 +10,7 @@ class SearchResult(BaseModel):
 
     text: str
     image_base64: str | None = None
+    urls: list[str] = Field(default_factory=list)
 
 
 class ToolCall(BaseModel):

@@ -40,6 +40,11 @@ class Config:
     ollama_max_retries: int = 3
     ollama_retry_delay: float = 0.5
 
+    # Spontaneous continuation
+    continue_idle_seconds: float = 1800.0
+    continue_min_seconds: float = 1800.0
+    continue_max_seconds: float = 10800.0
+
     @classmethod
     def load(cls) -> "Config":
         """Load configuration from .env file."""

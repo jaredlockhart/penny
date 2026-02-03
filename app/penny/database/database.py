@@ -169,6 +169,34 @@ class Database:
         except Exception as e:
             logger.error("Failed to set parent_summary: %s", e)
 
+    def get_conversation_leaves(self) -> list[MessageLog]:
+        """Get outgoing leaf messages eligible for spontaneous continuation.
+
+        Returns outgoing messages that have no children and whose parent is an
+        incoming (user) message. An already-continued thread has an outgoing
+        parent instead, so it's naturally excluded.
+        """
+        with self.get_session() as session:
+            # Subquery: all IDs that have a child message
+            has_child = select(MessageLog.parent_id).where(
+                MessageLog.parent_id.isnot(None)  # type: ignore[unresolved-attribute]
+            )
+            # Subquery: IDs of incoming messages
+            incoming_ids = select(MessageLog.id).where(
+                MessageLog.direction == MessageDirection.INCOMING
+            )
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.direction == MessageDirection.OUTGOING,
+                        MessageLog.id.notin_(has_child),  # type: ignore[unresolved-attribute]
+                        MessageLog.parent_id.in_(incoming_ids),  # type: ignore[unresolved-attribute]
+                    )
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
     def find_outgoing_by_content(self, content: str) -> MessageLog | None:
         """
         Find the most recent outgoing message matching the given content.

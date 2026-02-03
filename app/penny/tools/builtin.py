@@ -4,12 +4,14 @@ import asyncio
 import base64
 import logging
 import time
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
 import httpx
 from duckduckgo_search import DDGS
 from perplexity import Perplexity
+from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputItem
 
 from penny.constants import (
     IMAGE_DOWNLOAD_TIMEOUT,
@@ -57,20 +59,24 @@ class SearchTool(Tool):
         )
 
         # Handle text result
+        urls: list[str] = []
         if isinstance(text_result, Exception):
             text = f"Error performing search: {text_result}"
         else:
-            text = text_result
+            text, urls = text_result
 
         # Handle image result
         if isinstance(image_result, Exception) or image_result is None:
-            return SearchResult(text=text)
+            return SearchResult(text=text, urls=urls)
 
-        return SearchResult(text=text, image_base64=image_result)
+        return SearchResult(text=text, image_base64=image_result, urls=urls)
 
-    async def _search_text(self, query: str) -> str:
-        """Search via Perplexity."""
+    async def _search_text(self, query: str) -> tuple[str, list[str]]:
+        """Search via Perplexity. Returns (text, urls)."""
         start = time.time()
+
+        today = datetime.now(UTC).strftime("%B %d, %Y")
+        dated_query = f"[Today is {today}] {query}"
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
@@ -78,17 +84,30 @@ class SearchTool(Tool):
             partial(
                 self.perplexity.responses.create,
                 preset=PERPLEXITY_PRESET,
-                input=query,
+                input=dated_query,
             ),
         )
 
         duration_ms = int((time.time() - start) * 1000)
         result = response.output_text if response.output_text else NO_RESULTS_TEXT
 
+        # Extract citation URLs from response
+        urls: list[str] = []
+        for output in response.output:
+            if isinstance(output, SearchResultsOutputItem):
+                for r in output.results:
+                    if r.url and r.url not in urls:
+                        urls.append(r.url)
+            elif isinstance(output, MessageOutputItem):
+                for part in output.content:
+                    for ann in part.annotations or []:
+                        if ann.url and ann.url not in urls:
+                            urls.append(ann.url)
+
         if self.db:
             self.db.log_search(query=query, response=result, duration_ms=duration_ms)
 
-        return result
+        return result, urls
 
     async def _search_image(self, query: str) -> str | None:
         """Search for an image via DuckDuckGo and return base64 data."""

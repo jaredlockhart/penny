@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import random
 import signal
 import sys
 import time
@@ -14,7 +15,7 @@ from penny.agent import AgentController
 from penny.agent.models import MessageRole
 from penny.channels import MessageChannel, SignalChannel
 from penny.config import Config, setup_logging
-from penny.constants import SUMMARIZE_PROMPT, SYSTEM_PROMPT, MessageDirection
+from penny.constants import CONTINUE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT, MessageDirection
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.tools import SearchTool, ToolRegistry
@@ -215,6 +216,83 @@ class PennyAgent:
                 except Exception as e:
                     logger.error("Failed to summarize thread for message %d: %s", msg.id, e)
 
+    async def continue_conversations(self) -> None:
+        """Background loop: spontaneously continue a dangling conversation at random intervals."""
+        while self.running:
+            delay = random.uniform(
+                self.config.continue_min_seconds, self.config.continue_max_seconds
+            )
+            logger.debug("Next spontaneous continuation in %.0fs", delay)
+            await asyncio.sleep(delay)
+
+            if not self.running:
+                break
+
+            # Only continue conversations when idle
+            idle_seconds = time.monotonic() - self.last_message_time
+            if idle_seconds < self.config.continue_idle_seconds:
+                continue
+
+            leaves = self.db.get_conversation_leaves()
+            if not leaves:
+                logger.debug("No conversation leaves to continue")
+                continue
+
+            leaf = random.choice(leaves)
+            assert leaf.id is not None
+
+            # Walk thread to find the recipient (sender of an incoming message)
+            thread = self.db._walk_thread(leaf.id)
+            recipient = None
+            for msg in thread:
+                if msg.direction == MessageDirection.INCOMING:
+                    recipient = msg.sender
+                    break
+
+            if not recipient:
+                logger.debug("Could not find recipient for leaf message %d", leaf.id)
+                continue
+
+            logger.info(
+                "Spontaneously continuing conversation (leaf=%d, recipient=%s)", leaf.id, recipient
+            )
+
+            # Build thread history
+            history = [
+                (
+                    MessageRole.USER
+                    if m.direction == MessageDirection.INCOMING
+                    else MessageRole.ASSISTANT,
+                    m.content,
+                )
+                for m in thread
+            ]
+
+            try:
+                await self.channel.send_typing(recipient, True)
+                response = await self.controller.run(
+                    current_message=CONTINUE_PROMPT,
+                    system_prompt=SYSTEM_PROMPT,
+                    history=history,
+                )
+
+                answer = response.answer.strip() if response.answer else None
+                if not answer:
+                    continue
+
+                self.db.log_message(
+                    MessageDirection.OUTGOING,
+                    self.config.signal_number,
+                    answer,
+                    parent_id=leaf.id,
+                )
+                await self.channel.send_message(
+                    recipient, answer, attachments=response.attachments or None
+                )
+                await self.channel.send_typing(recipient, False)
+            except Exception as e:
+                logger.exception("Error in spontaneous continuation: %s", e)
+
     async def run(self) -> None:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
@@ -225,6 +303,7 @@ class PennyAgent:
             await asyncio.gather(
                 self.listen_for_messages(),
                 self.summarize_threads(),
+                self.continue_conversations(),
             )
         finally:
             await self.shutdown()
