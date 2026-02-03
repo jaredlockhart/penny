@@ -198,9 +198,9 @@ class PennyAgent:
                 # Format thread for summarization
                 thread_text = "\n".join(
                     "{}: {}".format(
-                        MessageRole.USER
+                        MessageRole.USER.value
                         if m.direction == MessageDirection.INCOMING
-                        else MessageRole.ASSISTANT,
+                        else MessageRole.ASSISTANT.value,
                         m.content,
                     )
                     for m in thread
