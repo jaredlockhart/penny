@@ -22,3 +22,15 @@ services:
       - SIGNAL_API_URL=http://signal-api:8080
     depends_on:
       - signal-api
+
+  discord:
+    build: ./app
+    restart: unless-stopped
+    command: ["python", "-m", "penny.channels.discord.agent"]
+    volumes:
+      - ./app/penny:/app/penny
+      - ./app/pyproject.toml:/app/pyproject.toml
+      - ./data:/app/data
+      - ./.env:/app/.env
+    environment:
+      - PYTHONUNBUFFERED=1

@@ -8,7 +8,7 @@ from typing import Any
 import discord
 
 from penny.channels.base import IncomingMessage, MessageChannel
-from penny.channels.discord.models import DiscordMessage, DiscordUser
+from penny.channels.discord.models import DiscordUser
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +41,11 @@ class DiscordChannel(MessageChannel):
         self.channel_id = channel_id
         self.on_message_callback = on_message_callback
 
-        # Set up Discord intents
+        # Set up Discord intents - need guilds to see channels
         intents = discord.Intents.default()
         intents.message_content = True
         intents.messages = True
+        intents.guilds = True
 
         # Create Discord client
         self.client = discord.Client(intents=intents)
@@ -66,13 +67,24 @@ class DiscordChannel(MessageChannel):
             logger.info("Discord bot logged in as %s", self.client.user)
             self._bot_user_id = str(self.client.user.id) if self.client.user else None
 
+            # Log available guilds and channels for debugging
+            logger.info("Bot is in %d guild(s)", len(self.client.guilds))
+            for guild in self.client.guilds:
+                logger.info("  Guild: %s (ID: %s)", guild.name, guild.id)
+                for ch in guild.text_channels[:5]:  # Log first 5 channels
+                    logger.info("    Channel: %s (ID: %s)", ch.name, ch.id)
+
             # Get the target channel
             channel = self.client.get_channel(int(self.channel_id))
             if channel and isinstance(channel, discord.TextChannel):
                 self._channel = channel
                 logger.info("Connected to channel: %s", channel.name)
             else:
-                logger.error("Could not find channel with ID: %s", self.channel_id)
+                logger.error(
+                    "Could not find channel with ID: %s. "
+                    "Make sure the bot is invited to the server and has access to this channel.",
+                    self.channel_id,
+                )
 
             self._ready.set()
 
@@ -126,13 +138,16 @@ class DiscordChannel(MessageChannel):
         await self._ready.wait()
         logger.info("Discord client is ready")
 
-    async def send_message(self, recipient: str, message: str) -> bool:
+    async def send_message(
+        self, recipient: str, message: str, attachments: list[str] | None = None
+    ) -> bool:
         """
         Send a message via Discord.
 
         Args:
             recipient: Channel ID (for Discord, we send to the configured channel)
             message: Message content
+            attachments: Optional list of base64-encoded attachments (not yet implemented)
 
         Returns:
             True if successful, False otherwise

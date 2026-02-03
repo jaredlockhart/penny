@@ -4,37 +4,38 @@ import asyncio
 import logging
 import os
 import signal
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 
+from penny.agent import AgentController
 from penny.channels.discord import DiscordChannel
 from penny.config import setup_logging
-from penny.memory import Database, build_context
+from penny.constants import SYSTEM_PROMPT, MessageDirection
+from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.tools import SearchTool, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class DiscordConfig:
     """Discord-specific configuration."""
 
-    def __init__(
-        self,
-        bot_token: str,
-        channel_id: str,
-        ollama_api_url: str,
-        ollama_model: str,
-        db_path: str,
-        log_level: str,
-    ):
-        self.bot_token = bot_token
-        self.channel_id = channel_id
-        self.ollama_api_url = ollama_api_url
-        self.ollama_model = ollama_model
-        self.db_path = db_path
-        self.log_level = log_level
+    bot_token: str
+    channel_id: str
+    ollama_api_url: str
+    ollama_model: str
+    db_path: str
+    log_level: str
+    log_file: str | None = None
+    perplexity_api_key: str | None = None
+    message_max_steps: int = 5
+    ollama_max_retries: int = 3
+    ollama_retry_delay: float = 0.5
 
     @classmethod
     def load(cls) -> "DiscordConfig":
@@ -60,18 +61,15 @@ class DiscordConfig:
         if not channel_id:
             raise ValueError("DISCORD_CHANNEL_ID environment variable is required")
 
-        ollama_api_url = os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434")
-        ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
-        log_level = os.getenv("LOG_LEVEL", "INFO")
-        db_path = os.getenv("DB_PATH", "/app/data/penny.db")
-
         return cls(
             bot_token=bot_token,
             channel_id=channel_id,
-            ollama_api_url=ollama_api_url,
-            ollama_model=ollama_model,
-            db_path=db_path,
-            log_level=log_level,
+            ollama_api_url=os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434"),
+            ollama_model=os.getenv("OLLAMA_MODEL", "llama3.2"),
+            db_path=os.getenv("DB_PATH", "/app/data/penny.db"),
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            log_file=os.getenv("LOG_FILE"),
+            perplexity_api_key=os.getenv("PERPLEXITY_API_KEY"),
         )
 
 
@@ -81,11 +79,36 @@ class DiscordAgent:
     def __init__(self, config: DiscordConfig):
         """Initialize the Discord agent."""
         self.config = config
-        self.ollama_client = OllamaClient(config.ollama_api_url, config.ollama_model)
 
         # Initialize database
         self.db = Database(config.db_path)
         self.db.create_tables()
+
+        # Initialize Ollama client with required parameters
+        self.ollama_client = OllamaClient(
+            config.ollama_api_url,
+            config.ollama_model,
+            db=self.db,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+        )
+
+        # Set up tool registry
+        tool_registry = ToolRegistry()
+        if config.perplexity_api_key:
+            tool_registry.register(
+                SearchTool(perplexity_api_key=config.perplexity_api_key, db=self.db)
+            )
+            logger.info("Search tool registered (Perplexity + image search)")
+        else:
+            logger.warning("No PERPLEXITY_API_KEY configured - agent will have no tools")
+
+        # Initialize agent controller
+        self.controller = AgentController(
+            ollama_client=self.ollama_client,
+            tool_registry=tool_registry,
+            max_steps=config.message_max_steps,
+        )
 
         # Create Discord channel with message callback
         self.channel = DiscordChannel(
@@ -105,47 +128,14 @@ class DiscordAgent:
         logger.info("Received shutdown signal, stopping agent...")
         self.running = False
 
-    async def _stream_and_send_response(self, sender: str, context: str) -> None:
-        """
-        Stream response from Ollama and send chunks to Discord.
-
-        Args:
-            sender: Username/ID of the sender (for logging)
-            context: Conversation context to send to Ollama
-        """
-        logger.info("Generating streaming response with Ollama...")
-        logger.debug("Context length: %d chars", len(context))
-        chunk_count = 0
-
+    async def _typing_loop(self, interval: float = 4.0) -> None:
+        """Send typing indicators on a loop until cancelled."""
         try:
-            async for chunk in self.ollama_client.stream_response(context):
-                # Turn off typing indicator before sending
-                await self.channel.send_typing(self.config.channel_id, False)
-
-                logger.debug("Sending chunk %d: %s...", chunk_count, chunk.line[:50])
-                await self.channel.send_message(self.config.channel_id, chunk.line)
-
-                # Log to database
-                self.db.log_message(
-                    "outgoing",
-                    "penny",
-                    sender,
-                    chunk.line,
-                    chunk_count,
-                    thinking=chunk.thinking,
-                )
-                chunk_count += 1
-
-                # Turn typing indicator back on for next chunk
+            while True:
                 await self.channel.send_typing(self.config.channel_id, True)
-
-            logger.info("Sent %d chunks to Discord", chunk_count)
-
-        except Exception as e:
-            logger.error("Error during streaming generation: %s", e)
-            error_msg = "Sorry, I encountered an error generating a response."
-            await self.channel.send_message(self.config.channel_id, error_msg)
-            self.db.log_message("outgoing", "penny", sender, error_msg)
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            pass
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -163,20 +153,42 @@ class DiscordAgent:
             logger.info("Received message from %s: %s", message.sender, message.content)
 
             # Log incoming message
-            self.db.log_message("incoming", message.sender, "penny", message.content)
+            incoming_id = self.db.log_message(
+                MessageDirection.INCOMING, message.sender, message.content
+            )
 
-            # Send typing indicator
-            await self.channel.send_typing(self.config.channel_id, True)
+            # Start typing indicator loop
+            typing_task = asyncio.create_task(self._typing_loop())
 
             try:
-                # Build context from conversation history
-                history = self.db.get_conversation_history(message.sender, "penny", limit=20)
-                context = build_context(history, message.content)
+                # Run through agent controller
+                response = await self.controller.run(
+                    current_message=message.content,
+                    system_prompt=SYSTEM_PROMPT,
+                    history=None,
+                )
 
-                # Stream and send response
-                await self._stream_and_send_response(message.sender, context)
+                answer = (
+                    response.answer.strip()
+                    if response.answer
+                    else "Sorry, I couldn't generate a response."
+                )
+
+                # Log outgoing message
+                self.db.log_message(
+                    MessageDirection.OUTGOING,
+                    "penny",
+                    answer,
+                    parent_id=incoming_id,
+                )
+
+                # Send response to Discord
+                await self.channel.send_message(
+                    self.config.channel_id, answer, attachments=response.attachments or None
+                )
+
             finally:
-                # Always stop typing indicator
+                typing_task.cancel()
                 await self.channel.send_typing(self.config.channel_id, False)
 
         except Exception as e:
@@ -211,7 +223,7 @@ async def main() -> None:
     """Main entry point for Discord agent."""
     # Load configuration
     config = DiscordConfig.load()
-    setup_logging(config.log_level)
+    setup_logging(config.log_level, config.log_file)
 
     # Create and run agent
     agent = DiscordAgent(config)
