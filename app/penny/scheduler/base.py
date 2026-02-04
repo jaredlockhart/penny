@@ -1,11 +1,16 @@
-"""Base classes for background task scheduling."""
+"""Background task scheduling."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from penny.agent import Agent
+
+logger = logging.getLogger(__name__)
 
 
 class Schedule:
@@ -32,3 +37,68 @@ class Schedule:
     def mark_complete(self) -> None:
         """Called after task execution completes."""
         pass
+
+
+class BackgroundScheduler:
+    """Unified scheduler for background tasks."""
+
+    def __init__(self, schedules: list[Schedule], tick_interval: float = 1.0):
+        """
+        Initialize the scheduler.
+
+        Args:
+            schedules: List of schedules in priority order (first checked first)
+            tick_interval: How often to check schedules in seconds
+        """
+        self._schedules = schedules
+        self._tick_interval = tick_interval
+        self._last_message_time = time.monotonic()
+        self._running = True
+        self._current_task: str | None = None
+
+    def notify_message(self) -> None:
+        """Called when a new message arrives. Resets all schedules."""
+        self._last_message_time = time.monotonic()
+        for schedule in self._schedules:
+            schedule.reset()
+        logger.debug("Scheduler: all schedules reset by incoming message")
+
+    def stop(self) -> None:
+        """Signal the scheduler to stop."""
+        self._running = False
+
+    async def run(self) -> None:
+        """Main scheduler loop."""
+        task_names = [s.agent.name for s in self._schedules]
+        logger.info("Background scheduler started with tasks: %s", task_names)
+
+        while self._running:
+            idle_seconds = time.monotonic() - self._last_message_time
+
+            # Find first schedule that fires
+            for schedule in self._schedules:
+                if schedule.should_run(idle_seconds):
+                    agent = schedule.agent
+                    self._current_task = agent.name
+                    logger.info("Running background task: %s", agent.name)
+
+                    try:
+                        did_work = await agent.execute()
+                        schedule.mark_complete()
+
+                        if did_work:
+                            logger.info("Background task completed: %s", agent.name)
+                        else:
+                            logger.debug("Background task had no work: %s", agent.name)
+
+                    except Exception as e:
+                        logger.exception("Background task failed: %s - %s", agent.name, e)
+                    finally:
+                        self._current_task = None
+
+                    # Only run one task per tick
+                    break
+
+            await asyncio.sleep(self._tick_interval)
+
+        logger.info("Background scheduler stopped")
