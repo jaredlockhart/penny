@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from penny.scheduler.base import Schedule
 
 if TYPE_CHECKING:
-    from penny.scheduler.base import ScheduledAgent
+    from penny.agent import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class IdleSchedule(Schedule):
     """Triggers after a fixed idle period."""
 
-    def __init__(self, agent: ScheduledAgent, idle_seconds: float):
+    def __init__(self, agent: Agent, idle_seconds: float):
         """
         Initialize idle schedule.
 
@@ -59,7 +59,11 @@ class TwoPhaseSchedule(Schedule):
     """Two-phase schedule: idle threshold, then random delay."""
 
     def __init__(
-        self, agent: ScheduledAgent, idle_seconds: float, min_delay: float, max_delay: float
+        self,
+        agent: Agent,
+        idle_seconds: float,
+        min_delay: float,
+        max_delay: float,
     ):
         """
         Initialize two-phase schedule.

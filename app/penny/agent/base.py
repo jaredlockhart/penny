@@ -24,6 +24,20 @@ class Agent:
 
     _instances: list[Agent] = []
 
+    @property
+    def name(self) -> str:
+        """Task name for logging. Override in subclasses."""
+        return self.__class__.__name__
+
+    async def execute(self) -> bool:
+        """
+        Execute a scheduled task. Override in subclasses.
+
+        Returns:
+            True if work was done, False otherwise
+        """
+        return False
+
     def __init__(
         self,
         system_prompt: str,
