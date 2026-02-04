@@ -52,13 +52,6 @@ class Config:
     continue_min_seconds: float = 1800.0
     continue_max_seconds: float = 10800.0
 
-    @property
-    def sender_id(self) -> str:
-        """Get the sender identifier for outgoing messages."""
-        if self.channel_type == "discord":
-            return "penny"
-        return self.signal_number or "unknown"
-
     @classmethod
     def load(cls) -> "Config":
         """Load configuration from .env file."""

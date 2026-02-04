@@ -1,8 +1,13 @@
 """Base abstractions for communication channels."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from pydantic import BaseModel
+
+# Type alias for message callback
+MessageCallback = Callable[[dict], Coroutine[Any, Any, None]]
 
 
 class IncomingMessage(BaseModel):
@@ -15,6 +20,22 @@ class IncomingMessage(BaseModel):
 
 class MessageChannel(ABC):
     """Abstract base class for communication channels."""
+
+    @property
+    @abstractmethod
+    def sender_id(self) -> str:
+        """Get the identifier for this channel's outgoing messages."""
+        pass
+
+    @abstractmethod
+    async def listen(self) -> None:
+        """
+        Start listening for messages and dispatch to callback.
+
+        This method blocks until the channel is closed. Messages are
+        dispatched to the callback provided at construction time.
+        """
+        pass
 
     @abstractmethod
     async def send_message(

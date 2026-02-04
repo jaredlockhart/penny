@@ -1,6 +1,6 @@
 """Pydantic models for Discord API structures."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DiscordUser(BaseModel):
@@ -16,19 +16,11 @@ class DiscordUser(BaseModel):
 class DiscordMessage(BaseModel):
     """Discord message structure from gateway events."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str
     channel_id: str = Field(alias="channel_id")
     author: DiscordUser
     content: str
     timestamp: str
     guild_id: str | None = Field(default=None, alias="guild_id")
-
-    class Config:
-        populate_by_name = True
-
-
-class DiscordMessagePayload(BaseModel):
-    """Payload for sending a Discord message."""
-
-    content: str
-    channel_id: str

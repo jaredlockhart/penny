@@ -1,7 +1,6 @@
 """Main agent loop for Penny."""
 
 import asyncio
-import json
 import logging
 import random
 import signal
@@ -9,11 +8,9 @@ import sys
 import time
 from typing import Any
 
-import websockets
-
 from penny.agent import Agent
 from penny.agent.models import MessageRole
-from penny.channels import DiscordChannel, MessageChannel, SignalChannel
+from penny.channels import MessageChannel, create_channel
 from penny.config import Config, setup_logging
 from penny.constants import CONTINUE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT, MessageDirection
 from penny.database import Database
@@ -28,7 +25,7 @@ class Penny:
     def __init__(self, config: Config, channel: MessageChannel | None = None):
         """Initialize the agent with configuration."""
         self.config = config
-        self.channel = channel or self._create_channel(config)
+        self.channel = channel or create_channel(config, on_message=self.handle_message)
         self.db = Database(config.db_path)
         self.db.create_tables()
 
@@ -76,20 +73,6 @@ class Penny:
 
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-
-    def _create_channel(self, config: Config) -> MessageChannel:
-        """Create the appropriate channel based on configuration."""
-        if config.channel_type == "discord":
-            assert config.discord_bot_token is not None
-            assert config.discord_channel_id is not None
-            return DiscordChannel(
-                token=config.discord_bot_token,
-                channel_id=config.discord_channel_id,
-                on_message_callback=self.handle_message,
-            )
-        else:
-            assert config.signal_number is not None
-            return SignalChannel(config.signal_api_url, config.signal_number)
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
@@ -142,7 +125,7 @@ class Penny:
                 )
                 self.db.log_message(
                     MessageDirection.OUTGOING,
-                    self.config.sender_id,
+                    self.channel.sender_id,
                     answer,
                     parent_id=incoming_id,
                 )
@@ -155,53 +138,6 @@ class Penny:
 
         except Exception as e:
             logger.exception("Error handling message: %s", e)
-
-    async def listen_for_messages(self) -> None:
-        """Listen for incoming messages from the channel."""
-        connection_url = self.channel.get_connection_url()
-
-        while self.running:
-            try:
-                logger.info("Connecting to channel: %s", connection_url)
-
-                async with websockets.connect(connection_url) as websocket:
-                    logger.info("Connected to Signal WebSocket")
-
-                    while self.running:
-                        try:
-                            message = await asyncio.wait_for(
-                                websocket.recv(),
-                                timeout=30.0,
-                            )
-
-                            logger.debug("Received raw WebSocket message: %s", message[:200])
-
-                            envelope = json.loads(message)
-                            logger.info("Parsed envelope with keys: %s", envelope.keys())
-
-                            asyncio.create_task(self.handle_message(envelope))
-
-                        except TimeoutError:
-                            logger.debug("WebSocket receive timeout, continuing...")
-                            continue
-
-                        except json.JSONDecodeError as e:
-                            logger.warning("Failed to parse message JSON: %s", e)
-                            continue
-
-            except websockets.exceptions.WebSocketException as e:
-                logger.error("WebSocket error: %s", e)
-                if self.running:
-                    logger.info("Reconnecting in 5 seconds...")
-                    await asyncio.sleep(5)
-
-            except Exception as e:
-                logger.exception("Unexpected error in message listener: %s", e)
-                if self.running:
-                    logger.info("Reconnecting in 5 seconds...")
-                    await asyncio.sleep(5)
-
-        logger.info("Message listener stopped")
 
     async def summarize_threads(self) -> None:
         """Background loop: summarize unsummarized threads when idle."""
@@ -352,7 +288,7 @@ class Penny:
 
                     self.db.log_message(
                         MessageDirection.OUTGOING,
-                        self.config.sender_id,
+                        self.channel.sender_id,
                         answer,
                         parent_id=leaf.id,
                     )
@@ -368,47 +304,17 @@ class Penny:
     async def run(self) -> None:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
-        logger.info("Channel type: %s", self.config.channel_type)
+        logger.info("Channel: %s (sender_id=%s)", self.config.channel_type, self.channel.sender_id)
         logger.info("Ollama model: %s", self.config.ollama_model)
 
         try:
-            if self.config.channel_type == "discord":
-                # Discord uses callback-based message handling
-                await self._run_discord()
-            else:
-                # Signal uses WebSocket-based message handling
-                await self._run_signal()
+            await asyncio.gather(
+                self.channel.listen(),
+                self.summarize_threads(),
+                self.continue_conversations(),
+            )
         finally:
             await self.shutdown()
-
-    async def _run_signal(self) -> None:
-        """Run with Signal channel (WebSocket-based)."""
-        logger.info("Signal number: %s", self.config.signal_number)
-        await asyncio.gather(
-            self.listen_for_messages(),
-            self.summarize_threads(),
-            self.continue_conversations(),
-        )
-
-    async def _run_discord(self) -> None:
-        """Run with Discord channel (callback-based)."""
-        assert isinstance(self.channel, DiscordChannel)
-        logger.info("Discord channel ID: %s", self.config.discord_channel_id)
-
-        # Start the Discord client (it handles its own connection)
-        await self.channel.start()
-
-        # Run background tasks while Discord client runs
-        await asyncio.gather(
-            self._discord_keepalive(),
-            self.summarize_threads(),
-            self.continue_conversations(),
-        )
-
-    async def _discord_keepalive(self) -> None:
-        """Keep the Discord agent running until shutdown."""
-        while self.running:
-            await asyncio.sleep(1)
 
     async def shutdown(self) -> None:
         """Clean shutdown of resources."""
@@ -427,10 +333,6 @@ async def main() -> None:
     logger.info("  channel_type: %s", config.channel_type)
     logger.info("  ollama_model: %s", config.ollama_model)
     logger.info("  ollama_api_url: %s", config.ollama_api_url)
-    if config.channel_type == "signal":
-        logger.info("  signal_api_url: %s", config.signal_api_url)
-    else:
-        logger.info("  discord_channel_id: %s", config.discord_channel_id)
     logger.info(
         "  continue_idle: %.0fs, continue_range: %.0fs-%.0fs",
         config.continue_idle_seconds,

@@ -1,12 +1,15 @@
 """Signal implementation of MessageChannel."""
 
+import asyncio
+import json
 import logging
 import re
 
 import httpx
+import websockets
 from pydantic import ValidationError
 
-from penny.channels.base import IncomingMessage, MessageChannel
+from penny.channels.base import IncomingMessage, MessageCallback, MessageChannel
 from penny.channels.signal.models import (
     HttpMethod,
     SendMessageRequest,
@@ -20,18 +23,73 @@ logger = logging.getLogger(__name__)
 class SignalChannel(MessageChannel):
     """Signal messenger channel implementation."""
 
-    def __init__(self, api_url: str, phone_number: str):
+    def __init__(self, api_url: str, phone_number: str, on_message: MessageCallback):
         """
         Initialize Signal channel.
 
         Args:
             api_url: Base URL for signal-cli-rest-api (e.g., http://localhost:8080)
             phone_number: Registered Signal phone number
+            on_message: Callback for incoming messages
         """
         self.api_url = api_url.rstrip("/")
         self.phone_number = phone_number
+        self._on_message = on_message
+        self._running = True
         self.http_client = httpx.AsyncClient(timeout=30.0)
         logger.info("Initialized Signal channel: url=%s, number=%s", api_url, phone_number)
+
+    @property
+    def sender_id(self) -> str:
+        """Get the identifier for outgoing messages (the Signal phone number)."""
+        return self.phone_number
+
+    async def listen(self) -> None:
+        """Listen for incoming messages via WebSocket."""
+        connection_url = self.get_connection_url()
+
+        while self._running:
+            try:
+                logger.info("Connecting to channel: %s", connection_url)
+
+                async with websockets.connect(connection_url) as websocket:
+                    logger.info("Connected to Signal WebSocket")
+
+                    while self._running:
+                        try:
+                            message = await asyncio.wait_for(
+                                websocket.recv(),
+                                timeout=30.0,
+                            )
+
+                            logger.debug("Received raw WebSocket message: %s", message[:200])
+
+                            envelope = json.loads(message)
+                            logger.info("Parsed envelope with keys: %s", envelope.keys())
+
+                            asyncio.create_task(self._on_message(envelope))
+
+                        except TimeoutError:
+                            logger.debug("WebSocket receive timeout, continuing...")
+                            continue
+
+                        except json.JSONDecodeError as e:
+                            logger.warning("Failed to parse message JSON: %s", e)
+                            continue
+
+            except websockets.exceptions.WebSocketException as e:
+                logger.error("WebSocket error: %s", e)
+                if self._running:
+                    logger.info("Reconnecting in 5 seconds...")
+                    await asyncio.sleep(5)
+
+            except Exception as e:
+                logger.exception("Unexpected error in message listener: %s", e)
+                if self._running:
+                    logger.info("Reconnecting in 5 seconds...")
+                    await asyncio.sleep(5)
+
+        logger.info("Message listener stopped")
 
     @staticmethod
     def _format_for_signal(text: str) -> str:
@@ -168,6 +226,7 @@ class SignalChannel(MessageChannel):
             return None
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Stop listening and close the HTTP client."""
+        self._running = False
         await self.http_client.aclose()
         logger.info("Signal channel closed")

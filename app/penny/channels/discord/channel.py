@@ -2,15 +2,16 @@
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine
-from typing import Any
 
 import discord
 
-from penny.channels.base import IncomingMessage, MessageChannel
-from penny.channels.discord.models import DiscordUser
+from penny.channels.base import IncomingMessage, MessageCallback, MessageChannel
+from penny.channels.discord.models import DiscordMessage, DiscordUser
 
 logger = logging.getLogger(__name__)
+
+# Sender ID for Discord bot messages in the database
+DISCORD_SENDER_ID = "penny"
 
 
 class DiscordChannel(MessageChannel):
@@ -23,23 +24,19 @@ class DiscordChannel(MessageChannel):
     the pull-based MessageChannel interface.
     """
 
-    def __init__(
-        self,
-        token: str,
-        channel_id: str,
-        on_message_callback: Callable[[dict], Coroutine[Any, Any, None]] | None = None,
-    ):
+    def __init__(self, token: str, channel_id: str, on_message: MessageCallback):
         """
         Initialize Discord channel.
 
         Args:
             token: Discord bot token
             channel_id: The channel ID to listen to and send messages in
-            on_message_callback: Optional callback for incoming messages
+            on_message: Callback for incoming messages
         """
-        self.token = token
+        self._token = token
         self.channel_id = channel_id
-        self.on_message_callback = on_message_callback
+        self._on_message = on_message
+        self._running = True
 
         # Set up Discord intents - need guilds to see channels
         intents = discord.Intents.default()
@@ -51,12 +48,16 @@ class DiscordChannel(MessageChannel):
         self.client = discord.Client(intents=intents)
         self._channel: discord.TextChannel | None = None
         self._ready = asyncio.Event()
-        self._bot_user_id: str | None = None
 
         # Register event handlers
         self._setup_events()
 
         logger.info("Initialized Discord channel for channel_id=%s", channel_id)
+
+    @property
+    def sender_id(self) -> str:
+        """Get the identifier for outgoing messages."""
+        return DISCORD_SENDER_ID
 
     def _setup_events(self) -> None:
         """Set up Discord event handlers."""
@@ -65,7 +66,6 @@ class DiscordChannel(MessageChannel):
         async def on_ready() -> None:
             """Called when the bot is ready."""
             logger.info("Discord bot logged in as %s", self.client.user)
-            self._bot_user_id = str(self.client.user.id) if self.client.user else None
 
             # Log available guilds and channels for debugging
             logger.info("Bot is in %d guild(s)", len(self.client.guilds))
@@ -105,38 +105,39 @@ class DiscordChannel(MessageChannel):
                 message.content[:100],
             )
 
-            # Convert to raw dict format for extract_message
-            raw_data = {
-                "id": str(message.id),
-                "channel_id": str(message.channel.id),
-                "author": {
-                    "id": str(message.author.id),
-                    "username": message.author.name,
-                    "discriminator": getattr(message.author, "discriminator", ""),
-                    "bot": message.author.bot,
-                    "global_name": getattr(message.author, "global_name", None),
-                },
-                "content": message.content,
-                "timestamp": message.created_at.isoformat(),
-                "guild_id": str(message.guild.id) if message.guild else None,
-            }
+            # Build structured message via Pydantic model
+            author = DiscordUser(
+                id=str(message.author.id),
+                username=message.author.name,
+                discriminator=getattr(message.author, "discriminator", ""),
+                bot=message.author.bot,
+                global_name=getattr(message.author, "global_name", None),
+            )
+            discord_message = DiscordMessage(
+                id=str(message.id),
+                channel_id=str(message.channel.id),
+                author=author,
+                content=message.content,
+                timestamp=message.created_at.isoformat(),
+                guild_id=str(message.guild.id) if message.guild else None,
+            )
+            raw_data = discord_message.model_dump(by_alias=True)
 
-            # Call the message callback if set
-            if self.on_message_callback:
-                await self.on_message_callback(raw_data)
+            # Dispatch to message callback
+            await self._on_message(raw_data)
 
-    async def start(self) -> None:
-        """
-        Start the Discord client.
-
-        This should be called to begin listening for messages.
-        The client runs in the background.
-        """
+    async def listen(self) -> None:
+        """Start listening for messages via Discord gateway."""
         logger.info("Starting Discord client...")
-        asyncio.create_task(self.client.start(self.token))
+        asyncio.create_task(self.client.start(self._token))
+
         # Wait for the client to be ready
         await self._ready.wait()
-        logger.info("Discord client is ready")
+        logger.info("Discord client is ready, channel_id=%s", self.channel_id)
+
+        # Keep running until shutdown
+        while self._running:
+            await asyncio.sleep(1)
 
     async def send_message(
         self, recipient: str, message: str, attachments: list[str] | None = None
@@ -232,34 +233,22 @@ class DiscordChannel(MessageChannel):
             IncomingMessage if valid, None if should be ignored
         """
         try:
-            # Parse using Pydantic model
-            author_data = raw_data.get("author", {})
-            author = DiscordUser(
-                id=author_data.get("id", "unknown"),
-                username=author_data.get("username", "unknown"),
-                discriminator=author_data.get("discriminator", ""),
-                bot=author_data.get("bot", False),
-                global_name=author_data.get("global_name"),
-            )
+            # Parse and validate using Pydantic model
+            message = DiscordMessage.model_validate(raw_data)
 
-            # Ignore bot messages
-            if author.bot:
-                logger.debug("Ignoring bot message from %s", author.username)
+            # Ignore bot messages (own messages already filtered in on_message)
+            if message.author.bot:
+                logger.debug("Ignoring bot message from %s", message.author.username)
                 return None
 
-            # Ignore messages from ourselves
-            if self._bot_user_id and author.id == self._bot_user_id:
-                logger.debug("Ignoring own message")
-                return None
-
-            content = raw_data.get("content", "").strip()
+            content = message.content.strip()
 
             if not content:
-                logger.debug("Ignoring empty message from %s", author.username)
+                logger.debug("Ignoring empty message from %s", message.author.username)
                 return None
 
             # Use username as sender for readability in logs/db
-            sender = f"{author.username}#{author.id}"
+            sender = f"{message.author.username}#{message.author.id}"
 
             logger.info("Extracted Discord message - sender: %s, content: '%s'", sender, content)
 
@@ -271,7 +260,8 @@ class DiscordChannel(MessageChannel):
             return None
 
     async def close(self) -> None:
-        """Close Discord client."""
+        """Stop listening and close Discord client."""
+        self._running = False
         logger.info("Closing Discord client...")
         await self.client.close()
         logger.info("Discord channel closed")

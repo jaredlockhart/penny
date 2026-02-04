@@ -182,6 +182,11 @@ CONTINUE_MAX_SECONDS=10800
 - `CONTINUE_MIN_SECONDS`: Minimum random delay between continuation attempts (default: 1800)
 - `CONTINUE_MAX_SECONDS`: Maximum random delay between continuation attempts (default: 10800)
 
+## Code Style
+
+- **Pydantic for all structured data**: All structured data (API payloads, config, internal messages) must be brokered through Pydantic models — no raw dicts
+- **Constants for string literals**: All string literals must be defined as constants or enums — no magic strings in logic
+
 ## Technical Notes
 
 ### Signal Formatting
