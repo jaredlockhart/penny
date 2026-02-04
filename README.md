@@ -255,11 +255,18 @@ Penny auto-detects which channel to use based on configured credentials:
 
 ### Signal Formatting
 
-signal-cli-rest-api supports markdown-style text formatting, but requires `text_mode: "styled"` in the request body:
+signal-cli-rest-api supports markdown-style text formatting:
 - `**bold**` → **bold**
 - `*italic*` → *italic*
 - `~strikethrough~` → ~~strikethrough~~ (note: single tilde, not double)
 - `` `monospace` `` → `monospace`
+
+**Formatting pipeline** (`SignalChannel.prepare_outgoing`):
+1. **Table conversion**: Markdown tables are converted to bullet-point lists (tables don't render well in Signal)
+2. **Tilde escaping**: Regular tildes converted to tilde operator (U+223C) to prevent accidental strikethrough (e.g., "~$50" stays as-is)
+3. **Strikethrough**: Intentional `~~text~~` converted to Signal's single-tilde format
+4. **Heading removal**: Markdown `#` headings stripped (keeps text)
+5. **Link conversion**: `[text](url)` converted to `text (url)`
 
 ### Quote-Reply Thread Reconstruction
 
@@ -269,8 +276,9 @@ When a user quote-replies to a Penny message, Signal:
 3. Truncates the quoted text (often to ~100 characters)
 
 To reliably look up the original message:
-- Outgoing messages are stored with markdown stripped
-- Quoted text is stripped before lookup
+- Outgoing messages are stored with markdown stripped (in `Database.log_message`)
+- Tilde operators (U+223C) are normalized back to regular tildes for matching
+- Quoted text is stripped before lookup (in `Database.find_outgoing_by_content`)
 - Lookup uses prefix matching (`startswith`) instead of exact match
 
 ### Discord Specifics

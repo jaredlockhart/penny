@@ -20,10 +20,10 @@ class Database:
 
     @staticmethod
     def _strip_formatting(text: str) -> str:
-        """Strip markdown formatting for storage/lookup.
+        """Strip markdown formatting for quote lookup.
 
         Signal converts **bold**/etc. to native formatting, so quotes come back
-        as plain text. We store plain text to enable reliable matching.
+        as plain text. We strip these markers to enable reliable matching.
         """
         # Remove bold/italic markers
         text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
@@ -31,6 +31,9 @@ class Database:
         text = re.sub(r"~{1,2}(.+?)~{1,2}", r"\1", text)
         # Remove monospace
         text = re.sub(r"`(.+?)`", r"\1", text)
+        # Normalize tilde operator (U+223C) to regular tilde for consistent matching
+        # (Signal channel uses tilde operator to prevent accidental strikethrough)
+        text = text.replace("\u223c", "~")
         return text
 
     def __init__(self, db_path: str):
@@ -231,9 +234,7 @@ class Database:
         Returns:
             The matching MessageLog, or None
         """
-        # Strip formatting from quoted text to match stored plain text
         content = self._strip_formatting(content)
-
         with self.get_session() as session:
             return session.exec(
                 select(MessageLog)
@@ -260,6 +261,9 @@ class Database:
         """
         parent_msg = self.find_outgoing_by_content(quoted_text)
         if not parent_msg:
+            logger.warning(
+                "Could not find quoted message in database, thread context will be empty"
+            )
             return None, None
 
         if parent_msg.parent_summary:

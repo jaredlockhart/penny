@@ -74,13 +74,29 @@ class MessageChannel(ABC):
 
         Args:
             recipient: Identifier for the recipient (platform-specific)
-            message: Message content
+            message: Message content (already prepared via prepare_outgoing)
             attachments: Optional list of base64-encoded attachments
 
         Returns:
             True if successful, False otherwise
         """
         pass
+
+    def prepare_outgoing(self, text: str) -> str:
+        """
+        Prepare text for sending via this channel.
+
+        Override in subclasses to apply channel-specific formatting.
+        The result is both logged to the database and sent to the recipient,
+        so quote matching works correctly.
+
+        Args:
+            text: Raw text from the agent
+
+        Returns:
+            Text formatted for this channel
+        """
+        return text
 
     @abstractmethod
     async def send_typing(self, recipient: str, typing: bool) -> bool:
@@ -142,13 +158,16 @@ class MessageChannel(ABC):
         Returns:
             True if send was successful, False otherwise
         """
+        # Prepare content for this channel (formatting, escaping, etc.)
+        # We log the prepared content so quote matching works correctly
+        prepared = self.prepare_outgoing(content)
         self._db.log_message(
             MessageDirection.OUTGOING,
             self.sender_id,
-            content,
+            prepared,
             parent_id=parent_id,
         )
-        return await self.send_message(recipient, content, attachments)
+        return await self.send_message(recipient, prepared, attachments)
 
     async def handle_message(self, envelope_data: dict) -> None:
         """

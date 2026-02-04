@@ -105,8 +105,62 @@ class SignalChannel(MessageChannel):
 
         logger.info("Message listener stopped")
 
-    @staticmethod
-    def _format_for_signal(text: str) -> str:
+    # Regex pattern for markdown tables: header | separator | data rows
+    _TABLE_PATTERN = re.compile(
+        r"^(\|[^\n]+\|)\n"  # Header row
+        r"(\|[-:\s|]+\|)\n"  # Separator row
+        r"((?:\|[^\n]+\|\n?)+)",  # Data rows (one or more)
+        re.MULTILINE,
+    )
+
+    @classmethod
+    def _table_to_bullets(cls, text: str) -> str:
+        """Convert markdown tables to bullet points.
+
+        Transforms:
+            | Model | Price | Type   |
+            |-------|-------|--------|
+            | Foo   | $100  | Basic  |
+            | Bar   | $200  | Pro    |
+
+        Into:
+            **Foo**
+              • Price: $100
+              • Type: Basic
+
+            **Bar**
+              • Price: $200
+              • Type: Pro
+        """
+
+        def convert_table(match: re.Match[str]) -> str:
+            header_line, _, data_block = match.groups()
+            headers = [c.strip() for c in header_line.strip("|").split("|")]
+
+            result = []
+            for line in data_block.strip().split("\n"):
+                cells = [c.strip() for c in line.strip("|").split("|")]
+                if cells and cells[0]:
+                    # Strip existing bold markers to avoid malformed **text**
+                    title = cells[0].strip("*").strip()
+                    result.append(f"**{title}**")
+                    result.extend(
+                        f"  • **{h}**: {c}"
+                        for h, c in zip(headers[1:], cells[1:], strict=False)
+                        if c
+                    )
+                    result.append("")  # Blank line between entries
+
+            logger.info(
+                "Converted markdown table to bullets: %d columns, %d rows",
+                len(headers),
+                len(data_block.strip().split("\n")),
+            )
+            return "\n".join(result)
+
+        return cls._TABLE_PATTERN.sub(convert_table, text)
+
+    def prepare_outgoing(self, text: str) -> str:
         """Format text for signal-cli-rest-api.
 
         signal-cli-rest-api supports markdown-style formatting:
@@ -115,13 +169,16 @@ class SignalChannel(MessageChannel):
         - ~strikethrough~ for strikethrough (single tilde, not double)
         - `monospace` for monospace
         """
+        # Convert markdown tables to bullet points
+        text = self._table_to_bullets(text)
         # Use placeholder for intentional strikethrough to protect during escaping
         placeholder = "\x00STRIKE\x00"
         # Convert ~~strikethrough~~ to placeholder (markdown uses double tilde)
         text = re.sub(r"~~(.+?)~~", rf"{placeholder}\1{placeholder}", text)
-        # Escape remaining single tildes with zero-width space to prevent accidental strikethrough
-        # (e.g., "~50" or "~/home" shouldn't become strikethrough)
-        text = text.replace("~", "\u200b~")
+        # Replace remaining tildes with tilde operator (U+223C) to prevent accidental strikethrough
+        # (e.g., "~50" meaning "approximately 50" shouldn't become strikethrough)
+        # Zero-width space doesn't work - Signal ignores invisible characters
+        text = text.replace("~", "\u223c")
         # Restore intentional strikethrough as single tilde (Signal format)
         text = text.replace(placeholder, "~")
         # Remove markdown headings (keep the text)
@@ -140,9 +197,6 @@ class SignalChannel(MessageChannel):
         if not message or not message.strip():
             logger.error("Attempted to send empty message to %s", recipient)
             raise ValueError("Cannot send empty or whitespace-only message")
-
-        # Format for signal-cli-rest-api (supports markdown-style formatting)
-        message = self._format_for_signal(message)
 
         try:
             url = f"{self.api_url}/v2/send"
