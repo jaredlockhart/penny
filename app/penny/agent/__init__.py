@@ -1,17 +1,15 @@
 """Agent loop components."""
 
-from penny.agent.controller import AgentController
+from penny.agent.agent import Agent
 from penny.agent.models import (
     ChatMessage,
     ControllerResponse,
     MessageRole,
 )
-from penny.agent.tool_executor import ToolExecutor
 
 __all__ = [
-    "AgentController",
+    "Agent",
     "ChatMessage",
     "ControllerResponse",
     "MessageRole",
-    "ToolExecutor",
 ]

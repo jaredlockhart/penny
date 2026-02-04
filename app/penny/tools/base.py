@@ -1,9 +1,13 @@
 """Base classes for tools."""
 
+import asyncio
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from penny.tools.models import ToolDefinition
+from penny.tools.models import ToolCall, ToolDefinition, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class Tool(ABC):
@@ -76,3 +80,61 @@ class ToolRegistry:
     def get_ollama_tools(self) -> list[dict[str, Any]]:
         """Get all tools in Ollama format for tool calling."""
         return [tool.to_ollama_tool() for tool in self._tools.values()]
+
+
+class ToolExecutor:
+    """Executes tools with timeout and error handling."""
+
+    def __init__(self, registry: ToolRegistry, timeout: float = 30.0):
+        self.registry = registry
+        self.timeout = timeout
+
+    async def execute(self, tool_call: ToolCall) -> ToolResult:
+        """Execute a tool call."""
+        tool = self.registry.get(tool_call.tool)
+
+        if tool is None:
+            logger.error("Tool not found: %s", tool_call.tool)
+            return ToolResult(
+                tool=tool_call.tool,
+                result=None,
+                error=f"Tool '{tool_call.tool}' not found",
+                id=tool_call.id,
+            )
+
+        try:
+            logger.info("Executing tool: %s", tool_call.tool)
+            logger.debug("Tool arguments: %s", tool_call.arguments)
+
+            result = await asyncio.wait_for(
+                tool.execute(**tool_call.arguments),
+                timeout=self.timeout,
+            )
+
+            logger.info("Tool executed successfully: %s", tool_call.tool)
+            logger.debug("Tool result: %s", result)
+
+            return ToolResult(
+                tool=tool_call.tool,
+                result=result,
+                error=None,
+                id=tool_call.id,
+            )
+
+        except TimeoutError:
+            logger.error("Tool execution timeout: %s", tool_call.tool)
+            return ToolResult(
+                tool=tool_call.tool,
+                result=None,
+                error=f"Tool execution timeout after {self.timeout}s",
+                id=tool_call.id,
+            )
+
+        except Exception as e:
+            logger.exception("Tool execution error: %s", tool_call.tool)
+            return ToolResult(
+                tool=tool_call.tool,
+                result=None,
+                error=f"Tool execution error: {str(e)}",
+                id=tool_call.id,
+            )

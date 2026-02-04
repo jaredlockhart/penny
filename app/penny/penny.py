@@ -11,19 +11,18 @@ from typing import Any
 
 import websockets
 
-from penny.agent import AgentController
+from penny.agent import Agent
 from penny.agent.models import MessageRole
 from penny.channels import MessageChannel, SignalChannel
 from penny.config import Config, setup_logging
 from penny.constants import CONTINUE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT, MessageDirection
 from penny.database import Database
-from penny.ollama import OllamaClient
-from penny.tools import SearchTool, ToolRegistry
+from penny.tools import SearchTool
 
 logger = logging.getLogger(__name__)
 
 
-class PennyAgent:
+class Penny:
     """AI agent powered by Ollama via an agent controller."""
 
     def __init__(self, config: Config, channel: MessageChannel | None = None):
@@ -32,27 +31,43 @@ class PennyAgent:
         self.channel = channel or SignalChannel(config.signal_api_url, config.signal_number)
         self.db = Database(config.db_path)
         self.db.create_tables()
-        self.ollama_client = OllamaClient(
-            config.ollama_api_url,
-            config.ollama_model,
+
+        def search_tools():
+            if config.perplexity_api_key:
+                return [SearchTool(perplexity_api_key=config.perplexity_api_key, db=self.db)]
+            return []
+
+        self.message_agent = Agent(
+            system_prompt=SYSTEM_PROMPT,
+            model=config.ollama_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=search_tools(),
             db=self.db,
+            max_steps=config.message_max_steps,
             max_retries=config.ollama_max_retries,
             retry_delay=config.ollama_retry_delay,
         )
 
-        tool_registry = ToolRegistry()
-        if config.perplexity_api_key:
-            tool_registry.register(
-                SearchTool(perplexity_api_key=config.perplexity_api_key, db=self.db)
-            )
-            logger.info("Search tool registered (Perplexity + image search)")
-        else:
-            logger.warning("No PERPLEXITY_API_KEY configured - agent will have no tools")
-
-        self.controller = AgentController(
-            ollama_client=self.ollama_client,
-            tool_registry=tool_registry,
+        self.continue_agent = Agent(
+            system_prompt=SYSTEM_PROMPT,
+            model=config.ollama_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=search_tools(),
+            db=self.db,
             max_steps=config.message_max_steps,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+        )
+
+        self.summarize_agent = Agent(
+            system_prompt=SUMMARIZE_PROMPT,
+            model=config.ollama_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=[],
+            db=self.db,
+            max_steps=1,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
         )
 
         self.running = True
@@ -101,9 +116,8 @@ class PennyAgent:
 
             typing_task = asyncio.create_task(self._typing_loop(message.sender))
             try:
-                response = await self.controller.run(
-                    current_message=message.content,
-                    system_prompt=SYSTEM_PROMPT,
+                response = await self.message_agent.run(
+                    prompt=message.content,
                     history=history,
                 )
 
@@ -218,8 +232,8 @@ class PennyAgent:
                 )
 
                 try:
-                    response = await self.ollama_client.generate(f"{SUMMARIZE_PROMPT}{thread_text}")
-                    summary = response.content.strip()
+                    response = await self.summarize_agent.run(prompt=thread_text)
+                    summary = response.answer.strip()
                     self.db.set_parent_summary(msg.id, summary)
                     logger.info(
                         "Summarized thread for message %d (length: %d)", msg.id, len(summary)
@@ -313,9 +327,8 @@ class PennyAgent:
             try:
                 typing_task = asyncio.create_task(self._typing_loop(recipient))
                 try:
-                    response = await self.controller.run(
-                        current_message=CONTINUE_PROMPT,
-                        system_prompt=SYSTEM_PROMPT,
+                    response = await self.continue_agent.run(
+                        prompt=CONTINUE_PROMPT,
                         history=history,
                     )
 
@@ -357,7 +370,7 @@ class PennyAgent:
         """Clean shutdown of resources."""
         logger.info("Shutting down agent...")
         await self.channel.close()
-        await self.ollama_client.close()
+        await Agent.close_all()
         logger.info("Agent shutdown complete")
 
 
@@ -377,7 +390,7 @@ async def main() -> None:
         config.continue_max_seconds,
     )
 
-    agent = PennyAgent(config)
+    agent = Penny(config)
     await agent.run()
 
 
