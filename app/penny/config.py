@@ -12,9 +12,16 @@ from dotenv import load_dotenv
 class Config:
     """Application configuration loaded from .env file."""
 
-    # Signal/messaging configuration
-    signal_number: str
+    # Channel type: "signal" or "discord"
+    channel_type: str
+
+    # Signal configuration (required if channel_type is "signal")
+    signal_number: str | None
     signal_api_url: str
+
+    # Discord configuration (required if channel_type is "discord")
+    discord_bot_token: str | None
+    discord_channel_id: str | None
 
     # Ollama configuration
     ollama_api_url: str
@@ -45,6 +52,13 @@ class Config:
     continue_min_seconds: float = 1800.0
     continue_max_seconds: float = 10800.0
 
+    @property
+    def sender_id(self) -> str:
+        """Get the sender identifier for outgoing messages."""
+        if self.channel_type == "discord":
+            return "penny"
+        return self.signal_number or "unknown"
+
     @classmethod
     def load(cls) -> "Config":
         """Load configuration from .env file."""
@@ -59,10 +73,43 @@ class Config:
                 load_dotenv(env_path)
                 break
 
-        # Required fields
+        # Determine channel type based on which credentials are configured
         signal_number = os.getenv("SIGNAL_NUMBER")
-        if not signal_number:
-            raise ValueError("SIGNAL_NUMBER environment variable is required")
+        discord_bot_token = os.getenv("DISCORD_BOT_TOKEN")
+        discord_channel_id = os.getenv("DISCORD_CHANNEL_ID")
+
+        # Explicit channel type or auto-detect
+        channel_type = os.getenv("CHANNEL_TYPE", "").lower()
+        if not channel_type:
+            # Auto-detect based on which credentials are present
+            has_discord = (
+                discord_bot_token
+                and discord_bot_token != "your-bot-token-here"
+                and discord_channel_id
+            )
+            has_signal = signal_number and signal_number != "+1234567890"
+
+            if has_discord and not has_signal:
+                channel_type = "discord"
+            elif has_signal:
+                channel_type = "signal"
+            else:
+                raise ValueError(
+                    "No channel configured. Set either SIGNAL_NUMBER or "
+                    "DISCORD_BOT_TOKEN + DISCORD_CHANNEL_ID in .env"
+                )
+
+        # Validate required fields for the selected channel
+        if channel_type == "signal" and not signal_number:
+            raise ValueError("SIGNAL_NUMBER is required for Signal channel")
+        if channel_type == "discord":
+            if not discord_bot_token or discord_bot_token == "your-bot-token-here":
+                raise ValueError(
+                    "DISCORD_BOT_TOKEN is required for Discord channel. "
+                    "Get your bot token from https://discord.com/developers/applications"
+                )
+            if not discord_channel_id:
+                raise ValueError("DISCORD_CHANNEL_ID is required for Discord channel")
 
         # Optional fields with defaults
         signal_api_url = os.getenv("SIGNAL_API_URL", "http://localhost:8080")
@@ -79,8 +126,11 @@ class Config:
         continue_max_seconds = float(os.getenv("CONTINUE_MAX_SECONDS", "10800"))
 
         return cls(
+            channel_type=channel_type,
             signal_number=signal_number,
             signal_api_url=signal_api_url,
+            discord_bot_token=discord_bot_token,
+            discord_channel_id=discord_channel_id,
             ollama_api_url=ollama_api_url,
             ollama_model=ollama_model,
             perplexity_api_key=perplexity_api_key,

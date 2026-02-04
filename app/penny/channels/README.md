@@ -106,13 +106,44 @@ See the [`signal/`](./signal/) directory for a complete reference implementation
 - [`signal/models.py`](./signal/models.py) - Signal-specific Pydantic models
 - [`signal/__init__.py`](./signal/__init__.py) - Module exports
 
-## Template: Discord
+## Discord configuration
 
-See the [`discord/`](./discord/) directory for a starter template with TODOs for Discord integration.
+To use the Discord channel integration you need:
 
-## Notes
+- **A Discord bot token** (`DISCORD_BOT_TOKEN`)
+- **A target channel ID** (`DISCORD_CHANNEL_ID`)
 
-- The `recipient` parameter is platform-specific (could be phone number, user ID, channel ID, etc.)
-- The `IncomingMessage` model has `sender`, `content`, and optional `quoted_text` fields
-- Platform-specific models and logic should be kept in their respective `models.py` files
-- Each channel implementation is self-contained in its own subdirectory
+### Create and configure the bot
+
+1. Create an application in the Discord Developer Portal.
+2. In the **Bot** tab, click **Add Bot** and copy the bot token.
+3. Enable **Message Content Intent** under **Privileged Gateway Intents**.
+
+### Invite the bot to your server
+
+1. In **OAuth2**, generate an invite URL with these scopes:
+   - `bot`
+   - `applications.commands`
+2. Select the permissions you want the bot to have, then open the generated URL in your browser.
+3. Authorise the bot for your server while logged into your Discord account.
+
+### Allow the bot to read/write in the target channel
+
+If the target channel is private:
+
+1. Right-click the channel and choose **Edit Channel**.
+2. Go to **Permissions**.
+3. Click **+** next to **Roles/Members** and add the bot.
+
+### Get the channel ID
+
+1. In Discord, enable **Developer Mode** within the admin settings.
+2. Right-click the channel and select **Copy Channel ID**.
+
+### Environment variables
+
+Set the following in your environment (see `.env.example`):
+
+- `DISCORD_BOT_TOKEN="..."`
+- `DISCORD_CHANNEL_ID=...`
+

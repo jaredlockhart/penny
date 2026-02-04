@@ -20,5 +20,3 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - SIGNAL_API_URL=http://signal-api:8080
-    depends_on:
-      - signal-api
