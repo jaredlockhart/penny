@@ -20,6 +20,9 @@ def create_channel(config: Config, on_message: MessageCallback) -> MessageChanne
 
     Returns:
         Configured MessageChannel instance
+
+    Raises:
+        ValueError: If channel type is unknown or required config is missing
     """
     if config.channel_type == CHANNEL_TYPE_DISCORD:
         if not config.discord_bot_token or not config.discord_channel_id:
@@ -29,7 +32,7 @@ def create_channel(config: Config, on_message: MessageCallback) -> MessageChanne
             channel_id=config.discord_channel_id,
             on_message=on_message,
         )
-    else:
+    elif config.channel_type == CHANNEL_TYPE_SIGNAL:
         if not config.signal_number:
             raise ValueError("Signal requires SIGNAL_NUMBER")
         return SignalChannel(
@@ -37,6 +40,8 @@ def create_channel(config: Config, on_message: MessageCallback) -> MessageChanne
             phone_number=config.signal_number,
             on_message=on_message,
         )
+    else:
+        raise ValueError(f"Unknown channel type: {config.channel_type}")
 
 
 __all__ = [
