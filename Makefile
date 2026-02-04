@@ -6,6 +6,7 @@ up:
 	docker-compose up --build
 
 test:
+	cp data/penny.db data/test.db 2>/dev/null || true
 	cp .env.test .env
 	docker-compose up --build
 
