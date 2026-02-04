@@ -115,8 +115,15 @@ class SignalChannel(MessageChannel):
         - ~strikethrough~ for strikethrough (single tilde, not double)
         - `monospace` for monospace
         """
-        # Convert ~~strikethrough~~ to ~strikethrough~ (markdown uses double, signal uses single)
-        text = re.sub(r"~~(.+?)~~", r"~\1~", text)
+        # Use placeholder for intentional strikethrough to protect during escaping
+        placeholder = "\x00STRIKE\x00"
+        # Convert ~~strikethrough~~ to placeholder (markdown uses double tilde)
+        text = re.sub(r"~~(.+?)~~", rf"{placeholder}\1{placeholder}", text)
+        # Escape remaining single tildes with zero-width space to prevent accidental strikethrough
+        # (e.g., "~50" or "~/home" shouldn't become strikethrough)
+        text = text.replace("~", "\u200b~")
+        # Restore intentional strikethrough as single tilde (Signal format)
+        text = text.replace(placeholder, "~")
         # Remove markdown headings (keep the text)
         text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
         # Convert markdown links [text](url) to just text (url)
