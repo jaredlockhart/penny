@@ -171,6 +171,7 @@ class MessageChannel(ABC):
                 # Agent handles context preparation internally
                 parent_id, response = await self._message_agent.handle(
                     content=message.content,
+                    sender=message.sender,
                     quoted_text=message.quoted_text,
                 )
 

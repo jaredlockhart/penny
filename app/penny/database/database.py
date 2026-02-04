@@ -3,13 +3,14 @@
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from penny.agent.models import MessageRole
 from penny.constants import MessageDirection
-from penny.database.models import MessageLog, PromptLog, SearchLog
+from penny.database.models import MessageLog, PromptLog, SearchLog, UserProfile
 
 logger = logging.getLogger(__name__)
 
@@ -299,3 +300,119 @@ class Database:
 
         history.reverse()
         return history
+
+    def get_user_messages(self, sender: str, limit: int = 100) -> list[MessageLog]:
+        """
+        Get incoming messages from a specific user.
+
+        Args:
+            sender: The user's identifier (phone number, discord ID, etc.)
+            limit: Maximum number of messages to return
+
+        Returns:
+            Most recent messages ordered by timestamp ascending (oldest first)
+        """
+        with self.get_session() as session:
+            # Get newest messages first, then reverse for chronological order
+            messages = list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == MessageDirection.INCOMING,
+                    )
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+            messages.reverse()  # Return in chronological order (oldest first)
+            return messages
+
+    def get_users_needing_profile_update(self) -> list[str]:
+        """
+        Get senders who have messages newer than their last profile update.
+
+        Returns:
+            List of sender IDs that need profile updates
+        """
+        with self.get_session() as session:
+            # Get all distinct incoming message senders
+            all_senders = list(
+                session.exec(
+                    select(MessageLog.sender)
+                    .where(MessageLog.direction == MessageDirection.INCOMING)
+                    .distinct()
+                ).all()
+            )
+
+            users_needing_update = []
+            for sender in all_senders:
+                profile = session.exec(
+                    select(UserProfile).where(UserProfile.sender == sender)
+                ).first()
+
+                latest_msg = session.exec(
+                    select(MessageLog.timestamp)
+                    .where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == MessageDirection.INCOMING,
+                    )
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .limit(1)
+                ).first()
+
+                if latest_msg and (not profile or profile.last_message_timestamp < latest_msg):
+                    users_needing_update.append(sender)
+
+            return users_needing_update
+
+    def get_user_profile(self, sender: str) -> UserProfile | None:
+        """
+        Get the cached profile for a user.
+
+        Args:
+            sender: The user's identifier
+
+        Returns:
+            The UserProfile if it exists, None otherwise
+        """
+        with self.get_session() as session:
+            return session.exec(select(UserProfile).where(UserProfile.sender == sender)).first()
+
+    def save_user_profile(
+        self,
+        sender: str,
+        profile_text: str,
+        last_message_timestamp: "datetime",
+    ) -> None:
+        """
+        Create or update a user profile.
+
+        Args:
+            sender: The user's identifier
+            profile_text: The generated profile content
+            last_message_timestamp: Timestamp of the newest message included
+        """
+        try:
+            with self.get_session() as session:
+                existing = session.exec(
+                    select(UserProfile).where(UserProfile.sender == sender)
+                ).first()
+
+                if existing:
+                    existing.profile_text = profile_text
+                    existing.updated_at = datetime.now(UTC)
+                    existing.last_message_timestamp = last_message_timestamp
+                    session.add(existing)
+                else:
+                    profile = UserProfile(
+                        sender=sender,
+                        profile_text=profile_text,
+                        last_message_timestamp=last_message_timestamp,
+                    )
+                    session.add(profile)
+
+                session.commit()
+                logger.debug("Saved profile for %s", sender)
+        except Exception as e:
+            logger.error("Failed to save profile: %s", e)

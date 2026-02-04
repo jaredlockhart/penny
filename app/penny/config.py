@@ -42,6 +42,7 @@ class Config:
     # Agent runtime configuration
     message_max_steps: int = 5
     summarize_idle_seconds: float = 300.0
+    profile_idle_seconds: float = 3600.0
 
     # Ollama retry configuration
     ollama_max_retries: int = 3
@@ -116,6 +117,9 @@ class Config:
         # Summarizer timing
         summarize_idle_seconds = float(os.getenv("SUMMARIZE_IDLE_SECONDS", "300"))
 
+        # Profile timing
+        profile_idle_seconds = float(os.getenv("PROFILE_IDLE_SECONDS", "3600"))
+
         # Followup timing
         followup_idle_seconds = float(os.getenv("FOLLOWUP_IDLE_SECONDS", "1800"))
         followup_min_seconds = float(os.getenv("FOLLOWUP_MIN_SECONDS", "1800"))
@@ -134,6 +138,7 @@ class Config:
             db_path=db_path,
             log_file=log_file,
             summarize_idle_seconds=summarize_idle_seconds,
+            profile_idle_seconds=profile_idle_seconds,
             followup_idle_seconds=followup_idle_seconds,
             followup_min_seconds=followup_min_seconds,
             followup_max_seconds=followup_max_seconds,

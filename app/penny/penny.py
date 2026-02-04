@@ -6,10 +6,10 @@ import signal
 import sys
 from typing import Any
 
-from penny.agent import Agent, FollowupAgent, MessageAgent, SummarizeAgent
+from penny.agent import Agent, FollowupAgent, MessageAgent, ProfileAgent, SummarizeAgent
 from penny.channels import MessageChannel, create_channel
 from penny.config import Config, setup_logging
-from penny.constants import SUMMARIZE_PROMPT, SYSTEM_PROMPT
+from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.scheduler import BackgroundScheduler, IdleSchedule, TwoPhaseSchedule
 from penny.tools import SearchTool
@@ -64,6 +64,17 @@ class Penny:
             retry_delay=config.ollama_retry_delay,
         )
 
+        self.profile_agent = ProfileAgent(
+            system_prompt=PROFILE_PROMPT,
+            model=config.ollama_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=[],
+            db=self.db,
+            max_steps=1,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+        )
+
         # Create channel (needs message_agent and db)
         self.channel = channel or create_channel(
             config=config,
@@ -74,9 +85,10 @@ class Penny:
         # Connect followup_agent to channel for sending responses
         self.followup_agent.set_channel(self.channel)
 
-        # Create schedules (priority order: summarize first - quick, continue second - slow)
+        # Create schedules (priority order: summarize first, profile second, followup last)
         schedules = [
             IdleSchedule(agent=self.summarize_agent, idle_seconds=config.summarize_idle_seconds),
+            IdleSchedule(agent=self.profile_agent, idle_seconds=config.profile_idle_seconds),
             TwoPhaseSchedule(
                 agent=self.followup_agent,
                 idle_seconds=config.followup_idle_seconds,
@@ -130,6 +142,7 @@ async def main() -> None:
     logger.info("  ollama_model: %s", config.ollama_model)
     logger.info("  ollama_api_url: %s", config.ollama_api_url)
     logger.info("  summarize_idle: %.0fs", config.summarize_idle_seconds)
+    logger.info("  profile_idle: %.0fs", config.profile_idle_seconds)
     logger.info(
         "  followup_idle: %.0fs, followup_range: %.0fs-%.0fs",
         config.followup_idle_seconds,

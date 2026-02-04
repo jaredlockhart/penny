@@ -1,6 +1,6 @@
 """Agent loop components."""
 
-from penny.agent.agents import FollowupAgent, MessageAgent, SummarizeAgent
+from penny.agent.agents import FollowupAgent, MessageAgent, ProfileAgent, SummarizeAgent
 from penny.agent.base import Agent
 from penny.agent.models import (
     ChatMessage,
@@ -15,5 +15,6 @@ __all__ = [
     "FollowupAgent",
     "MessageAgent",
     "MessageRole",
+    "ProfileAgent",
     "SummarizeAgent",
 ]

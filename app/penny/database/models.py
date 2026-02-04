@@ -45,3 +45,13 @@ class MessageLog(SQLModel, table=True):
     content: str
     parent_id: int | None = Field(default=None, foreign_key="messagelog.id", index=True)
     parent_summary: str | None = Field(default=None)  # Summarized thread history
+
+
+class UserProfile(SQLModel, table=True):
+    """Cached user profile generated from message history."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    sender: str = Field(unique=True, index=True)
+    profile_text: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    last_message_timestamp: datetime  # Timestamp of newest message included in profile
