@@ -1,12 +1,12 @@
 """Pydantic models for Ollama API structures."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class ChunkType(str, Enum):
+class ChunkType(StrEnum):
     """Types of chunks in streaming responses."""
 
     THINKING = "thinking"

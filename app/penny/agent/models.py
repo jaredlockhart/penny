@@ -1,11 +1,11 @@
 """Pydantic models and enums for agent loop."""
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class MessageRole(str, Enum):
+class MessageRole(StrEnum):
     """Valid message roles in chat conversations."""
 
     SYSTEM = "system"

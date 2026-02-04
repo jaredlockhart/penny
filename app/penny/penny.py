@@ -57,6 +57,7 @@ class PennyAgent:
 
         self.running = True
         self.last_message_time = time.monotonic()
+        self._continue_cancel: asyncio.Event = asyncio.Event()
 
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -79,6 +80,7 @@ class PennyAgent:
         """Process an incoming message through the agent controller."""
         try:
             self.last_message_time = time.monotonic()
+            self._continue_cancel.set()
 
             message = self.channel.extract_message(envelope_data)
             if message is None:
@@ -226,21 +228,52 @@ class PennyAgent:
                     logger.error("Failed to summarize thread for message %d: %s", msg.id, e)
 
     async def continue_conversations(self) -> None:
-        """Background loop: spontaneously continue a dangling conversation at random intervals."""
+        """Background loop: spontaneously continue a dangling conversation.
+
+        Logic:
+        1. Wait until idle for idle_time (reset if message received)
+        2. Start random timer between min and max (cancel if message received)
+        3. When timer completes, send continuation
+        """
         while self.running:
-            delay = random.uniform(
-                self.config.continue_min_seconds, self.config.continue_max_seconds
-            )
-            logger.debug("Next spontaneous continuation in %.0fs", delay)
-            await asyncio.sleep(delay)
+            # Phase 1: Wait for idle threshold
+            logger.info("Continuation: waiting for %.0fs idle", self.config.continue_idle_seconds)
+            while self.running:
+                self._continue_cancel.clear()
+                idle_seconds = time.monotonic() - self.last_message_time
+                if idle_seconds >= self.config.continue_idle_seconds:
+                    break
+                remaining = self.config.continue_idle_seconds - idle_seconds
+                try:
+                    await asyncio.wait_for(self._continue_cancel.wait(), timeout=remaining)
+                    # Message received, loop back to check idle again
+                    logger.info("Continuation: idle reset by incoming message")
+                    continue
+                except TimeoutError:
+                    # Idle threshold reached
+                    break
 
             if not self.running:
                 break
 
-            # Only continue conversations when idle
-            idle_seconds = time.monotonic() - self.last_message_time
-            if idle_seconds < self.config.continue_idle_seconds:
+            # Phase 2: Random delay timer (cancellable)
+            self._continue_cancel.clear()
+            delay = random.uniform(
+                self.config.continue_min_seconds, self.config.continue_max_seconds
+            )
+            logger.info("Continuation: idle threshold reached, timer started (%.0fs)", delay)
+            try:
+                await asyncio.wait_for(self._continue_cancel.wait(), timeout=delay)
+                # Message received, go back to phase 1
+                logger.info("Continuation: timer cancelled by incoming message")
                 continue
+            except TimeoutError:
+                # Timer completed
+                logger.info("Continuation: timer completed, sending message")
+                pass
+
+            if not self.running:
+                break
 
             leaves = self.db.get_conversation_leaves()
             if not leaves:
@@ -332,6 +365,17 @@ async def main() -> None:
     """Main entry point."""
     config = Config.load()
     setup_logging(config.log_level, config.log_file)
+
+    logger.info("Starting Penny with config:")
+    logger.info("  ollama_model: %s", config.ollama_model)
+    logger.info("  ollama_api_url: %s", config.ollama_api_url)
+    logger.info("  signal_api_url: %s", config.signal_api_url)
+    logger.info(
+        "  continue_idle: %.0fs, continue_range: %.0fs-%.0fs",
+        config.continue_idle_seconds,
+        config.continue_min_seconds,
+        config.continue_max_seconds,
+    )
 
     agent = PennyAgent(config)
     await agent.run()

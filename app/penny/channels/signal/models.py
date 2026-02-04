@@ -1,11 +1,11 @@
 """Pydantic models for Signal API message structures."""
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class HttpMethod(str, Enum):
+class HttpMethod(StrEnum):
     """HTTP methods for API requests."""
 
     PUT = "PUT"

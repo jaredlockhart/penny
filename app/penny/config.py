@@ -73,6 +73,11 @@ class Config:
         db_path = os.getenv("DB_PATH", "/app/data/penny.db")
         log_file = os.getenv("LOG_FILE")  # Optional, defaults to None
 
+        # Continuation timing
+        continue_idle_seconds = float(os.getenv("CONTINUE_IDLE_SECONDS", "1800"))
+        continue_min_seconds = float(os.getenv("CONTINUE_MIN_SECONDS", "1800"))
+        continue_max_seconds = float(os.getenv("CONTINUE_MAX_SECONDS", "10800"))
+
         return cls(
             signal_number=signal_number,
             signal_api_url=signal_api_url,
@@ -82,6 +87,9 @@ class Config:
             log_level=log_level,
             db_path=db_path,
             log_file=log_file,
+            continue_idle_seconds=continue_idle_seconds,
+            continue_min_seconds=continue_min_seconds,
+            continue_max_seconds=continue_max_seconds,
         )
 
 

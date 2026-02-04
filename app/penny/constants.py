@@ -1,9 +1,9 @@
 """Constants and prompts for Penny agent."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class MessageDirection(str, Enum):
+class MessageDirection(StrEnum):
     """Direction of a logged message."""
 
     INCOMING = "incoming"
