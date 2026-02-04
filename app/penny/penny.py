@@ -6,7 +6,14 @@ import signal
 import sys
 from typing import Any
 
-from penny.agent import Agent, FollowupAgent, MessageAgent, ProfileAgent, SummarizeAgent
+from penny.agent import (
+    Agent,
+    DiscoveryAgent,
+    FollowupAgent,
+    MessageAgent,
+    ProfileAgent,
+    SummarizeAgent,
+)
 from penny.channels import MessageChannel, create_channel
 from penny.config import Config, setup_logging
 from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
@@ -75,6 +82,17 @@ class Penny:
             retry_delay=config.ollama_retry_delay,
         )
 
+        self.discovery_agent = DiscoveryAgent(
+            system_prompt=SYSTEM_PROMPT,
+            model=config.ollama_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=search_tools(),
+            db=self.db,
+            max_steps=config.message_max_steps,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+        )
+
         # Create channel (needs message_agent and db)
         self.channel = channel or create_channel(
             config=config,
@@ -82,10 +100,11 @@ class Penny:
             db=self.db,
         )
 
-        # Connect followup_agent to channel for sending responses
+        # Connect agents that send messages to channel
         self.followup_agent.set_channel(self.channel)
+        self.discovery_agent.set_channel(self.channel)
 
-        # Create schedules (priority order: summarize first, profile second, followup last)
+        # Create schedules (priority order: summarize, profile, followup, discovery)
         schedules = [
             IdleSchedule(agent=self.summarize_agent, idle_seconds=config.summarize_idle_seconds),
             IdleSchedule(agent=self.profile_agent, idle_seconds=config.profile_idle_seconds),
@@ -94,6 +113,12 @@ class Penny:
                 idle_seconds=config.followup_idle_seconds,
                 min_delay=config.followup_min_seconds,
                 max_delay=config.followup_max_seconds,
+            ),
+            TwoPhaseSchedule(
+                agent=self.discovery_agent,
+                idle_seconds=config.discovery_idle_seconds,
+                min_delay=config.discovery_min_seconds,
+                max_delay=config.discovery_max_seconds,
             ),
         ]
         self.scheduler = BackgroundScheduler(schedules=schedules)
@@ -148,6 +173,12 @@ async def main() -> None:
         config.followup_idle_seconds,
         config.followup_min_seconds,
         config.followup_max_seconds,
+    )
+    logger.info(
+        "  discovery_idle: %.0fs, discovery_range: %.0fs-%.0fs",
+        config.discovery_idle_seconds,
+        config.discovery_min_seconds,
+        config.discovery_max_seconds,
     )
 
     agent = Penny(config)

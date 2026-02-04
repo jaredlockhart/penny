@@ -49,9 +49,14 @@ class Config:
     ollama_retry_delay: float = 0.5
 
     # Spontaneous followup
-    followup_idle_seconds: float = 1800.0
-    followup_min_seconds: float = 1800.0
-    followup_max_seconds: float = 10800.0
+    followup_idle_seconds: float = 1200.0
+    followup_min_seconds: float = 0.0
+    followup_max_seconds: float = 2400.0
+
+    # Discovery (sharing new things based on user interests)
+    discovery_idle_seconds: float = 1800.0
+    discovery_min_seconds: float = 0.0
+    discovery_max_seconds: float = 3600.0
 
     @classmethod
     def load(cls) -> "Config":
@@ -121,9 +126,14 @@ class Config:
         profile_idle_seconds = float(os.getenv("PROFILE_IDLE_SECONDS", "3600"))
 
         # Followup timing
-        followup_idle_seconds = float(os.getenv("FOLLOWUP_IDLE_SECONDS", "1800"))
-        followup_min_seconds = float(os.getenv("FOLLOWUP_MIN_SECONDS", "1800"))
-        followup_max_seconds = float(os.getenv("FOLLOWUP_MAX_SECONDS", "10800"))
+        followup_idle_seconds = float(os.getenv("FOLLOWUP_IDLE_SECONDS", "1200"))
+        followup_min_seconds = float(os.getenv("FOLLOWUP_MIN_SECONDS", "0"))
+        followup_max_seconds = float(os.getenv("FOLLOWUP_MAX_SECONDS", "2400"))
+
+        # Discovery timing
+        discovery_idle_seconds = float(os.getenv("DISCOVERY_IDLE_SECONDS", "1800"))
+        discovery_min_seconds = float(os.getenv("DISCOVERY_MIN_SECONDS", "0"))
+        discovery_max_seconds = float(os.getenv("DISCOVERY_MAX_SECONDS", "3600"))
 
         return cls(
             channel_type=channel_type,
@@ -142,6 +152,9 @@ class Config:
             followup_idle_seconds=followup_idle_seconds,
             followup_min_seconds=followup_min_seconds,
             followup_max_seconds=followup_max_seconds,
+            discovery_idle_seconds=discovery_idle_seconds,
+            discovery_min_seconds=discovery_min_seconds,
+            discovery_max_seconds=discovery_max_seconds,
         )
 
 

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class IdleSchedule(Schedule):
-    """Triggers after a fixed idle period."""
+    """Triggers after a fixed idle period, then waits for reset."""
 
     def __init__(self, agent: Agent, idle_seconds: float):
         """
@@ -29,6 +29,7 @@ class IdleSchedule(Schedule):
         """
         self.agent = agent
         self._idle_threshold = idle_seconds
+        self._fired = False
         logger.info(
             "IdleSchedule created for %s with threshold %.0fs",
             agent.name,
@@ -36,16 +37,18 @@ class IdleSchedule(Schedule):
         )
 
     def should_run(self, idle_seconds: float) -> bool:
-        """Check if idle threshold has been reached."""
+        """Check if idle threshold has been reached and hasn't fired yet."""
+        if self._fired:
+            return False
         return idle_seconds >= self._idle_threshold
 
     def reset(self) -> None:
-        """No state to reset."""
-        pass
+        """Reset fired state when a message arrives."""
+        self._fired = False
 
     def mark_complete(self) -> None:
-        """No post-completion action needed."""
-        pass
+        """Mark as fired so it won't run again until reset."""
+        self._fired = True
 
 
 class TwoPhaseState(StrEnum):

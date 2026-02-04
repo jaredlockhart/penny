@@ -379,6 +379,17 @@ class Database:
         with self.get_session() as session:
             return session.exec(select(UserProfile).where(UserProfile.sender == sender)).first()
 
+    def get_users_with_profiles(self) -> list[str]:
+        """
+        Get all users who have a profile.
+
+        Returns:
+            List of sender IDs that have profiles
+        """
+        with self.get_session() as session:
+            profiles = session.exec(select(UserProfile.sender)).all()
+            return list(profiles)
+
     def save_user_profile(
         self,
         sender: str,

@@ -80,7 +80,7 @@ class BackgroundScheduler:
                 if schedule.should_run(idle_seconds):
                     agent = schedule.agent
                     self._current_task = agent.name
-                    logger.info("Running background task: %s", agent.name)
+                    logger.debug("Running background task: %s", agent.name)
 
                     try:
                         did_work = await agent.execute()
@@ -88,8 +88,6 @@ class BackgroundScheduler:
 
                         if did_work:
                             logger.info("Background task completed: %s", agent.name)
-                        else:
-                            logger.debug("Background task had no work: %s", agent.name)
 
                     except Exception as e:
                         logger.exception("Background task failed: %s - %s", agent.name, e)

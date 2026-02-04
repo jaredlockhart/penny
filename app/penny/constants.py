@@ -36,6 +36,13 @@ FOLLOWUP_PROMPT = (
     "Keep it short, like texting a friend."
 )
 
+DISCOVERY_PROMPT = (
+    "Based on this user's interests, search for something new and interesting they'd enjoy. "
+    "Don't reference past conversations - just share a cool discovery out of the blue. "
+    "Open casually like 'yo check this out' or 'thought you might like this'. "
+    "Keep it short, like texting a friend."
+)
+
 SUMMARIZE_PROMPT = (
     "Summarize this conversation as concise bullet points. "
     "Keep as much information intact as possible. "
