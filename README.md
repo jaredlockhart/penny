@@ -1,8 +1,19 @@
 # Penny
 
+[![CI](https://github.com/jaredlockhart/penny/actions/workflows/check.yml/badge.svg)](https://github.com/jaredlockhart/penny/actions/workflows/check.yml)
+![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
+![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
+![Ollama](https://img.shields.io/badge/Ollama-local%20LLM-blueviolet)
+![Signal](https://img.shields.io/badge/Signal-messaging-3a76f0)
+![Discord](https://img.shields.io/badge/Discord-bot-5865f2)
+
 A local-first AI agent that communicates via Signal or Discord and runs entirely on your machine.
 
 **Author:** Jared Lockhart
+
+<p align="center">
+  <img src="penny.png" alt="Penny in action" width="600">
+</p>
 
 ## Overview
 
@@ -152,7 +163,8 @@ make typecheck   # Type check with ty
 
 All dev tool commands run in temporary Docker containers via `docker compose run --rm`, with source volume-mounted so changes write back to the host filesystem.
 
-## Configuration
+<details>
+<summary><h2>Configuration</h2></summary>
 
 Configuration is managed via a `.env` file in the project root:
 
@@ -241,7 +253,10 @@ Penny auto-detects which channel to use based on configured credentials:
 - `LOG_FILE`: Optional path to log file
 - `DB_PATH`: SQLite database location (default: /app/data/penny.db)
 
-## Discord Setup
+</details>
+
+<details>
+<summary><h2>Discord Setup</h2></summary>
 
 1. Create a Discord application at https://discord.com/developers/applications
 2. Create a bot for the application and copy the token
@@ -258,7 +273,10 @@ Penny auto-detects which channel to use based on configured credentials:
    DISCORD_CHANNEL_ID="your-channel-id"
    ```
 
-## Testing & CI
+</details>
+
+<details>
+<summary><h2>Testing & CI</h2></summary>
 
 Penny includes end-to-end integration tests that mock all external services:
 
@@ -278,12 +296,18 @@ Tests use mock servers and SDK patches:
 - `MockOllamaAsyncClient`: Configurable LLM responses
 - `MockPerplexity`, `MockDDGS`: Search API mocks
 
-## Code Style
+</details>
+
+<details>
+<summary><h2>Code Style</h2></summary>
 
 - **Pydantic for all structured data**: All structured data (API payloads, config, internal messages) must be brokered through Pydantic models — no raw dicts
 - **Constants for string literals**: All string literals must be defined as constants or enums — no magic strings in logic
 
-## Technical Notes
+</details>
+
+<details>
+<summary><h2>Technical Notes</h2></summary>
 
 ### Signal Formatting
 
@@ -318,6 +342,8 @@ To reliably look up the original message:
 - Messages are limited to 2000 characters (auto-chunked if longer)
 - Typing indicators auto-expire after ~10 seconds
 - Bot ignores its own messages and messages from other bots
+
+</details>
 
 ## License
 
