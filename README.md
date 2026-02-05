@@ -26,40 +26,23 @@ You send a message on Signal or Discord. Penny searches the web via Perplexity a
 
 ## Architecture
 
-### System Components
+### Message Flow Diagram
 
-```
-┌─────────────────────────────────────────────┐
-│            HOST ENVIRONMENT                  │
-│                                              │
-│  Signal: signal-cli-rest-api (port 8080)    │
-│    OR                                        │
-│  Discord: Bot via Discord Gateway            │
-│                                              │
-│  Ollama (port 11434)                        │
-│  Perplexity API (external)                  │
-│  SQLite: ./data/agent.db                    │
-│                                              │
-└──────────────┬───────────────────────────────┘
-               │ --network host
-        ┌──────▼────────┐
-        │  CONTAINER    │
-        │               │
-        │  Penny Agent  │
-        │  (Python)     │
-        │               │
-        │  - Channel    │
-        │    Listener   │
-        │  - Message    │
-        │    Agent      │
-        │  - Followup   │
-        │    Agent      │
-        │  - Summarize  │
-        │    Agent      │
-        │  - Scheduler  │
-        │  - SQLite     │
-        │    Logging    │
-        └───────────────┘
+```mermaid
+flowchart TD
+    User((User)) -->|"1. send message"| Channel[Signal / Discord]
+    Channel -->|"2. extract"| Penny[Penny Agent]
+    Penny -->|"3. prompt + tools"| Ollama[Ollama LLM]
+    Ollama -->|"4. tool call"| Search[SearchTool]
+    Search -->|"web search"| Perplexity[Perplexity API]
+    Search -->|"image search"| DDG[DuckDuckGo]
+    Search -->|"5. results"| Ollama
+    Ollama -->|"6. final response"| Penny
+    Penny -->|"7. send response"| Channel
+    Channel -->|"8. reply + image"| User
+
+    Penny -.->|"log"| DB[(SQLite)]
+    Penny -.->|"schedule"| BG["Background Agents\nSummarize · Followup · Profile"]
 ```
 
 ### Agent Architecture
