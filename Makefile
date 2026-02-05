@@ -1,6 +1,6 @@
 DC = docker-compose run --rm penny
 
-.PHONY: up test prod kill fmt lint fix typecheck check
+.PHONY: up test prod kill build fmt lint fix typecheck check pytest
 
 up:
 	docker-compose up --build
@@ -17,20 +17,27 @@ prod:
 kill:
 	docker-compose down --rmi local --remove-orphans
 
-fmt:
+build:
+	docker-compose build penny
+
+fmt: build
 	$(DC) ruff format penny/
 
-lint:
+lint: build
 	$(DC) ruff check penny/
 
-fix:
+fix: build
 	$(DC) ruff format penny/
 	$(DC) ruff check --fix penny/
 
-typecheck:
+typecheck: build
 	$(DC) ty check penny/
 
-check:
+check: build
 	$(DC) ruff format --check penny/
 	$(DC) ruff check penny/
 	$(DC) ty check penny/
+	$(DC) pytest penny/tests/ -v
+
+pytest: build
+	$(DC) pytest penny/tests/ -v

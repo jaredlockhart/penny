@@ -143,7 +143,9 @@ make up
 ```bash
 make up          # Build and start all services (foreground)
 make kill        # Tear down containers and remove local images
-make check       # Format check (read-only), lint, and typecheck
+make build       # Build the Docker image
+make check       # Build, format check, lint, typecheck, and run tests
+make pytest      # Run integration tests
 make fmt         # Format with ruff
 make lint        # Lint with ruff
 make fix         # Format + autofix lint issues

@@ -23,7 +23,10 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "ruff>=0.8.0",
-    "ty>=0.1.0",
+    "ty>=0.0.1",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "aiohttp>=3.9.0",
 ]
 
 [tool.ruff]
@@ -49,6 +52,11 @@ ignore = [
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["penny/tests"]
 
 [tool.ty.environment]
 python = "/usr/local/bin/python"

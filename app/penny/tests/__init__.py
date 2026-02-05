@@ -1,0 +1,1 @@
+"""Penny test suite."""

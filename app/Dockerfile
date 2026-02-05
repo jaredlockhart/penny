@@ -12,8 +12,7 @@ WORKDIR /app
 
 # Copy dependency files and install dependencies (cached layer)
 COPY pyproject.toml ./
-RUN uv pip install --system -r pyproject.toml && \
-    uv pip install --system ruff ty
+RUN uv pip install --system -r pyproject.toml --group dev
 
 # Copy source
 COPY penny/ ./penny/
