@@ -131,6 +131,7 @@ class Database:
         sender: str,
         content: str,
         parent_id: int | None = None,
+        signal_timestamp: int | None = None,
     ) -> int | None:
         """
         Log a user message or agent response.
@@ -140,6 +141,7 @@ class Database:
             sender: Who sent the message (phone number or "agent")
             content: The message text
             parent_id: Optional id of the parent message in the thread
+            signal_timestamp: Optional Signal message timestamp (ms since epoch)
 
         Returns:
             The id of the created message, or None on failure
@@ -155,6 +157,7 @@ class Database:
                     sender=sender,
                     content=content,
                     parent_id=parent_id,
+                    signal_timestamp=signal_timestamp,
                 )
                 session.add(log)
                 session.commit()
@@ -164,6 +167,25 @@ class Database:
         except Exception as e:
             logger.error("Failed to log message: %s", e)
             return None
+
+    def set_signal_timestamp(self, message_id: int, signal_timestamp: int) -> None:
+        """
+        Update the Signal timestamp on a message after sending.
+
+        Args:
+            message_id: The message ID to update
+            signal_timestamp: The Signal timestamp (ms since epoch)
+        """
+        try:
+            with self.get_session() as session:
+                msg = session.get(MessageLog, message_id)
+                if msg:
+                    msg.signal_timestamp = signal_timestamp
+                    session.add(msg)
+                    session.commit()
+                    logger.debug("Set signal_timestamp on message %d", message_id)
+        except Exception as e:
+            logger.error("Failed to set signal_timestamp: %s", e)
 
     def get_unsummarized_messages(self) -> list[MessageLog]:
         """Get all outgoing messages that have a parent but no summary yet."""

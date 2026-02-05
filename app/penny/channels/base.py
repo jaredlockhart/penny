@@ -14,6 +14,7 @@ from penny.constants import MessageDirection
 if TYPE_CHECKING:
     from penny.agent import MessageAgent
     from penny.database import Database
+    from penny.database.models import MessageLog
     from penny.scheduler import BackgroundScheduler
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class IncomingMessage(BaseModel):
     sender: str
     content: str
     quoted_text: str | None = None
+    signal_timestamp: int | None = None  # Original Signal timestamp (ms since epoch)
 
 
 class MessageChannel(ABC):
@@ -67,8 +69,12 @@ class MessageChannel(ABC):
 
     @abstractmethod
     async def send_message(
-        self, recipient: str, message: str, attachments: list[str] | None = None
-    ) -> bool:
+        self,
+        recipient: str,
+        message: str,
+        attachments: list[str] | None = None,
+        quote_message: MessageLog | None = None,
+    ) -> int | None:
         """
         Send a message to a recipient.
 
@@ -76,9 +82,10 @@ class MessageChannel(ABC):
             recipient: Identifier for the recipient (platform-specific)
             message: Message content (already prepared via prepare_outgoing)
             attachments: Optional list of base64-encoded attachments
+            quote_message: Optional message to quote-reply to
 
         Returns:
-            True if successful, False otherwise
+            Signal timestamp (ms since epoch) on success, None on failure
         """
         pass
 
@@ -145,6 +152,7 @@ class MessageChannel(ABC):
         content: str,
         parent_id: int | None,
         attachments: list[str] | None = None,
+        quote_message: MessageLog | None = None,
     ) -> bool:
         """
         Log and send an outgoing message.
@@ -154,6 +162,7 @@ class MessageChannel(ABC):
             content: Message content
             parent_id: Parent message ID for thread linking
             attachments: Optional list of base64-encoded attachments
+            quote_message: Optional message to quote-reply to
 
         Returns:
             True if send was successful, False otherwise
@@ -161,13 +170,17 @@ class MessageChannel(ABC):
         # Prepare content for this channel (formatting, escaping, etc.)
         # We log the prepared content so quote matching works correctly
         prepared = self.prepare_outgoing(content)
-        self._db.log_message(
+        message_id = self._db.log_message(
             MessageDirection.OUTGOING,
             self.sender_id,
             prepared,
             parent_id=parent_id,
         )
-        return await self.send_message(recipient, prepared, attachments)
+        signal_timestamp = await self.send_message(recipient, prepared, attachments, quote_message)
+        # Store the Signal timestamp for future quote replies
+        if signal_timestamp and message_id:
+            self._db.set_signal_timestamp(message_id, signal_timestamp)
+        return signal_timestamp is not None
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -197,7 +210,11 @@ class MessageChannel(ABC):
 
                 # Log incoming message linked to parent
                 incoming_id = self._db.log_message(
-                    MessageDirection.INCOMING, message.sender, message.content, parent_id=parent_id
+                    MessageDirection.INCOMING,
+                    message.sender,
+                    message.content,
+                    parent_id=parent_id,
+                    signal_timestamp=message.signal_timestamp,
                 )
 
                 answer = (

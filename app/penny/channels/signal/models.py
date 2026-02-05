@@ -79,6 +79,10 @@ class SendMessageRequest(BaseModel):
     recipients: list[str]
     base64_attachments: list[str] | None = None
     text_mode: str | None = "styled"  # Enable markdown-style formatting
+    # Quote reply fields (optional)
+    quote_timestamp: int | None = None
+    quote_author: str | None = None
+    quote_message: str | None = None
 
     def __str__(self) -> str:
         attachments = (
@@ -86,9 +90,14 @@ class SendMessageRequest(BaseModel):
             if self.base64_attachments
             else None
         )
+        quote = (
+            f"quote_author={self.quote_author}, quote_timestamp={self.quote_timestamp}"
+            if self.quote_timestamp
+            else None
+        )
         return (
             f"SendMessageRequest(message={self.message!r}, number={self.number}, "
-            f"recipients={self.recipients}, base64_attachments={attachments})"
+            f"recipients={self.recipients}, base64_attachments={attachments}, {quote})"
         )
 
 

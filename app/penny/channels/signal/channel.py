@@ -16,6 +16,7 @@ from penny.channels.base import IncomingMessage, MessageChannel
 from penny.channels.signal.models import (
     HttpMethod,
     SendMessageRequest,
+    SendMessageResponse,
     SignalEnvelope,
     TypingIndicatorRequest,
 )
@@ -23,6 +24,7 @@ from penny.channels.signal.models import (
 if TYPE_CHECKING:
     from penny.agent import MessageAgent
     from penny.database import Database
+    from penny.database.models import MessageLog
 
 logger = logging.getLogger(__name__)
 
@@ -190,9 +192,17 @@ class SignalChannel(MessageChannel):
         return text.strip()
 
     async def send_message(
-        self, recipient: str, message: str, attachments: list[str] | None = None
-    ) -> bool:
-        """Send a message via Signal."""
+        self,
+        recipient: str,
+        message: str,
+        attachments: list[str] | None = None,
+        quote_message: MessageLog | None = None,
+    ) -> int | None:
+        """Send a message via Signal.
+
+        Returns:
+            Signal timestamp (ms since epoch) on success, None on failure
+        """
         # Validate message is not empty
         if not message or not message.strip():
             logger.error("Attempted to send empty message to %s", recipient)
@@ -200,29 +210,51 @@ class SignalChannel(MessageChannel):
 
         try:
             url = f"{self.api_url}/v2/send"
+
+            # Build quote fields if quote_message provided
+            quote_timestamp = None
+            quote_author = None
+            quote_text = None
+            if quote_message:
+                # Use the original Signal timestamp if available, otherwise fall back to datetime
+                if quote_message.signal_timestamp:
+                    quote_timestamp = quote_message.signal_timestamp
+                else:
+                    quote_timestamp = int(quote_message.timestamp.timestamp() * 1000)
+                quote_author = quote_message.sender
+                quote_text = quote_message.content
+
             request = SendMessageRequest(
                 message=message,
                 number=self.phone_number,
                 recipients=[recipient],
                 base64_attachments=attachments if attachments else None,
+                quote_timestamp=quote_timestamp,
+                quote_author=quote_author,
+                quote_message=quote_text,
             )
 
             logger.debug("Sending to %s: %s", url, request)
 
             response = await self.http_client.post(
                 url,
-                json=request.model_dump(),
+                json=request.model_dump(exclude_none=True),
             )
             response.raise_for_status()
 
+            # Parse response to get the timestamp
+            send_response = SendMessageResponse.model_validate(response.json())
+            timestamp = send_response.timestamp
+
             logger.info(
-                "Sent message to %s (length: %d), status: %d",
+                "Sent message to %s (length: %d, timestamp: %s), status: %d",
                 recipient,
                 len(message),
+                timestamp,
                 response.status_code,
             )
             logger.debug("Response: %s", response.text)
-            return True
+            return timestamp
 
         except httpx.HTTPError as e:
             logger.error("Failed to send Signal message: %s", e)
@@ -233,7 +265,7 @@ class SignalChannel(MessageChannel):
                     resp.status_code,
                     resp.text,
                 )
-            return False
+            return None
 
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """Send a typing indicator via Signal."""
@@ -289,7 +321,15 @@ class SignalChannel(MessageChannel):
             quoted_text = envelope.envelope.dataMessage.quote.text
             logger.info("Message includes quote: '%s'", quoted_text[:100])
 
-        return IncomingMessage(sender=sender, content=content, quoted_text=quoted_text)
+        # Extract the Signal timestamp for quote reply support
+        signal_timestamp = envelope.envelope.dataMessage.timestamp
+
+        return IncomingMessage(
+            sender=sender,
+            content=content,
+            quoted_text=quoted_text,
+            signal_timestamp=signal_timestamp,
+        )
 
     def _parse_envelope(self, envelope_data: dict) -> SignalEnvelope | None:
         """Parse a Signal WebSocket envelope."""

@@ -45,6 +45,7 @@ class MessageLog(SQLModel, table=True):
     content: str
     parent_id: int | None = Field(default=None, foreign_key="messagelog.id", index=True)
     parent_summary: str | None = Field(default=None)  # Summarized thread history
+    signal_timestamp: int | None = Field(default=None)  # Original Signal timestamp (ms since epoch)
 
 
 class UserProfile(SQLModel, table=True):

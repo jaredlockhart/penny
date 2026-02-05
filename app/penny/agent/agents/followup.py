@@ -78,6 +78,7 @@ class FollowupAgent(Agent):
                 answer,
                 parent_id=leaf.id,
                 attachments=response.attachments or None,
+                quote_message=leaf,
             )
             return True
         finally:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import discord
@@ -14,6 +15,7 @@ from penny.channels.discord.models import DiscordMessage, DiscordUser
 if TYPE_CHECKING:
     from penny.agent import MessageAgent
     from penny.database import Database
+    from penny.database.models import MessageLog
 
 logger = logging.getLogger(__name__)
 
@@ -154,8 +156,12 @@ class DiscordChannel(MessageChannel):
             await asyncio.sleep(1)
 
     async def send_message(
-        self, recipient: str, message: str, attachments: list[str] | None = None
-    ) -> bool:
+        self,
+        recipient: str,
+        message: str,
+        attachments: list[str] | None = None,
+        quote_message: MessageLog | None = None,
+    ) -> int | None:
         """
         Send a message via Discord.
 
@@ -163,9 +169,10 @@ class DiscordChannel(MessageChannel):
             recipient: Channel ID (for Discord, we send to the configured channel)
             message: Message content
             attachments: Optional list of base64-encoded attachments (not yet implemented)
+            quote_message: Optional message to quote-reply to (not yet implemented for Discord)
 
         Returns:
-            True if successful, False otherwise
+            Timestamp (ms since epoch) on success, None on failure
         """
         try:
             # Wait for client to be ready
@@ -173,7 +180,7 @@ class DiscordChannel(MessageChannel):
 
             if not self._channel:
                 logger.error("Discord channel not available")
-                return False
+                return None
 
             # Discord has a 2000 character limit per message
             if len(message) > 2000:
@@ -185,14 +192,15 @@ class DiscordChannel(MessageChannel):
                 await self._channel.send(message)
 
             logger.info("Sent message to Discord channel (length: %d)", len(message))
-            return True
+            # Return current time as synthetic timestamp (Discord doesn't use this)
+            return int(time.time() * 1000)
 
         except discord.HTTPException as e:
             logger.error("Failed to send Discord message: %s", e)
-            return False
+            return None
         except Exception as e:
             logger.error("Unexpected error sending Discord message: %s", e)
-            return False
+            return None
 
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """
