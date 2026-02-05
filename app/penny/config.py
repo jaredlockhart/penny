@@ -43,21 +43,21 @@ class Config:
     # Agent runtime configuration
     message_max_steps: int = 5
     summarize_idle_seconds: float = 300.0
-    profile_idle_seconds: float = 3600.0
+    profile_idle_seconds: float = 300.0
 
     # Ollama retry configuration
     ollama_max_retries: int = 3
     ollama_retry_delay: float = 0.5
 
     # Spontaneous followup
-    followup_idle_seconds: float = 1200.0
-    followup_min_seconds: float = 0.0
-    followup_max_seconds: float = 2400.0
+    followup_idle_seconds: float = 300.0
+    followup_min_seconds: float = 3600.0
+    followup_max_seconds: float = 7200.0
 
     # Discovery (sharing new things based on user interests)
-    discovery_idle_seconds: float = 1800.0
-    discovery_min_seconds: float = 0.0
-    discovery_max_seconds: float = 3600.0
+    discovery_idle_seconds: float = 300.0
+    discovery_min_seconds: float = 7200.0
+    discovery_max_seconds: float = 14400.0
 
     @classmethod
     def load(cls) -> "Config":
@@ -126,17 +126,17 @@ class Config:
         summarize_idle_seconds = float(os.getenv("SUMMARIZE_IDLE_SECONDS", "300"))
 
         # Profile timing
-        profile_idle_seconds = float(os.getenv("PROFILE_IDLE_SECONDS", "3600"))
+        profile_idle_seconds = float(os.getenv("PROFILE_IDLE_SECONDS", "300"))
 
         # Followup timing
-        followup_idle_seconds = float(os.getenv("FOLLOWUP_IDLE_SECONDS", "1200"))
-        followup_min_seconds = float(os.getenv("FOLLOWUP_MIN_SECONDS", "0"))
-        followup_max_seconds = float(os.getenv("FOLLOWUP_MAX_SECONDS", "2400"))
+        followup_idle_seconds = float(os.getenv("FOLLOWUP_IDLE_SECONDS", "300"))
+        followup_min_seconds = float(os.getenv("FOLLOWUP_MIN_SECONDS", "3600"))
+        followup_max_seconds = float(os.getenv("FOLLOWUP_MAX_SECONDS", "7200"))
 
         # Discovery timing
-        discovery_idle_seconds = float(os.getenv("DISCOVERY_IDLE_SECONDS", "1800"))
-        discovery_min_seconds = float(os.getenv("DISCOVERY_MIN_SECONDS", "0"))
-        discovery_max_seconds = float(os.getenv("DISCOVERY_MAX_SECONDS", "3600"))
+        discovery_idle_seconds = float(os.getenv("DISCOVERY_IDLE_SECONDS", "300"))
+        discovery_min_seconds = float(os.getenv("DISCOVERY_MIN_SECONDS", "7200"))
+        discovery_max_seconds = float(os.getenv("DISCOVERY_MAX_SECONDS", "14400"))
 
         return cls(
             channel_type=channel_type,

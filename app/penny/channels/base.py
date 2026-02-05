@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from penny.constants import MessageDirection
+from penny.database.models import MessageLog
 
 if TYPE_CHECKING:
     from penny.agent import MessageAgent
     from penny.database import Database
-    from penny.database.models import MessageLog
     from penny.scheduler import BackgroundScheduler
 
 logger = logging.getLogger(__name__)
@@ -222,11 +222,20 @@ class MessageChannel(ABC):
                     if response.answer
                     else "Sorry, I couldn't generate a response."
                 )
+                # Quote-reply to the user's incoming message
+                incoming_log = MessageLog(
+                    id=incoming_id,
+                    direction=MessageDirection.INCOMING,
+                    sender=message.sender,
+                    content=message.content,
+                    signal_timestamp=message.signal_timestamp,
+                )
                 await self.send_response(
                     message.sender,
                     answer,
                     parent_id=incoming_id,
                     attachments=response.attachments or None,
+                    quote_message=incoming_log,
                 )
             finally:
                 typing_task.cancel()

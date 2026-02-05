@@ -38,8 +38,10 @@ FOLLOWUP_PROMPT = (
 )
 
 DISCOVERY_PROMPT = (
-    "Based on this user's interests, search for something new and interesting they'd enjoy. "
+    "Pick ONE specific topic from this user's interests - not multiple, just one. "
+    "Search for something new and interesting about that single topic. "
     "Don't reference past conversations - just share a cool discovery out of the blue. "
+    "Stay focused on that one thing, don't mention their other interests. "
     "Open casually, keep it short, like texting a friend."
 )
 
