@@ -114,7 +114,7 @@ class Config:
         # Optional fields with defaults
         signal_api_url = os.getenv("SIGNAL_API_URL", "http://localhost:8080")
         ollama_api_url = os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434")
-        ollama_foreground_model = os.getenv("OLLAMA_FOREGROUND_MODEL", "llama3.2")
+        ollama_foreground_model = os.getenv("OLLAMA_FOREGROUND_MODEL", "gpt-oss:20b")
         # Background model defaults to foreground model if not specified
         ollama_background_model = os.getenv("OLLAMA_BACKGROUND_MODEL", ollama_foreground_model)
         perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")  # Optional

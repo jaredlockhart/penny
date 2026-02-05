@@ -20,7 +20,7 @@ class OllamaClient:
 
         Args:
             api_url: Base URL for Ollama API (e.g., http://localhost:11434)
-            model: Model name to use (e.g., llama3.2)
+            model: Model name to use (e.g., gpt-oss:20b)
             db: Optional Database instance for logging prompts
             max_retries: Number of retry attempts on failure
             retry_delay: Seconds between retries

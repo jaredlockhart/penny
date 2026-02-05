@@ -19,10 +19,13 @@ You send a message on Signal or Discord. Penny searches the web via Perplexity a
 - **Source URLs**: URLs extracted from Perplexity search results, presented as a Sources list so the model picks the most relevant one
 - **Thread-Based Context**: Quote-reply to continue a conversation; Penny walks the message chain to rebuild history
 - **Spontaneous Followups**: Penny randomly follows up on idle conversations by searching for something new about the topic (configurable idle timeout and random delay)
+- **Proactive Discovery**: Penny shares new content based on user interests — searches for things users would enjoy and sends them unprompted
+- **User Profiles**: Background task builds personality profiles from message history (interests, preferences, communication patterns) and injects them into conversation context
 - **Thread Summarization**: Background task summarizes idle threads via Ollama and caches the summary for future context
+- **Dual Model Support**: Separate models for user-facing messages (fast) and background tasks (smart) via `OLLAMA_FOREGROUND_MODEL` / `OLLAMA_BACKGROUND_MODEL`
 - **Full Logging**: Every Ollama prompt, Perplexity search, and user/agent message is logged to SQLite
 - **Agent Loop**: Multi-step reasoning with tool calling (up to 5 steps), with duplicate tool call protection
-- **Retry on Failure**: Ollama client retries up to 3 times on transient errors
+- **Retry on Failure**: Ollama client retries up to 3 times on transient errors (configurable)
 
 ## Architecture
 
@@ -52,15 +55,23 @@ Penny uses specialized agent subclasses for different tasks:
 - **MessageAgent**: Handles incoming user messages, prepares context, runs agentic loop
 - **SummarizeAgent**: Background task that summarizes conversation threads when idle
 - **FollowupAgent**: Background task that spontaneously follows up on conversations
+- **ProfileAgent**: Background task that builds user profiles from message history
+- **DiscoveryAgent**: Background task that shares new content based on user interests
 
 Each agent owns its own OllamaClient instance and can have its own tools and prompts.
 
 ### Scheduler System
 
-Background tasks are managed by a priority-based scheduler:
+Background tasks are managed by a priority-based scheduler that runs tasks in priority order:
 
-- **IdleSchedule**: Triggers after a fixed idle period (used for summarization)
-- **TwoPhaseSchedule**: Idle threshold + random delay (used for followups)
+1. **Summarize** (IdleSchedule) — runs first, quick task
+2. **Profile** (IdleSchedule) — generates user profiles
+3. **Followup** (TwoPhaseSchedule) — spontaneous conversation followups
+4. **Discovery** (TwoPhaseSchedule) — proactive content sharing
+
+Schedule types:
+- **IdleSchedule**: Triggers after a fixed idle period (used for summarization and profile generation)
+- **TwoPhaseSchedule**: Idle threshold + random delay (used for followups and discovery)
 
 The scheduler resets all timers when a new message arrives.
 
@@ -73,7 +84,7 @@ The scheduler resets all timers when a new message arrives.
    - Run agentic loop with tools (Perplexity search + DuckDuckGo images)
 4. Log messages to database (linked via parent_id)
 5. Send response back via channel with image attachment (if available)
-6. Background: when idle, summarize threads and follow up on conversations
+6. Background: when idle, summarize threads, generate user profiles, follow up on conversations, and share new discoveries
 
 ### Design Decisions
 
@@ -85,7 +96,7 @@ The scheduler resets all timers when a new message arrives.
 
 ## Data Model
 
-Penny stores three types of log data in SQLite:
+Penny stores four types of data in SQLite:
 
 **PromptLog**: Every call to Ollama
 - Model name, full message list (JSON), tool definitions (JSON), response (JSON)
@@ -99,6 +110,10 @@ Penny stores three types of log data in SQLite:
 - Direction (incoming/outgoing), sender, content
 - Parent ID (foreign key to self) for threading
 - Parent summary (cached thread summary for context reconstruction)
+
+**UserProfile**: Cached user personality profiles
+- Sender (unique), profile text, last update timestamp
+- Tracks `last_message_timestamp` so profiles are only regenerated when new messages exist
 
 ## Setup & Running
 
@@ -157,7 +172,8 @@ DISCORD_CHANNEL_ID="your-channel-id"
 
 # Ollama Configuration
 OLLAMA_API_URL="http://host.docker.internal:11434"
-OLLAMA_MODEL="llama3.2"
+OLLAMA_FOREGROUND_MODEL="gpt-oss:20b"    # Fast model for user-facing messages
+OLLAMA_BACKGROUND_MODEL="gpt-oss:20b"    # Smarter model for background tasks (defaults to foreground)
 
 # Perplexity Configuration
 PERPLEXITY_API_KEY="your-api-key"
@@ -170,9 +186,13 @@ LOG_LEVEL="INFO"
 # Agent behavior (optional, defaults shown)
 MESSAGE_MAX_STEPS=5
 SUMMARIZE_IDLE_SECONDS=300
-FOLLOWUP_IDLE_SECONDS=1800
-FOLLOWUP_MIN_SECONDS=1800
-FOLLOWUP_MAX_SECONDS=10800
+PROFILE_IDLE_SECONDS=3600
+FOLLOWUP_IDLE_SECONDS=1200
+FOLLOWUP_MIN_SECONDS=0
+FOLLOWUP_MAX_SECONDS=2400
+DISCOVERY_IDLE_SECONDS=1800
+DISCOVERY_MIN_SECONDS=0
+DISCOVERY_MAX_SECONDS=3600
 ```
 
 ### Channel Selection
@@ -197,7 +217,10 @@ Penny auto-detects which channel to use based on configured credentials:
 
 **Ollama:**
 - `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
-- `OLLAMA_MODEL`: Model name to use (default: llama3.2)
+- `OLLAMA_FOREGROUND_MODEL`: Fast model for user-facing messages (default: gpt-oss:20b)
+- `OLLAMA_BACKGROUND_MODEL`: Smarter model for background tasks (default: same as foreground)
+- `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
+- `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 
 **API Keys:**
 - `PERPLEXITY_API_KEY`: API key for web search (without this, the agent has no tools)
@@ -205,9 +228,13 @@ Penny auto-detects which channel to use based on configured credentials:
 **Behavior:**
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
 - `SUMMARIZE_IDLE_SECONDS`: Idle time before summarizing threads (default: 300)
-- `FOLLOWUP_IDLE_SECONDS`: Idle time before followup is eligible (default: 1800)
-- `FOLLOWUP_MIN_SECONDS`: Minimum random delay for followup (default: 1800)
-- `FOLLOWUP_MAX_SECONDS`: Maximum random delay for followup (default: 10800)
+- `PROFILE_IDLE_SECONDS`: Idle time before generating user profiles (default: 3600)
+- `FOLLOWUP_IDLE_SECONDS`: Idle time before followup is eligible (default: 1200)
+- `FOLLOWUP_MIN_SECONDS`: Minimum random delay for followup (default: 0)
+- `FOLLOWUP_MAX_SECONDS`: Maximum random delay for followup (default: 2400)
+- `DISCOVERY_IDLE_SECONDS`: Idle time before discovery is eligible (default: 1800)
+- `DISCOVERY_MIN_SECONDS`: Minimum random delay for discovery (default: 0)
+- `DISCOVERY_MAX_SECONDS`: Maximum random delay for discovery (default: 3600)
 
 **Logging:**
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)
