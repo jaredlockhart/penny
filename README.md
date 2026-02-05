@@ -12,7 +12,9 @@ A local-first AI agent that communicates via Signal or Discord and runs entirely
 **Author:** Jared Lockhart
 
 <p align="center">
-  <img src="penny.png" alt="Penny in action" width="300">
+  <img src="penny1.png" alt="Penny screenshot 1" width="300">
+  <img src="penny2.png" alt="Penny screenshot 2" width="300">
+  <img src="penny3.png" alt="Penny screenshot 3" width="300">
 </p>
 
 ## Overview
