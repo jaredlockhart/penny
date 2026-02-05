@@ -1,41 +1,31 @@
-"""Mock Ollama server for integration testing."""
+"""Patches for Ollama SDK."""
 
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from aiohttp import web
+import pytest
 
 
-class MockOllamaServer:
-    """Mock Ollama API server for testing."""
+class MockOllamaResponse:
+    """Mock response from Ollama chat API."""
 
-    def __init__(self) -> None:
+    def __init__(self, response_dict: dict):
+        self._data = response_dict
+
+    def model_dump(self) -> dict:
+        """Return response as dict (matches ollama SDK interface)."""
+        return self._data
+
+
+class MockOllamaAsyncClient:
+    """Mock for ollama.AsyncClient."""
+
+    def __init__(self, host: str | None = None):
+        self.host = host
         self.requests: list[dict] = []
-        self._app: web.Application | None = None
-        self._runner: web.AppRunner | None = None
-        self._site: web.TCPSite | None = None
-        self.port: int | None = None
         self._response_handler: Callable[[dict, int], dict] | None = None
         self._request_count = 0
-
-    async def start(self, port: int = 0) -> None:
-        """Start the mock server on specified port (0 = random available port)."""
-        self._app = web.Application()
-        self._app.router.add_post("/api/chat", self._handle_chat)
-
-        self._runner = web.AppRunner(self._app)
-        await self._runner.setup()
-        self._site = web.TCPSite(self._runner, "localhost", port)
-        await self._site.start()
-
-        sock = self._site._server.sockets[0]  # type: ignore[union-attr]
-        self.port = sock.getsockname()[1]
-
-    async def stop(self) -> None:
-        """Stop the mock server."""
-        if self._runner:
-            await self._runner.cleanup()
 
     def set_response_handler(self, handler: Callable[[dict, int], dict]) -> None:
         """
@@ -59,26 +49,28 @@ class MockOllamaServer:
 
         def handler(request: dict, count: int) -> dict:
             if count == 1:
-                # First request: return search tool call
                 return self._make_tool_call_response(request, "search", {"query": search_query})
-            # Subsequent requests: return final response
             return self._make_text_response(request, final_response)
 
         self._response_handler = handler
 
-    async def _handle_chat(self, request: web.Request) -> web.Response:
-        """Handle POST /api/chat requests."""
-        data = await request.json()
-        self.requests.append(data)
+    async def chat(
+        self,
+        model: str,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+    ) -> MockOllamaResponse:
+        """Mock chat() call."""
+        request_data = {"model": model, "messages": messages, "tools": tools}
+        self.requests.append(request_data)
         self._request_count += 1
 
         if self._response_handler:
-            response = self._response_handler(data, self._request_count)
+            response_dict = self._response_handler(request_data, self._request_count)
         else:
-            # Default: simple text response
-            response = self._make_text_response(data, "default mock response")
+            response_dict = self._make_text_response(request_data, "default mock response")
 
-        return web.json_response(response)
+        return MockOllamaResponse(response_dict)
 
     def _make_text_response(self, request: dict, content: str) -> dict:
         """Create a text-only response."""
@@ -125,3 +117,24 @@ class MockOllamaServer:
             "eval_count": 20,
             "eval_duration": 800000000,
         }
+
+
+# Shared instance for tests to configure and inspect
+_mock_client: MockOllamaAsyncClient | None = None
+
+
+def _create_mock_client(host: str | None = None) -> MockOllamaAsyncClient:
+    """Factory that returns the shared mock client instance."""
+    global _mock_client
+    if _mock_client is None:
+        _mock_client = MockOllamaAsyncClient(host)
+    return _mock_client
+
+
+@pytest.fixture
+def mock_ollama(monkeypatch: pytest.MonkeyPatch) -> MockOllamaAsyncClient:
+    """Fixture to patch ollama.AsyncClient with a mock."""
+    global _mock_client
+    _mock_client = MockOllamaAsyncClient()
+    monkeypatch.setattr("penny.ollama.client.ollama.AsyncClient", _create_mock_client)
+    return _mock_client

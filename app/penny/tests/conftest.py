@@ -3,9 +3,9 @@
 import pytest
 
 from penny.config import Config
-from penny.tests.mocks.ollama_server import MockOllamaServer
 
-# Re-export search patches so they can be used as fixtures
+# Re-export mock fixtures so they can be used directly in tests
+from penny.tests.mocks.ollama_patches import mock_ollama  # noqa: F401
 from penny.tests.mocks.search_patches import mock_search, mock_search_with_results  # noqa: F401
 from penny.tests.mocks.signal_server import MockSignalServer
 
@@ -23,22 +23,13 @@ async def signal_server():
 
 
 @pytest.fixture
-async def ollama_server():
-    """Start a mock Ollama server and yield it."""
-    server = MockOllamaServer()
-    await server.start()
-    yield server
-    await server.stop()
-
-
-@pytest.fixture
 def test_db(tmp_path):
     """Create a temporary test database path."""
     return str(tmp_path / "test.db")
 
 
 @pytest.fixture
-def test_config(signal_server, ollama_server, test_db):
+def test_config(signal_server, test_db):
     """
     Create a test Config pointing to mock servers.
 
@@ -50,7 +41,7 @@ def test_config(signal_server, ollama_server, test_db):
         signal_api_url=f"http://localhost:{signal_server.port}",
         discord_bot_token=None,
         discord_channel_id=None,
-        ollama_api_url=f"http://localhost:{ollama_server.port}",
+        ollama_api_url="http://localhost:11434",  # URL unused when mocked
         ollama_foreground_model="test-model",
         ollama_background_model="test-model",
         perplexity_api_key="test-api-key",

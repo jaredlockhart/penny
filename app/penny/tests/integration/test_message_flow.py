@@ -9,7 +9,7 @@ from penny.penny import Penny
 
 
 @pytest.mark.asyncio
-async def test_basic_message_flow(signal_server, ollama_server, test_config, mock_search):
+async def test_basic_message_flow(signal_server, mock_ollama, test_config, mock_search):
     """
     Test the complete message flow:
     1. User sends a message via Signal
@@ -20,7 +20,7 @@ async def test_basic_message_flow(signal_server, ollama_server, test_config, moc
     6. Penny sends reply via Signal
     """
     # Configure Ollama to return search tool call, then final response
-    ollama_server.set_default_flow(
+    mock_ollama.set_default_flow(
         search_query="test search query",
         final_response="here's what i found about your question! 🌟",
     )
@@ -52,16 +52,16 @@ async def test_basic_message_flow(signal_server, ollama_server, test_config, moc
         assert "here's what i found" in response["message"].lower()
 
         # Verify Ollama was called twice (tool call + final response)
-        assert len(ollama_server.requests) == 2, "Expected 2 Ollama calls (tool + final)"
+        assert len(mock_ollama.requests) == 2, "Expected 2 Ollama calls (tool + final)"
 
         # First request should have user message
-        first_request = ollama_server.requests[0]
+        first_request = mock_ollama.requests[0]
         messages = first_request.get("messages", [])
         user_messages = [m for m in messages if m.get("role") == "user"]
         assert any("weather" in m.get("content", "").lower() for m in user_messages)
 
         # Second request should include tool result
-        second_request = ollama_server.requests[1]
+        second_request = mock_ollama.requests[1]
         messages = second_request.get("messages", [])
         tool_messages = [m for m in messages if m.get("role") == "tool"]
         assert len(tool_messages) >= 1, "Second request should include tool result"
@@ -92,14 +92,14 @@ async def test_basic_message_flow(signal_server, ollama_server, test_config, moc
 
 
 @pytest.mark.asyncio
-async def test_message_without_tool_call(signal_server, ollama_server, test_config, mock_search):
+async def test_message_without_tool_call(signal_server, mock_ollama, test_config, mock_search):
     """Test handling a message where Ollama doesn't call a tool."""
 
     # Configure Ollama to return direct response (no tool call)
     def direct_response(request, count):
-        return ollama_server._make_text_response(request, "just a simple response! 🌟")
+        return mock_ollama._make_text_response(request, "just a simple response! 🌟")
 
-    ollama_server.set_response_handler(direct_response)
+    mock_ollama.set_response_handler(direct_response)
 
     penny = Penny(test_config)
     penny_task = asyncio.create_task(penny.run())
@@ -118,7 +118,7 @@ async def test_message_without_tool_call(signal_server, ollama_server, test_conf
         assert "simple response" in response["message"].lower()
 
         # Only one Ollama call (no tool)
-        assert len(ollama_server.requests) == 1
+        assert len(mock_ollama.requests) == 1
 
     finally:
         penny_task.cancel()
