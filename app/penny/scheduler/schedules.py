@@ -16,31 +16,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class IdleSchedule(Schedule):
-    """Triggers after a fixed idle period, then waits for reset."""
+class ImmediateSchedule(Schedule):
+    """Runs immediately when system becomes idle, then waits for reset."""
 
-    def __init__(self, agent: Agent, idle_seconds: float):
+    def __init__(self, agent: Agent):
         """
-        Initialize idle schedule.
+        Initialize immediate schedule.
 
         Args:
             agent: The agent to execute when schedule fires
-            idle_seconds: Seconds of idle time before triggering
         """
         self.agent = agent
-        self._idle_threshold = idle_seconds
         self._fired = False
-        logger.info(
-            "IdleSchedule created for %s with threshold %.0fs",
-            agent.name,
-            idle_seconds,
-        )
+        logger.info("ImmediateSchedule created for %s", agent.name)
 
-    def should_run(self, idle_seconds: float) -> bool:
-        """Check if idle threshold has been reached and hasn't fired yet."""
+    def should_run(self, is_idle: bool) -> bool:
+        """Check if system is idle and hasn't fired yet."""
         if self._fired:
             return False
-        return idle_seconds >= self._idle_threshold
+        return is_idle
 
     def reset(self) -> None:
         """Reset fired state when a message arrives."""
@@ -51,57 +45,53 @@ class IdleSchedule(Schedule):
         self._fired = True
 
 
-class TwoPhaseState(StrEnum):
-    """State machine for two-phase schedule."""
+class DelayedScheduleState(StrEnum):
+    """State machine for delayed schedule."""
 
     WAITING_IDLE = "waiting_idle"
     WAITING_DELAY = "waiting_delay"
 
 
-class TwoPhaseSchedule(Schedule):
-    """Two-phase schedule: idle threshold, then random delay."""
+class DelayedSchedule(Schedule):
+    """Runs after global idle threshold + random delay."""
 
     def __init__(
         self,
         agent: Agent,
-        idle_seconds: float,
         min_delay: float,
         max_delay: float,
     ):
         """
-        Initialize two-phase schedule.
+        Initialize delayed schedule.
 
         Args:
             agent: The agent to execute when schedule fires
-            idle_seconds: Phase 1 - seconds of idle time before entering delay phase
-            min_delay: Phase 2 - minimum random delay in seconds
-            max_delay: Phase 2 - maximum random delay in seconds
+            min_delay: Minimum random delay in seconds after system becomes idle
+            max_delay: Maximum random delay in seconds after system becomes idle
         """
         self.agent = agent
-        self._idle_threshold = idle_seconds
         self._min_delay = min_delay
         self._max_delay = max_delay
-        self._state = TwoPhaseState.WAITING_IDLE
+        self._state = DelayedScheduleState.WAITING_IDLE
         self._delay_start: float | None = None
         self._delay_target: float | None = None
         logger.info(
-            "TwoPhaseSchedule created for %s with idle=%.0fs, delay=%.0fs-%.0fs",
+            "DelayedSchedule created for %s with delay=%.0fs-%.0fs",
             agent.name,
-            idle_seconds,
             min_delay,
             max_delay,
         )
 
-    def should_run(self, idle_seconds: float) -> bool:
-        """Check if both phases are complete."""
-        if self._state == TwoPhaseState.WAITING_IDLE:
-            if idle_seconds >= self._idle_threshold:
+    def should_run(self, is_idle: bool) -> bool:
+        """Check if system is idle and random delay has elapsed."""
+        if self._state == DelayedScheduleState.WAITING_IDLE:
+            if is_idle:
                 # Transition to delay phase
-                self._state = TwoPhaseState.WAITING_DELAY
+                self._state = DelayedScheduleState.WAITING_DELAY
                 self._delay_start = time.monotonic()
                 self._delay_target = random.uniform(self._min_delay, self._max_delay)
                 logger.info(
-                    "TwoPhaseSchedule: idle threshold reached, delay timer started (%.0fs)",
+                    "DelayedSchedule: system idle, delay timer started (%.0fs)",
                     self._delay_target,
                 )
             return False
@@ -114,9 +104,9 @@ class TwoPhaseSchedule(Schedule):
 
     def reset(self) -> None:
         """Reset to initial state (waiting for idle)."""
-        if self._state == TwoPhaseState.WAITING_DELAY:
-            logger.info("TwoPhaseSchedule: reset by incoming message")
-        self._state = TwoPhaseState.WAITING_IDLE
+        if self._state == DelayedScheduleState.WAITING_DELAY:
+            logger.info("DelayedSchedule: reset by incoming message")
+        self._state = DelayedScheduleState.WAITING_IDLE
         self._delay_start = None
         self._delay_target = None
 

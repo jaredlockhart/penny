@@ -43,7 +43,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nSummarize · Followup · Profile"]
+    Penny -.->|"schedule"| BG["Background Agents\nSummarize · Followup · Profile · Discovery"]
 ```
 
 ### Agent Architecture
@@ -60,16 +60,18 @@ Each agent owns its own OllamaClient instance and can have its own tools and pro
 
 ### Scheduler System
 
-Background tasks are managed by a priority-based scheduler that runs tasks in priority order:
+Background tasks are managed by a priority-based scheduler with a global idle threshold. The scheduler runs tasks in priority order:
 
-1. **Summarize** (IdleSchedule) — runs first, quick task
-2. **Profile** (IdleSchedule) — generates user profiles
-3. **Followup** (TwoPhaseSchedule) — spontaneous conversation followups
-4. **Discovery** (TwoPhaseSchedule) — proactive content sharing
+1. **Summarize** (ImmediateSchedule) — runs first, quick task
+2. **Profile** (ImmediateSchedule) — generates user profiles
+3. **Followup** (DelayedSchedule) — spontaneous conversation followups
+4. **Discovery** (DelayedSchedule) — proactive content sharing
+
+**Global idle threshold** (default: 300s): All background tasks wait for the system to become idle before they can run.
 
 Schedule types:
-- **IdleSchedule**: Triggers after a fixed idle period (used for summarization and profile generation)
-- **TwoPhaseSchedule**: Idle threshold + random delay (used for followups and discovery)
+- **ImmediateSchedule**: Runs immediately when system becomes idle (used for summarization and profile generation)
+- **DelayedSchedule**: Runs after system becomes idle + random delay (used for followups and discovery)
 
 The scheduler resets all timers when a new message arrives.
 
@@ -184,14 +186,11 @@ LOG_LEVEL="INFO"
 
 # Agent behavior (optional, defaults shown)
 MESSAGE_MAX_STEPS=5
-SUMMARIZE_IDLE_SECONDS=300
-PROFILE_IDLE_SECONDS=3600
-FOLLOWUP_IDLE_SECONDS=1200
-FOLLOWUP_MIN_SECONDS=0
-FOLLOWUP_MAX_SECONDS=2400
-DISCOVERY_IDLE_SECONDS=1800
-DISCOVERY_MIN_SECONDS=0
-DISCOVERY_MAX_SECONDS=3600
+IDLE_SECONDS=300                    # Global idle threshold for background tasks
+FOLLOWUP_MIN_SECONDS=3600           # Random delay after idle (followup)
+FOLLOWUP_MAX_SECONDS=7200
+DISCOVERY_MIN_SECONDS=7200          # Random delay after idle (discovery)
+DISCOVERY_MAX_SECONDS=14400
 ```
 
 ### Channel Selection
@@ -226,14 +225,11 @@ Penny auto-detects which channel to use based on configured credentials:
 
 **Behavior:**
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
-- `SUMMARIZE_IDLE_SECONDS`: Idle time before summarizing threads (default: 300)
-- `PROFILE_IDLE_SECONDS`: Idle time before generating user profiles (default: 3600)
-- `FOLLOWUP_IDLE_SECONDS`: Idle time before followup is eligible (default: 1200)
-- `FOLLOWUP_MIN_SECONDS`: Minimum random delay for followup (default: 0)
-- `FOLLOWUP_MAX_SECONDS`: Maximum random delay for followup (default: 2400)
-- `DISCOVERY_IDLE_SECONDS`: Idle time before discovery is eligible (default: 1800)
-- `DISCOVERY_MIN_SECONDS`: Minimum random delay for discovery (default: 0)
-- `DISCOVERY_MAX_SECONDS`: Maximum random delay for discovery (default: 3600)
+- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 300)
+- `FOLLOWUP_MIN_SECONDS`: Minimum random delay after idle for followup (default: 3600)
+- `FOLLOWUP_MAX_SECONDS`: Maximum random delay after idle for followup (default: 7200)
+- `DISCOVERY_MIN_SECONDS`: Minimum random delay after idle for discovery (default: 7200)
+- `DISCOVERY_MAX_SECONDS`: Maximum random delay after idle for discovery (default: 14400)
 
 **Logging:**
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)

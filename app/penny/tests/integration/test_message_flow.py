@@ -131,7 +131,7 @@ async def test_summarize_background_task(
     2. Wait for idle time to pass
     3. Verify SummarizeAgent generates and stores a summary
     """
-    config = make_config(summarize_idle_seconds=0.5)
+    config = make_config(idle_seconds=0.5)
     setup_ollama_flow(
         search_query="weather forecast today",
         message_response="here's the weather info! 🌤️",
@@ -177,7 +177,7 @@ async def test_profile_background_task(
     2. Wait for idle time to pass
     3. Verify ProfileAgent generates and stores a user profile
     """
-    config = make_config(profile_idle_seconds=0.5)
+    config = make_config(idle_seconds=0.5)
     setup_ollama_flow(
         search_query="fun facts about cats",
         message_response="cats are amazing! 🐱",
@@ -218,7 +218,7 @@ async def test_followup_background_task(
     3. Verify FollowupAgent sends a spontaneous follow-up message
     """
     config = make_config(
-        followup_idle_seconds=0.3,
+        idle_seconds=0.3,
         followup_min_seconds=0.1,
         followup_max_seconds=0.2,
     )

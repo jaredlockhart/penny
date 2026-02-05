@@ -38,12 +38,9 @@ DEFAULT_TEST_CONFIG = {
     "perplexity_api_key": "test-api-key",
     "log_level": "DEBUG",
     # Disable background tasks by default
-    "summarize_idle_seconds": 99999.0,
-    "profile_idle_seconds": 99999.0,
-    "followup_idle_seconds": 99999.0,
+    "idle_seconds": 99999.0,
     "followup_min_seconds": 99999.0,
     "followup_max_seconds": 99999.0,
-    "discovery_idle_seconds": 99999.0,
     "discovery_min_seconds": 99999.0,
     "discovery_max_seconds": 99999.0,
     # Fast retries for tests

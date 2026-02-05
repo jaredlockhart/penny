@@ -18,7 +18,7 @@ from penny.channels import MessageChannel, create_channel
 from penny.config import Config, setup_logging
 from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
-from penny.scheduler import BackgroundScheduler, IdleSchedule, TwoPhaseSchedule
+from penny.scheduler import BackgroundScheduler, DelayedSchedule, ImmediateSchedule
 from penny.tools import SearchTool
 
 logger = logging.getLogger(__name__)
@@ -106,22 +106,23 @@ class Penny:
 
         # Create schedules (priority order: summarize, profile, followup, discovery)
         schedules = [
-            IdleSchedule(agent=self.summarize_agent, idle_seconds=config.summarize_idle_seconds),
-            IdleSchedule(agent=self.profile_agent, idle_seconds=config.profile_idle_seconds),
-            TwoPhaseSchedule(
+            ImmediateSchedule(agent=self.summarize_agent),
+            ImmediateSchedule(agent=self.profile_agent),
+            DelayedSchedule(
                 agent=self.followup_agent,
-                idle_seconds=config.followup_idle_seconds,
                 min_delay=config.followup_min_seconds,
                 max_delay=config.followup_max_seconds,
             ),
-            TwoPhaseSchedule(
+            DelayedSchedule(
                 agent=self.discovery_agent,
-                idle_seconds=config.discovery_idle_seconds,
                 min_delay=config.discovery_min_seconds,
                 max_delay=config.discovery_max_seconds,
             ),
         ]
-        self.scheduler = BackgroundScheduler(schedules=schedules)
+        self.scheduler = BackgroundScheduler(
+            schedules=schedules,
+            idle_threshold=config.idle_seconds,
+        )
 
         # Connect scheduler to channel for message notifications
         self.channel.set_scheduler(self.scheduler)
@@ -169,17 +170,14 @@ async def main() -> None:
     logger.info("  ollama_model: %s", config.ollama_foreground_model)
     logger.info("  ollama_background_model: %s", config.ollama_background_model)
     logger.info("  ollama_api_url: %s", config.ollama_api_url)
-    logger.info("  summarize_idle: %.0fs", config.summarize_idle_seconds)
-    logger.info("  profile_idle: %.0fs", config.profile_idle_seconds)
+    logger.info("  idle_threshold: %.0fs", config.idle_seconds)
     logger.info(
-        "  followup_idle: %.0fs, followup_range: %.0fs-%.0fs",
-        config.followup_idle_seconds,
+        "  followup_delay: %.0fs-%.0fs",
         config.followup_min_seconds,
         config.followup_max_seconds,
     )
     logger.info(
-        "  discovery_idle: %.0fs, discovery_range: %.0fs-%.0fs",
-        config.discovery_idle_seconds,
+        "  discovery_delay: %.0fs-%.0fs",
         config.discovery_min_seconds,
         config.discovery_max_seconds,
     )

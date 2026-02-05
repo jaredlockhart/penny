@@ -1,11 +1,11 @@
 """Background task scheduling components."""
 
 from penny.scheduler.base import BackgroundScheduler, Schedule
-from penny.scheduler.schedules import IdleSchedule, TwoPhaseSchedule
+from penny.scheduler.schedules import DelayedSchedule, ImmediateSchedule
 
 __all__ = [
     "BackgroundScheduler",
-    "IdleSchedule",
+    "DelayedSchedule",
+    "ImmediateSchedule",
     "Schedule",
-    "TwoPhaseSchedule",
 ]

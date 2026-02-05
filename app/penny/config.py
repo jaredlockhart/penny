@@ -42,20 +42,19 @@ class Config:
 
     # Agent runtime configuration
     message_max_steps: int = 5
-    summarize_idle_seconds: float = 300.0
-    profile_idle_seconds: float = 300.0
 
     # Ollama retry configuration
     ollama_max_retries: int = 3
     ollama_retry_delay: float = 0.5
 
-    # Spontaneous followup
-    followup_idle_seconds: float = 300.0
+    # Global idle threshold for background tasks
+    idle_seconds: float = 300.0
+
+    # Spontaneous followup (random delay after idle)
     followup_min_seconds: float = 3600.0
     followup_max_seconds: float = 7200.0
 
-    # Discovery (sharing new things based on user interests)
-    discovery_idle_seconds: float = 300.0
+    # Discovery (random delay after idle)
     discovery_min_seconds: float = 7200.0
     discovery_max_seconds: float = 14400.0
 
@@ -122,19 +121,14 @@ class Config:
         db_path = os.getenv("DB_PATH", "/app/data/penny.db")
         log_file = os.getenv("LOG_FILE")  # Optional, defaults to None
 
-        # Summarizer timing
-        summarize_idle_seconds = float(os.getenv("SUMMARIZE_IDLE_SECONDS", "300"))
+        # Global idle threshold for all background tasks
+        idle_seconds = float(os.getenv("IDLE_SECONDS", "300"))
 
-        # Profile timing
-        profile_idle_seconds = float(os.getenv("PROFILE_IDLE_SECONDS", "300"))
-
-        # Followup timing
-        followup_idle_seconds = float(os.getenv("FOLLOWUP_IDLE_SECONDS", "300"))
+        # Followup timing (random delay after idle)
         followup_min_seconds = float(os.getenv("FOLLOWUP_MIN_SECONDS", "3600"))
         followup_max_seconds = float(os.getenv("FOLLOWUP_MAX_SECONDS", "7200"))
 
-        # Discovery timing
-        discovery_idle_seconds = float(os.getenv("DISCOVERY_IDLE_SECONDS", "300"))
+        # Discovery timing (random delay after idle)
         discovery_min_seconds = float(os.getenv("DISCOVERY_MIN_SECONDS", "7200"))
         discovery_max_seconds = float(os.getenv("DISCOVERY_MAX_SECONDS", "14400"))
 
@@ -151,12 +145,9 @@ class Config:
             log_level=log_level,
             db_path=db_path,
             log_file=log_file,
-            summarize_idle_seconds=summarize_idle_seconds,
-            profile_idle_seconds=profile_idle_seconds,
-            followup_idle_seconds=followup_idle_seconds,
+            idle_seconds=idle_seconds,
             followup_min_seconds=followup_min_seconds,
             followup_max_seconds=followup_max_seconds,
-            discovery_idle_seconds=discovery_idle_seconds,
             discovery_min_seconds=discovery_min_seconds,
             discovery_max_seconds=discovery_max_seconds,
         )
