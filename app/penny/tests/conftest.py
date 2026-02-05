@@ -23,6 +23,9 @@ from penny.tests.mocks.signal_server import MockSignalServer
 # Configure pytest-asyncio
 pytest_plugins = ("pytest_asyncio",)
 
+# Standard test sender phone number
+TEST_SENDER = "+15559876543"
+
 # Default config values for tests (background tasks disabled)
 DEFAULT_TEST_CONFIG = {
     "channel_type": "signal",
@@ -123,3 +126,47 @@ def running_penny() -> Callable[[Config], AbstractAsyncContextManager[Penny]]:
             await penny.shutdown()
 
     return _running_penny
+
+
+@pytest.fixture
+def setup_ollama_flow(mock_ollama):  # noqa: F811
+    """
+    Factory fixture to configure mock_ollama for a standard message + background task flow.
+
+    Sets up a multi-phase handler:
+    1. First call: tool call (search) with given query
+    2. Second call: message response
+    3. Third call onwards: background task response
+
+    Usage:
+        setup_ollama_flow(
+            search_query="weather forecast",
+            message_response="here's the weather! 🌤️",
+            background_response="summary of weather conversation",
+        )
+    """
+
+    def _setup(
+        search_query: str,
+        message_response: str,
+        background_response: str,
+    ) -> None:
+        request_count = [0]
+
+        def multi_phase_handler(request: dict, count: int) -> dict:
+            request_count[0] += 1
+            if request_count[0] == 1:
+                # First call: message agent tool call
+                return mock_ollama._make_tool_call_response(
+                    request, "search", {"query": search_query}
+                )
+            elif request_count[0] == 2:
+                # Second call: message agent final response
+                return mock_ollama._make_text_response(request, message_response)
+            else:
+                # Third call onwards: background task
+                return mock_ollama._make_text_response(request, background_response)
+
+        mock_ollama.set_response_handler(multi_phase_handler)
+
+    return _setup

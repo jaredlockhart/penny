@@ -6,6 +6,7 @@ import pytest
 from sqlmodel import select
 
 from penny.database.models import MessageLog
+from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
@@ -33,7 +34,7 @@ async def test_basic_message_flow(
 
         # Send incoming message
         await signal_server.push_message(
-            sender="+15559876543",
+            sender=TEST_SENDER,
             content="what's the weather like today?",
         )
 
@@ -41,7 +42,7 @@ async def test_basic_message_flow(
         response = await signal_server.wait_for_message(timeout=10.0)
 
         # Verify the response
-        assert response["recipients"] == ["+15559876543"]
+        assert response["recipients"] == [TEST_SENDER]
         assert "here's what i found" in response["message"].lower()
 
         # Verify Ollama was called twice (tool call + final response)
@@ -63,7 +64,7 @@ async def test_basic_message_flow(
         assert len(signal_server.typing_events) >= 1, "Should have sent typing indicator"
 
         # Verify messages were logged to database
-        incoming_messages = penny.db.get_user_messages("+15559876543")
+        incoming_messages = penny.db.get_user_messages(TEST_SENDER)
         assert len(incoming_messages) >= 1, "Incoming message should be logged"
 
         with penny.db.get_session() as session:
@@ -87,13 +88,13 @@ async def test_message_without_tool_call(
 
     async with running_penny(test_config):
         await signal_server.push_message(
-            sender="+15559876543",
+            sender=TEST_SENDER,
             content="hello penny",
         )
 
         response = await signal_server.wait_for_message(timeout=10.0)
 
-        assert response["recipients"] == ["+15559876543"]
+        assert response["recipients"] == [TEST_SENDER]
         assert "simple response" in response["message"].lower()
 
         # Only one Ollama call (no tool)
@@ -102,7 +103,7 @@ async def test_message_without_tool_call(
 
 @pytest.mark.asyncio
 async def test_summarize_background_task(
-    signal_server, mock_ollama, _mock_search, make_config, running_penny
+    signal_server, mock_ollama, _mock_search, make_config, running_penny, setup_ollama_flow
 ):
     """
     Test the summarize background task:
@@ -110,38 +111,15 @@ async def test_summarize_background_task(
     2. Wait for idle time to pass
     3. Verify SummarizeAgent generates and stores a summary
     """
-    # Create config with short summarize idle time
     config = make_config(summarize_idle_seconds=0.5)
-
-    # Track request count to provide different responses
-    request_count = [0]
-
-    def multi_phase_handler(request, count):
-        request_count[0] += 1
-        if request_count[0] == 1:
-            # First call: message agent tool call
-            return mock_ollama._make_tool_call_response(
-                request, "search", {"query": "weather forecast today"}
-            )
-        elif request_count[0] == 2:
-            # Second call: message agent final response
-            return mock_ollama._make_text_response(request, "here's the weather info! 🌤️")
-        else:
-            # Third call onwards: summarize agent
-            return mock_ollama._make_text_response(
-                request, "user asked about weather, assistant provided forecast"
-            )
-
-    mock_ollama.set_response_handler(multi_phase_handler)
+    setup_ollama_flow(
+        search_query="weather forecast today",
+        message_response="here's the weather info! 🌤️",
+        background_response="user asked about weather, assistant provided forecast",
+    )
 
     async with running_penny(config) as penny:
-        # Send message to create a thread
-        await signal_server.push_message(
-            sender="+15559876543",
-            content="what's the weather like?",
-        )
-
-        # Wait for message response
+        await signal_server.push_message(sender=TEST_SENDER, content="what's the weather like?")
         response = await signal_server.wait_for_message(timeout=10.0)
         assert "weather" in response["message"].lower()
 
@@ -152,12 +130,10 @@ async def test_summarize_background_task(
             ).first()
             assert outgoing is not None
             message_id = outgoing.id
-            # Verify it has a parent (thread link) but no summary yet
             assert outgoing.parent_id is not None
             assert outgoing.parent_summary is None
 
         # Wait for summarize task to trigger (idle time + scheduler tick)
-        # Scheduler ticks every 1s, summarize idle is 0.5s
         await asyncio.sleep(2.0)
 
         # Verify summary was generated
@@ -168,5 +144,104 @@ async def test_summarize_background_task(
             assert len(outgoing.parent_summary) > 0
             assert "weather" in outgoing.parent_summary.lower()
 
-        # Verify SummarizeAgent made an Ollama call (should be 3+ total)
         assert len(mock_ollama.requests) >= 3, "Expected at least 3 Ollama calls"
+
+
+@pytest.mark.asyncio
+async def test_profile_background_task(
+    signal_server, mock_ollama, _mock_search, make_config, running_penny, setup_ollama_flow
+):
+    """
+    Test the profile background task:
+    1. Send a message and get a response
+    2. Wait for idle time to pass
+    3. Verify ProfileAgent generates and stores a user profile
+    """
+    config = make_config(profile_idle_seconds=0.5)
+    setup_ollama_flow(
+        search_query="fun facts about cats",
+        message_response="cats are amazing! 🐱",
+        background_response="curious user interested in animals, especially cats.",
+    )
+
+    async with running_penny(config) as penny:
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="tell me something cool about cats!"
+        )
+        response = await signal_server.wait_for_message(timeout=10.0)
+        assert "cats" in response["message"].lower()
+
+        # Verify no profile exists yet
+        profile = penny.db.get_user_profile(TEST_SENDER)
+        assert profile is None, "Profile should not exist yet"
+
+        # Wait for profile task to trigger (idle time + scheduler tick)
+        await asyncio.sleep(2.0)
+
+        # Verify profile was generated
+        profile = penny.db.get_user_profile(TEST_SENDER)
+        assert profile is not None, "Profile should have been generated"
+        assert len(profile.profile_text) > 0
+        assert "cat" in profile.profile_text.lower() or "animal" in profile.profile_text.lower()
+
+        assert len(mock_ollama.requests) >= 3, "Expected at least 3 Ollama calls"
+
+
+@pytest.mark.asyncio
+async def test_followup_background_task(
+    signal_server, mock_ollama, _mock_search, make_config, running_penny, setup_ollama_flow
+):
+    """
+    Test the followup background task:
+    1. Send a message and get a response (creates conversation leaf)
+    2. Wait for idle time + random delay to pass
+    3. Verify FollowupAgent sends a spontaneous follow-up message
+    """
+    config = make_config(
+        followup_idle_seconds=0.3,
+        followup_min_seconds=0.1,
+        followup_max_seconds=0.2,
+    )
+    setup_ollama_flow(
+        search_query="best hiking trails nearby",
+        message_response="found some great trails for you! 🥾",
+        background_response="oh btw, i found more cool trails you might like! 🌲",
+    )
+
+    async with running_penny(config) as penny:
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="where can i go hiking this weekend?"
+        )
+        response = await signal_server.wait_for_message(timeout=10.0)
+        assert "trails" in response["message"].lower()
+
+        # Verify conversation leaf was created
+        leaves = penny.db.get_conversation_leaves()
+        assert len(leaves) >= 1, "Should have at least one conversation leaf"
+
+        # Record the message count after first response
+        first_response_count = len(signal_server.outgoing_messages)
+
+        # Wait for followup task to trigger
+        await asyncio.sleep(5.0)
+
+        # Check if followup was sent
+        assert len(signal_server.outgoing_messages) > first_response_count, (
+            f"Followup message should have been sent. "
+            f"Messages: {len(signal_server.outgoing_messages)}, "
+            f"Expected > {first_response_count}"
+        )
+
+        followup = signal_server.outgoing_messages[-1]
+        assert followup["recipients"] == [TEST_SENDER]
+        assert "trail" in followup["message"].lower()
+
+        # Verify the followup was logged to database with parent link
+        with penny.db.get_session() as session:
+            outgoing = list(
+                session.exec(select(MessageLog).where(MessageLog.direction == "outgoing")).all()
+            )
+        assert len(outgoing) >= 2, "Should have original response and followup"
+
+        followup_msg = outgoing[-1]
+        assert followup_msg.parent_id is not None, "Followup should be linked to thread"
