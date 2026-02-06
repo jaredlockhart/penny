@@ -1,0 +1,5 @@
+# Penny project code owners
+# These users are trusted for agent orchestrator issue content filtering.
+# Protect this file with a branch protection rule on main.
+
+* @jaredlockhart

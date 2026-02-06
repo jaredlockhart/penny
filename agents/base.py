@@ -40,6 +40,7 @@ class Agent:
         model: str | None = None,
         allowed_tools: list[str] | None = None,
         required_labels: list[str] | None = None,
+        trusted_users: set[str] | None = None,
     ):
         self.name = name
         self.prompt_path = prompt_path
@@ -49,6 +50,7 @@ class Agent:
         self.model = model
         self.allowed_tools = allowed_tools
         self.required_labels = required_labels
+        self.trusted_users = trusted_users
         self.last_run: datetime | None = None
         self.run_count = 0
 
@@ -101,6 +103,14 @@ class Agent:
         start = datetime.now()
 
         prompt = self.prompt_path.read_text()
+
+        # Pre-fetch and filter issue content to prevent prompt injection
+        if self.trusted_users is not None and self.required_labels:
+            from issue_filter import fetch_issues_for_labels, format_issues_for_prompt
+
+            issues = fetch_issues_for_labels(self.required_labels, self.trusted_users)
+            prompt += format_issues_for_prompt(issues)
+
         cmd = self._build_command(prompt)
 
         try:
