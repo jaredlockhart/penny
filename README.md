@@ -110,6 +110,8 @@ Penny stores four types of data in SQLite:
 - Direction (incoming/outgoing), sender, content
 - Parent ID (foreign key to self) for threading
 - Parent summary (cached thread summary for context reconstruction)
+- External ID (platform-specific message ID for reaction lookup)
+- Is-reaction flag (true if message is a reaction)
 
 **UserProfile**: Cached user interest profiles
 - Sender (unique), profile text (flat list of mentioned topics), last update timestamp
@@ -141,6 +143,7 @@ make up
 
 ```bash
 make up          # Build and start all services (foreground)
+make prod        # Deploy with .env.prod, auto-restart on new commits
 make kill        # Tear down containers and remove local images
 make build       # Build the Docker image
 make check       # Build, format check, lint, typecheck, and run tests
@@ -149,9 +152,12 @@ make fmt         # Format with ruff
 make lint        # Lint with ruff
 make fix         # Format + autofix lint issues
 make typecheck   # Type check with ty
+make agents      # Run the agent orchestrator (see agents/README.md)
 ```
 
 All dev tool commands run in temporary Docker containers via `docker compose run --rm`, with source volume-mounted so changes write back to the host filesystem.
+
+`make prod` copies `.env.prod`, starts containers detached, then runs a deploy-watch loop that polls git every 5 minutes and auto-restarts on new commits. Override the interval with `make prod DEPLOY_INTERVAL=60`.
 
 <details>
 <summary><h2>Configuration</h2></summary>
@@ -279,6 +285,27 @@ Tests use mock servers and SDK patches:
 - `MockSignalServer`: Simulates Signal WebSocket + REST API
 - `MockOllamaAsyncClient`: Configurable LLM responses
 - `MockPerplexity`, `MockDDGS`: Search API mocks
+
+</details>
+
+<details>
+<summary><h2>Agent Orchestrator</h2></summary>
+
+Penny includes a Python-based agent orchestrator that manages autonomous Claude CLI agents. Agents process work from GitHub Issues on a schedule, using labels as a state machine:
+
+`backlog` → `idea` → `draft` → `approved` → `in-progress` → `review` → `shipped`
+
+**Agents:**
+- **Product Manager**: Expands `idea` issues into specs, promotes to `approved` (5-min cycle, 600s timeout)
+- **Worker**: Implements `approved` issues — creates branches, writes code/tests, runs `make check`, opens PRs (5-min cycle, 1800s timeout)
+
+Each agent checks for matching GitHub issue labels before waking Claude CLI, so idle cycles cost ~1 second instead of a full Claude invocation.
+
+```bash
+make agents      # Run orchestrator continuously
+```
+
+See [agents/README.md](agents/README.md) for full details.
 
 </details>
 

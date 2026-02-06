@@ -39,7 +39,7 @@ agents/
 
 ### Product Manager
 
-Monitors GitHub Issues on a 1-hour cycle (600s timeout):
+Monitors GitHub Issues on a 5-minute cycle (600s timeout, requires `idea`/`draft` labels):
 - Scans for `idea`-labeled issues and expands them into detailed specs
 - Responds to user feedback on `draft`-labeled issues
 - Promotes specs to `approved` when ready for implementation
@@ -47,7 +47,7 @@ Monitors GitHub Issues on a 1-hour cycle (600s timeout):
 
 ### Worker
 
-Implements approved features on a 30-minute cycle (1800s timeout):
+Implements approved features on a 5-minute cycle (1800s timeout, requires `approved`/`in-progress` labels):
 - Checks for `in-progress` work first (resumes interrupted cycles)
 - Picks up `approved` issues and claims them (`in-progress`)
 - Reads the spec, creates a feature branch (`issue-<N>-<slug>`), writes code and tests
@@ -67,12 +67,14 @@ def get_agents() -> list[Agent]:
         Agent(
             name="product-manager",
             prompt_path=AGENTS_DIR / "product-manager" / "CLAUDE.md",
-            interval_seconds=3600,
+            interval_seconds=300,
+            required_labels=["idea", "draft"],
         ),
         Agent(
             name="my-agent",
             prompt_path=AGENTS_DIR / "my-agent" / "CLAUDE.md",
-            interval_seconds=1800,  # every 30 minutes
+            interval_seconds=300,
+            required_labels=["some-label"],
         ),
     ]
 ```
@@ -90,6 +92,7 @@ The `Agent` class accepts:
 | `timeout_seconds` | 600 | Max runtime before killing the process |
 | `model` | None | Override Claude model (e.g. "opus") |
 | `allowed_tools` | None | Restrict which tools Claude can use |
+| `required_labels` | None | GitHub issue labels to check before running (any match = has work) |
 
 ## Streaming Output
 
