@@ -18,6 +18,7 @@ from penny.channels import MessageChannel, create_channel
 from penny.config import Config, setup_logging
 from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
+from penny.database.migrate import migrate
 from penny.scheduler import BackgroundScheduler, DelayedSchedule, ImmediateSchedule
 from penny.tools import SearchTool
 
@@ -31,6 +32,7 @@ class Penny:
         """Initialize the agent with configuration."""
         self.config = config
         self.db = Database(config.db_path)
+        migrate(config.db_path)
         self.db.create_tables()
 
         def search_tools():
