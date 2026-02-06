@@ -5,6 +5,15 @@
 - **GitHub CLI (`gh`)**: Located at `/opt/homebrew/bin/gh` (not in default PATH)
 - **Logs**: Runtime logs are written to `data/penny.log` (not docker compose logs)
 
+## Git Workflow
+
+Branch protection is enabled on `main`. All changes must go through pull requests.
+
+- **Never push directly to `main`** — always create a feature branch
+- Create a descriptive branch name (e.g., `add-codeowners-filtering`, `fix-scheduler-bug`)
+- Commit changes to the branch, then push and create a PR via `gh pr create`
+- The user will review and merge the PR
+
 ## Documentation Maintenance
 
 **IMPORTANT**: Always update CLAUDE.md and README.md after making significant changes to the codebase. This includes:
@@ -102,6 +111,8 @@ scripts/
 agents/
   orchestrator.py       — Agent lifecycle manager, runs on schedule
   base.py               — Agent base class: wraps Claude CLI, has_work() pre-check
+  codeowners.py         — Parses .github/CODEOWNERS for trusted usernames
+  issue_filter.py       — Pre-fetches and filters issue content by trusted authors
   logs/                  — Per-agent output logs (gitignored)
   product-manager/
     CLAUDE.md            — PM agent prompt (expands ideas → specs)
@@ -444,6 +455,17 @@ Python-based orchestrator (`agents/`) that manages autonomous Claude CLI agents:
 - GitHub Issues as state machine: `backlog` → `idea` → `draft` → `approved` → `in-progress` → `review` → `shipped`
 - Streaming output via `--verbose --output-format stream-json` for real-time terminal logging
 - Run with `make agents` or `uv run --python 3.12 agents/orchestrator.py`
+
+#### CODEOWNERS-Based Issue Filtering
+
+Security layer to prevent prompt injection via public GitHub issues:
+- `.github/CODEOWNERS` defines trusted maintainer usernames (trust anchor)
+- `agents/codeowners.py`: Parses CODEOWNERS to extract `@username` tokens
+- `agents/issue_filter.py`: Pre-fetches issues via `gh` JSON API, strips bodies from untrusted authors, drops comments from non-CODEOWNERS users
+- Filtered issue content is injected into the agent prompt by `base.py`, so agents never need to call `gh issue view --comments` (which would bypass the filter)
+- Agent CLAUDE.md prompts instruct agents to use pre-fetched content only and restrict `gh` to write operations
+- Fails open without CODEOWNERS (backward compatible, logs warning)
+- Requires GitHub branch protection on `main` requiring CODEOWNERS review to prevent unauthorized CODEOWNERS edits
 
 ### Database Migrations
 

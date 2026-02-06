@@ -25,10 +25,16 @@ from datetime import datetime
 from pathlib import Path
 
 from base import Agent
+from codeowners import parse_codeowners
 from github_app import GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
+PROJECT_ROOT = AGENTS_DIR.parent
 LOG_DIR = AGENTS_DIR / "logs"
+
+logger = logging.getLogger(__name__)
+
+
 def load_github_app() -> GitHubApp | None:
     """Load GitHub App config from environment variables."""
     import os
@@ -49,6 +55,18 @@ def load_github_app() -> GitHubApp | None:
 
 def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
     """All registered agents. Add new agents here."""
+    trusted_users = parse_codeowners(PROJECT_ROOT)
+
+    if not trusted_users:
+        logger.warning(
+            "No trusted users found in CODEOWNERS. "
+            "Agents will NOT filter issue content (prompt injection risk). "
+            "Create .github/CODEOWNERS to enable filtering."
+        )
+        trusted: set[str] | None = None
+    else:
+        trusted = trusted_users
+
     return [
         Agent(
             name="product-manager",
@@ -57,6 +75,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             timeout_seconds=600,
             required_labels=["idea", "draft"],
             github_app=github_app,
+            trusted_users=trusted,
         ),
         Agent(
             name="worker",
@@ -65,6 +84,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             timeout_seconds=1800,
             required_labels=["approved", "in-progress"],
             github_app=github_app,
+            trusted_users=trusted,
         ),
         # Future agents:
         # Agent(name="quality", ...),
