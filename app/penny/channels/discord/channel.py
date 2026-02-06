@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import TYPE_CHECKING
 
 import discord
@@ -54,11 +53,12 @@ class DiscordChannel(MessageChannel):
         self.channel_id = channel_id
         self._running = True
 
-        # Set up Discord intents - need guilds to see channels
+        # Set up Discord intents - need guilds to see channels and reactions
         intents = discord.Intents.default()
         intents.message_content = True
         intents.messages = True
         intents.guilds = True
+        intents.reactions = True
 
         # Create Discord client
         self.client = discord.Client(intents=intents)
@@ -142,6 +142,36 @@ class DiscordChannel(MessageChannel):
             # Dispatch to message handler
             await self.handle_message(raw_data)
 
+        @self.client.event
+        async def on_reaction_add(reaction: discord.Reaction, user: discord.User) -> None:
+            """Called when a reaction is added to a message."""
+            # Ignore reactions from the bot itself
+            if user == self.client.user:
+                return
+
+            # Only process reactions in the configured channel
+            if str(reaction.message.channel.id) != self.channel_id:
+                return
+
+            logger.debug(
+                "Received Discord reaction from %s: %s on message %s",
+                user.name,
+                str(reaction.emoji),
+                reaction.message.id,
+            )
+
+            # Create IncomingMessage for the reaction
+            sender = f"{user.name}#{user.id}"
+            incoming = IncomingMessage(
+                sender=sender,
+                content=str(reaction.emoji),
+                is_reaction=True,
+                reacted_to_external_id=str(reaction.message.id),
+            )
+
+            # Handle the reaction via the base channel handler
+            await self._handle_reaction(incoming)
+
     async def listen(self) -> None:
         """Start listening for messages via Discord gateway."""
         logger.info("Starting Discord client...")
@@ -172,7 +202,7 @@ class DiscordChannel(MessageChannel):
             quote_message: Optional message to quote-reply to (not yet implemented for Discord)
 
         Returns:
-            Timestamp (ms since epoch) on success, None on failure
+            Discord message ID on success, None on failure
         """
         try:
             # Wait for client to be ready
@@ -182,18 +212,19 @@ class DiscordChannel(MessageChannel):
                 logger.error("Discord channel not available")
                 return None
 
+            sent_message = None
             # Discord has a 2000 character limit per message
             if len(message) > 2000:
                 # Split into chunks
                 chunks = [message[i : i + 2000] for i in range(0, len(message), 2000)]
                 for chunk in chunks:
-                    await self._channel.send(chunk)
+                    sent_message = await self._channel.send(chunk)
             else:
-                await self._channel.send(message)
+                sent_message = await self._channel.send(message)
 
             logger.info("Sent message to Discord channel (length: %d)", len(message))
-            # Return current time as synthetic timestamp (Discord doesn't use this)
-            return int(time.time() * 1000)
+            # Return Discord message ID for reaction lookup
+            return int(sent_message.id) if sent_message else None
 
         except discord.HTTPException as e:
             logger.error("Failed to send Discord message: %s", e)

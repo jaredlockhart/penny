@@ -245,3 +245,75 @@ async def test_followup_background_task(
 
         followup_msg = outgoing[-1]
         assert followup_msg.parent_id is not None, "Followup should be linked to thread"
+
+
+@pytest.mark.asyncio
+async def test_signal_reaction_message(
+    signal_server, mock_ollama, _mock_search, make_config, running_penny, setup_ollama_flow
+):
+    """
+    Test Signal reaction handling:
+    1. Send a message and get a response
+    2. React to the response with an emoji
+    3. Verify reaction is logged as a message with is_reaction=True
+    4. Verify thread is kept alive for followup
+    """
+    config = make_config(idle_seconds=0.5)
+    setup_ollama_flow(
+        search_query="test query",
+        message_response="here's a cool fact! 🌟",
+        background_response="glad you liked that, here's more! 🎉",
+    )
+
+    async with running_penny(config) as penny:
+        # Send initial message
+        await signal_server.push_message(sender=TEST_SENDER, content="tell me something cool")
+        response = await signal_server.wait_for_message(timeout=10.0)
+        assert "cool fact" in response["message"].lower()
+
+        # Get the outgoing message's signal timestamp
+        with penny.db.get_session() as session:
+            outgoing = session.exec(
+                select(MessageLog).where(MessageLog.direction == "outgoing")
+            ).first()
+            assert outgoing is not None
+            assert outgoing.external_id is not None
+            message_id = outgoing.id
+            external_id = outgoing.external_id
+
+        # Send a reaction to Penny's response
+        await signal_server.push_reaction(
+            sender=TEST_SENDER,
+            emoji="👍",
+            target_timestamp=int(external_id),
+        )
+
+        # Wait a bit for processing
+        await asyncio.sleep(0.5)
+
+        # Verify reaction was logged
+        with penny.db.get_session() as session:
+            reactions = list(
+                session.exec(
+                    select(MessageLog).where(
+                        MessageLog.is_reaction == True,  # noqa: E712
+                        MessageLog.sender == TEST_SENDER,
+                    )
+                ).all()
+            )
+        assert len(reactions) == 1, "Reaction should be logged"
+        reaction = reactions[0]
+        assert reaction.content == "👍"
+        assert reaction.parent_id == message_id
+        assert reaction.is_reaction is True
+
+        # Verify thread is no longer a leaf (has reaction as child)
+        leaves = penny.db.get_conversation_leaves()
+        # The original outgoing message should not be in leaves anymore
+        # because it now has a reaction child
+        leaf_ids = [leaf.id for leaf in leaves]
+        assert message_id not in leaf_ids, "Reacted message should not be a conversation leaf"
+
+        # Verify no response was sent to the reaction
+        # (only the initial response should exist)
+        assert len(signal_server.outgoing_messages) == 1

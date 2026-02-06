@@ -80,6 +80,44 @@ class MockSignalServer:
             if not ws.closed:
                 await ws.send_json(envelope)
 
+    async def push_reaction(
+        self,
+        sender: str,
+        emoji: str,
+        target_timestamp: int,
+        target_author: str | None = None,
+    ) -> None:
+        """Push a reaction message to all connected WebSocket clients."""
+        ts = int(time.time() * 1000)
+        envelope = {
+            "envelope": {
+                "source": sender,
+                "sourceNumber": sender,
+                "sourceUuid": str(uuid.uuid4()),
+                "sourceName": "Test User",
+                "sourceDevice": 1,
+                "timestamp": ts,
+                "serverReceivedTimestamp": ts,
+                "serverDeliveredTimestamp": ts,
+                "dataMessage": {
+                    "timestamp": ts,
+                    "message": "",
+                    "reaction": {
+                        "emoji": {"value": emoji},
+                        "targetAuthor": target_author or "+15551234567",
+                        "targetAuthorNumber": target_author or "+15551234567",
+                        "targetSentTimestamp": target_timestamp,
+                        "isRemove": False,
+                    },
+                },
+            },
+            "account": "+15551234567",
+        }
+
+        for ws in self._websockets:
+            if not ws.closed:
+                await ws.send_json(envelope)
+
     async def wait_for_message(self, timeout: float = 10.0) -> dict:
         """Wait for an outgoing message to be captured."""
         start = time.time()

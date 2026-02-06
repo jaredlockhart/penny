@@ -25,15 +25,35 @@ class Quote(BaseModel):
         populate_by_name = True
 
 
+class ReactionEmoji(BaseModel):
+    """Emoji used in a reaction."""
+
+    value: str  # The emoji unicode character
+
+
+class Reaction(BaseModel):
+    """Reaction message from Signal."""
+
+    emoji: ReactionEmoji
+    targetAuthor: str = Field(alias="targetAuthor")
+    targetAuthorNumber: str = Field(alias="targetAuthorNumber")
+    targetSentTimestamp: int = Field(alias="targetSentTimestamp")
+    isRemove: bool = Field(default=False, alias="isRemove")
+
+    class Config:
+        populate_by_name = True
+
+
 class DataMessage(BaseModel):
     """Data message from Signal."""
 
     timestamp: int
-    message: str
+    message: str = ""  # Empty for reactions
     expiresInSeconds: int = Field(default=0, alias="expiresInSeconds")
     isExpirationUpdate: bool = Field(default=False, alias="isExpirationUpdate")
     viewOnce: bool = Field(default=False, alias="viewOnce")
     quote: Quote | None = None
+    reaction: Reaction | None = None
 
     class Config:
         populate_by_name = True
@@ -59,6 +79,7 @@ class InnerEnvelope(BaseModel):
     serverDeliveredTimestamp: int = Field(alias="serverDeliveredTimestamp")
     dataMessage: DataMessage | None = Field(default=None, alias="dataMessage")
     typingMessage: TypingMessage | None = Field(default=None, alias="typingMessage")
+    syncMessage: dict | None = Field(default=None, alias="syncMessage")
 
     class Config:
         populate_by_name = True

@@ -307,6 +307,28 @@ class SignalChannel(MessageChannel):
             return None
 
         sender = envelope.envelope.source
+
+        # Check if this is a reaction
+        if envelope.envelope.dataMessage.reaction:
+            reaction = envelope.envelope.dataMessage.reaction
+            if reaction.isRemove:
+                logger.debug("Ignoring reaction removal from %s", sender)
+                return None
+
+            logger.info(
+                "Extracted reaction - sender: %s, emoji: %s, target: %s",
+                sender,
+                reaction.emoji.value,
+                reaction.targetSentTimestamp,
+            )
+            return IncomingMessage(
+                sender=sender,
+                content=reaction.emoji.value,
+                is_reaction=True,
+                reacted_to_external_id=str(reaction.targetSentTimestamp),
+            )
+
+        # Regular text message
         content = envelope.envelope.dataMessage.message.strip()
 
         logger.info("Extracted - sender: %s, content: '%s'", sender, content)

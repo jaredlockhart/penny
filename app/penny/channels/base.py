@@ -27,6 +27,8 @@ class IncomingMessage(BaseModel):
     content: str
     quoted_text: str | None = None
     signal_timestamp: int | None = None  # Original Signal timestamp (ms since epoch)
+    is_reaction: bool = False  # True if this is a reaction message
+    reacted_to_external_id: str | None = None  # External ID of message being reacted to
 
 
 class MessageChannel(ABC):
@@ -176,11 +178,11 @@ class MessageChannel(ABC):
             prepared,
             parent_id=parent_id,
         )
-        signal_timestamp = await self.send_message(recipient, prepared, attachments, quote_message)
-        # Store the Signal timestamp for future quote replies
-        if signal_timestamp and message_id:
-            self._db.set_signal_timestamp(message_id, signal_timestamp)
-        return signal_timestamp is not None
+        external_id = await self.send_message(recipient, prepared, attachments, quote_message)
+        # Store the external ID for future reactions and quote replies
+        if external_id and message_id:
+            self._db.set_external_id(message_id, str(external_id))
+        return external_id is not None
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -191,6 +193,11 @@ class MessageChannel(ABC):
         try:
             message = self.extract_message(envelope_data)
             if message is None:
+                return
+
+            # Handle reactions specially - log as message but don't respond
+            if message.is_reaction:
+                await self._handle_reaction(message)
                 return
 
             # Only reset idle timers for real messages, not receipts/sync messages
@@ -243,3 +250,38 @@ class MessageChannel(ABC):
 
         except Exception as e:
             logger.exception("Error handling message: %s", e)
+
+    async def _handle_reaction(self, message: IncomingMessage) -> None:
+        """
+        Handle a reaction message by logging it as a message in the thread.
+
+        Reactions keep threads alive for followup without triggering an immediate response.
+        """
+        if not message.reacted_to_external_id:
+            logger.warning("Reaction message missing reacted_to_external_id")
+            return
+
+        # Look up the message that was reacted to
+        reacted_msg = self._db.find_message_by_external_id(message.reacted_to_external_id)
+        if not reacted_msg or not reacted_msg.id:
+            logger.warning(
+                "Could not find message with external_id=%s for reaction",
+                message.reacted_to_external_id,
+            )
+            return
+
+        # Log the reaction as an incoming message with is_reaction=True
+        self._db.log_message(
+            MessageDirection.INCOMING,
+            message.sender,
+            message.content,  # The emoji
+            parent_id=reacted_msg.id,
+            is_reaction=True,
+        )
+
+        logger.info(
+            "Logged reaction from %s: %s (parent_id=%d)",
+            message.sender,
+            message.content,
+            reacted_msg.id,
+        )
