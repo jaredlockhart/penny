@@ -1,12 +1,11 @@
 """Integration tests for the basic message flow."""
 
 import asyncio
-from datetime import UTC, datetime
 
 import pytest
 from sqlmodel import select
 
-from penny.database.models import MessageLog, UserProfile
+from penny.database.models import MessageLog
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -33,17 +32,6 @@ async def test_basic_message_flow(
         # Verify we have a WebSocket connection
         assert len(signal_server._websockets) == 1, "Penny should have connected to WebSocket"
 
-        # Create a user profile before sending the message
-        test_profile_text = "friendly user who loves asking about weather patterns"
-        with penny.db.get_session() as session:
-            profile = UserProfile(
-                sender=TEST_SENDER,
-                profile_text=test_profile_text,
-                last_message_timestamp=datetime.now(UTC),
-            )
-            session.add(profile)
-            session.commit()
-
         # Send incoming message
         await signal_server.push_message(
             sender=TEST_SENDER,
@@ -65,14 +53,6 @@ async def test_basic_message_flow(
         messages = first_request.get("messages", [])
         user_messages = [m for m in messages if m.get("role") == "user"]
         assert any("weather" in m.get("content", "").lower() for m in user_messages)
-
-        # First request should include the user profile as a system message
-        system_messages = [m for m in messages if m.get("role") == "system"]
-        profile_messages = [
-            m for m in system_messages if "user profile" in m.get("content", "").lower()
-        ]
-        assert len(profile_messages) >= 1, "User profile should be injected into context"
-        assert test_profile_text in profile_messages[0]["content"]
 
         # Second request should include tool result
         second_request = mock_ollama.requests[1]

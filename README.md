@@ -111,9 +111,10 @@ Penny stores four types of data in SQLite:
 - Parent ID (foreign key to self) for threading
 - Parent summary (cached thread summary for context reconstruction)
 
-**UserProfile**: Cached user personality profiles
-- Sender (unique), profile text, last update timestamp
+**UserProfile**: Cached user interest profiles
+- Sender (unique), profile text (flat list of mentioned topics), last update timestamp
 - Tracks `last_message_timestamp` so profiles are only regenerated when new messages exist
+- Used exclusively by DiscoveryAgent for personalized content discovery
 
 ## Setup & Running
 
