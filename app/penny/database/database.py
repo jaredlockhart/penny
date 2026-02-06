@@ -132,6 +132,8 @@ class Database:
         content: str,
         parent_id: int | None = None,
         signal_timestamp: int | None = None,
+        external_id: str | None = None,
+        is_reaction: bool = False,
     ) -> int | None:
         """
         Log a user message or agent response.
@@ -142,6 +144,8 @@ class Database:
             content: The message text
             parent_id: Optional id of the parent message in the thread
             signal_timestamp: Optional Signal message timestamp (ms since epoch)
+            external_id: Optional platform-specific message ID for reaction lookup
+            is_reaction: True if this is a reaction message
 
         Returns:
             The id of the created message, or None on failure
@@ -158,6 +162,8 @@ class Database:
                     content=content,
                     parent_id=parent_id,
                     signal_timestamp=signal_timestamp,
+                    external_id=external_id,
+                    is_reaction=is_reaction,
                 )
                 session.add(log)
                 session.commit()
@@ -186,6 +192,25 @@ class Database:
                     logger.debug("Set signal_timestamp on message %d", message_id)
         except Exception as e:
             logger.error("Failed to set signal_timestamp: %s", e)
+
+    def set_external_id(self, message_id: int, external_id: str) -> None:
+        """
+        Update the external ID on a message after sending.
+
+        Args:
+            message_id: The message ID to update
+            external_id: The platform-specific message ID
+        """
+        try:
+            with self.get_session() as session:
+                msg = session.get(MessageLog, message_id)
+                if msg:
+                    msg.external_id = external_id
+                    session.add(msg)
+                    session.commit()
+                    logger.debug("Set external_id on message %d", message_id)
+        except Exception as e:
+            logger.error("Failed to set external_id: %s", e)
 
     def get_unsummarized_messages(self) -> list[MessageLog]:
         """Get all outgoing messages that have a parent but no summary yet."""
@@ -265,6 +290,22 @@ class Database:
                     MessageLog.content.startswith(content),
                 )
                 .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+            ).first()
+
+    def find_message_by_external_id(self, external_id: str) -> MessageLog | None:
+        """
+        Find a message by its platform-specific external ID.
+        Used to look up which message was reacted to.
+
+        Args:
+            external_id: The platform-specific message ID (Signal timestamp or Discord message ID)
+
+        Returns:
+            The matching MessageLog, or None
+        """
+        with self.get_session() as session:
+            return session.exec(
+                select(MessageLog).where(MessageLog.external_id == external_id)
             ).first()
 
     def get_thread_context(
