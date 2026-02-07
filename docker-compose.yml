@@ -11,12 +11,54 @@ services:
 
   penny:
     build: ./app
+    image: penny
     restart: unless-stopped
     volumes:
-      - ./app/penny:/app/penny
-      - ./app/pyproject.toml:/app/pyproject.toml
       - ./data:/app/data
       - ./.env:/app/.env
     environment:
       - PYTHONUNBUFFERED=1
       - SIGNAL_API_URL=http://signal-api:8080
+
+  pm:
+    build: ./agents
+    restart: unless-stopped
+    profiles: [team]
+    command: ["--agent", "product-manager"]
+    volumes:
+      - .:/repo
+      - ./data:/repo/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ANTHROPIC_API_KEY
+      - GITHUB_APP_ID
+      - GITHUB_APP_PRIVATE_KEY_PATH
+      - GITHUB_APP_INSTALLATION_ID
+
+  worker:
+    build: ./agents
+    restart: unless-stopped
+    profiles: [team]
+    stop_grace_period: 120s
+    command: ["--agent", "worker"]
+    volumes:
+      - .:/repo
+      - ./data:/repo/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ANTHROPIC_API_KEY
+      - GITHUB_APP_ID
+      - GITHUB_APP_PRIVATE_KEY_PATH
+      - GITHUB_APP_INSTALLATION_ID
+
+  watcher:
+    build: ./scripts/watcher
+    restart: unless-stopped
+    profiles: [team]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/repo
+    environment:
+      - DEPLOY_INTERVAL=300
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-penny}
+    working_dir: /repo

@@ -126,6 +126,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Penny Agent Orchestrator")
     parser.add_argument("--once", action="store_true", help="Run all due agents once and exit")
     parser.add_argument("--list", action="store_true", help="List registered agents and exit")
+    parser.add_argument("--agent", type=str, default=None, help="Run only the named agent (e.g. 'product-manager' or 'worker')")
     parser.add_argument("--log-file", type=Path, default=LOG_DIR / "orchestrator.log")
     args = parser.parse_args()
 
@@ -140,6 +141,12 @@ def main() -> None:
 
     agents = get_agents(github_app)
 
+    if args.agent:
+        agents = [a for a in agents if a.name == args.agent]
+        if not agents:
+            logger.error(f"Unknown agent: {args.agent}")
+            sys.exit(1)
+
     if args.list:
         for agent in agents:
             print(f"  {agent.name:20s}  every {agent.interval_seconds}s  prompt: {agent.prompt_path}")
@@ -152,6 +159,11 @@ def main() -> None:
         nonlocal running
         logger.info("Shutdown signal received")
         running = False
+        # Forward SIGTERM to any running agent subprocess
+        for agent in agents:
+            if agent._process is not None:
+                logger.info(f"Forwarding SIGTERM to [{agent.name}] subprocess (pid={agent._process.pid})")
+                agent._process.terminate()
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)

@@ -51,7 +51,7 @@ def fetch_issues_for_labels(labels: list[str], trusted_users: set[str] | None = 
     for label in labels:
         try:
             result = subprocess.run(
-                [str(GH_CLI), "issue", "list", "--label", label, "--json", "number", "--limit", "20"],
+                [GH_CLI, "issue", "list", "--label", label, "--json", "number", "--limit", "20"],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -82,7 +82,7 @@ def _fetch_and_filter_issue(number: int, trusted_users: set[str] | None) -> Filt
     """Fetch a single issue and filter out untrusted content."""
     try:
         result = subprocess.run(
-            [str(GH_CLI), "issue", "view", str(number), "--json", "title,body,author,comments,labels"],
+            [GH_CLI, "issue", "view", str(number), "--json", "title,body,author,comments,labels"],
             capture_output=True,
             text=True,
             timeout=15,
