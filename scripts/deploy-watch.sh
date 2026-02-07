@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-INTERVAL="${1:-300}"
+INTERVAL="$1"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DIR"
 
@@ -35,14 +35,18 @@ log "watching for updates (every ${INTERVAL}s)"
         LOCAL=$(git rev-parse HEAD)
         REMOTE=$(git rev-parse origin/main)
 
-        if [ "$LOCAL" != "$REMOTE" ]; then
-            log "new commits detected ($(git log --oneline HEAD..origin/main | head -3))"
-            git pull origin main --ff-only
-            log "rebuilding and restarting..."
-            docker compose down
-            docker compose up -d --build
-            log "restarted"
+        if [ "$LOCAL" = "$REMOTE" ]; then
+            log "up to date (${LOCAL:0:7})"
+            continue
         fi
+
+        log "new commits detected ($(git log --oneline HEAD..origin/main | head -3))"
+        git pull origin main --ff-only || { log "pull failed, skipping"; continue; }
+
+        log "rebuilding and restarting..."
+        docker compose down
+        docker compose up -d --build
+        log "restarted"
     done
 ) &
 WATCH_PID=$!
