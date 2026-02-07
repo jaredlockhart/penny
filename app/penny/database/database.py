@@ -457,6 +457,21 @@ class Database:
             profiles = session.exec(select(UserProfile.sender)).all()
             return list(profiles)
 
+    def get_all_senders(self) -> list[str]:
+        """
+        Get all unique senders who have sent messages.
+
+        Returns:
+            List of unique sender IDs from incoming messages
+        """
+        with self.get_session() as session:
+            senders = session.exec(
+                select(MessageLog.sender)
+                .where(MessageLog.direction == MessageDirection.INCOMING)
+                .distinct()
+            ).all()
+            return list(senders)
+
     def save_user_profile(
         self,
         sender: str,
