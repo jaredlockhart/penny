@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+from github_app import GitHubApp
 
 CLAUDE_CLI = Path.home() / ".local" / "bin" / "claude"
 GH_CLI = Path("/opt/homebrew/bin/gh")
@@ -40,6 +43,7 @@ class Agent:
         model: str | None = None,
         allowed_tools: list[str] | None = None,
         required_labels: list[str] | None = None,
+        github_app: GitHubApp | None = None,
     ):
         self.name = name
         self.prompt_path = prompt_path
@@ -49,6 +53,7 @@ class Agent:
         self.model = model
         self.allowed_tools = allowed_tools
         self.required_labels = required_labels
+        self.github_app = github_app
         self.last_run: datetime | None = None
         self.run_count = 0
 
@@ -57,6 +62,14 @@ class Agent:
             return True
         elapsed = (datetime.now() - self.last_run).total_seconds()
         return elapsed >= self.interval_seconds
+
+    def _get_env(self) -> dict[str, str] | None:
+        """Build subprocess env with bot identity if GitHub App is configured."""
+        if self.github_app is None:
+            return None
+        env = os.environ.copy()
+        env.update(self.github_app.get_env())
+        return env
 
     def has_work(self) -> bool:
         """Check if there are GitHub issues matching any required label.
@@ -71,7 +84,7 @@ class Agent:
             try:
                 result = subprocess.run(
                     [str(GH_CLI), "issue", "list", "--label", label, "--json", "number", "--limit", "1"],
-                    capture_output=True, text=True, timeout=15,
+                    capture_output=True, text=True, timeout=15, env=self._get_env(),
                 )
                 if result.returncode == 0 and result.stdout.strip() not in ("", "[]"):
                     return True
@@ -111,6 +124,7 @@ class Agent:
                 text=True,
                 bufsize=1,
                 cwd=str(self.working_dir),
+                env=self._get_env(),
             )
 
             result_text = ""
