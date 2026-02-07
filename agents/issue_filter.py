@@ -11,9 +11,7 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
-
-GH_CLI = Path("/opt/homebrew/bin/gh")
+from base import GH_CLI
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +56,10 @@ def fetch_issues_for_labels(labels: list[str], trusted_users: set[str] | None = 
                 text=True,
                 timeout=15,
             )
-            if result.returncode != 0 or not result.stdout.strip():
+            if result.returncode != 0:
+                logger.warning(f"gh issue list failed for label '{label}' (exit {result.returncode}): {(result.stderr or '').strip()}")
+                continue
+            if not result.stdout.strip():
                 continue
 
             for ref in json.loads(result.stdout):

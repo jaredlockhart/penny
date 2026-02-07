@@ -46,9 +46,9 @@ def _parse_file(path: Path) -> set[str]:
             continue
 
         # CODEOWNERS format: <pattern> @user1 @user2 ...
-        # Tokens after the file pattern are owners
+        # First token is the file pattern; owners start at tokens[1:]
         tokens = line.split()
-        for token in tokens:
+        for token in tokens[1:]:
             if token.startswith("@") and "/" not in token:
                 usernames.add(token.lstrip("@"))
 
