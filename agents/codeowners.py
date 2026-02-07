@@ -40,7 +40,7 @@ def _parse_file(path: Path) -> set[str]:
     """Extract unique GitHub usernames from a CODEOWNERS file."""
     usernames: set[str] = set()
 
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue

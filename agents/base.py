@@ -117,11 +117,11 @@ class Agent:
 
         prompt = self.prompt_path.read_text()
 
-        # Pre-fetch and filter issue content to prevent prompt injection
-        if self.trusted_users is not None and self.required_labels:
+        # Pre-fetch (and optionally filter) issue content to prevent prompt injection
+        if self.required_labels:
             from issue_filter import fetch_issues_for_labels, format_issues_for_prompt
 
-            issues = fetch_issues_for_labels(self.required_labels, self.trusted_users)
+            issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users)
             prompt += format_issues_for_prompt(issues)
 
         cmd = self._build_command(prompt)

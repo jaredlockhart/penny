@@ -40,11 +40,12 @@ class FilteredIssue:
     author_is_trusted: bool = True
 
 
-def fetch_issues_for_labels(labels: list[str], trusted_users: set[str]) -> list[FilteredIssue]:
+def fetch_issues_for_labels(labels: list[str], trusted_users: set[str] | None = None) -> list[FilteredIssue]:
     """Fetch all open issues matching any label, with untrusted content filtered out.
 
     Uses OR logic across labels — an issue matching any label is included.
-    Returns empty list on gh failure.
+    When trusted_users is None, all content is included unfiltered.
+    Skips labels where gh fails; may return partial results.
     """
     issues: list[FilteredIssue] = []
     seen_numbers: set[int] = set()
@@ -76,7 +77,7 @@ def fetch_issues_for_labels(labels: list[str], trusted_users: set[str]) -> list[
     return issues
 
 
-def _fetch_and_filter_issue(number: int, trusted_users: set[str]) -> FilteredIssue | None:
+def _fetch_and_filter_issue(number: int, trusted_users: set[str] | None) -> FilteredIssue | None:
     """Fetch a single issue and filter out untrusted content."""
     try:
         result = subprocess.run(
@@ -95,18 +96,19 @@ def _fetch_and_filter_issue(number: int, trusted_users: set[str]) -> FilteredIss
         return None
 
     author_login = data.get("author", {}).get("login", "")
-    author_trusted = author_login in trusted_users
+    author_trusted = trusted_users is None or author_login in trusted_users
 
-    # Filter body: only include if author is trusted
+    # Filter title and body: only include if author is trusted
+    title = data.get("title", "") if author_trusted else f"[Title hidden: untrusted author]"
     body = data.get("body", "") if author_trusted else ""
     if not author_trusted:
-        logger.warning(f"Issue #{number}: body filtered (author '{author_login}' not in CODEOWNERS)")
+        logger.warning(f"Issue #{number}: title/body filtered (author '{author_login}' not in CODEOWNERS)")
 
     # Filter comments: only include comments from trusted users
     trusted_comments: list[FilteredComment] = []
     for comment in data.get("comments", []):
         comment_author = comment.get("author", {}).get("login", "")
-        if comment_author in trusted_users:
+        if trusted_users is None or comment_author in trusted_users:
             trusted_comments.append(
                 FilteredComment(
                     author=comment_author,
@@ -121,7 +123,7 @@ def _fetch_and_filter_issue(number: int, trusted_users: set[str]) -> FilteredIss
 
     return FilteredIssue(
         number=number,
-        title=data.get("title", ""),
+        title=title,
         body=body,
         author=author_login,
         labels=labels,
