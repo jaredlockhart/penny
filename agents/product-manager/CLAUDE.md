@@ -38,8 +38,14 @@ All work is tracked in GitHub Issues. Use the `gh` CLI tool (located at `/opt/ho
 
 ### Label: `idea` - Ready for Expansion
 - User has selected this idea for you to research and flesh out
-- Your job: research, ask questions, write detailed spec via comment
-- Transition to: `draft` label
+- Your job: post requirements, wait for approval, then write detailed spec
+- Transition to: `requirements-approved` label added by user, then `draft` label by PM
+
+### Label: `requirements-approved` - Requirements Confirmed
+- User has reviewed and approved the requirements comment
+- Signals PM to proceed with writing full detailed specification
+- Your job: write detailed spec, then update to `draft`
+- Transition to: `draft` label (auto-removed when PM posts spec)
 
 ### Label: `draft` - Detailed Specification
 - Well-researched, detailed specification added as issue comment
@@ -69,9 +75,63 @@ All work is tracked in GitHub Issues. Use the `gh` CLI tool (located at `/opt/ho
 ## Your Workflow
 
 ### Mode 1: Expand Ideas (Automatic)
-**ONLY work on issues with the `idea` label** (not `backlog`). For each `idea` issue:
+
+**ONLY work on issues with the `idea` label** (not `backlog`). The expansion process has two phases:
+
+#### Mode 1a: Post Requirements (for `idea` issues without requirements)
+
+For each `idea` issue, first check if requirements have been gathered:
+
 1. Read the issue from the "GitHub Issues (Pre-Fetched, Filtered)" section at the bottom of this prompt
-2. Check if it already has a spec comment (look for "## Detailed Specification")
+2. Check if it already has a "## Requirements (Draft)" comment
+3. If NO requirements comment exists:
+   - Research the idea briefly to understand scope
+   - Post requirements using the template below
+   - DO NOT write full spec yet
+   - DO NOT change label yet
+   - Exit (wait for user approval)
+4. If requirements comment exists but NO `requirements-approved` label:
+   - Wait for user feedback (skip this issue)
+5. If `requirements-approved` label exists:
+   - Proceed to Mode 1b (write full spec)
+
+**Requirements Template:**
+```bash
+/opt/homebrew/bin/gh issue comment <number> --body "$(cat <<'EOF'
+## Requirements (Draft)
+
+**What this feature does**:
+[1-2 sentence summary]
+
+**In Scope**:
+- The user can do X
+- Penny can do Y
+- When X happens, Y occurs
+- [add more as needed]
+
+**Out of Scope** (for v1):
+- Advanced feature Z
+- Integration with external service W
+- [add more as needed]
+
+**Open Questions**:
+- Should this work per-user or per-conversation?
+- What happens if [edge case]?
+- [add more as needed]
+
+---
+
+@user Please review and confirm these requirements before I write the detailed spec. Reply with feedback or add `requirements-approved` label to proceed.
+EOF
+)"
+```
+
+#### Mode 1b: Write Spec (for `idea` issues with approved requirements)
+
+For each `idea` issue with `requirements-approved` label:
+
+1. Read the approved requirements from the previous comment
+2. Check if it already has a "## Detailed Specification" comment (to avoid duplicate work)
 3. If spec exists, skip (already processed)
 4. If no spec, research similar features in other AI agents, chat systems, etc.
 5. Consider technical constraints (Penny's architecture, dependencies, complexity)
@@ -94,7 +154,11 @@ All work is tracked in GitHub Issues. Use the `gh` CLI tool (located at `/opt/ho
    EOF
    )"
    ```
-7. Update label to `draft`: `/opt/homebrew/bin/gh issue edit <number> --remove-label idea --add-label draft`
+7. Update label to `draft` and remove `requirements-approved`: `/opt/homebrew/bin/gh issue edit <number> --remove-label idea --remove-label requirements-approved --add-label draft`
+
+**Special Case: Skip Requirements Phase**
+
+If user comments "skip requirements, write spec" or similar on an `idea` issue, you may proceed directly to Mode 1b without posting requirements first.
 
 ### Mode 2: Roadmap Planning (On Request)
 If you find an issue titled "Roadmap Review" or similar:
@@ -174,9 +238,54 @@ All feature tracking happens in GitHub Issues for the Penny repository.
 /opt/homebrew/bin/gh issue close <number> --comment "Reason for closing"
 ```
 
-## Example Spec Format
+## Example Workflow: Requirements → Spec
 
-When adding a spec to an issue as a comment:
+### Phase 1: Post Requirements (Mode 1a)
+
+User creates issue with `idea` label: "Reminders via natural language"
+
+PM posts requirements comment:
+
+```markdown
+## Requirements (Draft)
+
+**What this feature does**:
+Allow users to set time-based reminders via natural language. Penny will send a message at the specified time.
+
+**In Scope**:
+- User can request reminder via message: "remind me about X at Y time"
+- Penny confirms the reminder and scheduled time
+- Penny sends reminder message at scheduled time
+- Natural language time parsing (e.g., "in 2 hours", "tomorrow at 9am")
+- One-time reminders only (v1)
+
+**Out of Scope** (for v1):
+- Recurring reminders (daily/weekly/etc.)
+- Editing or cancelling reminders after creation
+- Listing active reminders
+- Snooze functionality
+- Location-based reminders
+
+**Open Questions**:
+- Should reminders work across Signal and Discord, or platform-specific?
+- What timezone should we use (UTC, user's local TZ)?
+- Max number of active reminders per user?
+
+---
+
+@user Please review and confirm these requirements before I write the detailed spec. Reply with feedback or add `requirements-approved` label to proceed.
+```
+
+PM does NOT change label yet. Waits for user.
+
+### Phase 2: User Reviews and Approves
+
+User adds comment: "Looks good, cross-platform is fine, use UTC for v1"
+User adds `requirements-approved` label
+
+### Phase 3: Write Detailed Spec (Mode 1b)
+
+PM reads approved requirements, writes full spec as new comment:
 
 ```markdown
 ## Detailed Specification
@@ -199,12 +308,14 @@ When adding a spec to an issue as a comment:
 - `ReminderSchedule` checks for due reminders every 60s
 - Natural language time parsing (consider using dateparser library)
 - Integration point: MessageAgent detects reminder requests, creates DB entry
+- Cross-platform: works on both Signal and Discord
+- Store all times in UTC, no timezone conversion for v1
 
 **Dependencies**:
 - None, can build on existing scheduler infrastructure
 
 **Risks/Considerations**:
-- Time zone handling (store in UTC, display in user's TZ?)
+- Time zone handling: storing in UTC means user must think in UTC (acceptable for v1)
 - Recurring reminders (v1: one-time only, v2: add recurrence)
 - Reminder editing/cancellation (future enhancement)
 
@@ -215,7 +326,7 @@ When adding a spec to an issue as a comment:
 @user Ready for your review! Let me know if you'd like any changes to this spec.
 ```
 
-Then update the label: `/opt/homebrew/bin/gh issue edit <number> --remove-label idea --add-label draft`
+Then PM updates label: `/opt/homebrew/bin/gh issue edit <number> --remove-label idea --remove-label requirements-approved --add-label draft`
 
 ## Autonomous Batch Processing
 
@@ -224,10 +335,11 @@ Each time you run (every hour via loop), do the following:
 ### 1. Process `idea` Issues
 Review the pre-fetched `idea` issues in the "GitHub Issues (Pre-Fetched, Filtered)" section at the bottom of this prompt.
 For each `idea` issue:
-- Check if it already has a "## Detailed Specification" comment (to avoid duplicate work)
-- If NOT, expand it automatically (research + write spec)
-- Update label to `draft`
-- Move to next issue
+- Check if it has a "## Requirements (Draft)" comment
+  - If NO: Post requirements (Mode 1a), then move to next issue
+  - If YES, check for `requirements-approved` label:
+    - If NO label: Skip (waiting for user approval), move to next issue
+    - If YES: Write detailed spec (Mode 1b), update label to `draft`, move to next issue
 
 ### 2. Process `draft` Issues with User Feedback
 Review the pre-fetched `draft` issues in the "GitHub Issues (Pre-Fetched, Filtered)" section at the bottom of this prompt.
