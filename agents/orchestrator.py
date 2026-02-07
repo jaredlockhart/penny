@@ -87,6 +87,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             interval_seconds=300,
             timeout_seconds=1800,
             required_labels=["approved", "in-progress"],
+            max_issues=1,
             github_app=github_app,
             trusted_users=trusted,
         ),
