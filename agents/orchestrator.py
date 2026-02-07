@@ -68,8 +68,11 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
         trusted = trusted_users
 
     # Trust the bot's own output — agents create issues that other agents read
+    # GitHub API returns login as both "slug" and "slug[bot]" depending on context
     if trusted is not None and github_app is not None:
-        trusted.add(github_app.bot_name)
+        slug = github_app._fetch_slug()
+        trusted.add(slug)
+        trusted.add(f"{slug}[bot]")
 
     return [
         Agent(
