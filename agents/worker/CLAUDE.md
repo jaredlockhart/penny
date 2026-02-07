@@ -37,17 +37,17 @@ Each time you run, follow this exact sequence:
 ### Step 1: Check for In-Progress Work
 
 ```bash
-/opt/homebrew/bin/gh issue list --label in-progress --json number,title --limit 5
+gh issue list --label in-progress --json number,title --limit 5
 ```
 
 If an `in-progress` issue exists:
 - Check if a PR already exists for it:
   ```bash
-  /opt/homebrew/bin/gh pr list --state open --json number,title,headRefName --limit 10
+  gh pr list --state open --json number,title,headRefName --limit 10
   ```
 - **PR exists** → Update the issue label to `review` and exit:
   ```bash
-  /opt/homebrew/bin/gh issue edit <N> --remove-label in-progress --add-label review
+  gh issue edit <N> --remove-label in-progress --add-label review
   ```
 - **No PR, but branch exists** → Checkout the branch and continue from Step 6
 - **No PR, no branch** → Treat as new work, continue from Step 3
@@ -55,13 +55,13 @@ If an `in-progress` issue exists:
 ### Step 2: Find Approved Work
 
 ```bash
-/opt/homebrew/bin/gh issue list --label approved --json number,title --limit 1
+gh issue list --label approved --json number,title --limit 1
 ```
 
 - **No approved issues** → Exit cleanly. Nothing to do this cycle.
 - **Found one** → Claim it:
   ```bash
-  /opt/homebrew/bin/gh issue edit <N> --remove-label approved --add-label in-progress
+  gh issue edit <N> --remove-label approved --add-label in-progress
   ```
 
 ### Step 3: Read the Spec
@@ -78,7 +78,7 @@ The spec was written by the Product Manager agent. Look for the most recent "## 
 
 Before writing any code, read the project context:
 ```bash
-cat /Users/decker/Documents/penny/CLAUDE.md
+cat CLAUDE.md
 ```
 
 Then read the specific files mentioned in the spec's "Technical Approach" section. At minimum, read:
@@ -89,9 +89,8 @@ Then read the specific files mentioned in the spec's "Technical Approach" sectio
 ### Step 5: Create Feature Branch
 
 ```bash
-git checkout main
-git pull origin main
-git checkout -b issue-<N>-<short-slug>
+git fetch origin main
+git checkout -b issue-<N>-<short-slug> origin/main
 ```
 
 Use a short descriptive slug derived from the issue title (e.g., `issue-11-reaction-feedback`).
@@ -108,19 +107,19 @@ Add or update tests for your changes. Follow the existing test patterns in `app/
 
 Run the full check suite:
 ```bash
-make check
+make check-local
 ```
 
-This runs inside Docker and executes: format check → lint → typecheck → tests.
+This runs: format check → lint → typecheck → tests.
 
-**If `make check` fails:**
+**If `make check-local` fails:**
 1. Read the error output carefully
 2. Fix the specific issues:
-   - Formatting: `make fmt` (auto-fixes)
-   - Lint: `make fix` (auto-fixes most issues)
+   - Formatting: `make fmt-local` (auto-fixes)
+   - Lint: `make fix-local` (auto-fixes most issues)
    - Type errors: fix manually
    - Test failures: fix manually
-3. Re-run `make check`
+3. Re-run `make check-local`
 4. Repeat up to **3 total attempts**
 5. If still failing after 3 attempts, proceed to Step 9 anyway — note the failures in the PR description
 
@@ -137,7 +136,7 @@ Use conventional commit format. Only add files you intentionally changed.
 ### Step 10: Create Pull Request
 
 ```bash
-/opt/homebrew/bin/gh pr create --title "<short description>" --body "$(cat <<'EOF'
+gh pr create --title "<short description>" --body "$(cat <<'EOF'
 ## Summary
 
 <1-3 sentences describing what was implemented>
@@ -162,7 +161,7 @@ EOF
 ### Step 11: Update Issue Label
 
 ```bash
-/opt/homebrew/bin/gh issue edit <N> --remove-label in-progress --add-label review
+gh issue edit <N> --remove-label in-progress --add-label review
 ```
 
 ### Step 12: Exit
@@ -171,7 +170,7 @@ Your work is done for this cycle. Exit cleanly.
 
 ## Codebase Context
 
-Refer to `/Users/decker/Documents/penny/CLAUDE.md` for the full technical context. Key points:
+Refer to `CLAUDE.md` for the full technical context. Key points:
 
 ### Architecture
 - **Agents**: MessageAgent, SummarizeAgent, FollowupAgent, ProfileAgent, DiscoveryAgent in `app/penny/agent/agents/`
@@ -214,7 +213,7 @@ app/penny/
 
 ## Code Style
 
-Follow these rules strictly. `make check` enforces them.
+Follow these rules strictly. `make check-local` enforces them.
 
 - **Pydantic for all structured data** — no raw dicts for API payloads, configs, or internal messages
 - **Constants for string literals** — define as module-level constants or enums, no magic strings
@@ -251,11 +250,11 @@ async def test_feature(signal_server, mock_ollama, test_config, running_penny):
 - **No approved issues**: Exit cleanly with a short summary: "No approved issues found. Exiting."
 - **Spec is ambiguous or incomplete**: Comment on the issue asking for clarification. Leave the label as `in-progress`. Do NOT attempt to implement an ambiguous spec.
   ```bash
-  /opt/homebrew/bin/gh issue comment <N> --body "Need clarification: <specific question>"
+  gh issue comment <N> --body "Need clarification: <specific question>"
   ```
 - **Feature is too large**: Implement the minimum viable version described in the spec. Note in the PR what was deferred.
 - **Feature requires infrastructure changes**: Note in the PR that manual infrastructure changes are needed. Do not modify infrastructure files yourself.
-- **`make check` fails after 3 attempts**: Create the PR anyway. List the failures in the PR description under a "Known Issues" section.
+- **`make check-local` fails after 3 attempts**: Create the PR anyway. List the failures in the PR description under a "Known Issues" section.
 
 ## Remember
 
@@ -263,7 +262,7 @@ async def test_feature(signal_server, mock_ollama, test_config, running_penny):
 - Read before you write — understand existing patterns before creating new code
 - Small, focused changes — implement exactly what the spec says, nothing extra
 - Tests are required — every feature needs test coverage
-- `make check` must pass — formatting, linting, types, and tests
+- `make check-local` must pass — formatting, linting, types, and tests
 - One issue per cycle — finish what you started before picking up new work
 
 Now, check GitHub Issues and start working!

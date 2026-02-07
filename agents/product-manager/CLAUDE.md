@@ -29,7 +29,7 @@ You may still use `gh` for **write operations only**:
 
 ## GitHub Issues Workflow
 
-All work is tracked in GitHub Issues. Use the `gh` CLI tool (located at `/opt/homebrew/bin/gh`) to interact with issues.
+All work is tracked in GitHub Issues. Use the `gh` CLI tool to interact with issues.
 
 ### Label: `backlog` - Unvetted Ideas
 - Initial idea capture, not yet prioritized by user
@@ -97,7 +97,7 @@ For each `idea` issue, first check if requirements have been gathered:
 
 **Requirements Template:**
 ```bash
-/opt/homebrew/bin/gh issue comment <number> --body "$(cat <<'EOF'
+gh issue comment <number> --body "$(cat <<'EOF'
 ## Requirements (Draft)
 
 **What this feature does**:
@@ -137,7 +137,7 @@ For each `idea` issue with `requirements-approved` label:
 5. Consider technical constraints (Penny's architecture, dependencies, complexity)
 6. Write a detailed specification as an issue comment:
    ```bash
-   /opt/homebrew/bin/gh issue comment <number> --body "$(cat <<'EOF'
+   gh issue comment <number> --body "$(cat <<'EOF'
    ## Detailed Specification
 
    **Description**: What is this feature?
@@ -154,7 +154,7 @@ For each `idea` issue with `requirements-approved` label:
    EOF
    )"
    ```
-7. Update label to `draft` and remove `requirements-approved`: `/opt/homebrew/bin/gh issue edit <number> --remove-label idea --remove-label requirements-approved --add-label draft`
+7. Update label to `draft` and remove `requirements-approved`: `gh issue edit <number> --remove-label idea --remove-label requirements-approved --add-label draft`
 
 **Special Case: Skip Requirements Phase**
 
@@ -162,7 +162,7 @@ If user comments "skip requirements, write spec" or similar on an `idea` issue, 
 
 ### Mode 2: Roadmap Planning (On Request)
 If you find an issue titled "Roadmap Review" or similar:
-1. List all issues: `/opt/homebrew/bin/gh issue list --limit 100 --json number,title,labels,state`
+1. List all issues: `gh issue list --limit 100 --json number,title,labels,state`
 2. Analyze and consider:
    - User value (which features matter most?)
    - Technical dependencies (what enables other features?)
@@ -192,7 +192,7 @@ For each `draft` issue, check for new user comments:
 
 ## Context About Penny
 
-Refer to `/Users/decker/Documents/penny/CLAUDE.md` for full technical context. Key points:
+Refer to `CLAUDE.md` for full technical context. Key points:
 
 - **Architecture**: Agent-based system with specialized agents (MessageAgent, SummarizeAgent, FollowupAgent, ProfileAgent, DiscoveryAgent)
 - **Platforms**: Signal and Discord (could expand to Slack, Telegram, etc.)
@@ -209,33 +209,33 @@ All feature tracking happens in GitHub Issues for the Penny repository.
 **List issues by state:**
 ```bash
 # Backlog (waiting for user selection)
-/opt/homebrew/bin/gh issue list --label backlog --limit 50
+gh issue list --label backlog --limit 50
 
 # Ready for PM to expand
-/opt/homebrew/bin/gh issue list --label idea --limit 50
+gh issue list --label idea --limit 50
 
 # All active work
-/opt/homebrew/bin/gh issue list --label idea,draft,approved --limit 50
+gh issue list --label idea,draft,approved --limit 50
 ```
 
 **Create new issue:**
 ```bash
-/opt/homebrew/bin/gh issue create --title "Feature: X" --label idea --body "Description"
+gh issue create --title "Feature: X" --label idea --body "Description"
 ```
 
 **Add comment with spec:**
 ```bash
-/opt/homebrew/bin/gh issue comment <number> --body "Detailed spec here"
+gh issue comment <number> --body "Detailed spec here"
 ```
 
 **Update labels:**
 ```bash
-/opt/homebrew/bin/gh issue edit <number> --remove-label idea --add-label draft
+gh issue edit <number> --remove-label idea --add-label draft
 ```
 
 **Close issue:**
 ```bash
-/opt/homebrew/bin/gh issue close <number> --comment "Reason for closing"
+gh issue close <number> --comment "Reason for closing"
 ```
 
 ## Example Workflow: Requirements → Spec
@@ -326,7 +326,7 @@ PM reads approved requirements, writes full spec as new comment:
 @user Ready for your review! Let me know if you'd like any changes to this spec.
 ```
 
-Then PM updates label: `/opt/homebrew/bin/gh issue edit <number> --remove-label idea --remove-label requirements-approved --add-label draft`
+Then PM updates label: `gh issue edit <number> --remove-label idea --remove-label requirements-approved --add-label draft`
 
 ## Autonomous Batch Processing
 

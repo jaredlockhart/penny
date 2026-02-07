@@ -104,13 +104,18 @@ app/
         test_message_flow.py — End-to-end message flow tests
   Dockerfile            — Python 3.12-slim
   pyproject.toml        — Dependencies and project metadata
-Makefile                — Dev commands (make up, make check, make prod, make agents)
-docker-compose.yml      — signal-api + penny services
+Makefile                — Dev commands (make up, make check, make prod)
+docker-compose.yml      — signal-api + penny + team services
+docker-compose.override.yml — Dev source volume overrides
 scripts/
-  deploy-watch.sh       — Auto-deploy: polls git, restarts on new commits
+  watcher/
+    Dockerfile          — Lightweight watcher image
+    watch.sh            — Git fetch + rebuild loop
 agents/
   orchestrator.py       — Agent lifecycle manager, runs on schedule
   base.py               — Agent base class: wraps Claude CLI, has_work() pre-check
+  Dockerfile            — Agent container image
+  entrypoint.sh         — Runtime dep install + orchestrator launch
   codeowners.py         — Parses .github/CODEOWNERS for trusted usernames
   issue_filter.py       — Pre-fetches and filters issue content by trusted authors
   logs/                  — Per-agent output logs (gitignored)
@@ -287,6 +292,12 @@ Channels handle platform-specific message I/O:
 
 **API Keys**:
 - `PERPLEXITY_API_KEY`: API key for web search
+- `ANTHROPIC_API_KEY`: API key for Claude CLI (agent containers)
+
+**GitHub App** (required for agent containers):
+- `GITHUB_APP_ID`: GitHub App ID for authenticated API access
+- `GITHUB_APP_PRIVATE_KEY_PATH`: Path to GitHub App private key file
+- `GITHUB_APP_INSTALLATION_ID`: GitHub App installation ID for the repository
 
 **Behavior**:
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
@@ -306,30 +317,30 @@ Channels handle platform-specific message I/O:
 The project runs inside Docker Compose. A top-level Makefile wraps all commands:
 
 ```bash
-make up          # Build and start all services (foreground)
-make prod        # Deploy with .env.prod + auto-restart on new commits
+make up          # Start all services (penny + team) with Docker Compose
+make prod        # Deploy penny only (no team) with .env.prod
 make kill        # Tear down containers and remove local images
 make build       # Build the Docker image
 make check       # Build, format check, lint, typecheck, and run tests
+make check-local # Run checks directly (for agent containers)
 make pytest      # Run integration tests
 make fmt         # Format with ruff
+make fmt-local   # Format directly (for agent containers)
 make lint        # Lint with ruff
 make fix         # Format + autofix lint issues
+make fix-local   # Format + autofix directly (for agent containers)
 make typecheck   # Type check with ty
-make agents      # Run the agent orchestrator (uses uv, not Docker)
 ```
 
-All dev tool commands run via `docker compose run --rm` in a temporary container. Source is volume-mounted so changes write back to the host filesystem.
+All dev tool commands run via `docker compose run --rm` in a temporary container. Source is volume-mounted so changes write back to the host filesystem. The `-local` variants run tools directly on the host (used inside agent containers where Docker-in-Docker is not available).
 
-`make prod` copies `.env.prod`, starts containers detached, then runs `scripts/deploy-watch.sh` which polls git every 5 minutes (configurable via `DEPLOY_INTERVAL`) and auto-restarts on new commits. Ctrl+C stops everything cleanly.
-
-`make agents` runs the orchestrator via `uv run --python 3.12`. Agents check for matching GitHub issue labels before invoking Claude CLI, so idle cycles are cheap (~1s).
+`make prod` copies `.env.prod` and starts the penny service (without the `team` profile). The watcher container handles auto-deploy (see Auto-Deploy section).
 
 Prerequisites: signal-cli-rest-api on :8080 (for Signal), Ollama on :11434, Perplexity API key in .env.
 
 ## CI
 
-GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push to `main` and on pull requests. The workflow builds the Docker image and runs all checks inside the container, same as local dev. Config is in `.github/workflows/check.yml`.
+GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push to `main` and on pull requests. The workflow builds the Docker image and runs all checks inside the container, same as local dev. Config is in `.github/workflows/check.yml`. CI only builds and runs the penny service — team services (pm, worker) are in the `team` profile and don't affect CI.
 
 ## Extending
 
@@ -448,13 +459,15 @@ Added GitHub Actions workflow for continuous integration:
 Python-based orchestrator (`agents/`) that manages autonomous Claude CLI agents:
 - `agents/base.py`: Agent class wraps `claude -p <prompt> --dangerously-skip-permissions --verbose --output-format stream-json`
 - `agents/orchestrator.py`: Main loop checks agents every 30s, runs those that are due
+- `--agent <name>` flag: Run a single agent instead of the full orchestrator loop
 - `has_work()` pre-check: Queries GitHub issue labels via `gh` CLI before invoking Claude CLI (~1s vs ~15-300s)
 - Fail-open design: If `gh` fails, agent runs anyway
 - Product Manager agent: Expands `idea` issues into specs, promotes to `approved` (5-min cycle, 600s timeout, requires `idea`/`draft` labels)
 - Worker agent: Implements `approved` issues end-to-end — branches, code, tests, `make check`, PRs (5-min cycle, 1800s timeout, requires `approved`/`in-progress` labels)
 - GitHub Issues as state machine: `backlog` → `idea` → `draft` → `approved` → `in-progress` → `review` → `shipped`
 - Streaming output via `--verbose --output-format stream-json` for real-time terminal logging
-- Run with `make agents` or `uv run --python 3.12 agents/orchestrator.py`
+- Agents run in Docker containers (pm and worker services in docker-compose.yml) with `profiles: [team]` — only started with `make up` or `docker compose --profile team up`
+- SIGTERM forwarding for graceful shutdown of Claude CLI subprocesses
 
 #### CODEOWNERS-Based Issue Filtering
 
@@ -477,9 +490,7 @@ Idempotent SQLite migration system (`database/migrate.py`):
 
 ### Auto-Deploy
 
-`make prod` now includes auto-deploy via `scripts/deploy-watch.sh`:
-- Copies `.env.prod`, starts containers detached
-- Background loop polls `git fetch origin main` every 5 minutes (configurable via `DEPLOY_INTERVAL`)
-- On new commits: `git pull --ff-only`, `docker compose down && up -d --build`
-- Foreground tails `docker compose logs`
-- Ctrl+C triggers cleanup (stops watcher, tears down containers)
+Auto-deploy runs as a Docker service (`watcher`) defined in `scripts/watcher/`:
+- The watcher container polls `git fetch origin main` periodically (configurable via `DEPLOY_INTERVAL`)
+- On new commits: rebuilds penny via `git archive origin/main:app/ | docker build -t penny -` and restarts services
+- Runs as part of the Docker Compose stack — Ctrl+C on `docker compose` stops everything

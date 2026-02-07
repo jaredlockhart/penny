@@ -16,8 +16,8 @@ from pathlib import Path
 
 from github_app import GitHubApp
 
-CLAUDE_CLI = Path.home() / ".local" / "bin" / "claude"
-GH_CLI = Path("/opt/homebrew/bin/gh")
+CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
+GH_CLI = os.getenv("GH_CLI", "gh")
 PROJECT_ROOT = Path(__file__).parent.parent
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ class Agent:
         self.trusted_users = trusted_users
         self.last_run: datetime | None = None
         self.run_count = 0
+        self._process: subprocess.Popen | None = None
 
     def is_due(self) -> bool:
         if self.last_run is None:
@@ -87,7 +88,7 @@ class Agent:
         for label in self.required_labels:
             try:
                 result = subprocess.run(
-                    [str(GH_CLI), "issue", "list", "--label", label, "--json", "number", "--limit", "1"],
+                    [GH_CLI, "issue", "list", "--label", label, "--json", "number", "--limit", "1"],
                     capture_output=True, text=True, timeout=15, env=self._get_env(),
                 )
                 if result.returncode == 0 and result.stdout.strip() not in ("", "[]"):
@@ -100,7 +101,7 @@ class Agent:
 
     def _build_command(self, prompt: str) -> list[str]:
         cmd = [
-            str(CLAUDE_CLI),
+            CLAUDE_CLI,
             "-p",
             prompt,
             "--dangerously-skip-permissions",
@@ -140,6 +141,7 @@ class Agent:
                 cwd=str(self.working_dir),
                 env=self._get_env(),
             )
+            self._process = process
 
             result_text = ""
             assert process.stdout is not None
@@ -156,6 +158,7 @@ class Agent:
                     logger.info(f"[{self.name}] {line}")
 
             process.wait(timeout=self.timeout_seconds)
+            self._process = None
 
             duration = (datetime.now() - start).total_seconds()
             self.last_run = datetime.now()
@@ -175,6 +178,7 @@ class Agent:
 
         except subprocess.TimeoutExpired:
             process.kill()
+            self._process = None
             duration = (datetime.now() - start).total_seconds()
             self.last_run = datetime.now()
             self.run_count += 1

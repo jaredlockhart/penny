@@ -1,0 +1,5 @@
+services:
+  penny:
+    volumes:
+      - ./app/penny:/app/penny
+      - ./app/pyproject.toml:/app/pyproject.toml
