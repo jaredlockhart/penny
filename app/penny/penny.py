@@ -145,6 +145,8 @@ class Penny:
         if self.config.ollama_background_model != self.config.ollama_foreground_model:
             logger.info("Ollama model: %s (background)", self.config.ollama_background_model)
 
+        await self._send_startup_announcement()
+
         try:
             await asyncio.gather(
                 self.channel.listen(),
@@ -152,6 +154,23 @@ class Penny:
             )
         finally:
             await self.shutdown()
+
+    async def _send_startup_announcement(self) -> None:
+        """Send a startup announcement to all known recipients."""
+        try:
+            senders = self.db.get_all_senders()
+            if not senders:
+                logger.info("No recipients found for startup announcement")
+                return
+
+            logger.info("Sending startup announcement to %d recipient(s)", len(senders))
+            for sender in senders:
+                try:
+                    await self.channel.send_status_message(sender, "👋")
+                except Exception as e:
+                    logger.warning("Failed to send startup announcement to %s: %s", sender, e)
+        except Exception as e:
+            logger.warning("Failed to send startup announcement: %s", e)
 
     async def shutdown(self) -> None:
         """Clean shutdown of resources."""

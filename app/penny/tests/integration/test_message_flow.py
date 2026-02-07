@@ -404,3 +404,56 @@ async def test_signal_reaction_raw_format(
         assert reaction.content == "👍"
         assert reaction.parent_id == message_id
         assert reaction.is_reaction is True
+
+
+@pytest.mark.asyncio
+async def test_startup_announcement(
+    signal_server, mock_ollama, test_config, _mock_search, running_penny
+):
+    """
+    Test that Penny sends a startup announcement (wave emoji) when starting up.
+
+    The announcement should:
+    - Be sent to all known recipients (users who have sent messages)
+    - Not be logged to the database
+    - Be sent after initialization is complete
+    """
+    # Set up initial message history so we have a known recipient
+    config = test_config
+    mock_ollama.set_default_flow(
+        search_query="test query",
+        final_response="test response 🌟",
+    )
+
+    # First, send a message to populate the database with a sender
+    async with running_penny(config) as penny:
+        await signal_server.push_message(sender=TEST_SENDER, content="initial message")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify the sender is in the database
+        senders = penny.db.get_all_senders()
+        assert TEST_SENDER in senders
+
+    # Clear the outgoing messages from the first run
+    signal_server.outgoing_messages.clear()
+
+    # Now start Penny again - it should send startup announcement
+    async with running_penny(config) as penny:
+        # Wait a bit for startup announcement to be sent
+        await asyncio.sleep(0.5)
+
+        # Verify startup announcement was sent
+        assert len(signal_server.outgoing_messages) == 1
+        startup_msg = signal_server.outgoing_messages[0]
+        assert startup_msg["message"] == "👋"
+        assert TEST_SENDER in startup_msg["recipients"]
+
+        # Verify the startup announcement was NOT logged to database
+        with penny.db.get_session() as session:
+            # Count all outgoing messages (should be just the one from first run)
+            outgoing = list(
+                session.exec(select(MessageLog).where(MessageLog.direction == "outgoing")).all()
+            )
+        # Only the response from the first run should be logged, not the startup announcement
+        assert len(outgoing) == 1
+        assert "👋" not in outgoing[0].content

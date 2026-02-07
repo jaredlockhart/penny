@@ -148,6 +148,26 @@ class MessageChannel(ABC):
         except asyncio.CancelledError:
             pass
 
+    async def send_status_message(self, recipient: str, content: str) -> bool:
+        """
+        Send a status message without logging to database.
+
+        Used for ephemeral status indicators like startup announcements
+        that shouldn't be part of conversation history.
+
+        Args:
+            recipient: Identifier for the recipient
+            content: Message content
+
+        Returns:
+            True if send was successful, False otherwise
+        """
+        prepared = self.prepare_outgoing(content)
+        external_id = await self.send_message(
+            recipient, prepared, attachments=None, quote_message=None
+        )
+        return external_id is not None
+
     async def send_response(
         self,
         recipient: str,
