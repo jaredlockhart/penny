@@ -315,20 +315,27 @@ class SignalChannel(MessageChannel):
                 logger.debug("Ignoring reaction removal from %s", sender)
                 return None
 
+            # Handle both string and ReactionEmoji object formats
+            emoji = reaction.emoji if isinstance(reaction.emoji, str) else reaction.emoji.value
+
             logger.info(
                 "Extracted reaction - sender: %s, emoji: %s, target: %s",
                 sender,
-                reaction.emoji.value,
+                emoji,
                 reaction.targetSentTimestamp,
             )
             return IncomingMessage(
                 sender=sender,
-                content=reaction.emoji.value,
+                content=emoji,
                 is_reaction=True,
                 reacted_to_external_id=str(reaction.targetSentTimestamp),
             )
 
         # Regular text message
+        if envelope.envelope.dataMessage.message is None:
+            logger.debug("Ignoring message with no text content from %s", sender)
+            return None
+
         content = envelope.envelope.dataMessage.message.strip()
 
         logger.info("Extracted - sender: %s, content: '%s'", sender, content)
