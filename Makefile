@@ -2,7 +2,7 @@ DC = docker compose run --rm penny
 
 DEPLOY_INTERVAL ?= 300
 
-.PHONY: up test prod kill build fmt lint fix typecheck check pytest agents
+.PHONY: up test prod kill build fmt lint fix typecheck check pytest team
 
 up:
 	docker compose up --build
@@ -45,6 +45,7 @@ check: build
 pytest: build
 	$(DC) pytest penny/tests/ -v
 
-agents:
+team:
+	eval "$$(uv run --python 3.12 --with 'PyJWT[crypto]' agents/github_app.py 2>/dev/null)" 2>/dev/null || true; \
 	uv run --python 3.12 agents/orchestrator.py
 
