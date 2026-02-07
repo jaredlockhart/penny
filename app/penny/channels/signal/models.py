@@ -34,7 +34,7 @@ class ReactionEmoji(BaseModel):
 class Reaction(BaseModel):
     """Reaction message from Signal."""
 
-    emoji: ReactionEmoji
+    emoji: str | ReactionEmoji
     targetAuthor: str = Field(alias="targetAuthor")
     targetAuthorNumber: str = Field(alias="targetAuthorNumber")
     targetSentTimestamp: int = Field(alias="targetSentTimestamp")
@@ -48,7 +48,7 @@ class DataMessage(BaseModel):
     """Data message from Signal."""
 
     timestamp: int
-    message: str = ""  # Empty for reactions
+    message: str | None = None  # None for reactions
     expiresInSeconds: int = Field(default=0, alias="expiresInSeconds")
     isExpirationUpdate: bool = Field(default=False, alias="isExpirationUpdate")
     viewOnce: bool = Field(default=False, alias="viewOnce")

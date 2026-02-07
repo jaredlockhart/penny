@@ -317,3 +317,90 @@ async def test_signal_reaction_message(
         # Verify no response was sent to the reaction
         # (only the initial response should exist)
         assert len(signal_server.outgoing_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_signal_reaction_raw_format(
+    signal_server, mock_ollama, _mock_search, make_config, running_penny
+):
+    """
+    Test Signal reaction handling with the raw format that Signal actually sends.
+
+    This tests the bug fix for issue #34 where Signal sends:
+    - message: None (not an empty string)
+    - emoji: "👍" (plain string, not {"value": "👍"} object)
+    """
+    config = make_config()
+    mock_ollama.set_default_flow(
+        search_query="test query",
+        final_response="test response 🌟",
+    )
+
+    async with running_penny(config) as penny:
+        # Send initial message
+        await signal_server.push_message(sender=TEST_SENDER, content="test message")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Get the outgoing message's signal timestamp
+        with penny.db.get_session() as session:
+            outgoing = session.exec(
+                select(MessageLog).where(MessageLog.direction == "outgoing")
+            ).first()
+            assert outgoing is not None
+            message_id = outgoing.id
+            external_id = outgoing.external_id
+
+        # Send a reaction using the raw format that Signal actually sends
+        # (not the mock format with {"value": emoji})
+        import json
+        import time
+
+        ts = int(time.time() * 1000)
+        raw_envelope = {
+            "envelope": {
+                "source": TEST_SENDER,
+                "sourceNumber": TEST_SENDER,
+                "sourceUuid": "test-uuid-123",
+                "sourceName": "Test User",
+                "sourceDevice": 1,
+                "timestamp": ts,
+                "serverReceivedTimestamp": ts,
+                "serverDeliveredTimestamp": ts,
+                "dataMessage": {
+                    "timestamp": ts,
+                    "message": None,  # KEY: None, not empty string
+                    "reaction": {
+                        "emoji": "👍",  # KEY: Plain string, not {"value": "👍"}
+                        "targetAuthor": config.signal_number,
+                        "targetAuthorNumber": config.signal_number,
+                        "targetSentTimestamp": int(external_id),
+                        "isRemove": False,
+                    },
+                },
+            },
+            "account": config.signal_number,
+        }
+
+        # Push the raw envelope to all connected websockets
+        for ws in signal_server._websockets:
+            if not ws.closed:
+                await ws.send_str(json.dumps(raw_envelope))
+
+        # Wait a bit for processing
+        await asyncio.sleep(0.5)
+
+        # Verify reaction was logged
+        with penny.db.get_session() as session:
+            reactions = list(
+                session.exec(
+                    select(MessageLog).where(
+                        MessageLog.is_reaction == True,  # noqa: E712
+                        MessageLog.sender == TEST_SENDER,
+                    )
+                ).all()
+            )
+        assert len(reactions) == 1, "Reaction should be logged"
+        reaction = reactions[0]
+        assert reaction.content == "👍"
+        assert reaction.parent_id == message_id
+        assert reaction.is_reaction is True
