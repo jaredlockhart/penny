@@ -9,6 +9,11 @@ Usage:
     python agents/orchestrator.py --list       # Show registered agents
 """
 
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["PyJWT[crypto]"]
+# ///
+
 from __future__ import annotations
 
 import argparse
@@ -20,12 +25,29 @@ from datetime import datetime
 from pathlib import Path
 
 from base import Agent
+from github_app import GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
 LOG_DIR = AGENTS_DIR / "logs"
+def load_github_app() -> GitHubApp | None:
+    """Load GitHub App config from environment variables."""
+    import os
+
+    app_id = os.getenv("GITHUB_APP_ID")
+    key_path = os.getenv("GITHUB_APP_PRIVATE_KEY_PATH")
+    install_id = os.getenv("GITHUB_APP_INSTALLATION_ID")
+
+    if not all([app_id, key_path, install_id]):
+        return None
+
+    return GitHubApp(
+        app_id=int(app_id),
+        private_key_path=Path(key_path),
+        installation_id=int(install_id),
+    )
 
 
-def get_agents() -> list[Agent]:
+def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
     """All registered agents. Add new agents here."""
     return [
         Agent(
@@ -34,6 +56,7 @@ def get_agents() -> list[Agent]:
             interval_seconds=300,
             timeout_seconds=600,
             required_labels=["idea", "draft"],
+            github_app=github_app,
         ),
         Agent(
             name="worker",
@@ -41,6 +64,7 @@ def get_agents() -> list[Agent]:
             interval_seconds=300,
             timeout_seconds=1800,
             required_labels=["approved", "in-progress"],
+            github_app=github_app,
         ),
         # Future agents:
         # Agent(name="quality", ...),
@@ -80,7 +104,13 @@ def main() -> None:
     setup_logging(args.log_file)
     logger = logging.getLogger(__name__)
 
-    agents = get_agents()
+    github_app = load_github_app()
+    if github_app:
+        logger.info(f"GitHub App: id={github_app.app_id}, install={github_app.installation_id}")
+    else:
+        logger.warning("No GitHub App configured — agents will use your personal gh auth")
+
+    agents = get_agents(github_app)
 
     if args.list:
         for agent in agents:
