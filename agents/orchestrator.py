@@ -77,7 +77,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             prompt_path=AGENTS_DIR / "product-manager" / "CLAUDE.md",
             interval_seconds=300,
             timeout_seconds=600,
-            required_labels=["idea", "draft"],
+            required_labels=["idea", "requirements-approved", "draft"],
             github_app=github_app,
             trusted_users=trusted,
         ),
