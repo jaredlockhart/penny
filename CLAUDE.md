@@ -318,7 +318,7 @@ The project runs inside Docker Compose. A top-level Makefile wraps all commands:
 
 ```bash
 make up          # Start all services (penny + team) with Docker Compose
-make prod        # Deploy penny only (no team) with .env.prod
+make prod        # Deploy penny only (no team, no override)
 make kill        # Tear down containers and remove local images
 make build       # Build the Docker image
 make check       # Build, format check, lint, typecheck, and run tests
@@ -334,7 +334,7 @@ make typecheck   # Type check with ty
 
 All dev tool commands run via `docker compose run --rm` in a temporary container. Source is volume-mounted so changes write back to the host filesystem. The `-local` variants run tools directly on the host (used inside agent containers where Docker-in-Docker is not available).
 
-`make prod` copies `.env.prod` and starts the penny service (without the `team` profile). The watcher container handles auto-deploy (see Auto-Deploy section).
+`make prod` starts the penny service only (skips `docker-compose.override.yml` and the `team` profile). The watcher container handles auto-deploy when running the full stack via `make up`.
 
 Prerequisites: signal-cli-rest-api on :8080 (for Signal), Ollama on :11434, Perplexity API key in .env.
 

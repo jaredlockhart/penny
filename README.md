@@ -143,7 +143,7 @@ make up
 
 ```bash
 make up          # Build and start all services (foreground)
-make prod        # Deploy with .env.prod, auto-restart on new commits
+make prod        # Deploy penny only (no team, no override)
 make kill        # Tear down containers and remove local images
 make build       # Build the Docker image
 make check       # Build, format check, lint, typecheck, and run tests
@@ -157,7 +157,7 @@ make agents      # Run the agent orchestrator (see agents/README.md)
 
 All dev tool commands run in temporary Docker containers via `docker compose run --rm`, with source volume-mounted so changes write back to the host filesystem.
 
-`make prod` copies `.env.prod`, starts containers detached, then runs a deploy-watch loop that polls git every 5 minutes and auto-restarts on new commits. Override the interval with `make prod DEPLOY_INTERVAL=60`.
+`make prod` starts the penny service only (skips `docker-compose.override.yml` and the `team` profile). Use `make up` for the full stack including agents and watcher.
 
 <details>
 <summary><h2>Configuration</h2></summary>

@@ -28,12 +28,9 @@ services:
     volumes:
       - .:/repo
       - ./data:/repo/data
+    env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
-      - ANTHROPIC_API_KEY
-      - GITHUB_APP_ID
-      - GITHUB_APP_PRIVATE_KEY_PATH=/repo/data/github-app.pem
-      - GITHUB_APP_INSTALLATION_ID
 
   worker:
     build: ./agents
@@ -44,12 +41,9 @@ services:
     volumes:
       - .:/repo
       - ./data:/repo/data
+    env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
-      - ANTHROPIC_API_KEY
-      - GITHUB_APP_ID
-      - GITHUB_APP_PRIVATE_KEY_PATH=/repo/data/github-app.pem
-      - GITHUB_APP_INSTALLATION_ID
 
   watcher:
     build: ./scripts/watcher

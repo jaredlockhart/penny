@@ -12,7 +12,6 @@ up:
 	docker compose --profile team up --build
 
 prod:
-	cp .env.prod .env
 	docker compose -f docker-compose.yml up --build
 
 kill:

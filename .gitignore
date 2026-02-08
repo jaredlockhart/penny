@@ -1,6 +1,5 @@
 # Environment
 .env
-.env.prod
 .env.test
 *.pem
 
