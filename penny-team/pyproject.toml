@@ -1,0 +1,19 @@
+[project]
+name = "penny-team"
+version = "0.1.0"
+description = "Autonomous agent orchestrator for Penny — manages PM, architect, and worker agents"
+authors = [{ name = "Jared Lockhart" }]
+requires-python = ">=3.12"
+dependencies = [
+    "PyJWT[crypto]>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Standalone scripts, not an importable package — install for dependencies only
+py-modules = []
+packages = []

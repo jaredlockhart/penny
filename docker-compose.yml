@@ -10,12 +10,12 @@ services:
       - MODE=json-rpc
 
   penny:
-    build: ./app
+    build: ./penny
     image: penny
     restart: unless-stopped
     volumes:
-      - ./data:/app/data
-      - ./.env:/app/.env
+      - ./data:/penny/data
+      - ./.env:/penny/.env
     environment:
       - PYTHONUNBUFFERED=1
       - SIGNAL_API_URL=http://signal-api:8080
@@ -23,7 +23,7 @@ services:
   pm:
     build:
       context: .
-      dockerfile: agents/Dockerfile
+      dockerfile: penny-team/Dockerfile
     restart: unless-stopped
     profiles: [team]
     command: ["--agent", "product-manager"]
@@ -37,7 +37,7 @@ services:
   architect:
     build:
       context: .
-      dockerfile: agents/Dockerfile
+      dockerfile: penny-team/Dockerfile
     restart: unless-stopped
     profiles: [team]
     command: ["--agent", "architect"]
@@ -51,7 +51,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: agents/Dockerfile
+      dockerfile: penny-team/Dockerfile
     restart: unless-stopped
     profiles: [team]
     stop_grace_period: 120s

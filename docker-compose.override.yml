@@ -1,5 +1,5 @@
 services:
   penny:
     volumes:
-      - ./app/penny:/app/penny
-      - ./app/pyproject.toml:/app/pyproject.toml
+      - ./penny/penny:/penny/penny
+      - ./penny/pyproject.toml:/penny/pyproject.toml

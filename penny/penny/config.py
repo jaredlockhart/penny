@@ -61,10 +61,10 @@ class Config:
     @classmethod
     def load(cls) -> "Config":
         """Load configuration from .env file."""
-        # Load .env file from project root or /app/.env in container
+        # Load .env file from project root or /penny/.env in container
         env_paths = [
             Path.cwd() / ".env",
-            Path("/app/.env"),
+            Path("/penny/.env"),
         ]
 
         for env_path in env_paths:
@@ -118,7 +118,7 @@ class Config:
         ollama_background_model = os.getenv("OLLAMA_BACKGROUND_MODEL", ollama_foreground_model)
         perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")  # Optional
         log_level = os.getenv("LOG_LEVEL", "INFO")
-        db_path = os.getenv("DB_PATH", "/app/data/penny.db")
+        db_path = os.getenv("DB_PATH", "/penny/data/penny.db")
         log_file = os.getenv("LOG_FILE")  # Optional, defaults to None
 
         # Global idle threshold for all background tasks

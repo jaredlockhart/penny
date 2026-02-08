@@ -4,9 +4,9 @@ Manages autonomous agent lifecycles. Each agent runs on its own schedule,
 executing Claude CLI with its specific prompt.
 
 Usage:
-    python agents/orchestrator.py              # Run continuously
-    python agents/orchestrator.py --once       # Run all due agents once and exit
-    python agents/orchestrator.py --list       # Show registered agents
+    python penny-team/orchestrator.py              # Run continuously
+    python penny-team/orchestrator.py --once       # Run all due agents once and exit
+    python penny-team/orchestrator.py --list       # Show registered agents
 """
 
 # /// script

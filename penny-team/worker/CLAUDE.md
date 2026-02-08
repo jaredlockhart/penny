@@ -204,7 +204,7 @@ Write the code following the patterns described below. Keep changes focused and 
 
 ### Step 7: Write Tests
 
-Add or update tests for your changes. Follow the existing test patterns in `app/penny/tests/`.
+Add or update tests for your changes. Follow the existing test patterns in `penny/penny/tests/`.
 
 ### Step 8: Validate
 
@@ -276,16 +276,16 @@ Your work is done for this cycle. Exit cleanly.
 Refer to `CLAUDE.md` for the full technical context. Key points:
 
 ### Architecture
-- **Agents**: MessageAgent, SummarizeAgent, FollowupAgent, ProfileAgent, DiscoveryAgent in `app/penny/agent/agents/`
-- **Channels**: Signal and Discord in `app/penny/channels/`
-- **Tools**: SearchTool (Perplexity + DuckDuckGo) in `app/penny/tools/`
-- **Scheduler**: BackgroundScheduler with priority-based scheduling in `app/penny/scheduler/`
-- **Database**: SQLite via SQLModel in `app/penny/database/`
-- **Ollama**: Local LLM client in `app/penny/ollama/`
+- **Agents**: MessageAgent, SummarizeAgent, FollowupAgent, ProfileAgent, DiscoveryAgent in `penny/penny/agent/agents/`
+- **Channels**: Signal and Discord in `penny/penny/channels/`
+- **Tools**: SearchTool (Perplexity + DuckDuckGo) in `penny/penny/tools/`
+- **Scheduler**: BackgroundScheduler with priority-based scheduling in `penny/penny/scheduler/`
+- **Database**: SQLite via SQLModel in `penny/penny/database/`
+- **Ollama**: Local LLM client in `penny/penny/ollama/`
 
 ### Directory Structure
 ```
-app/penny/
+penny/penny/
   penny.py              — Entry point
   config.py             — Config dataclass from .env
   constants.py          — System prompts, string constants
@@ -367,10 +367,10 @@ When your implementation requires database schema changes or data transformation
 
 1. Find the next available migration number:
    ```bash
-   ls app/penny/database/migrations/
+   ls penny/penny/database/migrations/
    ```
 
-2. Create a new file `app/penny/database/migrations/NNNN_short_description.py`:
+2. Create a new file `penny/penny/database/migrations/NNNN_short_description.py`:
    ```python
    """Brief description of what this migration does.
 
@@ -389,7 +389,7 @@ When your implementation requires database schema changes or data transformation
        # conn.execute("UPDATE tablename SET colname = ... WHERE ...")
    ```
 
-3. Update the SQLModel model in `app/penny/database/models.py` to match your schema changes.
+3. Update the SQLModel model in `penny/penny/database/models.py` to match your schema changes.
 
 ### Migration Types
 
@@ -421,7 +421,7 @@ Migration numbers must be unique across the codebase. If after rebasing onto mai
 
 1. Check what migrations exist:
    ```bash
-   ls app/penny/database/migrations/
+   ls penny/penny/database/migrations/
    ```
 2. Rename your migration file to use the next available number
 3. Run `make check` to verify — the `--validate` step will catch any remaining conflicts

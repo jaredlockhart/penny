@@ -152,7 +152,7 @@ make fmt         # Format with ruff
 make lint        # Lint with ruff
 make fix         # Format + autofix lint issues
 make typecheck   # Type check with ty
-make agents      # Run the agent orchestrator (see agents/README.md)
+make agents      # Run the agent orchestrator (see penny-team/README.md)
 ```
 
 All dev tool commands run in temporary Docker containers via `docker compose run --rm`, with source volume-mounted so changes write back to the host filesystem.
@@ -187,9 +187,9 @@ OLLAMA_BACKGROUND_MODEL="gpt-oss:20b"    # Smarter model for background tasks (d
 PERPLEXITY_API_KEY="your-api-key"
 
 # Database & Logging
-DB_PATH="/app/data/penny.db"
+DB_PATH="/penny/data/penny.db"
 LOG_LEVEL="INFO"
-# LOG_FILE="/app/data/penny.log"  # Optional
+# LOG_FILE="/penny/data/penny.log"  # Optional
 
 # Agent behavior (optional, defaults shown)
 MESSAGE_MAX_STEPS=5
@@ -241,7 +241,7 @@ Penny auto-detects which channel to use based on configured credentials:
 **Logging:**
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)
 - `LOG_FILE`: Optional path to log file
-- `DB_PATH`: SQLite database location (default: /app/data/penny.db)
+- `DB_PATH`: SQLite database location (default: /penny/data/penny.db)
 
 </details>
 
@@ -306,7 +306,7 @@ Each agent checks for matching GitHub issue labels before waking Claude CLI, so 
 make agents      # Run orchestrator continuously
 ```
 
-See [agents/README.md](agents/README.md) for full details.
+See [penny-team/README.md](penny-team/README.md) for full details.
 
 </details>
 

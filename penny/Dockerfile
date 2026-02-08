@@ -8,7 +8,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Set working directory
-WORKDIR /app
+WORKDIR /penny
 
 # Copy dependency files and install dependencies (cached layer)
 COPY pyproject.toml ./

@@ -5,9 +5,9 @@ Python-based orchestrator that manages autonomous Claude CLI agents. Each agent 
 ## Quick Start
 
 ```bash
-uv run --python 3.12 agents/orchestrator.py              # Run continuously
-uv run --python 3.12 agents/orchestrator.py --once       # Run all due agents once and exit
-uv run --python 3.12 agents/orchestrator.py --list       # Show registered agents
+uv run --python 3.12 penny-team/orchestrator.py              # Run continuously
+uv run --python 3.12 penny-team/orchestrator.py --once       # Run all due agents once and exit
+uv run --python 3.12 penny-team/orchestrator.py --list       # Show registered agents
 ```
 
 ## How It Works
@@ -17,7 +17,7 @@ The orchestrator loops every 30 seconds, checking which agents are due to run. W
 1. Reads the agent's `CLAUDE.md` prompt
 2. Calls `claude -p <prompt> --dangerously-skip-permissions --verbose --output-format stream-json`
 3. Streams JSON events in real-time, logging tool calls and text output as they happen
-4. Captures final output to `agents/logs/<agent-name>.log`
+4. Captures final output to `data/logs/<agent-name>.log`
 5. Records success/failure and duration
 
 Output streams to the terminal in real-time so you can watch agents work. Ctrl+C stops the orchestrator cleanly.
@@ -27,10 +27,9 @@ Output streams to the terminal in real-time so you can watch agents work. Ctrl+C
 Each agent is a directory with a single `CLAUDE.md` file (the prompt) and an entry in `orchestrator.py`:
 
 ```
-agents/
+penny-team/
   orchestrator.py          # Main loop
   base.py                  # Agent base class
-  logs/                    # Per-agent output logs (gitignored)
   product-manager/
     CLAUDE.md              # PM agent prompt (requirements gathering)
   architect/
@@ -65,7 +64,7 @@ Implements features on a 5-minute cycle (1800s timeout, requires `in-progress`/`
 
 ## Adding a New Agent
 
-1. Create a directory: `agents/my-agent/`
+1. Create a directory: `penny-team/my-agent/`
 2. Write a `CLAUDE.md` prompt defining the agent's behavior
 3. Register it in `orchestrator.py`:
 
@@ -91,7 +90,7 @@ The `Agent` class accepts:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `name` | required | Agent identifier; prompt loaded from `agents/<name>/CLAUDE.md` |
+| `name` | required | Agent identifier; prompt loaded from `penny-team/<name>/CLAUDE.md` |
 | `interval_seconds` | 3600 | How often the agent runs |
 | `working_dir` | project root | Working directory for Claude CLI |
 | `timeout_seconds` | 600 | Max runtime before killing the process |
@@ -110,8 +109,8 @@ This means you can watch agents think, call tools, and produce output live in th
 
 ## Logs
 
-- `agents/logs/orchestrator.log` — orchestrator events (start, stop, agent runs)
-- `agents/logs/<agent-name>.log` — raw Claude output per agent, appended each cycle
+- `data/logs/orchestrator.log` — orchestrator events (start, stop, agent runs)
+- `data/logs/<agent-name>.log` — raw Claude output per agent, appended each cycle
 
 ## GitHub Issue Labels
 

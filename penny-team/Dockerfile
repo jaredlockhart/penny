@@ -41,11 +41,11 @@ COPY . /repo
 RUN mkdir -p /repo/data
 
 # Install Python deps from baked-in source
-RUN cd /repo/app && uv pip install --system . --group dev --quiet
-RUN uv pip install --system "PyJWT[crypto]" python-dotenv --quiet
+RUN cd /repo/penny && uv pip install --system . --group dev --quiet
+RUN cd /repo/penny-team && uv pip install --system . --quiet
 
 # Claude CLI refuses --dangerously-skip-permissions as root
-COPY agents/entrypoint.sh /entrypoint.sh
+COPY penny-team/entrypoint.sh /entrypoint.sh
 RUN useradd -m -s /bin/bash agent \
     && chown -R agent:agent /repo /usr/local/lib/python3.12/ /usr/local/bin/ /usr/local/include/python3.12/ \
     && chmod +x /entrypoint.sh

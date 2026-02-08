@@ -22,7 +22,7 @@ GH_CLI = os.getenv("GH_CLI", "gh")
 LABELS_WITH_EXTERNAL_STATE = {"in-review"}
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent
-DATA_DIR = PROJECT_ROOT / "data" / "agents"
+DATA_DIR = PROJECT_ROOT / "data" / "penny-team"
 PROMPT_FILENAME = "CLAUDE.md"
 
 # Stream-json event types from Claude CLI

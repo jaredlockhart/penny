@@ -21,13 +21,13 @@ build:
 # Print a GitHub App installation token for use with gh CLI
 # Usage: GH_TOKEN=$(make token) gh pr create ...
 token:
-	@docker compose run --rm --no-deps --entrypoint "" pm uv run /repo/agents/github_app.py 2>/dev/null
+	@docker compose run --rm --no-deps --entrypoint "" pm uv run /repo/penny-team/github_app.py 2>/dev/null
 
 # --- Code quality (auto-detects host vs container via LOCAL env var) ---
 
 ifdef LOCAL
-# Inside a container — run tools directly from app/ subdir
-RUN = cd app &&
+# Inside a container — run tools directly from penny/ subdir
+RUN = cd penny &&
 else
 # On host — run tools inside the penny container
 RUN = docker compose run --rm penny

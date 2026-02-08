@@ -32,7 +32,7 @@ while true; do
 
     # Rebuild penny image from origin/main without touching the working tree
     log "Rebuilding penny image..."
-    if git archive origin/main:app/ | docker build -t penny - 2>&1; then
+    if git archive origin/main:penny/ | docker build -t penny - 2>&1; then
         log "Penny image rebuilt"
 
         # Restart penny with the new image

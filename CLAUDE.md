@@ -57,7 +57,7 @@ flowchart TD
 ## Directory Structure
 
 ```
-app/
+penny/
   penny/
     penny.py            — Entry point. Penny class: creates agents, channel, scheduler
     config.py           — Config dataclass loaded from .env, channel auto-detection
@@ -114,7 +114,7 @@ scripts/
   watcher/
     Dockerfile          — Lightweight watcher image
     watch.sh            — Git fetch + rebuild loop
-agents/
+penny-team/
   orchestrator.py       — Agent lifecycle manager, runs on schedule
   base.py               — Agent base class: wraps Claude CLI, has_work() pre-check
   Dockerfile            — Agent container image
@@ -132,7 +132,7 @@ agents/
   workflows/
     check.yml           — CI: runs make check on push/PR to main
 .env / .env.example     — Configuration
-data/agent.db           — SQLite database (runtime, gitignored)
+data/penny-team.db      — SQLite database (runtime, gitignored)
 data/logs/              — Agent orchestrator and per-agent logs (gitignored)
 ```
 
@@ -316,7 +316,7 @@ Channels handle platform-specific message I/O:
 **Logging**:
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)
 - `LOG_FILE`: Optional path to log file
-- `DB_PATH`: SQLite database location (default: /app/data/penny.db)
+- `DB_PATH`: SQLite database location (default: /penny/data/penny.db)
 
 ## Running
 
@@ -459,11 +459,11 @@ Added GitHub Actions workflow for continuous integration:
 
 ### Agent Orchestrator
 
-Python-based orchestrator (`agents/`) that manages autonomous Claude CLI agents:
-- `agents/base.py`: Agent class wraps `claude -p <prompt> --dangerously-skip-permissions --verbose --output-format stream-json`
-- `agents/orchestrator.py`: Main loop checks agents every 30s, runs those that are due
+Python-based orchestrator (`penny-team/`) that manages autonomous Claude CLI agents:
+- `penny-team/base.py`: Agent class wraps `claude -p <prompt> --dangerously-skip-permissions --verbose --output-format stream-json`
+- `penny-team/orchestrator.py`: Main loop checks agents every 30s, runs those that are due
 - `--agent <name>` flag: Run a single agent instead of the full orchestrator loop
-- `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `gh` CLI, compares to saved state in `data/agents/<name>.state.json` — skips Claude CLI if no issues changed since last run
+- `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `gh` CLI, compares to saved state in `data/penny-team/<name>.state.json` — skips Claude CLI if no issues changed since last run
 - State saved after successful runs; re-fetched to capture agent's own changes (comments, label edits)
 - Fail-open design: If `gh` fails, agent runs anyway
 - Product Manager agent: Gathers requirements for `requirements` issues (5-min cycle, 600s timeout)
@@ -480,8 +480,8 @@ Python-based orchestrator (`agents/`) that manages autonomous Claude CLI agents:
 
 Security layer to prevent prompt injection via public GitHub issues:
 - `.github/CODEOWNERS` defines trusted maintainer usernames (trust anchor)
-- `agents/codeowners.py`: Parses CODEOWNERS to extract `@username` tokens
-- `agents/issue_filter.py`: Pre-fetches issues via `gh` JSON API, strips bodies from untrusted authors, drops comments from non-CODEOWNERS users
+- `penny-team/codeowners.py`: Parses CODEOWNERS to extract `@username` tokens
+- `penny-team/issue_filter.py`: Pre-fetches issues via `gh` JSON API, strips bodies from untrusted authors, drops comments from non-CODEOWNERS users
 - Filtered issue content is injected into the agent prompt by `base.py`, so agents never need to call `gh issue view --comments` (which would bypass the filter)
 - Agent CLAUDE.md prompts instruct agents to use pre-fetched content only and restrict `gh` to write operations
 - Fails open without CODEOWNERS (backward compatible, logs warning)
@@ -490,7 +490,7 @@ Security layer to prevent prompt injection via public GitHub issues:
 #### PR Status Detection (CI Checks & Merge Conflicts)
 
 Worker agent automatically detects and fixes failing CI and merge conflicts on its PRs:
-- `agents/pr_checks.py`: Fetches PR check statuses and merge conflict status via `gh pr list --json statusCheckRollup,mergeable`, matches PRs to issues by branch naming convention (`issue-<N>-*`)
+- `penny-team/pr_checks.py`: Fetches PR check statuses and merge conflict status via `gh pr list --json statusCheckRollup,mergeable`, matches PRs to issues by branch naming convention (`issue-<N>-*`)
 - For failing PRs, fetches error logs via `gh run view --log-failed` (truncated to ~3000 chars)
 - Enriches `FilteredIssue` with `ci_status`, `ci_failure_details`, `merge_conflict`, and `merge_conflict_branch` before prompt injection
 - `pick_actionable_issue()` treats failing-CI and merge-conflict issues as actionable even when bot has last comment
@@ -514,5 +514,5 @@ File-based migration system in `database/migrations/`:
 
 Auto-deploy runs as a Docker service (`watcher`) defined in `scripts/watcher/`:
 - The watcher container polls `git fetch origin main` periodically (configurable via `DEPLOY_INTERVAL`)
-- On new commits: rebuilds penny via `git archive origin/main:app/ | docker build -t penny -` and restarts services
+- On new commits: rebuilds penny via `git archive origin/main:penny/ | docker build -t penny -` and restarts services
 - Runs as part of the Docker Compose stack — Ctrl+C on `docker compose` stops everything
