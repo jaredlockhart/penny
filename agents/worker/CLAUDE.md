@@ -88,7 +88,13 @@ Check the pre-fetched issue data for a "CI Status: FAILING" section. If present:
    git commit -m "fix: address failing CI checks (#<N>)"
    git push
    ```
-6. Exit — the orchestrator will re-check CI status on the next cycle
+6. Comment on the **PR** (not the issue) summarizing what you fixed:
+   ```bash
+   gh pr comment <PR_NUMBER> --body "*[Worker Agent]*
+
+   Fixed failing CI: <brief description of what was wrong and how you fixed it>"
+   ```
+7. Exit — the orchestrator will re-check CI status on the next cycle
 
 **Do NOT check review comments if CI is failing.** Fix CI first — the user cannot meaningfully review a PR with red checks.
 
