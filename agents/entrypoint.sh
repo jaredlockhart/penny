@@ -4,8 +4,10 @@ set -euo pipefail
 # Install Penny's Python deps from mounted source tree (for ruff, ty, pytest)
 if [ -f /repo/app/pyproject.toml ]; then
     echo "[entrypoint] Installing Penny deps from app/pyproject.toml..."
-    uv pip install --system -r /repo/app/pyproject.toml --group dev --quiet
-    uv pip install --system --no-deps /repo/app --quiet
+    cd /repo/app
+    uv pip install --system -r pyproject.toml --group dev --quiet
+    uv pip install --system --no-deps . --quiet
+    cd /repo
 fi
 
 # Install orchestrator deps (PyJWT for GitHub App auth)
