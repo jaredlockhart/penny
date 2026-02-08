@@ -36,10 +36,18 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Snapshot the entire repo into the image (build context is project root)
+COPY . /repo
+RUN mkdir -p /repo/data
+
+# Install Python deps from baked-in source
+RUN cd /repo/app && uv pip install --system . --group dev --quiet
+RUN uv pip install --system "PyJWT[crypto]" python-dotenv --quiet
+
 # Claude CLI refuses --dangerously-skip-permissions as root
-COPY entrypoint.sh /entrypoint.sh
+COPY agents/entrypoint.sh /entrypoint.sh
 RUN useradd -m -s /bin/bash agent \
-    && chown -R agent:agent /usr/local/lib/python3.12/ /usr/local/bin/ /usr/local/include/python3.12/ \
+    && chown -R agent:agent /repo /usr/local/lib/python3.12/ /usr/local/bin/ /usr/local/include/python3.12/ \
     && chmod +x /entrypoint.sh
 USER agent
 

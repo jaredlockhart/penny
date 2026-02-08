@@ -30,7 +30,7 @@ from github_app import BOT_SUFFIX, GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent
-LOG_DIR = AGENTS_DIR / "logs"
+LOG_DIR = PROJECT_ROOT / "data" / "logs"
 ENV_FILENAME = ".env"
 ORCHESTRATOR_LOG = "orchestrator.log"
 

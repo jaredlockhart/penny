@@ -26,6 +26,7 @@ You may still use `gh` for **write operations only**:
 ## Environment
 
 - **`GH_TOKEN` is pre-set** — the orchestrator injects a GitHub App token into your environment. Use `gh` directly (e.g., `gh pr create ...`). Do NOT use `make token` — it requires Docker which is not available in your container.
+- **Git auth is pre-configured** — `git push` and `git fetch` work directly with no extra setup. Do NOT modify git remotes, set credential helpers, or embed tokens in URLs — credentials are already configured via the entrypoint.
 
 ## Safety Rules
 
@@ -87,7 +88,13 @@ Check the pre-fetched issue data for a "CI Status: FAILING" section. If present:
    git commit -m "fix: address failing CI checks (#<N>)"
    git push
    ```
-6. Exit — the orchestrator will re-check CI status on the next cycle
+6. Comment on the **PR** (not the issue) summarizing what you fixed:
+   ```bash
+   gh pr comment <PR_NUMBER> --body "*[Worker Agent]*
+
+   Fixed failing CI: <brief description of what was wrong and how you fixed it>"
+   ```
+7. Exit — the orchestrator will re-check CI status on the next cycle
 
 **Do NOT check review comments if CI is failing.** Fix CI first — the user cannot meaningfully review a PR with red checks.
 
