@@ -11,6 +11,7 @@ from penny.config import Config
 
 if TYPE_CHECKING:
     from penny.agent import MessageAgent
+    from penny.commands import CommandRegistry
     from penny.database import Database
 
 # Channel type constants
@@ -22,6 +23,7 @@ def create_channel(
     config: Config,
     message_agent: MessageAgent,
     db: Database,
+    command_registry: CommandRegistry | None = None,
 ) -> MessageChannel:
     """
     Create the appropriate channel based on configuration.
@@ -30,6 +32,7 @@ def create_channel(
         config: Application configuration
         message_agent: Agent for processing incoming messages
         db: Database for logging messages
+        command_registry: Optional command registry for handling commands
 
     Returns:
         Configured MessageChannel instance
@@ -45,6 +48,7 @@ def create_channel(
             channel_id=config.discord_channel_id,
             message_agent=message_agent,
             db=db,
+            command_registry=command_registry,
         )
     elif config.channel_type == CHANNEL_TYPE_SIGNAL:
         if not config.signal_number:
@@ -54,6 +58,7 @@ def create_channel(
             phone_number=config.signal_number,
             message_agent=message_agent,
             db=db,
+            command_registry=command_registry,
         )
     else:
         raise ValueError(f"Unknown channel type: {config.channel_type}")

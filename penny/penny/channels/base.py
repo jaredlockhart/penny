@@ -5,15 +5,18 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from penny.config import Config
 from penny.constants import MessageDirection
 from penny.database.models import MessageLog
 
 if TYPE_CHECKING:
     from penny.agent import MessageAgent
+    from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.scheduler import BackgroundScheduler
 
@@ -38,6 +41,7 @@ class MessageChannel(ABC):
         self,
         message_agent: MessageAgent,
         db: Database,
+        command_registry: CommandRegistry | None = None,
     ):
         """
         Initialize channel with dependencies.
@@ -45,14 +49,35 @@ class MessageChannel(ABC):
         Args:
             message_agent: Agent for processing incoming messages
             db: Database for logging messages
+            command_registry: Optional command registry for handling commands
         """
         self._message_agent = message_agent
         self._db = db
+        self._command_registry = command_registry
         self._scheduler: BackgroundScheduler | None = None
 
     def set_scheduler(self, scheduler: BackgroundScheduler) -> None:
         """Set the scheduler for message notifications."""
         self._scheduler = scheduler
+
+    def set_command_context(self, config: Config, channel_type: str, start_time: datetime) -> None:
+        """
+        Set command context for command execution.
+
+        Args:
+            config: Penny config
+            channel_type: Channel type ("signal" or "discord")
+            start_time: Penny startup time
+        """
+        from penny.commands import CommandContext
+
+        self._command_context = CommandContext(
+            db=self._db,
+            config=config,
+            user="",  # Will be set per-command
+            channel_type=channel_type,
+            start_time=start_time,
+        )
 
     @property
     @abstractmethod
@@ -226,6 +251,18 @@ class MessageChannel(ABC):
 
             logger.info("Received message from %s: %s", message.sender, message.content)
 
+            # Check if thread-replying to a command
+            if message.quoted_text and message.quoted_text.strip().startswith("/"):
+                await self.send_status_message(
+                    message.sender, "Threading is not supported for commands."
+                )
+                return
+
+            # Check if message is a command
+            if message.content.strip().startswith("/"):
+                await self._handle_command(message)
+                return
+
             typing_task = asyncio.create_task(self._typing_loop(message.sender))
             try:
                 # Agent handles context preparation internally
@@ -305,3 +342,71 @@ class MessageChannel(ABC):
             message.content,
             reacted_msg.id,
         )
+
+    async def _handle_command(self, message: IncomingMessage) -> None:
+        """
+        Handle a command message.
+
+        Args:
+            message: The incoming command message
+        """
+        if not self._command_registry:
+            logger.warning("Command received but no registry configured")
+            return
+
+        # Parse command name and args
+        text = message.content.strip()
+        parts = text[1:].split(maxsplit=1)  # Skip leading /
+        command_name = parts[0].lower()
+        command_args = parts[1] if len(parts) > 1 else ""
+
+        # Look up command
+        command = self._command_registry.get(command_name)
+        if not command:
+            response = f"Unknown command: /{command_name}. Use /commands to see available commands."
+            await self.send_status_message(message.sender, response)
+            self._db.log_command(
+                user=message.sender,
+                channel_type=self._command_context.channel_type,
+                command_name=command_name,
+                command_args=command_args,
+                response=response,
+                error="unknown command",
+            )
+            return
+
+        # Execute command
+        try:
+            # Update context with current user
+            context = self._command_context
+            context.user = message.sender
+
+            result = await command.execute(command_args, context)
+            response = result.text
+
+            # Send response
+            await self.send_status_message(message.sender, response)
+
+            # Log command execution
+            self._db.log_command(
+                user=message.sender,
+                channel_type=context.channel_type,
+                command_name=command_name,
+                command_args=command_args,
+                response=response,
+            )
+
+            logger.info("Executed command /%s for %s", command_name, message.sender)
+
+        except Exception as e:
+            logger.exception("Error executing command /%s: %s", command_name, e)
+            error_response = f"Error executing command: {e!s}"
+            await self.send_status_message(message.sender, error_response)
+            self._db.log_command(
+                user=message.sender,
+                channel_type=self._command_context.channel_type,
+                command_name=command_name,
+                command_args=command_args,
+                response=error_response,
+                error=str(e),
+            )

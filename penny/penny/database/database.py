@@ -10,7 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from penny.agent.models import MessageRole
 from penny.constants import MessageDirection
-from penny.database.models import MessageLog, PromptLog, SearchLog, UserProfile
+from penny.database.models import CommandLog, MessageLog, PromptLog, SearchLog, UserProfile
 
 logger = logging.getLogger(__name__)
 
@@ -509,3 +509,76 @@ class Database:
                 logger.debug("Saved profile for %s", sender)
         except Exception as e:
             logger.error("Failed to save profile: %s", e)
+
+    def count_messages(self) -> int:
+        """
+        Count total number of messages (incoming + outgoing).
+
+        Returns:
+            Total message count
+        """
+        with self.get_session() as session:
+            from sqlalchemy import func
+
+            return session.exec(select(func.count()).select_from(MessageLog)).one()
+
+    def count_active_threads(self) -> int:
+        """
+        Count number of active conversation threads.
+
+        A thread is active if it's a leaf message (has no children).
+
+        Returns:
+            Number of active threads
+        """
+        with self.get_session() as session:
+            from sqlalchemy import func
+
+            # Get all message IDs that appear as parent_id (have children)
+            has_child = select(MessageLog.parent_id).where(
+                MessageLog.parent_id.isnot(None)  # type: ignore[unresolved-attribute]
+            )
+            # Count messages that are NOT in that set (leaves)
+            return session.exec(
+                select(func.count())
+                .select_from(MessageLog)
+                .where(
+                    MessageLog.id.notin_(has_child)  # type: ignore[unresolved-attribute]
+                )
+            ).one()
+
+    def log_command(
+        self,
+        user: str,
+        channel_type: str,
+        command_name: str,
+        command_args: str,
+        response: str,
+        error: str | None = None,
+    ) -> None:
+        """
+        Log a command invocation.
+
+        Args:
+            user: User who invoked the command
+            channel_type: Channel type ("signal" or "discord")
+            command_name: Name of the command (without / prefix)
+            command_args: Arguments passed to the command
+            response: Response text sent to user
+            error: Error message if command failed
+        """
+        try:
+            with self.get_session() as session:
+                log = CommandLog(
+                    user=user,
+                    channel_type=channel_type,
+                    command_name=command_name,
+                    command_args=command_args,
+                    response=response,
+                    error=error,
+                )
+                session.add(log)
+                session.commit()
+                logger.debug("Logged command: /%s %s", command_name, command_args)
+        except Exception as e:
+            logger.error("Failed to log command: %s", e)

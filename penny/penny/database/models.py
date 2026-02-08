@@ -58,3 +58,18 @@ class UserProfile(SQLModel, table=True):
     profile_text: str
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     last_message_timestamp: datetime  # Timestamp of newest message included in profile
+
+
+class CommandLog(SQLModel, table=True):
+    """Log of every command invocation and its response."""
+
+    __tablename__ = "command_logs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    user: str = Field(index=True)  # Signal number or Discord user ID
+    channel_type: str  # "signal" or "discord"
+    command_name: str = Field(index=True)  # e.g., "debug"
+    command_args: str  # e.g., "" or "debug" (for /commands debug)
+    response: str  # Full response text sent to user
+    error: str | None = None  # Error message if command failed

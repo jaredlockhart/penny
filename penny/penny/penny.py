@@ -4,6 +4,7 @@ import asyncio
 import logging
 import signal
 import sys
+from datetime import datetime
 from typing import Any
 
 from penny.agent import (
@@ -15,6 +16,7 @@ from penny.agent import (
     SummarizeAgent,
 )
 from penny.channels import MessageChannel, create_channel
+from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
 from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
@@ -31,9 +33,13 @@ class Penny:
     def __init__(self, config: Config, channel: MessageChannel | None = None):
         """Initialize the agent with configuration."""
         self.config = config
+        self.start_time = datetime.now()
         self.db = Database(config.db_path)
         migrate(config.db_path)
         self.db.create_tables()
+
+        # Create command registry
+        self.command_registry = create_command_registry()
 
         def search_tools():
             if config.perplexity_api_key:
@@ -100,6 +106,14 @@ class Penny:
             config=config,
             message_agent=self.message_agent,
             db=self.db,
+            command_registry=self.command_registry,
+        )
+
+        # Set command context on channel
+        self.channel.set_command_context(
+            config=config,
+            channel_type=config.channel_type,
+            start_time=self.start_time,
         )
 
         # Connect agents that send messages to channel

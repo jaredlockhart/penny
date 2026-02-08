@@ -13,6 +13,7 @@ from penny.channels.discord.models import DiscordMessage, DiscordUser
 
 if TYPE_CHECKING:
     from penny.agent import MessageAgent
+    from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.database.models import MessageLog
 
@@ -38,6 +39,7 @@ class DiscordChannel(MessageChannel):
         channel_id: str,
         message_agent: MessageAgent,
         db: Database,
+        command_registry: CommandRegistry | None = None,
     ):
         """
         Initialize Discord channel.
@@ -47,8 +49,9 @@ class DiscordChannel(MessageChannel):
             channel_id: The channel ID to listen to and send messages in
             message_agent: Agent for processing incoming messages
             db: Database for logging messages
+            command_registry: Optional command registry for handling commands
         """
-        super().__init__(message_agent=message_agent, db=db)
+        super().__init__(message_agent=message_agent, db=db, command_registry=command_registry)
         self._token = token
         self.channel_id = channel_id
         self._running = True

@@ -23,6 +23,7 @@ from penny.channels.signal.models import (
 
 if TYPE_CHECKING:
     from penny.agent import MessageAgent
+    from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.database.models import MessageLog
 
@@ -38,6 +39,7 @@ class SignalChannel(MessageChannel):
         phone_number: str,
         message_agent: MessageAgent,
         db: Database,
+        command_registry: CommandRegistry | None = None,
     ):
         """
         Initialize Signal channel.
@@ -47,8 +49,9 @@ class SignalChannel(MessageChannel):
             phone_number: Registered Signal phone number
             message_agent: Agent for processing incoming messages
             db: Database for logging messages
+            command_registry: Optional command registry for handling commands
         """
-        super().__init__(message_agent=message_agent, db=db)
+        super().__init__(message_agent=message_agent, db=db, command_registry=command_registry)
         self.api_url = api_url.rstrip("/")
         self.phone_number = phone_number
         self._running = True
