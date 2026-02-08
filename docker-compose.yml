@@ -31,6 +31,7 @@ services:
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
+      - LOCAL=1
 
   worker:
     build: ./agents
@@ -44,6 +45,7 @@ services:
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
+      - LOCAL=1
 
   watcher:
     build: ./scripts/watcher

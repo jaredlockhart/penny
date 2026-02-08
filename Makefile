@@ -1,12 +1,10 @@
-DC = docker compose run --rm penny
-
 # Check tool configuration (single source of truth for tool parameters)
 RUFF_TARGETS = penny/
 PYTEST_ARGS = penny/tests/ -v
 
-.PHONY: up prod kill build fmt lint fix typecheck check pytest fmt-local fix-local check-local
+.PHONY: up prod kill build fmt lint fix typecheck check pytest
 
-# --- Docker-based (host / CI) ---
+# --- Docker Compose ---
 
 up:
 	docker compose --profile team up --build
@@ -20,39 +18,34 @@ kill:
 build:
 	docker compose build penny
 
-fmt: build
-	$(DC) ruff format $(RUFF_TARGETS)
+# --- Code quality (auto-detects host vs container via LOCAL env var) ---
 
-lint: build
-	$(DC) ruff check $(RUFF_TARGETS)
+ifdef LOCAL
+# Inside a container — run tools directly from app/ subdir
+RUN = cd app &&
+else
+# On host — run tools inside the penny container
+RUN = docker compose run --rm penny
+endif
 
-fix: build
-	$(DC) ruff format $(RUFF_TARGETS)
-	$(DC) ruff check --fix $(RUFF_TARGETS)
+fmt: $(if $(LOCAL),,build)
+	$(RUN) ruff format $(RUFF_TARGETS)
 
-typecheck: build
-	$(DC) ty check $(RUFF_TARGETS)
+lint: $(if $(LOCAL),,build)
+	$(RUN) ruff check $(RUFF_TARGETS)
 
-check: build
-	$(DC) ruff format --check $(RUFF_TARGETS)
-	$(DC) ruff check $(RUFF_TARGETS)
-	$(DC) ty check $(RUFF_TARGETS)
-	$(DC) pytest $(PYTEST_ARGS)
+fix: $(if $(LOCAL),,build)
+	$(RUN) ruff format $(RUFF_TARGETS)
+	$(RUN) ruff check --fix $(RUFF_TARGETS)
 
-pytest: build
-	$(DC) pytest $(PYTEST_ARGS)
+typecheck: $(if $(LOCAL),,build)
+	$(RUN) ty check $(RUFF_TARGETS)
 
-# --- Direct execution (agent containers) ---
+check: $(if $(LOCAL),,build)
+	$(RUN) ruff format --check $(RUFF_TARGETS)
+	$(RUN) ruff check $(RUFF_TARGETS)
+	$(RUN) ty check $(RUFF_TARGETS)
+	$(RUN) pytest $(PYTEST_ARGS)
 
-fmt-local:
-	cd app && ruff format $(RUFF_TARGETS)
-
-fix-local:
-	cd app && ruff format $(RUFF_TARGETS)
-	cd app && ruff check --fix $(RUFF_TARGETS)
-
-check-local:
-	cd app && ruff format --check $(RUFF_TARGETS)
-	cd app && ruff check $(RUFF_TARGETS)
-	cd app && ty check $(RUFF_TARGETS)
-	cd app && pytest $(PYTEST_ARGS)
+pytest: $(if $(LOCAL),,build)
+	$(RUN) pytest $(PYTEST_ARGS)

@@ -107,19 +107,19 @@ Add or update tests for your changes. Follow the existing test patterns in `app/
 
 Run the full check suite:
 ```bash
-make check-local
+make check
 ```
 
 This runs: format check → lint → typecheck → tests.
 
-**If `make check-local` fails:**
+**If `make check` fails:**
 1. Read the error output carefully
 2. Fix the specific issues:
-   - Formatting: `make fmt-local` (auto-fixes)
-   - Lint: `make fix-local` (auto-fixes most issues)
+   - Formatting: `make fmt` (auto-fixes)
+   - Lint: `make fix` (auto-fixes most issues)
    - Type errors: fix manually
    - Test failures: fix manually
-3. Re-run `make check-local`
+3. Re-run `make check`
 4. Repeat up to **3 total attempts**
 5. If still failing after 3 attempts, proceed to Step 9 anyway — note the failures in the PR description
 
@@ -213,7 +213,7 @@ app/penny/
 
 ## Code Style
 
-Follow these rules strictly. `make check-local` enforces them.
+Follow these rules strictly. `make check` enforces them.
 
 - **Pydantic for all structured data** — no raw dicts for API payloads, configs, or internal messages
 - **Constants for string literals** — define as module-level constants or enums, no magic strings
@@ -254,7 +254,7 @@ async def test_feature(signal_server, mock_ollama, test_config, running_penny):
   ```
 - **Feature is too large**: Implement the minimum viable version described in the spec. Note in the PR what was deferred.
 - **Feature requires infrastructure changes**: Note in the PR that manual infrastructure changes are needed. Do not modify infrastructure files yourself.
-- **`make check-local` fails after 3 attempts**: Create the PR anyway. List the failures in the PR description under a "Known Issues" section.
+- **`make check` fails after 3 attempts**: Create the PR anyway. List the failures in the PR description under a "Known Issues" section.
 
 ## Remember
 
@@ -262,7 +262,7 @@ async def test_feature(signal_server, mock_ollama, test_config, running_penny):
 - Read before you write — understand existing patterns before creating new code
 - Small, focused changes — implement exactly what the spec says, nothing extra
 - Tests are required — every feature needs test coverage
-- `make check-local` must pass — formatting, linting, types, and tests
+- `make check` must pass — formatting, linting, types, and tests
 - One issue per cycle — finish what you started before picking up new work
 
 Now, check GitHub Issues and start working!

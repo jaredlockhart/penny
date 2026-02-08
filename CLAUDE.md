@@ -321,18 +321,15 @@ make up          # Start all services (penny + team) with Docker Compose
 make prod        # Deploy penny only (no team, no override)
 make kill        # Tear down containers and remove local images
 make build       # Build the Docker image
-make check       # Build, format check, lint, typecheck, and run tests
-make check-local # Run checks directly (for agent containers)
+make check       # Format check, lint, typecheck, and run tests
 make pytest      # Run integration tests
 make fmt         # Format with ruff
-make fmt-local   # Format directly (for agent containers)
 make lint        # Lint with ruff
 make fix         # Format + autofix lint issues
-make fix-local   # Format + autofix directly (for agent containers)
 make typecheck   # Type check with ty
 ```
 
-All dev tool commands run via `docker compose run --rm` in a temporary container. Source is volume-mounted so changes write back to the host filesystem. The `-local` variants run tools directly on the host (used inside agent containers where Docker-in-Docker is not available).
+On the host, dev tool commands run via `docker compose run --rm` in a temporary container. Inside agent containers (where `LOCAL=1` is set), the same `make` targets run tools directly — no Docker-in-Docker needed.
 
 `make prod` starts the penny service only (skips `docker-compose.override.yml` and the `team` profile). The watcher container handles auto-deploy when running the full stack via `make up`.
 
