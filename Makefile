@@ -2,7 +2,7 @@
 RUFF_TARGETS = penny/
 PYTEST_ARGS = penny/tests/ -v
 
-.PHONY: up prod kill build fmt lint fix typecheck check pytest
+.PHONY: up prod kill build fmt lint fix typecheck check pytest token
 
 # --- Docker Compose ---
 
@@ -17,6 +17,11 @@ kill:
 
 build:
 	docker compose build penny
+
+# Print a GitHub App installation token for use with gh CLI
+# Usage: GH_TOKEN=$(make token) gh pr create ...
+token:
+	@docker compose run --rm --no-deps --entrypoint "" pm uv run /repo/agents/github_app.py 2>/dev/null | grep GH_TOKEN | cut -d"'" -f2
 
 # --- Code quality (auto-detects host vs container via LOCAL env var) ---
 

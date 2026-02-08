@@ -4,6 +4,11 @@ Generates installation access tokens so agent PRs and commits
 come from the bot identity instead of a personal account.
 """
 
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["PyJWT[crypto]", "python-dotenv"]
+# ///
+
 from __future__ import annotations
 
 import json
@@ -96,9 +101,18 @@ class GitHubApp:
 if __name__ == "__main__":
     import os
 
+    from dotenv import load_dotenv
+
+    project_root = Path(__file__).parent.parent
+    load_dotenv(project_root / ".env")
+
+    key_path = Path(os.environ["GITHUB_APP_PRIVATE_KEY_PATH"])
+    if not key_path.is_absolute():
+        key_path = project_root / key_path
+
     app = GitHubApp(
         app_id=int(os.environ["GITHUB_APP_ID"]),
-        private_key_path=Path(os.environ["GITHUB_APP_PRIVATE_KEY_PATH"]),
+        private_key_path=key_path,
         installation_id=int(os.environ["GITHUB_APP_INSTALLATION_ID"]),
     )
     for key, value in app.get_env().items():
