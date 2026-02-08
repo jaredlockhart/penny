@@ -117,7 +117,7 @@ if __name__ == "__main__":
 
     from dotenv import load_dotenv
 
-    project_root = Path(__file__).parent.parent
+    project_root = Path(__file__).parent.parent.parent.parent
     load_dotenv(project_root / ".env")
 
     key_path = Path(os.environ["GITHUB_APP_PRIVATE_KEY_PATH"])

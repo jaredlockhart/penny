@@ -14,14 +14,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from github_app import GitHubApp
+from penny_team.utils.github_app import GitHubApp
 
 CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
 GH_CLI = os.getenv("GH_CLI", "gh")
 # Labels where external state (CI checks) can change without updating issue timestamps
 LABELS_WITH_EXTERNAL_STATE = {"in-review"}
 AGENTS_DIR = Path(__file__).parent
-PROJECT_ROOT = AGENTS_DIR.parent
+PROJECT_ROOT = AGENTS_DIR.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "penny-team"
 PROMPT_FILENAME = "CLAUDE.md"
 
@@ -182,8 +182,8 @@ class Agent:
         actionability check. Used by has_work() when timestamp
         comparison alone can't determine if work is needed.
         """
-        from issue_filter import fetch_issues_for_labels, pick_actionable_issue
-        from pr_checks import enrich_issues_with_pr_status
+        from penny_team.utils.issue_filter import fetch_issues_for_labels, pick_actionable_issue
+        from penny_team.utils.pr_checks import enrich_issues_with_pr_status
 
         try:
             issues = fetch_issues_for_labels(
@@ -225,12 +225,12 @@ class Agent:
 
         # Pre-fetch, filter, and pick one actionable issue
         if self.required_labels:
-            from issue_filter import fetch_issues_for_labels, format_issues_for_prompt, pick_actionable_issue
+            from penny_team.utils.issue_filter import fetch_issues_for_labels, format_issues_for_prompt, pick_actionable_issue
 
             all_issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users, env=self._get_env())
 
             # Enrich in-review issues with CI and merge conflict status (no-op if none match)
-            from pr_checks import enrich_issues_with_pr_status
+            from penny_team.utils.pr_checks import enrich_issues_with_pr_status
             enrich_issues_with_pr_status(all_issues, env=self._get_env())
 
             issue = pick_actionable_issue(all_issues, self._bot_logins)

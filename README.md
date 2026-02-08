@@ -152,7 +152,6 @@ make fmt         # Format with ruff
 make lint        # Lint with ruff
 make fix         # Format + autofix lint issues
 make typecheck   # Type check with ty
-make agents      # Run the agent orchestrator (see penny-team/README.md)
 ```
 
 All dev tool commands run in temporary Docker containers via `docker compose run --rm`, with source volume-mounted so changes write back to the host filesystem.
@@ -303,10 +302,8 @@ Penny includes a Python-based agent orchestrator that manages autonomous Claude 
 Each agent checks for matching GitHub issue labels before waking Claude CLI, so idle cycles cost ~1 second instead of a full Claude invocation.
 
 ```bash
-make agents      # Run orchestrator continuously
+make up          # Run orchestrator with full stack
 ```
-
-See [penny-team/README.md](penny-team/README.md) for full details.
 
 </details>
 

@@ -14,8 +14,8 @@ import logging
 import subprocess
 from dataclasses import dataclass
 
-from base import GH_CLI
-from issue_filter import CI_STATUS_FAILING, CI_STATUS_PASSING, FilteredIssue
+from penny_team.base import GH_CLI
+from penny_team.utils.issue_filter import CI_STATUS_FAILING, CI_STATUS_PASSING, FilteredIssue
 
 LABEL_IN_REVIEW = "in-review"
 

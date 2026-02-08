@@ -11,7 +11,7 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass, field
-from base import GH_CLI, GH_FIELD_NUMBER
+from penny_team.base import GH_CLI, GH_FIELD_NUMBER
 
 # gh CLI JSON field sets for --json flag
 GH_LIST_FIELDS = str(GH_FIELD_NUMBER)

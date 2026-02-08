@@ -14,6 +14,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# Standalone scripts, not an importable package — install for dependencies only
+# Not an importable package — install for dependencies only.
+# PYTHONPATH is set in the Dockerfile so imports resolve from /repo/penny-team/.
 py-modules = []
 packages = []

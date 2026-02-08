@@ -24,12 +24,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from base import Agent
-from codeowners import parse_codeowners
-from github_app import BOT_SUFFIX, GitHubApp
+from penny_team.base import Agent
+from penny_team.utils.codeowners import parse_codeowners
+from penny_team.utils.github_app import BOT_SUFFIX, GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
-PROJECT_ROOT = AGENTS_DIR.parent
+PROJECT_ROOT = AGENTS_DIR.parent.parent
 LOG_DIR = PROJECT_ROOT / "data" / "logs"
 ENV_FILENAME = ".env"
 ORCHESTRATOR_LOG = "orchestrator.log"
