@@ -91,6 +91,18 @@ class Agent:
         return env
 
     @property
+    def _bot_logins(self) -> set[str] | None:
+        """Both login forms for the bot (slug and slug[bot]).
+
+        GitHub uses different formats in different API responses,
+        so we need to check against both.
+        """
+        if self.github_app is None:
+            return None
+        slug = self.github_app._fetch_slug()
+        return {slug, self.github_app.bot_name}
+
+    @property
     def _state_path(self) -> Path:
         return DATA_DIR / f"{self.name}.state.json"
 
@@ -132,8 +144,9 @@ class Agent:
         gh fails (fail-open).
 
         For labels with external state (e.g. in-review where CI checks can
-        change without updating issue timestamps), always returns True when
-        matching issues exist.
+        change without updating issue timestamps), performs a full
+        actionability check including CI status, merge conflicts, and
+        review feedback.
         """
         if not self.required_labels:
             return True
@@ -146,20 +159,47 @@ class Agent:
         if not current:
             return False
 
-        # CI check status changes don't update issue timestamps, so skip
-        # the timestamp optimization for labels with external state
+        saved = self._load_state()
+        if current != saved:
+            return True
+
+        # Timestamps unchanged. For labels with external state (CI, reviews),
+        # check if any issue actually needs attention.
         has_external_state = any(
             label in LABELS_WITH_EXTERNAL_STATE
             for label in self.required_labels
         )
         if has_external_state:
+            return self._check_actionable_issues()
+
+        logger.info(f"[{self.name}] No issue changes since last run, skipping")
+        return False
+
+    def _check_actionable_issues(self) -> bool:
+        """Check if any issues actually need agent attention.
+
+        Performs the full issue fetch, PR status enrichment, and
+        actionability check. Used by has_work() when timestamp
+        comparison alone can't determine if work is needed.
+        """
+        from issue_filter import fetch_issues_for_labels, pick_actionable_issue
+        from pr_checks import enrich_issues_with_pr_status
+
+        try:
+            issues = fetch_issues_for_labels(
+                self.required_labels,
+                trusted_users=self.trusted_users,
+                env=self._get_env(),
+            )
+            enrich_issues_with_pr_status(issues, env=self._get_env())
+            issue = pick_actionable_issue(issues, self._bot_logins)
+        except Exception:
+            # Fail open — if anything goes wrong, let the agent run
             return True
 
-        saved = self._load_state()
-        if current == saved:
-            logger.info(f"[{self.name}] No issue changes since last run, skipping")
+        if issue is None:
+            logger.info(f"[{self.name}] No actionable issues, skipping")
             return False
-
         return True
 
     def _build_command(self, prompt: str) -> list[str]:
@@ -187,14 +227,13 @@ class Agent:
         if self.required_labels:
             from issue_filter import fetch_issues_for_labels, format_issues_for_prompt, pick_actionable_issue
 
-            bot_login = self.github_app.bot_name if self.github_app else None
             all_issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users, env=self._get_env())
 
             # Enrich in-review issues with CI and merge conflict status (no-op if none match)
             from pr_checks import enrich_issues_with_pr_status
             enrich_issues_with_pr_status(all_issues, env=self._get_env())
 
-            issue = pick_actionable_issue(all_issues, bot_login)
+            issue = pick_actionable_issue(all_issues, self._bot_logins)
 
             if issue is None:
                 duration = (datetime.now() - start).total_seconds()

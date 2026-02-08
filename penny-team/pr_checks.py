@@ -1,9 +1,10 @@
 """PR status detection for worker agent PRs.
 
-Fetches PR check statuses and merge conflict status via gh CLI and
-enriches FilteredIssue objects with CI failure details and merge
-conflict information. This enables the worker agent to detect and
-fix failing checks and rebase conflicting branches.
+Fetches PR check statuses, merge conflict status, and review feedback
+via gh CLI and enriches FilteredIssue objects with CI failure details,
+merge conflict information, and review state. This enables the worker
+agent to detect and fix failing checks, rebase conflicting branches,
+and address review feedback.
 """
 
 from __future__ import annotations
@@ -25,7 +26,10 @@ PASSING_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED", ""}
 PENDING_STATES = {"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED"}
 
 # gh CLI JSON fields for PR list
-PR_FIELDS = "number,headRefName,statusCheckRollup,mergeable"
+PR_FIELDS = "number,headRefName,statusCheckRollup,mergeable,reviews"
+
+# GitHub review states that indicate feedback needing attention
+REVIEW_STATE_CHANGES_REQUESTED = "CHANGES_REQUESTED"
 
 # Max characters of failure log to include in prompt
 MAX_LOG_CHARS = 3000
@@ -75,6 +79,10 @@ def enrich_issues_with_pr_status(
         if pr.get("mergeable", "") == MERGE_STATUS_CONFLICTING:
             issue.merge_conflict = True
             issue.merge_conflict_branch = pr["headRefName"]
+
+        # Review feedback detection (latest review per reviewer wins)
+        if _has_changes_requested(pr.get("reviews", [])):
+            issue.has_review_feedback = True
 
         # CI check detection
         failed = _extract_failed_checks(pr.get("statusCheckRollup", []))
@@ -129,6 +137,24 @@ def _match_prs_to_issues(
             except ValueError:
                 continue
     return result
+
+
+def _has_changes_requested(reviews: list[dict]) -> bool:
+    """Check if any reviewer's latest review requests changes.
+
+    A reviewer might request changes then later approve. We only care
+    about each reviewer's most recent review (last in the list).
+    """
+    latest_by_reviewer: dict[str, str] = {}
+    for review in reviews:
+        login = review.get("author", {}).get("login", "")
+        state = review.get("state", "")
+        if login and state:
+            latest_by_reviewer[login] = state
+    return any(
+        state == REVIEW_STATE_CHANGES_REQUESTED
+        for state in latest_by_reviewer.values()
+    )
 
 
 def _extract_failed_checks(status_rollup: list[dict]) -> list[FailedCheck]:

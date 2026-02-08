@@ -24,6 +24,9 @@ GH_ISSUE_LIMIT = "20"
 CI_STATUS_PASSING = "passing"
 CI_STATUS_FAILING = "failing"
 
+# Label constants
+LABEL_IN_REVIEW = "in-review"
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +54,7 @@ class FilteredIssue:
     ci_failure_details: str | None = None
     merge_conflict: bool = False
     merge_conflict_branch: str | None = None
+    has_review_feedback: bool = False
 
 
 def fetch_issues_for_labels(
@@ -160,7 +164,7 @@ def _fetch_and_filter_issue(
 
 def pick_actionable_issue(
     issues: list[FilteredIssue],
-    bot_login: str | None = None,
+    bot_logins: set[str] | None = None,
 ) -> FilteredIssue | None:
     """Pick the first issue that needs agent attention.
 
@@ -168,30 +172,41 @@ def pick_actionable_issue(
     last trusted comment is NOT from the bot. Issues where the bot has
     the last word are waiting for human feedback and should be skipped.
 
-    When bot_login is None (no GitHub App), returns the first issue.
+    bot_logins should include both the app slug and slug[bot] forms,
+    since GitHub uses different formats in different API responses.
+
+    When bot_logins is None (no GitHub App), returns the first issue.
     """
     if not issues:
         return None
 
-    if bot_login is None:
+    if bot_logins is None:
         return issues[0]
 
     for issue in issues:
-        if not issue.trusted_comments:
-            # New issue with no comments — needs initial processing
-            return issue
-        last_comment = issue.trusted_comments[-1]
-        if last_comment.author != bot_login:
-            # Human commented last — needs agent response
-            return issue
+        # Check if external signals require attention regardless of comments
         if issue.ci_status == CI_STATUS_FAILING:
-            # CI failing on PR — needs fixes even though bot has last comment
             return issue
         if issue.merge_conflict:
-            # PR has merge conflicts — needs rebase even though bot has last comment
+            return issue
+        if issue.has_review_feedback:
             return issue
 
-    # All issues have bot as last commenter and CI passing — nothing to do
+        if not issue.trusted_comments:
+            if LABEL_IN_REVIEW in issue.labels:
+                # in-review with no issue comments — PR already created,
+                # and no CI/merge/review issues detected above. Waiting
+                # for human review.
+                continue
+            # New issue with no comments — needs initial processing
+            return issue
+
+        last_comment = issue.trusted_comments[-1]
+        if last_comment.author not in bot_logins:
+            # Human commented last — needs agent response
+            return issue
+
+    # All issues handled or waiting for human action — nothing to do
     return None
 
 
