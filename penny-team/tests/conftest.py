@@ -121,6 +121,29 @@ def mock_popen(monkeypatch):
 
 
 @pytest.fixture
+def capture_popen(monkeypatch):
+    """Mock Popen that captures call args and returns canned stream-json output.
+
+    Usage:
+        calls = capture_popen(stdout_lines=['{"type":"result","result":"done"}'])
+        agent.run()
+        cmd = calls[0][0][0]  # First call, positional args, first arg (the command list)
+        prompt = cmd[cmd.index("-p") + 1]
+    """
+    calls: list[tuple[tuple, dict]] = []
+
+    def factory(stdout_lines=None, returncode=0):
+        def popen_spy(*args, **kwargs):
+            calls.append((args, kwargs))
+            return MockPopen(stdout_lines=stdout_lines, returncode=returncode)
+
+        monkeypatch.setattr(subprocess, "Popen", popen_spy)
+        return calls
+
+    return factory
+
+
+@pytest.fixture
 def project_root(tmp_path):
     """Create a temporary project root with a .github/CODEOWNERS file."""
     github_dir = tmp_path / ".github"
