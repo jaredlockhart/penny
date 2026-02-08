@@ -12,4 +12,5 @@ services:
     working_dir: /repo/penny-team
     volumes:
       - ./penny-team/penny_team:/repo/penny-team/penny_team
+      - ./penny-team/tests:/repo/penny-team/tests
       - ./penny-team/pyproject.toml:/repo/penny-team/pyproject.toml

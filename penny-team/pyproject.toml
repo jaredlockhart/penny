@@ -23,6 +23,7 @@ packages = []
 dev = [
     "ruff>=0.8.0",
     "ty>=0.0.1",
+    "pytest>=8.0.0",
 ]
 
 [tool.ruff]
@@ -45,6 +46,9 @@ select = [
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ty.environment]
 python = "/usr/local/bin/python"
