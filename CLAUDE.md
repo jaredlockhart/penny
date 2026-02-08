@@ -458,7 +458,8 @@ Python-based orchestrator (`agents/`) that manages autonomous Claude CLI agents:
 - `agents/base.py`: Agent class wraps `claude -p <prompt> --dangerously-skip-permissions --verbose --output-format stream-json`
 - `agents/orchestrator.py`: Main loop checks agents every 30s, runs those that are due
 - `--agent <name>` flag: Run a single agent instead of the full orchestrator loop
-- `has_work()` pre-check: Queries GitHub issue labels via `gh` CLI before invoking Claude CLI (~1s vs ~15-300s)
+- `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `gh` CLI, compares to saved state in `data/agents/<name>.state.json` — skips Claude CLI if no issues changed since last run
+- State saved after successful runs; re-fetched to capture agent's own changes (comments, label edits)
 - Fail-open design: If `gh` fails, agent runs anyway
 - Product Manager agent: Expands `idea` issues into specs, promotes to `approved` (5-min cycle, 600s timeout, requires `idea`/`draft` labels)
 - Worker agent: Implements `approved` issues end-to-end — branches, code, tests, `make check`, PRs (5-min cycle, 1800s timeout, requires `approved`/`in-progress` labels)
