@@ -2,7 +2,6 @@
 
 ## Environment Notes
 
-- **GitHub CLI (`gh`)**: Located at `/opt/homebrew/bin/gh` (not in default PATH)
 - **Logs**: Runtime logs are written to `data/penny.log` (not docker compose logs)
 
 ## Git Workflow
