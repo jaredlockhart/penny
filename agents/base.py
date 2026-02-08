@@ -124,7 +124,7 @@ class Agent:
         if self.required_labels:
             from issue_filter import fetch_issues_for_labels, format_issues_for_prompt
 
-            issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users)
+            issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users, env=self._get_env())
             if self.max_issues is not None:
                 issues = issues[:self.max_issues]
             prompt += format_issues_for_prompt(issues)

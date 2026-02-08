@@ -38,7 +38,11 @@ class FilteredIssue:
     author_is_trusted: bool = True
 
 
-def fetch_issues_for_labels(labels: list[str], trusted_users: set[str] | None = None) -> list[FilteredIssue]:
+def fetch_issues_for_labels(
+    labels: list[str],
+    trusted_users: set[str] | None = None,
+    env: dict[str, str] | None = None,
+) -> list[FilteredIssue]:
     """Fetch all open issues matching any label, with untrusted content filtered out.
 
     Uses OR logic across labels — an issue matching any label is included.
@@ -55,6 +59,7 @@ def fetch_issues_for_labels(labels: list[str], trusted_users: set[str] | None = 
                 capture_output=True,
                 text=True,
                 timeout=15,
+                env=env,
             )
             if result.returncode != 0:
                 logger.warning(f"gh issue list failed for label '{label}' (exit {result.returncode}): {(result.stderr or '').strip()}")
@@ -67,7 +72,7 @@ def fetch_issues_for_labels(labels: list[str], trusted_users: set[str] | None = 
                 if number in seen_numbers:
                     continue
 
-                filtered = _fetch_and_filter_issue(number, trusted_users)
+                filtered = _fetch_and_filter_issue(number, trusted_users, env=env)
                 if filtered is not None:
                     issues.append(filtered)
                     seen_numbers.add(number)
@@ -78,7 +83,11 @@ def fetch_issues_for_labels(labels: list[str], trusted_users: set[str] | None = 
     return issues
 
 
-def _fetch_and_filter_issue(number: int, trusted_users: set[str] | None) -> FilteredIssue | None:
+def _fetch_and_filter_issue(
+    number: int,
+    trusted_users: set[str] | None,
+    env: dict[str, str] | None = None,
+) -> FilteredIssue | None:
     """Fetch a single issue and filter out untrusted content."""
     try:
         result = subprocess.run(
@@ -86,6 +95,7 @@ def _fetch_and_filter_issue(number: int, trusted_users: set[str] | None) -> Filt
             capture_output=True,
             text=True,
             timeout=15,
+            env=env,
         )
         if result.returncode != 0:
             logger.error(f"Failed to fetch issue #{number}: {result.stderr}")

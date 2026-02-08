@@ -36,9 +36,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 
 ENV PYTHONDONTWRITEBYTECODE=1
 
-WORKDIR /repo
-
+# Claude CLI refuses --dangerously-skip-permissions as root
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN useradd -m -s /bin/bash agent \
+    && chmod -R a+w /usr/local/lib/python3.12/ /usr/local/bin/ /usr/local/include/python3.12/ \
+    && chmod +x /entrypoint.sh
+USER agent
+
+WORKDIR /repo
 
 ENTRYPOINT ["/entrypoint.sh"]
