@@ -22,10 +22,17 @@ penny-team/
       CLAUDE.md         — Architect agent prompt (detailed specs)
     worker/
       CLAUDE.md         — Worker agent prompt (implementation)
+  tests/
+    conftest.py         — MockSubprocess/MockPopen fixtures for gh + Claude CLI
+    test_codeowners.py  — CODEOWNERS parser tests
+    test_issue_filter.py — Issue fetch/filter/actionability tests
+    test_pr_checks.py   — PR status detection tests
+    test_base.py        — Agent class tests (is_due, has_work, run, state)
+    test_orchestrator.py — Agent registration, logging, config tests
   scripts/
     entrypoint.sh       — Claude CLI setup + orchestrator launch
   Dockerfile            — Agent container image (Python 3.12 + Node.js + Claude CLI + gh)
-  pyproject.toml        — Dependencies + ruff/ty config (matches penny/ settings)
+  pyproject.toml        — Dependencies + ruff/ty/pytest config
 ```
 
 ## Agent Configurations

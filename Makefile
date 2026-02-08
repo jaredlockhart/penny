@@ -2,6 +2,7 @@
 RUFF_TARGETS = penny/
 PYTEST_ARGS = penny/tests/ -v
 TEAM_RUFF_TARGETS = penny_team/
+TEAM_PYTEST_ARGS = tests/ -v
 
 .PHONY: up prod kill build team-build fmt lint fix typecheck check pytest token migrate-test migrate-validate
 
@@ -66,9 +67,11 @@ check: $(if $(LOCAL),,build team-build)
 	$(TEAM_RUN) ruff format --check $(TEAM_RUFF_TARGETS)
 	$(TEAM_RUN) ruff check $(TEAM_RUFF_TARGETS)
 	$(TEAM_RUN) ty check $(TEAM_RUFF_TARGETS)
+	$(TEAM_RUN) pytest $(TEAM_PYTEST_ARGS)
 
-pytest: $(if $(LOCAL),,build)
+pytest: $(if $(LOCAL),,build team-build)
 	$(RUN) pytest $(PYTEST_ARGS)
+	$(TEAM_RUN) pytest $(TEAM_PYTEST_ARGS)
 
 migrate-test: $(if $(LOCAL),,build)
 	$(RUN) python -m penny.database.migrate --test
