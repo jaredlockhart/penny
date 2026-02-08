@@ -292,7 +292,7 @@ Channels handle platform-specific message I/O:
 
 **API Keys**:
 - `PERPLEXITY_API_KEY`: API key for web search
-- `ANTHROPIC_API_KEY`: API key for Claude CLI (agent containers)
+- `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
 
 **GitHub App** (required for agent containers):
 - `GITHUB_APP_ID`: GitHub App ID for authenticated API access
