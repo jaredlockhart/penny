@@ -43,7 +43,7 @@ RUN mkdir -p /repo/data
 
 # Install Python deps from baked-in source
 RUN cd /repo/penny && uv pip install --system . --group dev --quiet
-RUN cd /repo/penny-team && uv pip install --system . --quiet
+RUN cd /repo/penny-team && uv pip install --system . --group dev --quiet
 
 # Claude CLI refuses --dangerously-skip-permissions as root
 COPY penny-team/scripts/entrypoint.sh /entrypoint.sh

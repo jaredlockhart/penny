@@ -69,7 +69,7 @@ def load_github_app() -> GitHubApp | None:
     key_path = os.getenv(ENV_KEY_PATH)
     install_id = os.getenv(ENV_INSTALL_ID)
 
-    if not all([app_id, key_path, install_id]):
+    if app_id is None or key_path is None or install_id is None:
         return None
 
     key_file = Path(key_path)
@@ -142,7 +142,14 @@ def setup_logging(log_file: Path | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt, handlers=handlers)
 
 
-def save_agent_log(agent_name: str, run_number: int, timestamp: datetime, duration: float, success: bool, output: str) -> None:
+def save_agent_log(
+    agent_name: str,
+    run_number: int,
+    timestamp: datetime,
+    duration: float,
+    success: bool,
+    output: str,
+) -> None:
     """Save raw agent output to a per-agent log file."""
     log_path = LOG_DIR / f"{agent_name}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,7 +166,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Penny Agent Orchestrator")
     parser.add_argument("--once", action="store_true", help="Run all due agents once and exit")
     parser.add_argument("--list", action="store_true", help="List registered agents and exit")
-    parser.add_argument("--agent", type=str, default=None, help="Run only the named agent (e.g. 'product-manager' or 'worker')")
+    parser.add_argument(
+        "--agent",
+        type=str,
+        default=None,
+        help="Run only the named agent (e.g. 'product-manager' or 'worker')",
+    )
     parser.add_argument("--log-file", type=Path, default=LOG_DIR / ORCHESTRATOR_LOG)
     args = parser.parse_args()
 
@@ -168,6 +180,7 @@ def main() -> None:
 
     # Load .env so orchestrator works without shell exports
     from dotenv import load_dotenv
+
     load_dotenv(PROJECT_ROOT / ENV_FILENAME)
 
     github_app = load_github_app()
@@ -186,7 +199,9 @@ def main() -> None:
 
     if args.list:
         for agent in agents:
-            print(f"  {agent.name:20s}  every {agent.interval_seconds}s  prompt: {agent.prompt_path}")
+            print(
+                f"  {agent.name:20s}  every {agent.interval_seconds}s  prompt: {agent.prompt_path}"
+            )
         return
 
     # Clean shutdown
@@ -217,13 +232,20 @@ def main() -> None:
         for agent in agents:
             if agent.has_work():
                 result = agent.run()
-                save_agent_log(agent.name, agent.run_count, result.timestamp, result.duration, result.success, result.output)
+                save_agent_log(
+                    agent.name,
+                    agent.run_count,
+                    result.timestamp,
+                    result.duration,
+                    result.success,
+                    result.output,
+                )
             else:
                 logger.info(f"[{agent.name}] No matching issues, skipping")
         return
 
     # Main loop — check agents every 30s, run those that are due
-    TICK_SECONDS = 30
+    tick_seconds = 30
 
     while running:
         for agent in agents:
@@ -232,13 +254,20 @@ def main() -> None:
             if agent.is_due():
                 if agent.has_work():
                     result = agent.run()
-                    save_agent_log(agent.name, agent.run_count, result.timestamp, result.duration, result.success, result.output)
+                    save_agent_log(
+                        agent.name,
+                        agent.run_count,
+                        result.timestamp,
+                        result.duration,
+                        result.success,
+                        result.output,
+                    )
                 else:
                     logger.info(f"[{agent.name}] No matching issues, skipping")
                     agent.last_run = datetime.now()
 
         # Sleep in 1s increments so signals are responsive
-        for _ in range(TICK_SECONDS):
+        for _ in range(tick_seconds):
             if not running:
                 break
             time.sleep(1)

@@ -151,10 +151,7 @@ def _has_changes_requested(reviews: list[dict]) -> bool:
         state = review.get("state", "")
         if login and state:
             latest_by_reviewer[login] = state
-    return any(
-        state == REVIEW_STATE_CHANGES_REQUESTED
-        for state in latest_by_reviewer.values()
-    )
+    return any(state == REVIEW_STATE_CHANGES_REQUESTED for state in latest_by_reviewer.values())
 
 
 def _extract_failed_checks(status_rollup: list[dict]) -> list[FailedCheck]:
@@ -166,10 +163,12 @@ def _extract_failed_checks(status_rollup: list[dict]) -> list[FailedCheck]:
         if state in PENDING_STATES:
             continue
         if conclusion not in PASSING_CONCLUSIONS:
-            failed.append(FailedCheck(
-                name=check.get("context", check.get("name", "unknown")),
-                conclusion=conclusion,
-            ))
+            failed.append(
+                FailedCheck(
+                    name=check.get("context", check.get("name", "unknown")),
+                    conclusion=conclusion,
+                )
+            )
     return failed
 
 
@@ -180,8 +179,19 @@ def _fetch_failure_log(
     """Fetch truncated log output from the most recent failing run."""
     try:
         result = subprocess.run(
-            [GH_CLI, "run", "list", "--branch", branch, "--status", "failure",
-             "--json", "databaseId", "--limit", "1"],
+            [
+                GH_CLI,
+                "run",
+                "list",
+                "--branch",
+                branch,
+                "--status",
+                "failure",
+                "--json",
+                "databaseId",
+                "--limit",
+                "1",
+            ],
             capture_output=True,
             text=True,
             timeout=15,

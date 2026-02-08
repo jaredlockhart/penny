@@ -68,16 +68,17 @@ The project runs inside Docker Compose. A top-level Makefile wraps all commands:
 make up          # Start all services (penny + team) with Docker Compose
 make prod        # Deploy penny only (no team, no override)
 make kill        # Tear down containers and remove local images
-make build       # Build the Docker image
-make check       # Format check, lint, typecheck, and run tests
+make build       # Build the penny Docker image
+make team-build  # Build the penny-team Docker image
+make check       # Format check, lint, typecheck, and run tests (penny + penny-team)
 make pytest      # Run integration tests
-make fmt         # Format with ruff
-make lint        # Lint with ruff
-make fix         # Format + autofix lint issues
-make typecheck   # Type check with ty
+make fmt         # Format with ruff (penny + penny-team)
+make lint        # Lint with ruff (penny + penny-team)
+make fix         # Format + autofix lint issues (penny + penny-team)
+make typecheck   # Type check with ty (penny + penny-team)
 ```
 
-On the host, dev tool commands run via `docker compose run --rm` in a temporary container. Inside agent containers (where `LOCAL=1` is set), the same `make` targets run tools directly — no Docker-in-Docker needed.
+On the host, dev tool commands run via `docker compose run --rm` in a temporary container (penny service for `penny/`, team service for `penny-team/`). Inside agent containers (where `LOCAL=1` is set), the same `make` targets run tools directly — no Docker-in-Docker needed.
 
 `make prod` starts the penny service only (skips `docker-compose.override.yml` and the `team` profile). The watcher container handles auto-deploy when running the full stack via `make up`.
 
@@ -85,7 +86,7 @@ Prerequisites: signal-cli-rest-api on :8080 (for Signal), Ollama on :11434, Perp
 
 ## CI
 
-GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push to `main` and on pull requests. The workflow builds the Docker image and runs all checks inside the container, same as local dev. Config is in `.github/workflows/check.yml`. CI only builds and runs the penny service — team services (pm, worker) are in the `team` profile and don't affect CI.
+GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push to `main` and on pull requests. The workflow builds the Docker images and runs all checks inside containers, same as local dev. Config is in `.github/workflows/check.yml`. Both penny and penny-team code are checked in CI.
 
 ## Configuration (.env)
 

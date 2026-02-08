@@ -25,7 +25,7 @@ penny-team/
   scripts/
     entrypoint.sh       — Claude CLI setup + orchestrator launch
   Dockerfile            — Agent container image (Python 3.12 + Node.js + Claude CLI + gh)
-  pyproject.toml        — Dependencies: PyJWT[crypto], python-dotenv
+  pyproject.toml        — Dependencies + ruff/ty config (matches penny/ settings)
 ```
 
 ## Agent Configurations

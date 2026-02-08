@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -127,8 +127,21 @@ class Agent:
         timestamps: dict[str, str] = {}
         for label in self.required_labels or []:
             result = subprocess.run(
-                [GH_CLI, "issue", "list", "--label", label, "--json", f"{GH_FIELD_NUMBER},{GH_FIELD_UPDATED_AT}", "--limit", "20"],
-                capture_output=True, text=True, timeout=15, env=self._get_env(),
+                [
+                    GH_CLI,
+                    "issue",
+                    "list",
+                    "--label",
+                    label,
+                    "--json",
+                    f"{GH_FIELD_NUMBER},{GH_FIELD_UPDATED_AT}",
+                    "--limit",
+                    "20",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=self._get_env(),
             )
             if result.returncode != 0:
                 raise RuntimeError(f"gh issue list failed for label '{label}'")
@@ -166,8 +179,7 @@ class Agent:
         # Timestamps unchanged. For labels with external state (CI, reviews),
         # check if any issue actually needs attention.
         has_external_state = any(
-            label in LABELS_WITH_EXTERNAL_STATE
-            for label in self.required_labels
+            label in LABELS_WITH_EXTERNAL_STATE for label in self.required_labels
         )
         if has_external_state:
             return self._check_actionable_issues()
@@ -184,6 +196,9 @@ class Agent:
         """
         from penny_team.utils.issue_filter import fetch_issues_for_labels, pick_actionable_issue
         from penny_team.utils.pr_checks import enrich_issues_with_pr_status
+
+        if not self.required_labels:
+            return True
 
         try:
             issues = fetch_issues_for_labels(
@@ -209,7 +224,8 @@ class Agent:
             prompt,
             "--dangerously-skip-permissions",
             "--verbose",
-            "--output-format", "stream-json",
+            "--output-format",
+            "stream-json",
         ]
         if self.model:
             cmd.extend(["--model", self.model])
@@ -225,12 +241,19 @@ class Agent:
 
         # Pre-fetch, filter, and pick one actionable issue
         if self.required_labels:
-            from penny_team.utils.issue_filter import fetch_issues_for_labels, format_issues_for_prompt, pick_actionable_issue
+            from penny_team.utils.issue_filter import (
+                fetch_issues_for_labels,
+                format_issues_for_prompt,
+                pick_actionable_issue,
+            )
 
-            all_issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users, env=self._get_env())
+            all_issues = fetch_issues_for_labels(
+                self.required_labels, trusted_users=self.trusted_users, env=self._get_env()
+            )
 
             # Enrich in-review issues with CI and merge conflict status (no-op if none match)
             from penny_team.utils.pr_checks import enrich_issues_with_pr_status
+
             enrich_issues_with_pr_status(all_issues, env=self._get_env())
 
             issue = pick_actionable_issue(all_issues, self._bot_logins)
@@ -239,7 +262,9 @@ class Agent:
                 duration = (datetime.now() - start).total_seconds()
                 self.last_run = datetime.now()
                 self.run_count += 1
-                logger.info(f"[{self.name}] No actionable issues (bot has last comment on all), skipping")
+                logger.info(
+                    f"[{self.name}] No actionable issues (bot has last comment on all), skipping"
+                )
                 try:
                     self._save_state(self._fetch_issue_timestamps())
                 except (subprocess.TimeoutExpired, OSError, RuntimeError) as e:
@@ -291,7 +316,8 @@ class Agent:
 
             success = process.returncode == 0
             level = logging.INFO if success else logging.ERROR
-            logger.log(level, f"[{self.name}] Cycle #{self.run_count} {'OK' if success else 'FAILED'} in {duration:.1f}s")
+            status = "OK" if success else "FAILED"
+            logger.log(level, f"[{self.name}] Cycle #{self.run_count} {status} in {duration:.1f}s")
 
             # Don't save state here — there may be more actionable issues.
             # State is only saved when pick_actionable_issue() returns None
