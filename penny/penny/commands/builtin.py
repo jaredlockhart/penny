@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 try:
-    import psutil
+    import psutil  # type: ignore[import-untyped]
+
+    HAS_PSUTIL = True
 except ImportError:
     psutil = None
+    HAS_PSUTIL = False
 
 from penny.penny.commands.base import Command
 from penny.penny.commands.models import CommandContext, CommandResult
@@ -108,11 +111,11 @@ class DebugCommand(Command):
         agent_status = self._get_agent_status()
 
         # Memory
-        if psutil is None:
+        if not HAS_PSUTIL:
             mem_str = "unknown (psutil not installed)"
         else:
             try:
-                process = psutil.Process()
+                process = psutil.Process()  # type: ignore[union-attr]
                 mem_mb = process.memory_info().rss / 1024 / 1024
                 mem_percent = process.memory_percent()
                 mem_str = f"{mem_mb:.0f} MB ({mem_percent:.1f}%)"
