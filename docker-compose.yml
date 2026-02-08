@@ -32,7 +32,7 @@ services:
       - PYTHONUNBUFFERED=1
       - ANTHROPIC_API_KEY
       - GITHUB_APP_ID
-      - GITHUB_APP_PRIVATE_KEY_PATH
+      - GITHUB_APP_PRIVATE_KEY_PATH=/repo/data/github-app.pem
       - GITHUB_APP_INSTALLATION_ID
 
   worker:
@@ -48,7 +48,7 @@ services:
       - PYTHONUNBUFFERED=1
       - ANTHROPIC_API_KEY
       - GITHUB_APP_ID
-      - GITHUB_APP_PRIVATE_KEY_PATH
+      - GITHUB_APP_PRIVATE_KEY_PATH=/repo/data/github-app.pem
       - GITHUB_APP_INSTALLATION_ID
 
   watcher:

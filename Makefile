@@ -13,7 +13,7 @@ up:
 
 prod:
 	cp .env.prod .env
-	docker compose -f docker-compose.yml up -d
+	docker compose -f docker-compose.yml up --build
 
 kill:
 	docker compose --profile team down --rmi local --remove-orphans
