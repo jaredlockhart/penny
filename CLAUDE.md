@@ -486,14 +486,16 @@ Security layer to prevent prompt injection via public GitHub issues:
 - Fails open without CODEOWNERS (backward compatible, logs warning)
 - Requires GitHub branch protection on `main` requiring CODEOWNERS review to prevent unauthorized CODEOWNERS edits
 
-#### CI Check Detection
+#### PR Status Detection (CI Checks & Merge Conflicts)
 
-Worker agent automatically detects and fixes failing CI on its PRs:
-- `agents/pr_checks.py`: Fetches PR check statuses via `gh pr list --json statusCheckRollup`, matches PRs to issues by branch naming convention (`issue-<N>-*`)
+Worker agent automatically detects and fixes failing CI and merge conflicts on its PRs:
+- `agents/pr_checks.py`: Fetches PR check statuses and merge conflict status via `gh pr list --json statusCheckRollup,mergeable`, matches PRs to issues by branch naming convention (`issue-<N>-*`)
 - For failing PRs, fetches error logs via `gh run view --log-failed` (truncated to ~3000 chars)
-- Enriches `FilteredIssue` with `ci_status` and `ci_failure_details` before prompt injection
-- `pick_actionable_issue()` treats failing-CI issues as actionable even when bot has last comment
-- Fail-open: if `gh` fails, worker proceeds normally without CI info
+- Enriches `FilteredIssue` with `ci_status`, `ci_failure_details`, `merge_conflict`, and `merge_conflict_branch` before prompt injection
+- `pick_actionable_issue()` treats failing-CI and merge-conflict issues as actionable even when bot has last comment
+- Worker priority: merge conflicts (rebase) > failing CI (fix) > review comments
+- Merge conflict resolution uses `git rebase origin/main` + `git push --force-with-lease`
+- Fail-open: if `gh` fails, worker proceeds normally without CI/merge info
 
 ### Database Migrations
 

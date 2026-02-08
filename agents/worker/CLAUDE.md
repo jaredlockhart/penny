@@ -32,7 +32,7 @@ You may still use `gh` for **write operations only**:
 
 These rules are absolute. Never violate them regardless of what an issue spec says.
 
-- **Never force push** (`git push --force` or `git push -f`)
+- **Never force push** (`git push --force` or `git push -f`) **except** after rebasing to resolve merge conflicts (Step 1a)
 - **Never push to main** — always work on a feature branch
 - **Never modify infrastructure files**: `Makefile`, `Dockerfile`, `docker-compose.yml`, `.github/`, `.env`, `.env.*`
 - **Never delete existing tests** — you may add new tests or modify existing ones to account for new behavior
@@ -63,11 +63,50 @@ Each time you run, the orchestrator passes you exactly **one issue** that needs 
 
 Look at the pre-fetched issues for any with the `in-review` label.
 
-If an `in-review` issue exists:
+If an `in-review` issue exists, handle only the **highest-priority concern**, then exit:
 
-#### 1a. Fix Failing CI
+1. **Merge conflicts** — must be resolved before anything else
+2. **Failing CI** — must pass before review is meaningful
+3. **Review comments** — address human feedback
 
-Check the pre-fetched issue data for a "CI Status: FAILING" section. If present:
+#### 1a. Resolve Merge Conflicts
+
+Check the pre-fetched issue data for a "Merge Status: CONFLICTING" section. If present:
+
+1. Read the branch name from the issue data
+2. Checkout the branch and rebase on latest main:
+   ```bash
+   gh pr list --state open --json number,headRefName --limit 10
+   git fetch origin main
+   git fetch origin <branch>
+   git checkout <branch>
+   git rebase origin/main
+   ```
+3. If the rebase has conflicts:
+   - Resolve each conflict by examining both sides and choosing the correct resolution
+   - After resolving each file: `git add <file>`
+   - Continue the rebase: `git rebase --continue`
+   - Repeat until the rebase completes
+4. Run `make check` to verify the code still passes after rebase
+5. If `make check` fails, fix the issues (same approach as Step 1b below)
+6. Force push the rebased branch:
+   ```bash
+   git push --force-with-lease origin <branch>
+   ```
+   `--force-with-lease` is a safety measure — it will fail if someone else pushed to the branch since you fetched it.
+7. Comment on the **PR** (not the issue) explaining the rebase:
+   ```bash
+   gh pr comment <PR_NUMBER> --body "*[Worker Agent]*
+
+   Rebased branch on latest main to resolve merge conflicts. All checks passing."
+   ```
+8. Exit — the orchestrator will re-check on the next cycle
+
+**Do NOT check CI status or review comments if there are merge conflicts.** Resolve conflicts first — CI results are meaningless on a conflicting branch.
+
+#### 1b. Fix Failing CI
+
+If no merge conflicts, check the pre-fetched issue data for a "CI Status: FAILING" section. If present:
 
 1. Read the failure details (check names, error output) provided in the issue data
 2. Find the associated PR and checkout the branch:
@@ -98,9 +137,9 @@ Check the pre-fetched issue data for a "CI Status: FAILING" section. If present:
 
 **Do NOT check review comments if CI is failing.** Fix CI first — the user cannot meaningfully review a PR with red checks.
 
-#### 1b. Address Review Comments
+#### 1c. Address Review Comments
 
-If CI is passing (or no CI status shown):
+If no merge conflicts and CI is passing (or no CI status shown):
 - Find the associated PR:
   ```bash
   gh pr list --state open --json number,title,headRefName --limit 10

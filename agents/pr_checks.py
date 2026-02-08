@@ -1,8 +1,9 @@
-"""CI check detection for worker agent PRs.
+"""PR status detection for worker agent PRs.
 
-Fetches PR check statuses via gh CLI and enriches FilteredIssue
-objects with CI failure details. This enables the worker agent to
-detect and fix failing checks before waiting for human review.
+Fetches PR check statuses and merge conflict status via gh CLI and
+enriches FilteredIssue objects with CI failure details and merge
+conflict information. This enables the worker agent to detect and
+fix failing checks and rebase conflicting branches.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ PASSING_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED", ""}
 PENDING_STATES = {"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED"}
 
 # gh CLI JSON fields for PR list
-PR_FIELDS = "number,headRefName,statusCheckRollup"
+PR_FIELDS = "number,headRefName,statusCheckRollup,mergeable"
 
 # Max characters of failure log to include in prompt
 MAX_LOG_CHARS = 3000
@@ -40,14 +41,18 @@ class FailedCheck:
     conclusion: str
 
 
-def enrich_issues_with_ci_status(
+MERGE_STATUS_CONFLICTING = "CONFLICTING"
+
+
+def enrich_issues_with_pr_status(
     issues: list[FilteredIssue],
     env: dict[str, str] | None = None,
 ) -> None:
-    """Enrich in-review issues with CI check status from their PRs.
+    """Enrich in-review issues with CI check and merge conflict status from their PRs.
 
-    Mutates FilteredIssue objects in place, setting ci_status and
-    ci_failure_details. Fail-open: if gh fails, issues are left unchanged.
+    Mutates FilteredIssue objects in place, setting ci_status,
+    ci_failure_details, merge_conflict, and merge_conflict_branch.
+    Fail-open: if gh fails, issues are left unchanged.
     """
     in_review = [i for i in issues if LABEL_IN_REVIEW in i.labels]
     if not in_review:
@@ -56,7 +61,7 @@ def enrich_issues_with_ci_status(
     try:
         prs = _fetch_open_prs(env)
     except (subprocess.TimeoutExpired, OSError, RuntimeError):
-        logger.warning("Failed to fetch PR check statuses, skipping CI detection")
+        logger.warning("Failed to fetch PR statuses, skipping CI/merge detection")
         return
 
     pr_by_issue = _match_prs_to_issues(prs, in_review)
@@ -66,6 +71,12 @@ def enrich_issues_with_ci_status(
         if pr is None:
             continue
 
+        # Merge conflict detection
+        if pr.get("mergeable", "") == MERGE_STATUS_CONFLICTING:
+            issue.merge_conflict = True
+            issue.merge_conflict_branch = pr["headRefName"]
+
+        # CI check detection
         failed = _extract_failed_checks(pr.get("statusCheckRollup", []))
 
         if not failed:

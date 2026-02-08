@@ -190,9 +190,9 @@ class Agent:
             bot_login = self.github_app.bot_name if self.github_app else None
             all_issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users, env=self._get_env())
 
-            # Enrich in-review issues with CI check status (no-op if none match)
-            from pr_checks import enrich_issues_with_ci_status
-            enrich_issues_with_ci_status(all_issues, env=self._get_env())
+            # Enrich in-review issues with CI and merge conflict status (no-op if none match)
+            from pr_checks import enrich_issues_with_pr_status
+            enrich_issues_with_pr_status(all_issues, env=self._get_env())
 
             issue = pick_actionable_issue(all_issues, bot_login)
 
