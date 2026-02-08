@@ -10,7 +10,9 @@ Branch protection is enabled on `main`. All changes must go through pull request
 
 - **Never push directly to `main`** — always create a feature branch
 - Create a descriptive branch name (e.g., `add-codeowners-filtering`, `fix-scheduler-bug`)
-- Commit changes to the branch, then push and create a PR via `gh pr create`
+- Commit changes to the branch, then push and create a PR
+- **Use `make token` for GitHub operations**: `GH_TOKEN=$(make token) gh pr create ...`
+  - This generates a GitHub App installation token for authenticated `gh` CLI access
 - The user will review and merge the PR
 
 ## Documentation Maintenance
