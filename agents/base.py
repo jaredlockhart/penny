@@ -19,6 +19,7 @@ from github_app import GitHubApp
 CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
 GH_CLI = os.getenv("GH_CLI", "gh")
 PROJECT_ROOT = Path(__file__).parent.parent
+DATA_DIR = PROJECT_ROOT / "data" / "agents"
 
 logger = logging.getLogger(__name__)
 
@@ -76,28 +77,64 @@ class Agent:
         env.update(self.github_app.get_env())
         return env
 
-    def has_work(self) -> bool:
-        """Check if there are GitHub issues matching any required label.
+    @property
+    def _state_path(self) -> Path:
+        return DATA_DIR / f"{self.name}.state.json"
 
-        Returns True if no labels are configured (always run) or if any
-        label has at least one open issue.
+    def _load_state(self) -> dict[str, str]:
+        """Load saved issue timestamps from disk."""
+        try:
+            return json.loads(self._state_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def _save_state(self, timestamps: dict[str, str]) -> None:
+        """Persist issue timestamps to disk."""
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._state_path.write_text(json.dumps(timestamps))
+
+    def _fetch_issue_timestamps(self) -> dict[str, str]:
+        """Fetch updatedAt timestamps for all issues matching required labels.
+
+        Returns a dict mapping issue number (str) to updatedAt timestamp.
+        Raises RuntimeError if any gh call fails (caller should fail open).
+        """
+        timestamps: dict[str, str] = {}
+        for label in self.required_labels or []:
+            result = subprocess.run(
+                [GH_CLI, "issue", "list", "--label", label, "--json", "number,updatedAt", "--limit", "20"],
+                capture_output=True, text=True, timeout=15, env=self._get_env(),
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"gh issue list failed for label '{label}'")
+            for issue in json.loads(result.stdout):
+                timestamps[str(issue["number"])] = issue["updatedAt"]
+        return timestamps
+
+    def has_work(self) -> bool:
+        """Check if there are new or updated GitHub issues since the last run.
+
+        Returns True if no labels are configured (always run), if any issue
+        has been created/updated/removed since the last saved state, or if
+        gh fails (fail-open).
         """
         if not self.required_labels:
             return True
 
-        for label in self.required_labels:
-            try:
-                result = subprocess.run(
-                    [GH_CLI, "issue", "list", "--label", label, "--json", "number", "--limit", "1"],
-                    capture_output=True, text=True, timeout=15, env=self._get_env(),
-                )
-                if result.returncode == 0 and result.stdout.strip() not in ("", "[]"):
-                    return True
-            except (subprocess.TimeoutExpired, OSError):
-                # If gh fails, run the agent anyway to be safe
-                return True
+        try:
+            current = self._fetch_issue_timestamps()
+        except (subprocess.TimeoutExpired, OSError, RuntimeError):
+            return True
 
-        return False
+        if not current:
+            return False
+
+        saved = self._load_state()
+        if current == saved:
+            logger.info(f"[{self.name}] No issue changes since last run, skipping")
+            return False
+
+        return True
 
     def _build_command(self, prompt: str) -> list[str]:
         cmd = [
@@ -167,6 +204,12 @@ class Agent:
             success = process.returncode == 0
             level = logging.INFO if success else logging.ERROR
             logger.log(level, f"[{self.name}] Cycle #{self.run_count} {'OK' if success else 'FAILED'} in {duration:.1f}s")
+
+            if success and self.required_labels:
+                try:
+                    self._save_state(self._fetch_issue_timestamps())
+                except (subprocess.TimeoutExpired, OSError, RuntimeError) as e:
+                    logger.warning(f"[{self.name}] Failed to save issue state: {e}")
 
             return AgentRun(
                 agent_name=self.name,
