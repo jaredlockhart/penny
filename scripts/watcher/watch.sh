@@ -5,7 +5,7 @@
 set -euo pipefail
 
 INTERVAL="${DEPLOY_INTERVAL:-300}"
-COMPOSE_FILE="/repo/docker-compose.yml"
+COMPOSE="docker compose -f /repo/docker-compose.yml --project-directory ${HOST_PROJECT_DIR:-/repo}"
 
 log() { echo "[watcher $(date +%H:%M:%S)] $*"; }
 
@@ -37,11 +37,11 @@ while true; do
 
         # Restart penny with the new image
         log "Restarting penny..."
-        docker compose -f "$COMPOSE_FILE" up -d --no-build penny
+        $COMPOSE up -d --no-build penny
 
         # Restart agents (graceful — docker sends SIGTERM, waits stop_grace_period)
         log "Restarting agents..."
-        if docker compose -f "$COMPOSE_FILE" --profile team restart pm worker; then
+        if $COMPOSE --profile team restart pm worker; then
             log "All services restarted"
         else
             log "Agent restart failed, will retry on next cycle"

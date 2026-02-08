@@ -57,4 +57,5 @@ services:
     environment:
       - DEPLOY_INTERVAL=300
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-penny}
+      - HOST_PROJECT_DIR=${PWD}
     working_dir: /repo
