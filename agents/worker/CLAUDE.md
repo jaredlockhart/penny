@@ -26,6 +26,7 @@ You may still use `gh` for **write operations only**:
 ## Environment
 
 - **`GH_TOKEN` is pre-set** — the orchestrator injects a GitHub App token into your environment. Use `gh` directly (e.g., `gh pr create ...`). Do NOT use `make token` — it requires Docker which is not available in your container.
+- **Git auth is pre-configured** — `git push` and `git fetch` work directly with no extra setup. Do NOT modify git remotes, set credential helpers, or embed tokens in URLs — credentials are already configured via the entrypoint.
 
 ## Safety Rules
 
