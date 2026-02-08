@@ -1,6 +1,5 @@
 # Environment
 .env
-.env.test
 *.pem
 
 # Data directory (SQLite database)
