@@ -115,5 +115,4 @@ if __name__ == "__main__":
         private_key_path=key_path,
         installation_id=int(os.environ["GITHUB_APP_INSTALLATION_ID"]),
     )
-    for key, value in app.get_env().items():
-        print(f"export {key}='{value}'")
+    print(app.get_token())

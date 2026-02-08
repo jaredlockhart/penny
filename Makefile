@@ -21,7 +21,7 @@ build:
 # Print a GitHub App installation token for use with gh CLI
 # Usage: GH_TOKEN=$(make token) gh pr create ...
 token:
-	@docker compose run --rm --no-deps --entrypoint "" pm uv run /repo/agents/github_app.py 2>/dev/null | grep GH_TOKEN | cut -d"'" -f2
+	@docker compose run --rm --no-deps --entrypoint "" pm uv run /repo/agents/github_app.py 2>/dev/null
 
 # --- Code quality (auto-detects host vs container via LOCAL env var) ---
 
