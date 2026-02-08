@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 from penny_team.utils.issue_filter import (
+    FilteredComment,
     FilteredIssue,
     fetch_issues_for_labels,
     format_issues_for_prompt,
@@ -66,6 +67,60 @@ class TestPickActionableIssue:
         """in-review issues with no comments are waiting for human review."""
         issue = _make_issue(labels=["in-review"], trusted_comments=[])
         assert pick_actionable_issue([issue], BOT_LOGINS) is None
+
+    def test_in_review_no_comments_but_failing_ci_is_actionable(self):
+        """in-review with no comments but failing CI is still actionable.
+
+        Bug fix: external signals (CI failure, merge conflict, review feedback)
+        should override the "no comments → skip" logic for in-review issues.
+        """
+        issue = _make_issue(
+            labels=["in-review"],
+            trusted_comments=[],
+            ci_status="failing",
+            ci_failure_details="ruff check failed",
+        )
+        result = pick_actionable_issue([issue], BOT_LOGINS)
+        assert result is not None
+        assert result.number == 1
+
+    def test_in_review_no_comments_but_merge_conflict_is_actionable(self):
+        """in-review with no comments but merge conflict is still actionable."""
+        issue = _make_issue(
+            labels=["in-review"],
+            trusted_comments=[],
+            merge_conflict=True,
+            merge_conflict_branch="issue-1-fix",
+        )
+        result = pick_actionable_issue([issue], BOT_LOGINS)
+        assert result is not None
+
+    def test_in_review_no_comments_but_review_feedback_is_actionable(self):
+        """in-review with no comments but review feedback is still actionable."""
+        issue = _make_issue(
+            labels=["in-review"],
+            trusted_comments=[],
+            has_review_feedback=True,
+        )
+        result = pick_actionable_issue([issue], BOT_LOGINS)
+        assert result is not None
+
+    def test_in_review_bot_last_comment_but_failing_ci_is_actionable(self):
+        """in-review where bot has last comment but CI is failing → still actionable.
+
+        Bug fix: bot having the last comment should not prevent the worker
+        from waking when there are external signals (failing CI).
+        """
+        issue = _make_issue(
+            labels=["in-review"],
+            trusted_comments=[
+                FilteredComment(author="penny-team[bot]", body="PR created.", created_at="t1"),
+            ],
+            ci_status="failing",
+            ci_failure_details="test failed",
+        )
+        result = pick_actionable_issue([issue], BOT_LOGINS)
+        assert result is not None
 
 
 # --- format_issues_for_prompt (edge cases only) ---

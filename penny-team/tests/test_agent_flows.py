@@ -234,6 +234,38 @@ class TestProductManagerFlow:
         # Claude CLI should NOT have been called
         assert len(calls) == 0
 
+    def test_skip_saves_state_success_does_not(
+        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+    ):
+        """State is saved when agent skips (no actionable issues) but NOT after
+        a successful Claude CLI run.
+
+        Bug fix: state is only saved when pick_actionable_issue() returns None
+        (all issues handled). This ensures has_work() keeps returning True until
+        the entire queue is burned down across multiple cycles.
+        """
+        agent = _make_flow_agent(tmp_path, "product-manager", ["requirements"])
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "pm.state.json"
+        monkeypatch.setattr(
+            type(agent), "_state_path", property(lambda self: state_path)
+        )
+
+        # --- Run 1: actionable issue → Claude runs, state NOT saved ---
+        mock_subprocess.add_response("issue list", stdout=_issue_list_response(42))
+        mock_subprocess.add_response(
+            "issue view",
+            stdout=_issue_view_response(
+                number=42, labels=["requirements"], comments=[]
+            ),
+        )
+        calls = capture_popen(stdout_lines=[_result_event()], returncode=0)
+
+        agent.run()
+
+        assert len(calls) == 1  # Claude CLI was called
+        assert not state_path.exists()  # State NOT saved after success
+
 
 # =============================================================================
 # Architect Flow

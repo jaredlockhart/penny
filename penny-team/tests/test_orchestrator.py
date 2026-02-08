@@ -58,6 +58,24 @@ class TestGetAgents:
         for agent in agents:
             assert agent.trusted_users is None
 
+    def test_trusted_users_includes_both_bot_login_forms(
+        self, project_root, monkeypatch, mock_github_app
+    ):
+        """When github_app is configured, both bot login forms are trusted.
+
+        Bug fix: GitHub API returns bot author as both "slug" (e.g. "penny-team")
+        and "slug[bot]" (e.g. "penny-team[bot]") depending on context. Both forms
+        must be in trusted_users so bot-authored comments aren't filtered out.
+        """
+        monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
+        agents = get_agents(mock_github_app)
+        for agent in agents:
+            assert "penny-team" in agent.trusted_users  # slug form
+            assert "penny-team[bot]" in agent.trusted_users  # [bot] suffix form
+            # CODEOWNERS users should still be there too
+            assert "alice" in agent.trusted_users
+            assert "bob" in agent.trusted_users
+
 
 class TestSaveAgentLog:
     def test_writes_log_file(self, tmp_path, monkeypatch):

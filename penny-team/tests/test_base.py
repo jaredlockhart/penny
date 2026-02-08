@@ -172,6 +172,87 @@ class TestHasWork:
 
         assert agent.has_work() is True
 
+    def test_external_state_label_checks_actionability(
+        self, tmp_path, mock_subprocess, monkeypatch
+    ):
+        """Worker with in-review label + unchanged timestamps still checks actionability.
+
+        Bug fix: has_work() used to return False when timestamps were unchanged,
+        even for in-review issues where CI checks/merge conflicts/reviews can
+        change without updating issue timestamps. Now it calls
+        _check_actionable_issues() for labels in LABELS_WITH_EXTERNAL_STATE.
+        """
+        agent = _make_agent(tmp_path, required_labels=["in-progress", "in-review"])
+        state_path = tmp_path / "state.json"
+        monkeypatch.setattr(type(agent), "_state_path", property(lambda self: state_path))
+
+        timestamps = {"42": "2024-01-01T00:00:00Z"}
+        state_path.write_text(json.dumps(timestamps))
+
+        mock_subprocess.add_response(
+            "issue list",
+            stdout=json.dumps([{"number": 42, "updatedAt": "2024-01-01T00:00:00Z"}]),
+        )
+
+        # _check_actionable_issues should be called and its result used
+        monkeypatch.setattr(agent, "_check_actionable_issues", lambda: True)
+
+        assert agent.has_work() is True
+
+    def test_external_state_no_actionable_returns_false(
+        self, tmp_path, mock_subprocess, monkeypatch
+    ):
+        """Worker with unchanged timestamps and no actionable issues returns False.
+
+        When _check_actionable_issues finds nothing to do (CI passing, no
+        conflicts, no reviews, bot last comment on all), has_work() returns False.
+        """
+        agent = _make_agent(tmp_path, required_labels=["in-progress", "in-review"])
+        state_path = tmp_path / "state.json"
+        monkeypatch.setattr(type(agent), "_state_path", property(lambda self: state_path))
+
+        timestamps = {"42": "2024-01-01T00:00:00Z"}
+        state_path.write_text(json.dumps(timestamps))
+
+        mock_subprocess.add_response(
+            "issue list",
+            stdout=json.dumps([{"number": 42, "updatedAt": "2024-01-01T00:00:00Z"}]),
+        )
+
+        monkeypatch.setattr(agent, "_check_actionable_issues", lambda: False)
+
+        assert agent.has_work() is False
+
+    def test_non_external_state_unchanged_skips_actionability_check(
+        self, tmp_path, mock_subprocess, monkeypatch
+    ):
+        """PM with requirements label + unchanged timestamps returns False without
+        checking actionability (no external state for requirements label).
+        """
+        agent = _make_agent(tmp_path, required_labels=["requirements"])
+        state_path = tmp_path / "state.json"
+        monkeypatch.setattr(type(agent), "_state_path", property(lambda self: state_path))
+
+        timestamps = {"42": "2024-01-01T00:00:00Z"}
+        state_path.write_text(json.dumps(timestamps))
+
+        mock_subprocess.add_response(
+            "issue list",
+            stdout=json.dumps([{"number": 42, "updatedAt": "2024-01-01T00:00:00Z"}]),
+        )
+
+        check_called = False
+
+        def spy():
+            nonlocal check_called
+            check_called = True
+            return True
+
+        monkeypatch.setattr(agent, "_check_actionable_issues", spy)
+
+        assert agent.has_work() is False
+        assert check_called is False
+
 
 # --- run ---
 
