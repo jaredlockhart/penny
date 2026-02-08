@@ -18,6 +18,8 @@ from github_app import GitHubApp
 
 CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
 GH_CLI = os.getenv("GH_CLI", "gh")
+# Labels where external state (CI checks) can change without updating issue timestamps
+LABELS_WITH_EXTERNAL_STATE = {"in-review"}
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent
 DATA_DIR = PROJECT_ROOT / "data" / "agents"
@@ -128,6 +130,10 @@ class Agent:
         Returns True if no labels are configured (always run), if any issue
         has been created/updated/removed since the last saved state, or if
         gh fails (fail-open).
+
+        For labels with external state (e.g. in-review where CI checks can
+        change without updating issue timestamps), always returns True when
+        matching issues exist.
         """
         if not self.required_labels:
             return True
@@ -139,6 +145,15 @@ class Agent:
 
         if not current:
             return False
+
+        # CI check status changes don't update issue timestamps, so skip
+        # the timestamp optimization for labels with external state
+        has_external_state = any(
+            label in LABELS_WITH_EXTERNAL_STATE
+            for label in self.required_labels
+        )
+        if has_external_state:
+            return True
 
         saved = self._load_state()
         if current == saved:
