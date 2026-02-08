@@ -86,7 +86,6 @@ class SignalChannel(MessageChannel):
                             asyncio.create_task(self.handle_message(envelope))
 
                         except TimeoutError:
-                            logger.debug("WebSocket receive timeout, continuing...")
                             continue
 
                         except json.JSONDecodeError as e:
