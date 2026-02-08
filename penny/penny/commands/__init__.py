@@ -1,8 +1,8 @@
 """Command system for Penny."""
 
-from penny.penny.commands.base import Command, CommandRegistry
-from penny.penny.commands.builtin import CommandsCommand, DebugCommand
-from penny.penny.commands.models import CommandContext, CommandError, CommandResult
+from penny.commands.base import Command, CommandRegistry
+from penny.commands.builtin import CommandsCommand, DebugCommand
+from penny.commands.models import CommandContext, CommandError, CommandResult
 
 __all__ = [
     "Command",

@@ -5,8 +5,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from penny.penny.config import Config
-from penny.penny.database import Database
+from penny.config import Config
+from penny.database import Database
 
 
 @dataclass

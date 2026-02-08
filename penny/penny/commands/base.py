@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from penny.penny.commands.models import CommandContext, CommandResult
+from penny.commands.models import CommandContext, CommandResult
 
 
 class Command(ABC):

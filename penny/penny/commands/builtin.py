@@ -7,21 +7,21 @@ import logging
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 try:
     import psutil  # type: ignore[import-untyped]
 
     HAS_PSUTIL = True
 except ImportError:
-    psutil = None
+    psutil: Any = None
     HAS_PSUTIL = False
 
-from penny.penny.commands.base import Command
-from penny.penny.commands.models import CommandContext, CommandResult
+from penny.commands.base import Command
+from penny.commands.models import CommandContext, CommandResult
 
 if TYPE_CHECKING:
-    from penny.penny.commands.base import CommandRegistry
+    from penny.commands.base import CommandRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -111,11 +111,11 @@ class DebugCommand(Command):
         agent_status = self._get_agent_status()
 
         # Memory
-        if not HAS_PSUTIL:
+        if not HAS_PSUTIL or psutil is None:
             mem_str = "unknown (psutil not installed)"
         else:
             try:
-                process = psutil.Process()  # type: ignore[union-attr]
+                process = psutil.Process()
                 mem_mb = process.memory_info().rss / 1024 / 1024
                 mem_percent = process.memory_percent()
                 mem_str = f"{mem_mb:.0f} MB ({mem_percent:.1f}%)"
