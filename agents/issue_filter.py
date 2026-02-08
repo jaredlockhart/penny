@@ -49,6 +49,8 @@ class FilteredIssue:
     author_is_trusted: bool = True
     ci_status: str | None = None
     ci_failure_details: str | None = None
+    merge_conflict: bool = False
+    merge_conflict_branch: str | None = None
 
 
 def fetch_issues_for_labels(
@@ -185,6 +187,9 @@ def pick_actionable_issue(
         if issue.ci_status == CI_STATUS_FAILING:
             # CI failing on PR — needs fixes even though bot has last comment
             return issue
+        if issue.merge_conflict:
+            # PR has merge conflicts — needs rebase even though bot has last comment
+            return issue
 
     # All issues have bot as last commenter and CI passing — nothing to do
     return None
@@ -234,6 +239,13 @@ def _format_single_issue(issue: FilteredIssue) -> str:
             parts.append(f"**{comment.author}** ({comment.created_at}):\n{comment.body}\n")
     else:
         parts.append("\n### Comments\n\n*No trusted comments.*")
+
+    if issue.merge_conflict:
+        parts.append(
+            f"\n### Merge Status: CONFLICTING\n\n"
+            f"This PR's branch (`{issue.merge_conflict_branch}`) has merge conflicts "
+            f"with `main` and needs to be rebased."
+        )
 
     if issue.ci_failure_details:
         parts.append(f"\n### CI Status: FAILING\n\n{issue.ci_failure_details}")
