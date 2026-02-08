@@ -21,12 +21,13 @@ services:
       - SIGNAL_API_URL=http://signal-api:8080
 
   pm:
-    build: ./agents
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
     restart: unless-stopped
     profiles: [team]
     command: ["--agent", "product-manager"]
     volumes:
-      - .:/repo
       - ./data:/repo/data
     env_file: .env
     environment:
@@ -34,12 +35,13 @@ services:
       - LOCAL=1
 
   architect:
-    build: ./agents
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
     restart: unless-stopped
     profiles: [team]
     command: ["--agent", "architect"]
     volumes:
-      - .:/repo
       - ./data:/repo/data
     env_file: .env
     environment:
@@ -47,13 +49,14 @@ services:
       - LOCAL=1
 
   worker:
-    build: ./agents
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
     restart: unless-stopped
     profiles: [team]
     stop_grace_period: 120s
     command: ["--agent", "worker"]
     volumes:
-      - .:/repo
       - ./data:/repo/data
     env_file: .env
     environment:

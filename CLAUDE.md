@@ -2,7 +2,7 @@
 
 ## Environment Notes
 
-- **Logs**: Runtime logs are written to `data/penny.log` (not docker compose logs)
+- **Logs**: Runtime logs are written to `data/penny.log`; agent logs are in `data/logs/` (not docker compose logs)
 
 ## Git Workflow
 
@@ -117,11 +117,10 @@ agents/
   orchestrator.py       — Agent lifecycle manager, runs on schedule
   base.py               — Agent base class: wraps Claude CLI, has_work() pre-check
   Dockerfile            — Agent container image
-  entrypoint.sh         — Runtime dep install + orchestrator launch
+  entrypoint.sh         — Claude CLI setup + orchestrator launch
   codeowners.py         — Parses .github/CODEOWNERS for trusted usernames
   issue_filter.py       — Pre-fetches and filters issue content by trusted authors
   pr_checks.py          — Detects failing CI checks on PRs, enriches issues for worker
-  logs/                  — Per-agent output logs (gitignored)
   product-manager/
     CLAUDE.md            — PM agent prompt (requirements gathering)
   architect/
@@ -133,6 +132,7 @@ agents/
     check.yml           — CI: runs make check on push/PR to main
 .env / .env.example     — Configuration
 data/agent.db           — SQLite database (runtime, gitignored)
+data/logs/              — Agent orchestrator and per-agent logs (gitignored)
 ```
 
 ## Agent Architecture
@@ -471,6 +471,8 @@ Python-based orchestrator (`agents/`) that manages autonomous Claude CLI agents:
 - GitHub Issues as state machine: `backlog` → `requirements` → `specification` → `in-progress` → `in-review` → closed
 - Streaming output via `--verbose --output-format stream-json` for real-time terminal logging
 - Agents run in Docker containers (pm, architect, and worker services in docker-compose.yml) with `profiles: [team]` — only started with `make up` or `docker compose --profile team up`
+- Repo is snapshotted into the Docker image at build time (not volume-mounted) — agent edits don't bleed into the host working tree
+- Only `data/` is volume-mounted for shared state files and logs (`data/logs/`)
 - SIGTERM forwarding for graceful shutdown of Claude CLI subprocesses
 
 #### CODEOWNERS-Based Issue Filtering

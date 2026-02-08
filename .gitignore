@@ -42,8 +42,5 @@ Thumbs.db
 .uv/
 uv.lock
 
-# Agent logs
-agents/logs/
-
 # claude
 .claude/
