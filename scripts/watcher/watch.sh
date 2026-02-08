@@ -41,9 +41,11 @@ while true; do
 
         # Restart agents (graceful — docker sends SIGTERM, waits stop_grace_period)
         log "Restarting agents..."
-        docker compose -f "$COMPOSE_FILE" --profile team restart pm worker
-
-        log "All services restarted"
+        if docker compose -f "$COMPOSE_FILE" --profile team restart pm worker; then
+            log "All services restarted"
+        else
+            log "Agent restart failed, will retry on next cycle"
+        fi
     else
         log "Build failed, skipping restart"
     fi

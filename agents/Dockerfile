@@ -39,7 +39,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Claude CLI refuses --dangerously-skip-permissions as root
 COPY entrypoint.sh /entrypoint.sh
 RUN useradd -m -s /bin/bash agent \
-    && chmod -R a+w /usr/local/lib/python3.12/ /usr/local/bin/ /usr/local/include/python3.12/ \
+    && chown -R agent:agent /usr/local/lib/python3.12/ /usr/local/bin/ /usr/local/include/python3.12/ \
     && chmod +x /entrypoint.sh
 USER agent
 

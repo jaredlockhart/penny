@@ -169,9 +169,13 @@ def main() -> None:
         running = False
         # Forward SIGTERM to any running agent subprocess
         for agent in agents:
-            if agent._process is not None:
-                logger.info(f"Forwarding SIGTERM to [{agent.name}] subprocess (pid={agent._process.pid})")
-                agent._process.terminate()
+            proc = agent._process
+            if proc is not None and proc.poll() is None:
+                logger.info(f"Forwarding SIGTERM to [{agent.name}] subprocess (pid={proc.pid})")
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    logger.debug(f"Subprocess for [{agent.name}] already exited")
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)

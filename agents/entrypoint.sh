@@ -5,8 +5,7 @@ set -euo pipefail
 if [ -f /repo/app/pyproject.toml ]; then
     echo "[entrypoint] Installing Penny deps from app/pyproject.toml..."
     cd /repo/app
-    uv pip install --system -r pyproject.toml --group dev --quiet
-    uv pip install --system --no-deps . --quiet
+    uv pip install --system . --group dev --quiet
     cd /repo
 fi
 

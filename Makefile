@@ -12,7 +12,7 @@ up:
 	docker compose --profile team up --build
 
 prod:
-	docker compose -f docker-compose.yml up --build
+	docker compose -f docker-compose.yml up --build penny
 
 kill:
 	docker compose --profile team down --rmi local --remove-orphans
