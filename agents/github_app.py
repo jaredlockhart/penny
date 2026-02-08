@@ -18,6 +18,20 @@ import urllib.request
 from pathlib import Path
 
 GITHUB_API = "https://api.github.com"
+JWT_ALGORITHM = "RS256"
+BOT_SUFFIX = "[bot]"
+NOREPLY_DOMAIN = "users.noreply.github.com"
+
+# API paths
+API_APP = "/app"
+API_ACCESS_TOKENS = "/app/installations/{install_id}/access_tokens"
+
+# Environment variable keys for bot identity
+ENV_GH_TOKEN = "GH_TOKEN"
+ENV_GIT_AUTHOR_NAME = "GIT_AUTHOR_NAME"
+ENV_GIT_AUTHOR_EMAIL = "GIT_AUTHOR_EMAIL"
+ENV_GIT_COMMITTER_NAME = "GIT_COMMITTER_NAME"
+ENV_GIT_COMMITTER_EMAIL = "GIT_COMMITTER_EMAIL"
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +55,7 @@ class GitHubApp:
             "iss": str(self.app_id),
         }
         private_key = self.private_key_path.read_text()
-        return jwt.encode(payload, private_key, algorithm="RS256")
+        return jwt.encode(payload, private_key, algorithm=JWT_ALGORITHM)
 
     def _api_request(self, method: str, path: str, token: str) -> dict:
         url = f"{GITHUB_API}{path}"
@@ -57,7 +71,7 @@ class GitHubApp:
     def _fetch_slug(self) -> str:
         if self._slug is None:
             jwt_token = self._make_jwt()
-            data = self._api_request("GET", "/app", jwt_token)
+            data = self._api_request("GET", API_APP, jwt_token)
             self._slug = data["slug"]
             logger.info(f"GitHub App: {self._slug} (id={self.app_id})")
         return self._slug
@@ -70,7 +84,7 @@ class GitHubApp:
         jwt_token = self._make_jwt()
         data = self._api_request(
             "POST",
-            f"/app/installations/{self.installation_id}/access_tokens",
+            API_ACCESS_TOKENS.format(install_id=self.installation_id),
             jwt_token,
         )
         self._token = data["token"]
@@ -81,20 +95,20 @@ class GitHubApp:
 
     @property
     def bot_name(self) -> str:
-        return f"{self._fetch_slug()}[bot]"
+        return f"{self._fetch_slug()}{BOT_SUFFIX}"
 
     @property
     def bot_email(self) -> str:
-        return f"{self.app_id}+{self._fetch_slug()}[bot]@users.noreply.github.com"
+        return f"{self.app_id}+{self._fetch_slug()}{BOT_SUFFIX}@{NOREPLY_DOMAIN}"
 
     def get_env(self) -> dict[str, str]:
         """Environment variables for subprocess to use bot identity."""
         return {
-            "GH_TOKEN": self.get_token(),
-            "GIT_AUTHOR_NAME": self.bot_name,
-            "GIT_AUTHOR_EMAIL": self.bot_email,
-            "GIT_COMMITTER_NAME": self.bot_name,
-            "GIT_COMMITTER_EMAIL": self.bot_email,
+            ENV_GH_TOKEN: self.get_token(),
+            ENV_GIT_AUTHOR_NAME: self.bot_name,
+            ENV_GIT_AUTHOR_EMAIL: self.bot_email,
+            ENV_GIT_COMMITTER_NAME: self.bot_name,
+            ENV_GIT_COMMITTER_EMAIL: self.bot_email,
         }
 
 

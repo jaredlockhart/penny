@@ -32,28 +32,36 @@ agents/
   base.py                  # Agent base class
   logs/                    # Per-agent output logs (gitignored)
   product-manager/
-    CLAUDE.md              # PM agent prompt
+    CLAUDE.md              # PM agent prompt (requirements gathering)
+  architect/
+    CLAUDE.md              # Architect agent prompt (detailed specs)
   worker/
-    CLAUDE.md              # Worker agent prompt
+    CLAUDE.md              # Worker agent prompt (implementation)
 ```
 
 ### Product Manager
 
-Monitors GitHub Issues on a 5-minute cycle (600s timeout, requires `idea`/`draft` labels):
-- Scans for `idea`-labeled issues and expands them into detailed specs
-- Responds to user feedback on `draft`-labeled issues
-- Promotes specs to `approved` when ready for implementation
-- All interaction via GitHub Issue comments and labels
+Gathers requirements on a 5-minute cycle (600s timeout, requires `requirements` label):
+- Posts requirements on issues moved to `requirements`
+- Responds to user questions and feedback about requirements
+- User moves issue to `specification` when satisfied
+
+### Architect
+
+Writes detailed specifications on a 5-minute cycle (600s timeout, requires `specification` label):
+- Reads approved requirements and writes detailed specs
+- Responds to user feedback on specs
+- User moves issue to `in-progress` when satisfied
 
 ### Worker
 
-Implements approved features on a 5-minute cycle (1800s timeout, requires `approved`/`in-progress` labels):
-- Checks for `in-progress` work first (resumes interrupted cycles)
-- Picks up `approved` issues and claims them (`in-progress`)
+Implements features on a 5-minute cycle (1800s timeout, requires `in-progress`/`in-review` labels):
 - Reads the spec, creates a feature branch (`issue-<N>-<slug>`), writes code and tests
 - Runs `make check` to validate (format, lint, typecheck, tests) — retries up to 3 times
 - Creates a PR with `Closes #N` linking back to the issue
-- Labels issue `review` when PR is ready
+- Moves issue to `in-review` when PR is ready
+- Detects failing CI checks on `in-review` PRs and fixes them automatically
+- Addresses PR review comments on `in-review` issues
 
 ## Adding a New Agent
 
@@ -65,14 +73,12 @@ Implements approved features on a 5-minute cycle (1800s timeout, requires `appro
 def get_agents() -> list[Agent]:
     return [
         Agent(
-            name="product-manager",
-            prompt_path=AGENTS_DIR / "product-manager" / "CLAUDE.md",
-            interval_seconds=300,
-            required_labels=["idea", "draft"],
+            name=AGENT_PM,
+            interval_seconds=PM_INTERVAL,
+            required_labels=[LABEL_REQUIREMENTS],
         ),
         Agent(
             name="my-agent",
-            prompt_path=AGENTS_DIR / "my-agent" / "CLAUDE.md",
             interval_seconds=300,
             required_labels=["some-label"],
         ),
@@ -85,8 +91,7 @@ The `Agent` class accepts:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `name` | required | Agent identifier, used in logs |
-| `prompt_path` | required | Path to CLAUDE.md prompt file |
+| `name` | required | Agent identifier; prompt loaded from `agents/<name>/CLAUDE.md` |
 | `interval_seconds` | 3600 | How often the agent runs |
 | `working_dir` | project root | Working directory for Claude CLI |
 | `timeout_seconds` | 600 | Max runtime before killing the process |
@@ -110,12 +115,12 @@ This means you can watch agents think, call tools, and produce output live in th
 
 ## GitHub Issue Labels
 
-All agents share this label workflow:
+Each label maps to exactly one agent. Issues move through labels as a state machine:
 
-- **`backlog`** — Idea captured, not yet selected
-- **`idea`** — Selected for PM to expand into a spec
-- **`draft`** — Spec written, awaiting review
-- **`approved`** — Ready for a worker agent to implement
-- **`in-progress`** — Worker agent is coding
-- **`review`** — PR open for review
-- **`shipped`** — Merged and closed
+`backlog` → `requirements` → `specification` → `in-progress` → `in-review` → closed
+
+- **`backlog`** — Idea captured, not yet selected (no agent)
+- **`requirements`** — PM gathers requirements
+- **`specification`** — Architect writes detailed spec
+- **`in-progress`** — Worker implements the spec
+- **`in-review`** — Worker addresses PR feedback

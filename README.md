@@ -293,11 +293,12 @@ Tests use mock servers and SDK patches:
 
 Penny includes a Python-based agent orchestrator that manages autonomous Claude CLI agents. Agents process work from GitHub Issues on a schedule, using labels as a state machine:
 
-`backlog` → `idea` → `draft` → `approved` → `in-progress` → `review` → `shipped`
+`backlog` → `requirements` → `specification` → `in-progress` → `in-review` → closed
 
 **Agents:**
-- **Product Manager**: Expands `idea` issues into specs, promotes to `approved` (5-min cycle, 600s timeout)
-- **Worker**: Implements `approved` issues — creates branches, writes code/tests, runs `make check`, opens PRs (5-min cycle, 1800s timeout)
+- **Product Manager**: Gathers requirements for `requirements` issues (5-min cycle, 600s timeout)
+- **Architect**: Writes detailed specs for `specification` issues, handles spec feedback (5-min cycle, 600s timeout)
+- **Worker**: Implements `in-progress` issues — creates branches, writes code/tests, runs `make check`, opens PRs; addresses PR feedback on `in-review` issues (5-min cycle, 1800s timeout)
 
 Each agent checks for matching GitHub issue labels before waking Claude CLI, so idle cycles cost ~1 second instead of a full Claude invocation.
 

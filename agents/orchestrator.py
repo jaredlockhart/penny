@@ -26,11 +26,37 @@ from pathlib import Path
 
 from base import Agent
 from codeowners import parse_codeowners
-from github_app import GitHubApp
+from github_app import BOT_SUFFIX, GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent
 LOG_DIR = AGENTS_DIR / "logs"
+ENV_FILENAME = ".env"
+ORCHESTRATOR_LOG = "orchestrator.log"
+
+# GitHub issue labels — each label maps to exactly one agent
+LABEL_REQUIREMENTS = "requirements"
+LABEL_SPECIFICATION = "specification"
+LABEL_IN_PROGRESS = "in-progress"
+LABEL_IN_REVIEW = "in-review"
+
+# Agent names
+AGENT_PM = "product-manager"
+AGENT_ARCHITECT = "architect"
+AGENT_WORKER = "worker"
+
+# Agent timing
+PM_INTERVAL = 300
+PM_TIMEOUT = 600
+ARCHITECT_INTERVAL = 300
+ARCHITECT_TIMEOUT = 600
+WORKER_INTERVAL = 300
+WORKER_TIMEOUT = 1800
+
+# Environment variable names
+ENV_APP_ID = "GITHUB_APP_ID"
+ENV_KEY_PATH = "GITHUB_APP_PRIVATE_KEY_PATH"
+ENV_INSTALL_ID = "GITHUB_APP_INSTALLATION_ID"
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +65,9 @@ def load_github_app() -> GitHubApp | None:
     """Load GitHub App config from environment variables."""
     import os
 
-    app_id = os.getenv("GITHUB_APP_ID")
-    key_path = os.getenv("GITHUB_APP_PRIVATE_KEY_PATH")
-    install_id = os.getenv("GITHUB_APP_INSTALLATION_ID")
+    app_id = os.getenv(ENV_APP_ID)
+    key_path = os.getenv(ENV_KEY_PATH)
+    install_id = os.getenv(ENV_INSTALL_ID)
 
     if not all([app_id, key_path, install_id]):
         return None
@@ -76,30 +102,33 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
     if trusted is not None and github_app is not None:
         slug = github_app._fetch_slug()
         trusted.add(slug)
-        trusted.add(f"{slug}[bot]")
+        trusted.add(f"{slug}{BOT_SUFFIX}")
 
     return [
         Agent(
-            name="product-manager",
-            prompt_path=AGENTS_DIR / "product-manager" / "CLAUDE.md",
-            interval_seconds=300,
-            timeout_seconds=600,
-            required_labels=["idea", "requirements-approved", "draft"],
+            name=AGENT_PM,
+            interval_seconds=PM_INTERVAL,
+            timeout_seconds=PM_TIMEOUT,
+            required_labels=[LABEL_REQUIREMENTS],
             github_app=github_app,
             trusted_users=trusted,
         ),
         Agent(
-            name="worker",
-            prompt_path=AGENTS_DIR / "worker" / "CLAUDE.md",
-            interval_seconds=300,
-            timeout_seconds=1800,
-            required_labels=["approved", "in-progress"],
-            max_issues=1,
+            name=AGENT_ARCHITECT,
+            interval_seconds=ARCHITECT_INTERVAL,
+            timeout_seconds=ARCHITECT_TIMEOUT,
+            required_labels=[LABEL_SPECIFICATION],
             github_app=github_app,
             trusted_users=trusted,
         ),
-        # Future agents:
-        # Agent(name="quality", ...),
+        Agent(
+            name=AGENT_WORKER,
+            interval_seconds=WORKER_INTERVAL,
+            timeout_seconds=WORKER_TIMEOUT,
+            required_labels=[LABEL_IN_PROGRESS, LABEL_IN_REVIEW],
+            github_app=github_app,
+            trusted_users=trusted,
+        ),
     ]
 
 
@@ -131,7 +160,7 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="Run all due agents once and exit")
     parser.add_argument("--list", action="store_true", help="List registered agents and exit")
     parser.add_argument("--agent", type=str, default=None, help="Run only the named agent (e.g. 'product-manager' or 'worker')")
-    parser.add_argument("--log-file", type=Path, default=LOG_DIR / "orchestrator.log")
+    parser.add_argument("--log-file", type=Path, default=LOG_DIR / ORCHESTRATOR_LOG)
     args = parser.parse_args()
 
     setup_logging(args.log_file)
@@ -139,7 +168,7 @@ def main() -> None:
 
     # Load .env so orchestrator works without shell exports
     from dotenv import load_dotenv
-    load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv(PROJECT_ROOT / ENV_FILENAME)
 
     github_app = load_github_app()
     if github_app:

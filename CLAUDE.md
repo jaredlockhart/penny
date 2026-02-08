@@ -11,8 +11,9 @@ Branch protection is enabled on `main`. All changes must go through pull request
 - **Never push directly to `main`** — always create a feature branch
 - Create a descriptive branch name (e.g., `add-codeowners-filtering`, `fix-scheduler-bug`)
 - Commit changes to the branch, then push and create a PR
-- **Use `make token` for GitHub operations**: `GH_TOKEN=$(make token) gh pr create ...`
+- **Use `make token` for GitHub operations** (host only): `GH_TOKEN=$(make token) gh pr create ...`
   - This generates a GitHub App installation token for authenticated `gh` CLI access
+  - Agent containers already have `GH_TOKEN` set by the orchestrator — just use `gh` directly
 - The user will review and merge the PR
 
 ## Documentation Maintenance
@@ -119,11 +120,14 @@ agents/
   entrypoint.sh         — Runtime dep install + orchestrator launch
   codeowners.py         — Parses .github/CODEOWNERS for trusted usernames
   issue_filter.py       — Pre-fetches and filters issue content by trusted authors
+  pr_checks.py          — Detects failing CI checks on PRs, enriches issues for worker
   logs/                  — Per-agent output logs (gitignored)
   product-manager/
-    CLAUDE.md            — PM agent prompt (expands ideas → specs)
+    CLAUDE.md            — PM agent prompt (requirements gathering)
+  architect/
+    CLAUDE.md            — Architect agent prompt (detailed specs)
   worker/
-    CLAUDE.md            — Worker agent prompt (implements approved issues)
+    CLAUDE.md            — Worker agent prompt (implementation)
 .github/
   workflows/
     check.yml           — CI: runs make check on push/PR to main
@@ -461,11 +465,12 @@ Python-based orchestrator (`agents/`) that manages autonomous Claude CLI agents:
 - `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `gh` CLI, compares to saved state in `data/agents/<name>.state.json` — skips Claude CLI if no issues changed since last run
 - State saved after successful runs; re-fetched to capture agent's own changes (comments, label edits)
 - Fail-open design: If `gh` fails, agent runs anyway
-- Product Manager agent: Expands `idea` issues into specs, promotes to `approved` (5-min cycle, 600s timeout, requires `idea`/`draft` labels)
-- Worker agent: Implements `approved` issues end-to-end — branches, code, tests, `make check`, PRs (5-min cycle, 1800s timeout, requires `approved`/`in-progress` labels)
-- GitHub Issues as state machine: `backlog` → `idea` → `draft` → `approved` → `in-progress` → `review` → `shipped`
+- Product Manager agent: Gathers requirements for `requirements` issues (5-min cycle, 600s timeout)
+- Architect agent: Writes detailed specs for `specification` issues, handles spec feedback (5-min cycle, 600s timeout)
+- Worker agent: Implements `in-progress` issues end-to-end — branches, code, tests, `make check`, PRs; addresses PR feedback on `in-review` issues (5-min cycle, 1800s timeout)
+- GitHub Issues as state machine: `backlog` → `requirements` → `specification` → `in-progress` → `in-review` → closed
 - Streaming output via `--verbose --output-format stream-json` for real-time terminal logging
-- Agents run in Docker containers (pm and worker services in docker-compose.yml) with `profiles: [team]` — only started with `make up` or `docker compose --profile team up`
+- Agents run in Docker containers (pm, architect, and worker services in docker-compose.yml) with `profiles: [team]` — only started with `make up` or `docker compose --profile team up`
 - SIGTERM forwarding for graceful shutdown of Claude CLI subprocesses
 
 #### CODEOWNERS-Based Issue Filtering
@@ -478,6 +483,15 @@ Security layer to prevent prompt injection via public GitHub issues:
 - Agent CLAUDE.md prompts instruct agents to use pre-fetched content only and restrict `gh` to write operations
 - Fails open without CODEOWNERS (backward compatible, logs warning)
 - Requires GitHub branch protection on `main` requiring CODEOWNERS review to prevent unauthorized CODEOWNERS edits
+
+#### CI Check Detection
+
+Worker agent automatically detects and fixes failing CI on its PRs:
+- `agents/pr_checks.py`: Fetches PR check statuses via `gh pr list --json statusCheckRollup`, matches PRs to issues by branch naming convention (`issue-<N>-*`)
+- For failing PRs, fetches error logs via `gh run view --log-failed` (truncated to ~3000 chars)
+- Enriches `FilteredIssue` with `ci_status` and `ci_failure_details` before prompt injection
+- `pick_actionable_issue()` treats failing-CI issues as actionable even when bot has last comment
+- Fail-open: if `gh` fails, worker proceeds normally without CI info
 
 ### Database Migrations
 

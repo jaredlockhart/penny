@@ -18,8 +18,22 @@ from github_app import GitHubApp
 
 CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
 GH_CLI = os.getenv("GH_CLI", "gh")
-PROJECT_ROOT = Path(__file__).parent.parent
+AGENTS_DIR = Path(__file__).parent
+PROJECT_ROOT = AGENTS_DIR.parent
 DATA_DIR = PROJECT_ROOT / "data" / "agents"
+PROMPT_FILENAME = "CLAUDE.md"
+
+# Stream-json event types from Claude CLI
+EVENT_ASSISTANT = "assistant"
+EVENT_RESULT = "result"
+
+# Stream-json content block types
+BLOCK_TEXT = "text"
+BLOCK_TOOL_USE = "tool_use"
+
+# GitHub API JSON field names
+GH_FIELD_NUMBER = "number"
+GH_FIELD_UPDATED_AT = "updatedAt"
 
 logger = logging.getLogger(__name__)
 
@@ -37,26 +51,23 @@ class Agent:
     def __init__(
         self,
         name: str,
-        prompt_path: Path,
         interval_seconds: int = 3600,
         working_dir: Path = PROJECT_ROOT,
         timeout_seconds: int = 600,
         model: str | None = None,
         allowed_tools: list[str] | None = None,
         required_labels: list[str] | None = None,
-        max_issues: int | None = None,
         github_app: GitHubApp | None = None,
         trusted_users: set[str] | None = None,
     ):
         self.name = name
-        self.prompt_path = prompt_path
+        self.prompt_path = AGENTS_DIR / name / PROMPT_FILENAME
         self.interval_seconds = interval_seconds
         self.working_dir = working_dir
         self.timeout_seconds = timeout_seconds
         self.model = model
         self.allowed_tools = allowed_tools
         self.required_labels = required_labels
-        self.max_issues = max_issues
         self.github_app = github_app
         self.trusted_users = trusted_users
         self.last_run: datetime | None = None
@@ -102,13 +113,13 @@ class Agent:
         timestamps: dict[str, str] = {}
         for label in self.required_labels or []:
             result = subprocess.run(
-                [GH_CLI, "issue", "list", "--label", label, "--json", "number,updatedAt", "--limit", "20"],
+                [GH_CLI, "issue", "list", "--label", label, "--json", f"{GH_FIELD_NUMBER},{GH_FIELD_UPDATED_AT}", "--limit", "20"],
                 capture_output=True, text=True, timeout=15, env=self._get_env(),
             )
             if result.returncode != 0:
                 raise RuntimeError(f"gh issue list failed for label '{label}'")
             for issue in json.loads(result.stdout):
-                timestamps[str(issue["number"])] = issue["updatedAt"]
+                timestamps[str(issue[GH_FIELD_NUMBER])] = issue[GH_FIELD_UPDATED_AT]
         return timestamps
 
     def has_work(self) -> bool:
@@ -157,14 +168,37 @@ class Agent:
 
         prompt = self.prompt_path.read_text()
 
-        # Pre-fetch (and optionally filter) issue content to prevent prompt injection
+        # Pre-fetch, filter, and pick one actionable issue
         if self.required_labels:
-            from issue_filter import fetch_issues_for_labels, format_issues_for_prompt
+            from issue_filter import fetch_issues_for_labels, format_issues_for_prompt, pick_actionable_issue
 
-            issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users, env=self._get_env())
-            if self.max_issues is not None:
-                issues = issues[:self.max_issues]
-            prompt += format_issues_for_prompt(issues)
+            bot_login = self.github_app.bot_name if self.github_app else None
+            all_issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users, env=self._get_env())
+
+            # Enrich in-review issues with CI check status (no-op if none match)
+            from pr_checks import enrich_issues_with_ci_status
+            enrich_issues_with_ci_status(all_issues, env=self._get_env())
+
+            issue = pick_actionable_issue(all_issues, bot_login)
+
+            if issue is None:
+                duration = (datetime.now() - start).total_seconds()
+                self.last_run = datetime.now()
+                self.run_count += 1
+                logger.info(f"[{self.name}] No actionable issues (bot has last comment on all), skipping")
+                try:
+                    self._save_state(self._fetch_issue_timestamps())
+                except (subprocess.TimeoutExpired, OSError, RuntimeError) as e:
+                    logger.warning(f"[{self.name}] Failed to save issue state: {e}")
+                return AgentRun(
+                    agent_name=self.name,
+                    success=True,
+                    output="No actionable issues",
+                    duration=duration,
+                    timestamp=start,
+                )
+
+            prompt += format_issues_for_prompt([issue])
 
         cmd = self._build_command(prompt)
 
@@ -189,7 +223,7 @@ class Agent:
                 try:
                     event = json.loads(line)
                     self._log_event(event)
-                    if event.get("type") == "result":
+                    if event.get("type") == EVENT_RESULT:
                         result_text = event.get("result", "")
                 except json.JSONDecodeError:
                     logger.info(f"[{self.name}] {line}")
@@ -205,11 +239,10 @@ class Agent:
             level = logging.INFO if success else logging.ERROR
             logger.log(level, f"[{self.name}] Cycle #{self.run_count} {'OK' if success else 'FAILED'} in {duration:.1f}s")
 
-            if success and self.required_labels:
-                try:
-                    self._save_state(self._fetch_issue_timestamps())
-                except (subprocess.TimeoutExpired, OSError, RuntimeError) as e:
-                    logger.warning(f"[{self.name}] Failed to save issue state: {e}")
+            # Don't save state here — there may be more actionable issues.
+            # State is only saved when pick_actionable_issue() returns None
+            # (all issues handled), so has_work() keeps returning True until
+            # the queue is fully burned down.
 
             return AgentRun(
                 agent_name=self.name,
@@ -238,16 +271,16 @@ class Agent:
         """Log a stream-json event in a human-readable way."""
         event_type = event.get("type", "")
 
-        if event_type == "assistant":
+        if event_type == EVENT_ASSISTANT:
             # Assistant text output
             for block in event.get("message", {}).get("content", []):
-                if block.get("type") == "text":
-                    for text_line in block["text"].split("\n"):
+                if block.get("type") == BLOCK_TEXT:
+                    for text_line in block[BLOCK_TEXT].split("\n"):
                         logger.info(f"[{self.name}] {text_line}")
-                elif block.get("type") == "tool_use":
+                elif block.get("type") == BLOCK_TOOL_USE:
                     tool_name = block.get("name", "?")
                     logger.info(f"[{self.name}] [tool] {tool_name}")
 
-        elif event_type == "result":
+        elif event_type == EVENT_RESULT:
             for text_line in event.get("result", "").split("\n"):
                 logger.info(f"[{self.name}] {text_line}")

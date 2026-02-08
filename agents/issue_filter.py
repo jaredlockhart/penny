@@ -11,7 +11,18 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass, field
-from base import GH_CLI
+from base import GH_CLI, GH_FIELD_NUMBER
+
+# gh CLI JSON field sets for --json flag
+GH_LIST_FIELDS = str(GH_FIELD_NUMBER)
+GH_VIEW_FIELDS = "title,body,author,comments,labels"
+
+# Issue list limit
+GH_ISSUE_LIMIT = "20"
+
+# CI status values set by pr_checks.enrich_issues_with_ci_status()
+CI_STATUS_PASSING = "passing"
+CI_STATUS_FAILING = "failing"
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +47,8 @@ class FilteredIssue:
     labels: list[str] = field(default_factory=list)
     trusted_comments: list[FilteredComment] = field(default_factory=list)
     author_is_trusted: bool = True
+    ci_status: str | None = None
+    ci_failure_details: str | None = None
 
 
 def fetch_issues_for_labels(
@@ -55,7 +68,7 @@ def fetch_issues_for_labels(
     for label in labels:
         try:
             result = subprocess.run(
-                [GH_CLI, "issue", "list", "--label", label, "--json", "number", "--limit", "20"],
+                [GH_CLI, "issue", "list", "--label", label, "--json", GH_LIST_FIELDS, "--limit", GH_ISSUE_LIMIT],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -68,7 +81,7 @@ def fetch_issues_for_labels(
                 continue
 
             for ref in json.loads(result.stdout):
-                number = ref["number"]
+                number = ref[GH_FIELD_NUMBER]
                 if number in seen_numbers:
                     continue
 
@@ -91,7 +104,7 @@ def _fetch_and_filter_issue(
     """Fetch a single issue and filter out untrusted content."""
     try:
         result = subprocess.run(
-            [GH_CLI, "issue", "view", str(number), "--json", "title,body,author,comments,labels"],
+            [GH_CLI, "issue", "view", str(number), "--json", GH_VIEW_FIELDS],
             capture_output=True,
             text=True,
             timeout=15,
@@ -143,6 +156,40 @@ def _fetch_and_filter_issue(
     )
 
 
+def pick_actionable_issue(
+    issues: list[FilteredIssue],
+    bot_login: str | None = None,
+) -> FilteredIssue | None:
+    """Pick the first issue that needs agent attention.
+
+    An issue needs attention if it has no trusted comments, or if the
+    last trusted comment is NOT from the bot. Issues where the bot has
+    the last word are waiting for human feedback and should be skipped.
+
+    When bot_login is None (no GitHub App), returns the first issue.
+    """
+    if not issues:
+        return None
+
+    if bot_login is None:
+        return issues[0]
+
+    for issue in issues:
+        if not issue.trusted_comments:
+            # New issue with no comments — needs initial processing
+            return issue
+        last_comment = issue.trusted_comments[-1]
+        if last_comment.author != bot_login:
+            # Human commented last — needs agent response
+            return issue
+        if issue.ci_status == CI_STATUS_FAILING:
+            # CI failing on PR — needs fixes even though bot has last comment
+            return issue
+
+    # All issues have bot as last commenter and CI passing — nothing to do
+    return None
+
+
 def format_issues_for_prompt(issues: list[FilteredIssue]) -> str:
     """Format all filtered issues into a prompt section for injection."""
     if not issues:
@@ -187,6 +234,9 @@ def _format_single_issue(issue: FilteredIssue) -> str:
             parts.append(f"**{comment.author}** ({comment.created_at}):\n{comment.body}\n")
     else:
         parts.append("\n### Comments\n\n*No trusted comments.*")
+
+    if issue.ci_failure_details:
+        parts.append(f"\n### CI Status: FAILING\n\n{issue.ci_failure_details}")
 
     parts.append("\n---")
     return "\n".join(parts)

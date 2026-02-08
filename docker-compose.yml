@@ -33,6 +33,19 @@ services:
       - PYTHONUNBUFFERED=1
       - LOCAL=1
 
+  architect:
+    build: ./agents
+    restart: unless-stopped
+    profiles: [team]
+    command: ["--agent", "architect"]
+    volumes:
+      - .:/repo
+      - ./data:/repo/data
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOCAL=1
+
   worker:
     build: ./agents
     restart: unless-stopped
