@@ -348,6 +348,84 @@ async def test_feature(signal_server, mock_ollama, test_config, running_penny):
         assert response["message"] == "expected response"
 ```
 
+## Database Migrations
+
+When your implementation requires database schema changes or data transformations, you must write a migration.
+
+### When to Write a Migration
+
+**Write a migration for:**
+- Adding a column to an existing table
+- Adding indexes to existing tables
+- Backfilling or transforming existing data
+- Creating a new table that needs initial seed data
+
+**You do NOT need a migration for:**
+- New tables with no existing data — SQLModel `create_tables()` handles this automatically on startup
+
+### How to Create a Migration
+
+1. Find the next available migration number:
+   ```bash
+   ls app/penny/database/migrations/
+   ```
+
+2. Create a new file `app/penny/database/migrations/NNNN_short_description.py`:
+   ```python
+   """Brief description of what this migration does.
+
+   Type: schema | data
+   """
+
+   import sqlite3
+
+
+   def up(conn: sqlite3.Connection) -> None:
+       """Apply the migration."""
+       # Schema changes (DDL) first:
+       conn.execute("ALTER TABLE tablename ADD COLUMN colname TYPE DEFAULT value")
+
+       # Data changes (DML) after, if needed:
+       # conn.execute("UPDATE tablename SET colname = ... WHERE ...")
+   ```
+
+3. Update the SQLModel model in `app/penny/database/models.py` to match your schema changes.
+
+### Migration Types
+
+- **Schema migrations** (Type: schema): DDL changes — `ALTER TABLE`, `CREATE INDEX`, etc.
+- **Data migrations** (Type: data): DML changes — `UPDATE`, `INSERT`, backfills on existing data
+
+Document the type in the migration file's docstring. Both types use the same `up()` function.
+
+### Safety Rules for Migrations
+
+- **Always provide DEFAULT values** for new columns (SQLite requires this for `ALTER TABLE ADD COLUMN`)
+- **Never DROP columns** — SQLite has limited support and data loss is unacceptable
+- **Never rename columns** — create a new column and migrate data instead
+- **Keep migrations small** — one logical change per migration file
+- **Migrations run once** — the `_migrations` table tracks what's been applied, so your `up()` function does not need to be idempotent (exception: migration `0001` which is the bootstrap migration)
+
+### Testing Migrations
+
+After writing a migration, test it:
+```bash
+make migrate-test
+```
+
+This copies the production database, applies all pending migrations to the copy, and reports success or failure. Always run this before committing.
+
+### Rebase and Renumber
+
+Migration numbers must be unique across the codebase. If after rebasing onto main you find your migration number conflicts with one that was already merged:
+
+1. Check what migrations exist:
+   ```bash
+   ls app/penny/database/migrations/
+   ```
+2. Rename your migration file to use the next available number
+3. Run `make check` to verify — the `--validate` step will catch any remaining conflicts
+
 ## Edge Cases
 
 - **No issues to work on**: Exit cleanly with a short summary: "No in-progress or in-review issues found. Exiting."

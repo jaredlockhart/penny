@@ -2,7 +2,7 @@
 RUFF_TARGETS = penny/
 PYTEST_ARGS = penny/tests/ -v
 
-.PHONY: up prod kill build fmt lint fix typecheck check pytest token
+.PHONY: up prod kill build fmt lint fix typecheck check pytest token migrate-test migrate-validate
 
 # --- Docker Compose ---
 
@@ -50,7 +50,14 @@ check: $(if $(LOCAL),,build)
 	$(RUN) ruff format --check $(RUFF_TARGETS)
 	$(RUN) ruff check $(RUFF_TARGETS)
 	$(RUN) ty check $(RUFF_TARGETS)
+	$(RUN) python -m penny.database.migrate --validate
 	$(RUN) pytest $(PYTEST_ARGS)
 
 pytest: $(if $(LOCAL),,build)
 	$(RUN) pytest $(PYTEST_ARGS)
+
+migrate-test: $(if $(LOCAL),,build)
+	$(RUN) python -m penny.database.migrate --test
+
+migrate-validate: $(if $(LOCAL),,build)
+	$(RUN) python -m penny.database.migrate --validate

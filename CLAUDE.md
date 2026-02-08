@@ -92,7 +92,8 @@ app/
     database/
       database.py       — Database: SQLite via SQLModel, thread walking, summarization storage
       models.py         — PromptLog, SearchLog, MessageLog, UserProfile (SQLModel tables)
-      migrate.py        — Idempotent SQLite migrations (ALTER TABLE with column-exists checks)
+      migrate.py        — Migration runner: file discovery, tracking table, validation
+      migrations/       — Numbered migration files (0001_*.py, 0002_*.py, ...)
     ollama/
       client.py         — OllamaClient: wraps official ollama SDK async client
       models.py         — ChatResponse, ChatResponseMessage
@@ -499,11 +500,15 @@ Worker agent automatically detects and fixes failing CI and merge conflicts on i
 
 ### Database Migrations
 
-Idempotent SQLite migration system (`database/migrate.py`):
+File-based migration system in `database/migrations/`:
+- Each migration is a numbered Python file (e.g., `0001_add_reaction_fields.py`) with a `def up(conn)` function
+- Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
+- Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
 - Runs on startup before `create_tables()` in `penny.py`
-- Uses `PRAGMA table_info` to check column existence before `ALTER TABLE`
-- Safe to run multiple times, no migration framework needed
-- Current migrations: `is_reaction` (BOOLEAN) and `external_id` (VARCHAR) on MessageLog
+- `make migrate-test`: copies production DB, applies migrations to copy, reports success/failure
+- `make migrate-validate`: checks for duplicate migration number prefixes (also runs in `make check`)
+- Rebase-only policy: if two PRs create the same migration number, the second must rebase and renumber
+- Run standalone: `python -m penny.database.migrate [--test] [--validate] [db_path]`
 
 ### Auto-Deploy
 

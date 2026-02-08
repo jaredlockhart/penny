@@ -61,6 +61,7 @@ gh issue comment <number> --body "$(cat <<'EOF'
 **Use Cases**: When/why would users want this?
 **User Experience**: How does it work from user perspective?
 **Technical Approach**: High-level implementation strategy
+**Database Changes** (if applicable): New/modified tables, columns, migrations needed (schema and/or data). Check `app/penny/database/migrations/` for the next available migration number.
 **Dependencies**: What needs to exist first?
 **Risks/Considerations**: Potential issues or tradeoffs
 **Estimated Complexity**: Low/Medium/High
