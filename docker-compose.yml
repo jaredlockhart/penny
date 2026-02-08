@@ -31,7 +31,6 @@ services:
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
-      - GITHUB_APP_PRIVATE_KEY_PATH=/repo/data/github-app.pem  # override host shell
 
   worker:
     build: ./agents
@@ -45,7 +44,6 @@ services:
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
-      - GITHUB_APP_PRIVATE_KEY_PATH=/repo/data/github-app.pem  # override host shell
 
   watcher:
     build: ./scripts/watcher

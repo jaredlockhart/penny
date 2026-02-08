@@ -11,7 +11,7 @@ Usage:
 
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["PyJWT[crypto]"]
+# dependencies = ["PyJWT[crypto]", "python-dotenv"]
 # ///
 
 from __future__ import annotations
@@ -46,9 +46,13 @@ def load_github_app() -> GitHubApp | None:
     if not all([app_id, key_path, install_id]):
         return None
 
+    key_file = Path(key_path)
+    if not key_file.is_absolute():
+        key_file = PROJECT_ROOT / key_file
+
     return GitHubApp(
         app_id=int(app_id),
-        private_key_path=Path(key_path),
+        private_key_path=key_file,
         installation_id=int(install_id),
     )
 
@@ -132,6 +136,10 @@ def main() -> None:
 
     setup_logging(args.log_file)
     logger = logging.getLogger(__name__)
+
+    # Load .env so orchestrator works without shell exports
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
 
     github_app = load_github_app()
     if github_app:

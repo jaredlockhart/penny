@@ -12,7 +12,7 @@ fi
 
 # Install orchestrator deps (PyJWT for GitHub App auth)
 echo "[entrypoint] Installing orchestrator deps..."
-uv pip install --system "PyJWT[crypto]" --quiet
+uv pip install --system "PyJWT[crypto]" python-dotenv --quiet
 
 echo "[entrypoint] Starting orchestrator..."
 exec python /repo/agents/orchestrator.py "$@"
