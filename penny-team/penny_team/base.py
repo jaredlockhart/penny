@@ -14,27 +14,23 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from penny_team.constants import LABELS_WITH_EXTERNAL_STATE
+from penny_team.constants import (
+    BLOCK_TEXT,
+    BLOCK_TOOL_USE,
+    CLAUDE_CLI,
+    EVENT_ASSISTANT,
+    EVENT_RESULT,
+    GH_CLI,
+    GH_FIELD_NUMBER,
+    GH_FIELD_UPDATED_AT,
+    LABELS_WITH_EXTERNAL_STATE,
+    PROMPT_FILENAME,
+)
 from penny_team.utils.github_app import GitHubApp
 
-CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
-GH_CLI = os.getenv("GH_CLI", "gh")
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "penny-team"
-PROMPT_FILENAME = "CLAUDE.md"
-
-# Stream-json event types from Claude CLI
-EVENT_ASSISTANT = "assistant"
-EVENT_RESULT = "result"
-
-# Stream-json content block types
-BLOCK_TEXT = "text"
-BLOCK_TOOL_USE = "tool_use"
-
-# GitHub API JSON field names
-GH_FIELD_NUMBER = "number"
-GH_FIELD_UPDATED_AT = "updatedAt"
 
 logger = logging.getLogger(__name__)
 

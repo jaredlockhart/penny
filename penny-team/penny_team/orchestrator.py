@@ -25,33 +25,30 @@ from datetime import datetime
 from pathlib import Path
 
 from penny_team.base import Agent
-from penny_team.constants import Label
+from penny_team.constants import (
+    AGENT_ARCHITECT,
+    AGENT_PM,
+    AGENT_WORKER,
+    ARCHITECT_INTERVAL,
+    ARCHITECT_TIMEOUT,
+    BOT_SUFFIX,
+    ENV_APP_ID,
+    ENV_FILENAME,
+    ENV_INSTALL_ID,
+    ENV_KEY_PATH,
+    ORCHESTRATOR_LOG,
+    PM_INTERVAL,
+    PM_TIMEOUT,
+    WORKER_INTERVAL,
+    WORKER_TIMEOUT,
+    Label,
+)
 from penny_team.utils.codeowners import parse_codeowners
-from penny_team.utils.github_app import BOT_SUFFIX, GitHubApp
+from penny_team.utils.github_app import GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent.parent
 LOG_DIR = PROJECT_ROOT / "data" / "logs"
-ENV_FILENAME = ".env"
-ORCHESTRATOR_LOG = "orchestrator.log"
-
-# Agent names
-AGENT_PM = "product-manager"
-AGENT_ARCHITECT = "architect"
-AGENT_WORKER = "worker"
-
-# Agent timing
-PM_INTERVAL = 300
-PM_TIMEOUT = 600
-ARCHITECT_INTERVAL = 300
-ARCHITECT_TIMEOUT = 600
-WORKER_INTERVAL = 300
-WORKER_TIMEOUT = 1800
-
-# Environment variable names
-ENV_APP_ID = "GITHUB_APP_ID"
-ENV_KEY_PATH = "GITHUB_APP_PRIVATE_KEY_PATH"
-ENV_INSTALL_ID = "GITHUB_APP_INSTALLATION_ID"
 
 logger = logging.getLogger(__name__)
 

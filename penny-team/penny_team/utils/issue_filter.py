@@ -12,19 +12,15 @@ import logging
 import subprocess
 from dataclasses import dataclass, field
 
-from penny_team.base import GH_CLI, GH_FIELD_NUMBER
-from penny_team.constants import Label
-
-# gh CLI JSON field sets for --json flag
-GH_LIST_FIELDS = str(GH_FIELD_NUMBER)
-GH_VIEW_FIELDS = "title,body,author,comments,labels"
-
-# Issue list limit
-GH_ISSUE_LIMIT = "20"
-
-# CI status values set by pr_checks.enrich_issues_with_ci_status()
-CI_STATUS_PASSING = "passing"
-CI_STATUS_FAILING = "failing"
+from penny_team.constants import (
+    CI_STATUS_FAILING,
+    GH_CLI,
+    GH_FIELD_NUMBER,
+    GH_ISSUE_LIMIT,
+    GH_ISSUE_LIST_FIELDS,
+    GH_ISSUE_VIEW_FIELDS,
+    Label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +76,7 @@ def fetch_issues_for_labels(
                     "--label",
                     label,
                     "--json",
-                    GH_LIST_FIELDS,
+                    GH_ISSUE_LIST_FIELDS,
                     "--limit",
                     GH_ISSUE_LIMIT,
                 ],
@@ -122,7 +118,7 @@ def _fetch_and_filter_issue(
     """Fetch a single issue and filter out untrusted content."""
     try:
         result = subprocess.run(
-            [GH_CLI, "issue", "view", str(number), "--json", GH_VIEW_FIELDS],
+            [GH_CLI, "issue", "view", str(number), "--json", GH_ISSUE_VIEW_FIELDS],
             capture_output=True,
             text=True,
             timeout=15,

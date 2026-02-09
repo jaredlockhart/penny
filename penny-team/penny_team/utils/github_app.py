@@ -17,21 +17,19 @@ import time
 import urllib.request
 from pathlib import Path
 
-GITHUB_API = "https://api.github.com"
-JWT_ALGORITHM = "RS256"
-BOT_SUFFIX = "[bot]"
-NOREPLY_DOMAIN = "users.noreply.github.com"
-
-# API paths
-API_APP = "/app"
-API_ACCESS_TOKENS = "/app/installations/{install_id}/access_tokens"
-
-# Environment variable keys for bot identity
-ENV_GH_TOKEN = "GH_TOKEN"
-ENV_GIT_AUTHOR_NAME = "GIT_AUTHOR_NAME"
-ENV_GIT_AUTHOR_EMAIL = "GIT_AUTHOR_EMAIL"
-ENV_GIT_COMMITTER_NAME = "GIT_COMMITTER_NAME"
-ENV_GIT_COMMITTER_EMAIL = "GIT_COMMITTER_EMAIL"
+from penny_team.constants import (
+    API_ACCESS_TOKENS,
+    API_APP,
+    BOT_SUFFIX,
+    ENV_GH_TOKEN,
+    ENV_GIT_AUTHOR_EMAIL,
+    ENV_GIT_AUTHOR_NAME,
+    ENV_GIT_COMMITTER_EMAIL,
+    ENV_GIT_COMMITTER_NAME,
+    GITHUB_API,
+    JWT_ALGORITHM,
+    NOREPLY_DOMAIN,
+)
 
 logger = logging.getLogger(__name__)
 

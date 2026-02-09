@@ -14,24 +14,19 @@ import logging
 import subprocess
 from dataclasses import dataclass
 
-from penny_team.base import GH_CLI
-from penny_team.constants import Label
-from penny_team.utils.issue_filter import CI_STATUS_FAILING, CI_STATUS_PASSING, FilteredIssue
-
-# GitHub check conclusions that count as passing
-PASSING_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED", ""}
-
-# statusCheckRollup states that mean "still running"
-PENDING_STATES = {"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED"}
-
-# gh CLI JSON fields for PR list
-PR_FIELDS = "number,headRefName,statusCheckRollup,mergeable,reviews"
-
-# GitHub review states that indicate feedback needing attention
-REVIEW_STATE_CHANGES_REQUESTED = "CHANGES_REQUESTED"
-
-# Max characters of failure log to include in prompt
-MAX_LOG_CHARS = 3000
+from penny_team.constants import (
+    CI_STATUS_FAILING,
+    CI_STATUS_PASSING,
+    GH_CLI,
+    GH_PR_FIELDS,
+    MAX_LOG_CHARS,
+    MERGE_STATUS_CONFLICTING,
+    PASSING_CONCLUSIONS,
+    PENDING_STATES,
+    REVIEW_STATE_CHANGES_REQUESTED,
+    Label,
+)
+from penny_team.utils.issue_filter import FilteredIssue
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +37,6 @@ class FailedCheck:
 
     name: str
     conclusion: str
-
-
-MERGE_STATUS_CONFLICTING = "CONFLICTING"
 
 
 def enrich_issues_with_pr_status(
@@ -107,7 +99,7 @@ def _fetch_open_prs(
 ) -> list[dict]:
     """Fetch all open PRs with check status data."""
     result = subprocess.run(
-        [GH_CLI, "pr", "list", "--state", "open", "--json", PR_FIELDS, "--limit", "20"],
+        [GH_CLI, "pr", "list", "--state", "open", "--json", GH_PR_FIELDS, "--limit", "20"],
         capture_output=True,
         text=True,
         timeout=15,
