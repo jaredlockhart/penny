@@ -1,7 +1,5 @@
 """Integration tests for startup announcement feature."""
 
-import subprocess
-
 import pytest
 
 from penny.tests.conftest import TEST_SENDER
@@ -9,7 +7,7 @@ from penny.tests.conftest import TEST_SENDER
 
 @pytest.mark.asyncio
 async def test_startup_announcement_with_commit(
-    signal_server, test_config, mock_ollama, running_penny
+    signal_server, test_config, mock_ollama, running_penny, monkeypatch
 ):
     """Test that Penny sends startup announcement with restart message from git commit."""
     # First run: populate database with a sender
@@ -25,6 +23,9 @@ async def test_startup_announcement_with_commit(
 
     # Clear messages from first run
     signal_server.outgoing_messages.clear()
+
+    # Set commit message in environment variable
+    monkeypatch.setenv("GIT_COMMIT_MESSAGE", "feat: add cool new feature")
 
     # Second run: configure restart message and verify announcement
     mock_ollama.set_default_flow(final_response="i added a cool new feature! check it out")
@@ -64,7 +65,7 @@ async def test_startup_announcement_with_commit(
 async def test_startup_announcement_fallback_no_git(
     signal_server, test_config, mock_ollama, running_penny, monkeypatch
 ):
-    """Test that Penny falls back to 'i just restarted!' when git unavailable."""
+    """Test that Penny falls back to 'i just restarted!' when git commit message unavailable."""
     # First run: populate database
     mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
 
@@ -78,16 +79,8 @@ async def test_startup_announcement_fallback_no_git(
     # Clear messages
     signal_server.outgoing_messages.clear()
 
-    # Mock subprocess.run to simulate git command failure
-    def mock_run(*args, **kwargs):
-        class MockResult:
-            returncode = 1
-            stdout = ""
-            stderr = "fatal: not a git repository"
-
-        return MockResult()
-
-    monkeypatch.setattr(subprocess, "run", mock_run)
+    # Set commit message to "unknown" to simulate missing git info
+    monkeypatch.setenv("GIT_COMMIT_MESSAGE", "unknown")
 
     # Second run: verify fallback message
     async with running_penny(test_config):
@@ -110,7 +103,7 @@ async def test_startup_announcement_fallback_no_git(
 
 @pytest.mark.asyncio
 async def test_startup_announcement_fallback_llm_error(
-    signal_server, test_config, mock_ollama, running_penny
+    signal_server, test_config, mock_ollama, running_penny, monkeypatch
 ):
     """Test that Penny falls back when LLM transformation fails."""
     # First run: populate database
@@ -125,6 +118,9 @@ async def test_startup_announcement_fallback_llm_error(
 
     # Clear messages
     signal_server.outgoing_messages.clear()
+
+    # Set commit message in environment variable
+    monkeypatch.setenv("GIT_COMMIT_MESSAGE", "feat: some feature")
 
     # Second run: configure LLM to fail for restart message generation
     def error_handler(request, count):
@@ -168,7 +164,7 @@ async def test_startup_announcement_no_recipients(
 
 @pytest.mark.asyncio
 async def test_startup_announcement_multiple_recipients(
-    signal_server, test_config, mock_ollama, running_penny
+    signal_server, test_config, mock_ollama, running_penny, monkeypatch
 ):
     """Test that Penny sends startup announcement to all known recipients."""
     # First run: populate database with multiple senders
@@ -193,6 +189,9 @@ async def test_startup_announcement_multiple_recipients(
 
     # Clear messages from first run
     signal_server.outgoing_messages.clear()
+
+    # Set commit message in environment variable
+    monkeypatch.setenv("GIT_COMMIT_MESSAGE", "feat: update something cool")
 
     # Second run: verify announcements to both recipients
     mock_ollama.set_default_flow(final_response="i updated something cool")

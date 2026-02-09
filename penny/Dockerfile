@@ -10,9 +10,11 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Set working directory
 WORKDIR /penny
 
-# Accept build arg for git commit (set at build time)
+# Accept build args for git info (set at build time)
 ARG GIT_COMMIT=unknown
+ARG GIT_COMMIT_MESSAGE=unknown
 ENV GIT_COMMIT=${GIT_COMMIT}
+ENV GIT_COMMIT_MESSAGE=${GIT_COMMIT_MESSAGE}
 
 # Copy dependency files and install dependencies (cached layer)
 COPY pyproject.toml ./

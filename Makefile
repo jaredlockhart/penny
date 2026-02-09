@@ -9,16 +9,22 @@ TEAM_PYTEST_ARGS = tests/ -v
 # --- Docker Compose ---
 
 up:
-	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) docker compose --profile team up --build
+	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+	GIT_COMMIT_MESSAGE=$$(git log -1 --pretty=%B 2>/dev/null | tr '\n' ' ' | sed 's/ *$$//' || echo unknown) \
+	docker compose --profile team up --build
 
 prod:
-	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) docker compose -f docker-compose.yml up --build penny
+	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+	GIT_COMMIT_MESSAGE=$$(git log -1 --pretty=%B 2>/dev/null | tr '\n' ' ' | sed 's/ *$$//' || echo unknown) \
+	docker compose -f docker-compose.yml up --build penny
 
 kill:
 	docker compose --profile team down --rmi local --remove-orphans
 
 build:
-	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) docker compose build penny
+	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+	GIT_COMMIT_MESSAGE=$$(git log -1 --pretty=%B 2>/dev/null | tr '\n' ' ' | sed 's/ *$$//' || echo unknown) \
+	docker compose build penny
 
 team-build:
 	docker compose build team
