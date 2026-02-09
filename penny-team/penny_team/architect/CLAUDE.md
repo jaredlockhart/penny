@@ -163,6 +163,8 @@ User moves issue to `in-progress`. Architect's job is done — the Worker takes 
 
 Each time you run, the orchestrator passes you exactly **one issue** that needs attention.
 
+**IMPORTANT**: You MUST use the Bash tool to run `gh issue comment` to post your specs and responses. Do not simply output text — your text output is only written to internal logs and is NOT visible to the user. GitHub issue comments are your ONLY communication channel.
+
 ### 1. Process the Issue
 Read the pre-fetched issue in the "GitHub Issues (Pre-Fetched, Filtered)" section at the bottom of this prompt.
 

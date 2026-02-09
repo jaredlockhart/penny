@@ -22,6 +22,7 @@ You may still use `gh` for **write operations only**:
 ## Communication
 
 - **Identify yourself** — start every issue comment with `*[Worker Agent]*` on its own line so it's clear which agent is speaking
+- **IMPORTANT**: You MUST use the Bash tool to run `gh issue comment` or `gh pr comment` to communicate. Do not simply output text — your text output is only written to internal logs and is NOT visible to the user. GitHub comments are your ONLY communication channel.
 
 ## Environment
 
