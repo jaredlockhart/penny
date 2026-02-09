@@ -40,6 +40,7 @@ GH_CLI = os.getenv("GH_CLI", "gh")
 AGENT_PM = "product-manager"
 AGENT_ARCHITECT = "architect"
 AGENT_WORKER = "worker"
+AGENT_MONITOR = "monitor"
 
 
 # =============================================================================
@@ -52,6 +53,8 @@ ARCHITECT_INTERVAL = 300
 ARCHITECT_TIMEOUT = 600
 WORKER_INTERVAL = 300
 WORKER_TIMEOUT = 1800
+MONITOR_INTERVAL = 300
+MONITOR_TIMEOUT = 600
 
 
 # =============================================================================
@@ -147,3 +150,20 @@ ENV_GIT_COMMITTER_EMAIL = "GIT_COMMITTER_EMAIL"
 ENV_APP_ID = "GITHUB_APP_ID"
 ENV_KEY_PATH = "GITHUB_APP_PRIVATE_KEY_PATH"
 ENV_INSTALL_ID = "GITHUB_APP_INSTALLATION_ID"
+
+
+# =============================================================================
+# Monitor agent — log parsing
+# =============================================================================
+
+# Log levels that indicate errors worth filing issues for
+LOG_LEVELS_ERROR = {"ERROR", "CRITICAL"}
+
+# Maximum bytes to read on first run (tail of log)
+MONITOR_FIRST_RUN_MAX_BYTES = 100 * 1024  # 100KB
+
+# Maximum bytes of error context to pass to Claude per cycle
+MONITOR_MAX_ERROR_CONTEXT = 50 * 1024  # 50KB
+
+# State key for byte offset
+MONITOR_STATE_OFFSET = "byte_offset"

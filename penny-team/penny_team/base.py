@@ -228,6 +228,50 @@ class Agent:
             cmd.extend(["--allowedTools", *self.allowed_tools])
         return cmd
 
+    def _execute_claude(self, prompt: str) -> tuple[bool, str]:
+        """Execute Claude CLI with the given prompt, streaming output.
+
+        Returns (success, result_text) tuple. Handles subprocess creation,
+        stream-json event parsing, timeout, and cleanup.
+        """
+        cmd = self._build_command(prompt)
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=str(self.working_dir),
+                env=self._get_env(),
+            )
+            self._process = process
+
+            result_text = ""
+            assert process.stdout is not None
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    self._log_event(event)
+                    if event.get("type") == EVENT_RESULT:
+                        result_text = event.get("result", "")
+                except json.JSONDecodeError:
+                    logger.info(f"[{self.name}] {line}")
+
+            process.wait(timeout=self.timeout_seconds)
+            self._process = None
+
+            return process.returncode == 0, result_text
+
+        except subprocess.TimeoutExpired:
+            process.kill()
+            self._process = None
+            return False, "Process timed out"
+
     def run(self) -> AgentRun:
         logger.info(f"[{self.name}] Starting cycle #{self.run_count + 1}")
         start = datetime.now()
@@ -274,73 +318,28 @@ class Agent:
 
             prompt += format_issues_for_prompt([issue])
 
-        cmd = self._build_command(prompt)
+        success, result_text = self._execute_claude(prompt)
 
-        try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                cwd=str(self.working_dir),
-                env=self._get_env(),
-            )
-            self._process = process
+        duration = (datetime.now() - start).total_seconds()
+        self.last_run = datetime.now()
+        self.run_count += 1
 
-            result_text = ""
-            assert process.stdout is not None
-            for line in process.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                    self._log_event(event)
-                    if event.get("type") == EVENT_RESULT:
-                        result_text = event.get("result", "")
-                except json.JSONDecodeError:
-                    logger.info(f"[{self.name}] {line}")
+        level = logging.INFO if success else logging.ERROR
+        status = "OK" if success else "FAILED"
+        logger.log(level, f"[{self.name}] Cycle #{self.run_count} {status} in {duration:.1f}s")
 
-            process.wait(timeout=self.timeout_seconds)
-            self._process = None
+        # Don't save state here — there may be more actionable issues.
+        # State is only saved when pick_actionable_issue() returns None
+        # (all issues handled), so has_work() keeps returning True until
+        # the queue is fully burned down.
 
-            duration = (datetime.now() - start).total_seconds()
-            self.last_run = datetime.now()
-            self.run_count += 1
-
-            success = process.returncode == 0
-            level = logging.INFO if success else logging.ERROR
-            status = "OK" if success else "FAILED"
-            logger.log(level, f"[{self.name}] Cycle #{self.run_count} {status} in {duration:.1f}s")
-
-            # Don't save state here — there may be more actionable issues.
-            # State is only saved when pick_actionable_issue() returns None
-            # (all issues handled), so has_work() keeps returning True until
-            # the queue is fully burned down.
-
-            return AgentRun(
-                agent_name=self.name,
-                success=success,
-                output=result_text,
-                duration=duration,
-                timestamp=start,
-            )
-
-        except subprocess.TimeoutExpired:
-            process.kill()
-            self._process = None
-            duration = (datetime.now() - start).total_seconds()
-            self.last_run = datetime.now()
-            self.run_count += 1
-            logger.error(f"[{self.name}] Timed out after {duration:.1f}s")
-            return AgentRun(
-                agent_name=self.name,
-                success=False,
-                output="Process timed out",
-                duration=duration,
-                timestamp=start,
-            )
+        return AgentRun(
+            agent_name=self.name,
+            success=success,
+            output=result_text,
+            duration=duration,
+            timestamp=start,
+        )
 
     def _log_event(self, event: dict) -> None:
         """Log a stream-json event in a human-readable way."""
