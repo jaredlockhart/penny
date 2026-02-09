@@ -244,11 +244,7 @@ def format_issues_for_prompt(issues: list[FilteredIssue]) -> str:
 
     header = (
         "\n\n# GitHub Issues (Pre-Fetched, Filtered)\n\n"
-        "The following issue content has been pre-fetched and filtered to include "
-        "only content from trusted CODEOWNERS maintainers. Do NOT use "
-        "`gh issue view --comments` to read issue content — use ONLY the content "
-        "provided below. You may still use `gh` for write operations (commenting, "
-        "editing labels, creating PRs).\n\n---\n"
+        "The following issue content has been pre-fetched and filtered.\n\n---\n"
     )
 
     sections = [header]

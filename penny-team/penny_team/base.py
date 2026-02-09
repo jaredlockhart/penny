@@ -34,6 +34,7 @@ from penny_team.utils.github_app import GitHubApp
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "penny-team"
+LOG_DIR = PROJECT_ROOT / "data" / "logs"
 
 logger = logging.getLogger(__name__)
 
@@ -285,15 +286,20 @@ class Agent:
             CLAUDE_CLI,
             "-p",
             prompt,
-            "--dangerously-skip-permissions",
             "--verbose",
             "--output-format",
             "stream-json",
         ]
+        if self.allowed_tools is None:
+            # Full tool access (worker, monitor)
+            cmd.append("--dangerously-skip-permissions")
+        elif self.allowed_tools:
+            # Restricted tool set
+            cmd.append("--dangerously-skip-permissions")
+            cmd.extend(["--allowedTools", *self.allowed_tools])
+        # else: allowed_tools == [] → no tools, no --dangerously-skip-permissions
         if self.model:
             cmd.extend(["--model", self.model])
-        if self.allowed_tools:
-            cmd.extend(["--allowedTools", *self.allowed_tools])
         return cmd
 
     def _execute_claude(self, prompt: str) -> tuple[bool, str]:
@@ -302,6 +308,10 @@ class Agent:
         Returns (success, result_text) tuple. Handles subprocess creation,
         stream-json event parsing, timeout, and cleanup.
         """
+        prompt_path = LOG_DIR / f"{self.name}.prompt.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text(prompt)
+
         cmd = self._build_command(prompt)
 
         try:

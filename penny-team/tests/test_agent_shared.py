@@ -276,6 +276,39 @@ class TestBuildCommand:
         assert "Bash" in cmd
         assert "Read" in cmd
 
+    def test_no_tools_omits_permissions_flag(self, tmp_path, capture_popen):
+        """allowed_tools=[] → no --dangerously-skip-permissions, no tool access."""
+        agent = make_agent(tmp_path, allowed_tools=[])
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        agent.run()
+
+        cmd = calls[0][0][0]
+        assert "--dangerously-skip-permissions" not in cmd
+        assert "--allowedTools" not in cmd
+
+
+# =============================================================================
+# prompt logging
+# =============================================================================
+
+
+class TestPromptLogging:
+    def test_prompt_written_to_log_file(self, tmp_path, capture_popen, monkeypatch):
+        """run() writes the full prompt to data/logs/{name}.prompt.md."""
+        log_dir = tmp_path / "data" / "logs"
+        monkeypatch.setattr("penny_team.base.LOG_DIR", log_dir)
+
+        agent = make_agent(tmp_path)
+        capture_popen(stdout_lines=[result_event("output")], returncode=0)
+
+        agent.run()
+
+        prompt_file = log_dir / f"{agent.name}.prompt.md"
+        assert prompt_file.exists()
+        content = prompt_file.read_text()
+        assert "You are the test-agent agent" in content
+
 
 # =============================================================================
 # has_work

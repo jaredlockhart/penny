@@ -114,6 +114,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             github_app=github_app,
             trusted_users=trusted,
             post_output_as_comment=True,
+            allowed_tools=[],
         ),
         Agent(
             name=AGENT_ARCHITECT,
@@ -123,6 +124,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             github_app=github_app,
             trusted_users=trusted,
             post_output_as_comment=True,
+            allowed_tools=[],
         ),
         Agent(
             name=AGENT_WORKER,
