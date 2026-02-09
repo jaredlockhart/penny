@@ -442,7 +442,7 @@ async def test_startup_announcement(
 
     # Configure mock_ollama for restart message generation (not used with fallback)
     mock_ollama.set_default_flow(
-        final_response="i just restarted!",
+        final_response="I just restarted!",
     )
 
     # Now start Penny again - it should send startup announcement
