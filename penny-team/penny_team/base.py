@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from penny_team.constants import (
+    APP_PREFIX,
     BLOCK_TEXT,
     BLOCK_TOOL_USE,
     CLAUDE_CLI,
@@ -87,15 +88,17 @@ class Agent:
 
     @property
     def _bot_logins(self) -> set[str] | None:
-        """Both login forms for the bot (slug and slug[bot]).
+        """All login forms for the bot.
 
-        GitHub uses different formats in different API responses,
-        so we need to check against both.
+        GitHub uses different formats in different API responses:
+          "slug"      — e.g. "penny-team"
+          "slug[bot]" — e.g. "penny-team[bot]"
+          "app/slug"  — e.g. "app/penny-team" (issue/comment author)
         """
         if self.github_app is None:
             return None
         slug = self.github_app._fetch_slug()
-        return {slug, self.github_app.bot_name}
+        return {slug, self.github_app.bot_name, f"{APP_PREFIX}{slug}"}
 
     @property
     def _state_path(self) -> Path:

@@ -133,6 +133,7 @@ CODEOWNERS_PATHS = [
 GITHUB_API = "https://api.github.com"
 JWT_ALGORITHM = "RS256"
 BOT_SUFFIX = "[bot]"
+APP_PREFIX = "app/"
 NOREPLY_DOMAIN = "users.noreply.github.com"
 
 # API paths

@@ -30,6 +30,7 @@ from penny_team.constants import (
     AGENT_MONITOR,
     AGENT_PM,
     AGENT_WORKER,
+    APP_PREFIX,
     ARCHITECT_INTERVAL,
     ARCHITECT_TIMEOUT,
     BOT_SUFFIX,
@@ -94,11 +95,15 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
         trusted = trusted_users
 
     # Trust the bot's own output — agents create issues that other agents read
-    # GitHub API returns login as both "slug" and "slug[bot]" depending on context
+    # GitHub API returns login in three formats depending on context:
+    #   "slug"          — e.g. "penny-team"
+    #   "slug[bot]"     — e.g. "penny-team[bot]"
+    #   "app/slug"      — e.g. "app/penny-team" (issue author via gh issue view)
     if trusted is not None and github_app is not None:
         slug = github_app._fetch_slug()
         trusted.add(slug)
         trusted.add(f"{slug}{BOT_SUFFIX}")
+        trusted.add(f"{APP_PREFIX}{slug}")
 
     return [
         Agent(
