@@ -30,24 +30,18 @@ while true; do
 
     log "New commits on origin/main: ${LAST_REF:0:7} -> ${CURRENT:0:7}"
 
-    # Rebuild penny image from origin/main without touching the working tree
-    log "Rebuilding penny image..."
-    if git archive origin/main:penny/ | docker build -t penny - 2>&1; then
-        log "Penny image rebuilt"
+    # Update working tree (so override volume mounts serve current code)
+    if ! git merge --ff-only origin/main; then
+        log "Fast-forward failed, resetting to origin/main"
+        git reset --hard origin/main
+    fi
 
-        # Restart penny with the new image
-        log "Restarting penny..."
-        $COMPOSE up -d --no-build penny
-
-        # Restart agents (graceful — docker sends SIGTERM, waits stop_grace_period)
-        log "Restarting agents..."
-        if $COMPOSE --profile team restart pm worker; then
-            log "All services restarted"
-        else
-            log "Agent restart failed, will retry on next cycle"
-        fi
+    # Rebuild all images and recreate changed containers
+    log "Rebuilding and restarting all services..."
+    if GIT_COMMIT="${CURRENT:0:7}" $COMPOSE --profile team up -d --build; then
+        log "All services rebuilt and restarted"
     else
-        log "Build failed, skipping restart"
+        log "Restart failed, will retry next cycle"
     fi
 
     LAST_REF="$CURRENT"
