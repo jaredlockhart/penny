@@ -31,9 +31,15 @@ async def test_startup_announcement_with_commit(
 
     async with running_penny(test_config):
         # Wait for startup announcement
+        # The announcement is sent immediately on startup, so we need to wait for it
         import asyncio
+        import time
 
-        await asyncio.sleep(0.5)
+        start = time.time()
+        while time.time() - start < 5.0:
+            if len(signal_server.outgoing_messages) > 0:
+                break
+            await asyncio.sleep(0.05)
 
         # Should have received startup announcement
         assert len(signal_server.outgoing_messages) == 1
@@ -81,8 +87,13 @@ async def test_startup_announcement_fallback_no_git(
     async with running_penny(test_config):
         # Wait for startup announcement
         import asyncio
+        import time
 
-        await asyncio.sleep(0.5)
+        start = time.time()
+        while time.time() - start < 5.0:
+            if len(signal_server.outgoing_messages) > 0:
+                break
+            await asyncio.sleep(0.05)
 
         # Should use fallback message
         assert len(signal_server.outgoing_messages) == 1
@@ -118,8 +129,13 @@ async def test_startup_announcement_fallback_llm_error(
     async with running_penny(test_config):
         # Wait for startup announcement
         import asyncio
+        import time
 
-        await asyncio.sleep(0.5)
+        start = time.time()
+        while time.time() - start < 5.0:
+            if len(signal_server.outgoing_messages) > 0:
+                break
+            await asyncio.sleep(0.05)
 
         # Should use fallback message when LLM fails
         assert len(signal_server.outgoing_messages) == 1
@@ -178,8 +194,16 @@ async def test_startup_announcement_multiple_recipients(
     async with running_penny(test_config):
         # Wait for startup announcements
         import asyncio
+        import time
 
-        await asyncio.sleep(0.5)
+        # Wait for messages to arrive (may be 1 or 2 depending on batching)
+        start = time.time()
+        while time.time() - start < 5.0:
+            if len(signal_server.outgoing_messages) > 0:
+                # Got at least one message, wait a bit more in case there's a second
+                await asyncio.sleep(0.2)
+                break
+            await asyncio.sleep(0.05)
 
         # Should have sent to both recipients
         # Note: Signal API batches messages, so there might be 1 or 2 messages
