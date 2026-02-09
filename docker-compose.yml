@@ -10,7 +10,10 @@ services:
       - MODE=json-rpc
 
   penny:
-    build: ./penny
+    build:
+      context: ./penny
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: penny
     restart: unless-stopped
     volumes:

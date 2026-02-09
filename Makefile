@@ -9,16 +9,16 @@ TEAM_PYTEST_ARGS = tests/ -v
 # --- Docker Compose ---
 
 up:
-	docker compose --profile team up --build
+	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) docker compose --profile team up --build
 
 prod:
-	docker compose -f docker-compose.yml up --build penny
+	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) docker compose -f docker-compose.yml up --build penny
 
 kill:
 	docker compose --profile team down --rmi local --remove-orphans
 
 build:
-	docker compose build penny
+	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) docker compose build penny
 
 team-build:
 	docker compose build team
