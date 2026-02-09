@@ -113,6 +113,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             required_labels=[Label.REQUIREMENTS],
             github_app=github_app,
             trusted_users=trusted,
+            post_output_as_comment=True,
         ),
         Agent(
             name=AGENT_ARCHITECT,
@@ -121,6 +122,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             required_labels=[Label.SPECIFICATION],
             github_app=github_app,
             trusted_users=trusted,
+            post_output_as_comment=True,
         ),
         Agent(
             name=AGENT_WORKER,
