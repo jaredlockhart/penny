@@ -21,7 +21,9 @@ from penny.config import Config, setup_logging
 from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
+from penny.ollama.client import OllamaClient
 from penny.scheduler import BackgroundScheduler, DelayedSchedule, ImmediateSchedule
+from penny.startup import get_restart_message
 from penny.tools import SearchTool
 
 logger = logging.getLogger(__name__)
@@ -182,10 +184,26 @@ class Penny:
                 logger.info("No recipients found for startup announcement")
                 return
 
+            # Create temporary Ollama client for restart message generation
+            ollama_client = OllamaClient(
+                api_url=self.config.ollama_api_url,
+                model=self.config.ollama_foreground_model,
+                db=self.db,
+                max_retries=self.config.ollama_max_retries,
+                retry_delay=self.config.ollama_retry_delay,
+            )
+
+            # Generate restart message
+            restart_msg = await get_restart_message(ollama_client)
+            await ollama_client.close()
+
+            # Combine wave with restart message
+            announcement = f"👋 {restart_msg}"
+
             logger.info("Sending startup announcement to %d recipient(s)", len(senders))
             for sender in senders:
                 try:
-                    await self.channel.send_status_message(sender, "👋")
+                    await self.channel.send_status_message(sender, announcement)
                 except Exception as e:
                     logger.warning("Failed to send startup announcement to %s: %s", sender, e)
         except Exception as e:
