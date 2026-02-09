@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 try:
-    import psutil  # type: ignore[import-untyped]
+    import psutil
 
     HAS_PSUTIL = True
 except ImportError:
@@ -143,8 +143,8 @@ class DebugCommand(Command):
 
     def _get_agent_status(self) -> str:
         """Get agent run status from state files."""
-        # Agent state files are in /penny/data/agents (mounted from host data/)
-        agents_dir = Path("/penny/data/agents")
+        # Agent state files are in /penny/data/penny-team (mounted from host data/)
+        agents_dir = Path("/penny/data/penny-team")
         if not agents_dir.exists():
             return "unknown (no state directory)"
 
