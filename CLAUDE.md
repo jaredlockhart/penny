@@ -130,6 +130,12 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `LOG_FILE`: Optional path to log file
 - `DB_PATH`: SQLite database location (default: /penny/data/penny.db)
 
+## Testing Philosophy
+
+- **Strongly prefer integration tests**: Test through public entry points (e.g., `agent.run()`, `has_work()`, full message flow) rather than testing internal functions in isolation
+- **Unit tests only for pure utility functions**: CODEOWNERS parsing, config loading, and similar pure functions with many edge cases are acceptable as unit tests
+- **Mock at system boundaries**: Mock external services (Ollama, Signal, GitHub CLI, Claude CLI) but let internal code execute end-to-end
+
 ## Code Style
 
 - **Pydantic for all structured data**: All structured data (API payloads, config, internal messages) must be brokered through Pydantic models — no raw dicts

@@ -23,12 +23,19 @@ penny-team/
     worker/
       CLAUDE.md         — Worker agent prompt (implementation)
   tests/
-    conftest.py         — MockSubprocess/MockPopen fixtures for gh + Claude CLI
-    test_codeowners.py  — CODEOWNERS parser tests
-    test_issue_filter.py — Issue fetch/filter/actionability tests
-    test_pr_checks.py   — PR status detection tests
-    test_base.py        — Agent class tests (is_due, has_work, run, state)
-    test_orchestrator.py — Agent registration, logging, config tests
+    conftest.py              — Shared fixtures, helpers, and data factories
+    test_codeowners.py       — CODEOWNERS parser tests (unit)
+    test_orchestrator.py     — Agent registration, logging, config tests (unit)
+    test_agent_shared.py     — Shared Agent base class behavior (integration)
+    test_product_manager.py  — Product Manager agent flow tests (integration)
+    test_architect.py        — Architect agent flow tests (integration)
+    test_worker.py           — Worker agent flow + PR status edge case tests (integration + unit)
+
+  Tests strongly prefer integration style — test through agent.run() / has_work()
+  entry points with mocked subprocess (gh CLI, Claude CLI). Unit tests are only
+  used for pure utility functions with many edge cases (CODEOWNERS parsing, PR
+  matching logic).
+
   scripts/
     entrypoint.sh       — Claude CLI setup + orchestrator launch
   Dockerfile            — Agent container image (Python 3.12 + Node.js + Claude CLI + gh)

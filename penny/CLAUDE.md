@@ -231,7 +231,7 @@ File-based migration system in `database/migrations/`:
 
 ## Test Infrastructure
 
-End-to-end integration tests with mocks for external services:
+Strongly prefer end-to-end integration tests over unit tests. Test through public entry points with mocks for external services:
 
 **Mocks** (in `tests/mocks/`):
 - `MockSignalServer`: WebSocket + REST server using aiohttp, captures outgoing messages and typing events
