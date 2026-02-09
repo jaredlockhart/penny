@@ -145,6 +145,11 @@ class Penny:
         if self.config.ollama_background_model != self.config.ollama_foreground_model:
             logger.info("Ollama model: %s (background)", self.config.ollama_background_model)
 
+        # Validate channel connectivity before starting (if implemented)
+        validate_fn = getattr(self.channel, "validate_connectivity", None)
+        if validate_fn and callable(validate_fn):
+            await validate_fn()
+
         await self._send_startup_announcement()
 
         try:
