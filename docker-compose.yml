@@ -19,6 +19,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - SIGNAL_API_URL=http://signal-api:8080
+      - LOG_FILE=/penny/data/penny.log
 
   pm:
     build:
@@ -56,6 +57,20 @@ services:
     profiles: [team]
     stop_grace_period: 120s
     command: ["--agent", "worker"]
+    volumes:
+      - ./data:/repo/data
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOCAL=1
+
+  monitor:
+    build:
+      context: .
+      dockerfile: penny-team/Dockerfile
+    restart: unless-stopped
+    profiles: [team]
+    command: ["--agent", "monitor"]
     volumes:
       - ./data:/repo/data
     env_file: .env

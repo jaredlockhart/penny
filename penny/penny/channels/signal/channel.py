@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import socket
 from typing import TYPE_CHECKING
 
 import httpx
@@ -95,8 +96,24 @@ class SignalChannel(MessageChannel):
                             logger.warning("Failed to parse message JSON: %s", e)
                             continue
 
+            except (
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.ConnectionClosedOK,
+            ) as e:
+                logger.info("WebSocket connection closed: %s - reconnecting in 5 seconds...", e)
+                if self._running:
+                    await asyncio.sleep(5)
+
+            except (socket.gaierror, OSError, ConnectionError) as e:
+                logger.info(
+                    "Network/DNS error connecting to Signal API: %s - reconnecting in 5s...",
+                    e,
+                )
+                if self._running:
+                    await asyncio.sleep(5)
+
             except websockets.exceptions.WebSocketException as e:
-                logger.error("WebSocket error: %s", e)
+                logger.error("Unexpected WebSocket error: %s", e)
                 if self._running:
                     logger.info("Reconnecting in 5 seconds...")
                     await asyncio.sleep(5)
@@ -257,6 +274,10 @@ class SignalChannel(MessageChannel):
             )
             logger.debug("Response: %s", response.text)
             return timestamp
+
+        except (httpx.ConnectError, httpx.NetworkError) as e:
+            logger.info("Network or DNS error sending Signal message: %s", e)
+            return None
 
         except httpx.HTTPError as e:
             logger.error("Failed to send Signal message: %s", e)

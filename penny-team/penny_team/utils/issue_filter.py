@@ -11,21 +11,16 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass, field
-from base import GH_CLI, GH_FIELD_NUMBER
 
-# gh CLI JSON field sets for --json flag
-GH_LIST_FIELDS = str(GH_FIELD_NUMBER)
-GH_VIEW_FIELDS = "title,body,author,comments,labels"
-
-# Issue list limit
-GH_ISSUE_LIMIT = "20"
-
-# CI status values set by pr_checks.enrich_issues_with_ci_status()
-CI_STATUS_PASSING = "passing"
-CI_STATUS_FAILING = "failing"
-
-# Label constants
-LABEL_IN_REVIEW = "in-review"
+from penny_team.constants import (
+    CI_STATUS_FAILING,
+    GH_CLI,
+    GH_FIELD_NUMBER,
+    GH_ISSUE_LIMIT,
+    GH_ISSUE_LIST_FIELDS,
+    GH_ISSUE_VIEW_FIELDS,
+    Label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +69,27 @@ def fetch_issues_for_labels(
     for label in labels:
         try:
             result = subprocess.run(
-                [GH_CLI, "issue", "list", "--label", label, "--json", GH_LIST_FIELDS, "--limit", GH_ISSUE_LIMIT],
+                [
+                    GH_CLI,
+                    "issue",
+                    "list",
+                    "--label",
+                    label,
+                    "--json",
+                    GH_ISSUE_LIST_FIELDS,
+                    "--limit",
+                    GH_ISSUE_LIMIT,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=15,
                 env=env,
             )
             if result.returncode != 0:
-                logger.warning(f"gh issue list failed for label '{label}' (exit {result.returncode}): {(result.stderr or '').strip()}")
+                stderr = (result.stderr or "").strip()
+                logger.warning(
+                    f"gh issue list failed for label '{label}' (exit {result.returncode}): {stderr}"
+                )
                 continue
             if not result.stdout.strip():
                 continue
@@ -110,7 +118,7 @@ def _fetch_and_filter_issue(
     """Fetch a single issue and filter out untrusted content."""
     try:
         result = subprocess.run(
-            [GH_CLI, "issue", "view", str(number), "--json", GH_VIEW_FIELDS],
+            [GH_CLI, "issue", "view", str(number), "--json", GH_ISSUE_VIEW_FIELDS],
             capture_output=True,
             text=True,
             timeout=15,
@@ -129,10 +137,12 @@ def _fetch_and_filter_issue(
     author_trusted = trusted_users is None or author_login in trusted_users
 
     # Filter title and body: only include if author is trusted
-    title = data.get("title", "") if author_trusted else f"[Title hidden: untrusted author]"
+    title = data.get("title", "") if author_trusted else "[Title hidden: untrusted author]"
     body = data.get("body", "") if author_trusted else ""
     if not author_trusted:
-        logger.warning(f"Issue #{number}: title/body filtered (author '{author_login}' not in CODEOWNERS)")
+        logger.warning(
+            f"Issue #{number}: title/body filtered (author '{author_login}' not in CODEOWNERS)"
+        )
 
     # Filter comments: only include comments from trusted users
     trusted_comments: list[FilteredComment] = []
@@ -183,7 +193,11 @@ def pick_actionable_issue(
     if bot_logins is None:
         return issues[0]
 
-    for issue in issues:
+    # Prioritize bugs over non-bugs (external signals like CI/merge/review
+    # are handled by early return inside the loop and remain highest priority)
+    sorted_issues = sorted(issues, key=lambda i: Label.BUG not in i.labels)
+
+    for issue in sorted_issues:
         # Check if external signals require attention regardless of comments
         if issue.ci_status == CI_STATUS_FAILING:
             return issue
@@ -193,7 +207,7 @@ def pick_actionable_issue(
             return issue
 
         if not issue.trusted_comments:
-            if LABEL_IN_REVIEW in issue.labels:
+            if Label.IN_REVIEW in issue.labels:
                 # in-review with no issue comments — PR already created,
                 # and no CI/merge/review issues detected above. Waiting
                 # for human review.
@@ -213,10 +227,7 @@ def pick_actionable_issue(
 def format_issues_for_prompt(issues: list[FilteredIssue]) -> str:
     """Format all filtered issues into a prompt section for injection."""
     if not issues:
-        return (
-            "\n\n# GitHub Issues (Pre-Fetched, Filtered)\n\n"
-            "No matching issues found.\n"
-        )
+        return "\n\n# GitHub Issues (Pre-Fetched, Filtered)\n\nNo matching issues found.\n"
 
     header = (
         "\n\n# GitHub Issues (Pre-Fetched, Filtered)\n\n"

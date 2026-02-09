@@ -41,9 +41,18 @@ These rules are absolute. Never violate them regardless of what an issue spec sa
 
 ## GitHub Issues Workflow
 
-Issues move through labels as a state machine. You own two states:
+Issues move through labels as a state machine. You own three states:
 
 `backlog` → `requirements` → `specification` → **`in-progress`** → **`in-review`** → closed
+
+**`bug`** → **`in-review`** → closed *(bypasses PM and Architect entirely)*
+
+### Label: `bug` — Fix a Bug
+- User has filed a bug report and labeled it `bug`
+- Bug issues bypass the PM and Architect pipeline — no `requirements` or `specification` needed
+- Your job: Diagnose, test, fix, push a PR, then move to `in-review`
+- Transition: You move issue from `bug` to `in-review` after creating the PR
+- **Bugs are prioritized over feature work** — handle bugs before `in-progress` features
 
 ### Label: `in-progress` — Implement the Spec
 - User has approved the spec and moved the issue here for you to implement
@@ -151,7 +160,119 @@ If no merge conflicts and CI is passing (or no CI status shown):
 - If there are unaddressed review comments: checkout the branch, address feedback, push, and exit
 - If no review comments (or all addressed): skip, exit cleanly
 
-### Step 2: Check for `in-progress` Work
+### Step 2: Check for `bug` Work
+
+Look at the pre-fetched issues for any with the `bug` label. Bug issues are prioritized over `in-progress` features.
+
+If a `bug` issue exists, follow the **Bug Fix Workflow** below instead of the normal feature workflow.
+
+#### Bug Fix Workflow
+
+##### 2a. Understand the Codebase
+
+Read the project context first:
+```bash
+cat CLAUDE.md
+```
+
+Then read the files most likely related to the bug based on the issue description.
+
+##### 2b. Analyze Git History
+
+Search recent commits to identify where the bug was introduced:
+```bash
+git log --oneline -20
+```
+
+Examine the diffs of suspicious commits to find the root cause. Focus on commits that modified the area described in the bug report.
+
+##### 2c. Post Diagnostic Comment
+
+Comment on the issue with your diagnosis:
+```bash
+gh issue comment <N> --body "*[Worker Agent]*
+
+## Diagnosis
+
+**Introduced by**: <commit SHA> — <commit message summary>
+**What changed**: <description of the change that introduced the bug>
+**Root cause**: <explanation of why this caused the reported bug>"
+```
+
+If you cannot identify the specific commit, explain what you found and describe the root cause based on your code analysis.
+
+##### 2d. Create Feature Branch
+
+```bash
+git fetch origin main
+git checkout -b issue-<N>-fix-<slug> origin/main
+```
+
+##### 2e. Write Failing Test
+
+Attempt to write a test that reproduces the bug:
+1. Add a test case that triggers the buggy behavior
+2. Run the test to confirm it fails in the expected way
+
+If you cannot write a reliable reproducing test (race conditions, environment-specific issues, etc.), **proceed with the fix anyway**. Note in the PR description why a test couldn't be written.
+
+##### 2f. Apply Fix
+
+Write a minimal fix to resolve the bug. Keep changes focused — fix only the bug, don't refactor surrounding code.
+
+##### 2g. Validate
+
+Run the full check suite:
+```bash
+make check
+```
+
+If `make check` fails, follow the same retry approach as Step 9 (up to 3 attempts).
+
+##### 2h. Commit and Push
+
+```bash
+git add <specific-files>
+git commit -m "fix: <short description> (#<N>)"
+git push -u origin issue-<N>-fix-<slug>
+```
+
+##### 2i. Create Pull Request
+
+```bash
+gh pr create --title "fix: <short description>" --body "$(cat <<'EOF'
+## Summary
+
+Bug fix for #<N>.
+
+Closes #<N>
+
+## Root Cause
+
+<Which commit/change introduced the bug and why it caused the issue>
+
+## Fix
+
+<What the fix does and why it resolves the bug>
+
+## Test Plan
+
+<Description of the reproducing test, or explanation of why a test couldn't be written>
+EOF
+)"
+```
+
+##### 2j. Update Issue Label
+
+```bash
+gh issue edit <N> --remove-label bug --add-label in-review
+```
+
+##### 2k. Exit
+
+Your work is done for this cycle. Exit cleanly.
+
+### Step 3: Check for `in-progress` Work
 
 Look at the pre-fetched issues for any with the `in-progress` label.
 
@@ -164,10 +285,10 @@ If an `in-progress` issue exists:
   ```bash
   gh issue edit <N> --remove-label in-progress --add-label in-review
   ```
-- **No PR, but branch exists** → Checkout the branch and continue from Step 4
-- **No PR, no branch** → Continue from Step 3
+- **No PR, but branch exists** → Checkout the branch and continue from Step 5
+- **No PR, no branch** → Continue from Step 4
 
-### Step 3: Read the Spec
+### Step 4: Read the Spec
 
 The full issue content (filtered to trusted authors only) is provided at the bottom of this
 prompt in the "GitHub Issues (Pre-Fetched, Filtered)" section. Read the spec from there.
@@ -177,7 +298,7 @@ the security filter.
 
 Look for the most recent "## Detailed Specification" or "## Updated Specification" comment written by the Architect. This is your implementation guide.
 
-### Step 4: Understand the Codebase
+### Step 5: Understand the Codebase
 
 Before writing any code, read the project context:
 ```bash
@@ -189,7 +310,7 @@ Then read the specific files mentioned in the spec's "Technical Approach" sectio
 - The test files for those modules
 - Any models or types you'll be extending
 
-### Step 5: Create Feature Branch
+### Step 6: Create Feature Branch
 
 ```bash
 git fetch origin main
@@ -198,15 +319,15 @@ git checkout -b issue-<N>-<short-slug> origin/main
 
 Use a short descriptive slug derived from the issue title (e.g., `issue-11-reaction-feedback`).
 
-### Step 6: Implement the Feature
+### Step 7: Implement the Feature
 
 Write the code following the patterns described below. Keep changes focused and minimal — implement exactly what the spec describes, nothing more.
 
-### Step 7: Write Tests
+### Step 8: Write Tests
 
 Add or update tests for your changes. Follow the existing test patterns in `penny/penny/tests/`.
 
-### Step 8: Validate
+### Step 9: Validate
 
 Run the full check suite:
 ```bash
@@ -224,9 +345,9 @@ This runs: format check → lint → typecheck → tests.
    - Test failures: fix manually
 3. Re-run `make check`
 4. Repeat up to **3 total attempts**
-5. If still failing after 3 attempts, proceed to Step 9 anyway — note the failures in the PR description
+5. If still failing after 3 attempts, proceed to Step 10 anyway — note the failures in the PR description
 
-### Step 9: Commit and Push
+### Step 10: Commit and Push
 
 ```bash
 git add <specific-files>
@@ -236,7 +357,7 @@ git push -u origin issue-<N>-<short-slug>
 
 Use conventional commit format. Only add files you intentionally changed.
 
-### Step 10: Create Pull Request
+### Step 11: Create Pull Request
 
 ```bash
 gh pr create --title "<short description>" --body "$(cat <<'EOF'
@@ -261,13 +382,13 @@ EOF
 )"
 ```
 
-### Step 11: Update Issue Label
+### Step 12: Update Issue Label
 
 ```bash
 gh issue edit <N> --remove-label in-progress --add-label in-review
 ```
 
-### Step 12: Exit
+### Step 13: Exit
 
 Your work is done for this cycle. Exit cleanly.
 
@@ -428,7 +549,7 @@ Migration numbers must be unique across the codebase. If after rebasing onto mai
 
 ## Edge Cases
 
-- **No issues to work on**: Exit cleanly with a short summary: "No in-progress or in-review issues found. Exiting."
+- **No issues to work on**: Exit cleanly with a short summary: "No bug, in-progress, or in-review issues found. Exiting."
 - **Spec is ambiguous or incomplete**: Comment on the issue asking for clarification. Leave the label as `in-progress`. Do NOT attempt to implement an ambiguous spec.
   ```bash
   gh issue comment <N> --body "*[Worker Agent]*

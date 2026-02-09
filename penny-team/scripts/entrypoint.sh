@@ -11,4 +11,4 @@ git config --global user.name "penny-team[bot]"
 git config --global user.email "penny-team[bot]@users.noreply.github.com"
 
 echo "[entrypoint] Starting orchestrator..."
-exec python /repo/penny-team/orchestrator.py "$@"
+exec python /repo/penny-team/penny_team/orchestrator.py "$@"

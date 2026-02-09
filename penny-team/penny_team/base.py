@@ -10,32 +10,28 @@ import json
 import logging
 import os
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from github_app import GitHubApp
+from penny_team.constants import (
+    APP_PREFIX,
+    BLOCK_TEXT,
+    BLOCK_TOOL_USE,
+    CLAUDE_CLI,
+    EVENT_ASSISTANT,
+    EVENT_RESULT,
+    GH_CLI,
+    GH_FIELD_NUMBER,
+    GH_FIELD_UPDATED_AT,
+    LABELS_WITH_EXTERNAL_STATE,
+    PROMPT_FILENAME,
+)
+from penny_team.utils.github_app import GitHubApp
 
-CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
-GH_CLI = os.getenv("GH_CLI", "gh")
-# Labels where external state (CI checks) can change without updating issue timestamps
-LABELS_WITH_EXTERNAL_STATE = {"in-review"}
 AGENTS_DIR = Path(__file__).parent
-PROJECT_ROOT = AGENTS_DIR.parent
+PROJECT_ROOT = AGENTS_DIR.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "penny-team"
-PROMPT_FILENAME = "CLAUDE.md"
-
-# Stream-json event types from Claude CLI
-EVENT_ASSISTANT = "assistant"
-EVENT_RESULT = "result"
-
-# Stream-json content block types
-BLOCK_TEXT = "text"
-BLOCK_TOOL_USE = "tool_use"
-
-# GitHub API JSON field names
-GH_FIELD_NUMBER = "number"
-GH_FIELD_UPDATED_AT = "updatedAt"
 
 logger = logging.getLogger(__name__)
 
@@ -92,15 +88,17 @@ class Agent:
 
     @property
     def _bot_logins(self) -> set[str] | None:
-        """Both login forms for the bot (slug and slug[bot]).
+        """All login forms for the bot.
 
-        GitHub uses different formats in different API responses,
-        so we need to check against both.
+        GitHub uses different formats in different API responses:
+          "slug"      — e.g. "penny-team"
+          "slug[bot]" — e.g. "penny-team[bot]"
+          "app/slug"  — e.g. "app/penny-team" (issue/comment author)
         """
         if self.github_app is None:
             return None
         slug = self.github_app._fetch_slug()
-        return {slug, self.github_app.bot_name}
+        return {slug, self.github_app.bot_name, f"{APP_PREFIX}{slug}"}
 
     @property
     def _state_path(self) -> Path:
@@ -127,8 +125,21 @@ class Agent:
         timestamps: dict[str, str] = {}
         for label in self.required_labels or []:
             result = subprocess.run(
-                [GH_CLI, "issue", "list", "--label", label, "--json", f"{GH_FIELD_NUMBER},{GH_FIELD_UPDATED_AT}", "--limit", "20"],
-                capture_output=True, text=True, timeout=15, env=self._get_env(),
+                [
+                    GH_CLI,
+                    "issue",
+                    "list",
+                    "--label",
+                    label,
+                    "--json",
+                    f"{GH_FIELD_NUMBER},{GH_FIELD_UPDATED_AT}",
+                    "--limit",
+                    "20",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=self._get_env(),
             )
             if result.returncode != 0:
                 raise RuntimeError(f"gh issue list failed for label '{label}'")
@@ -166,8 +177,7 @@ class Agent:
         # Timestamps unchanged. For labels with external state (CI, reviews),
         # check if any issue actually needs attention.
         has_external_state = any(
-            label in LABELS_WITH_EXTERNAL_STATE
-            for label in self.required_labels
+            label in LABELS_WITH_EXTERNAL_STATE for label in self.required_labels
         )
         if has_external_state:
             return self._check_actionable_issues()
@@ -182,8 +192,11 @@ class Agent:
         actionability check. Used by has_work() when timestamp
         comparison alone can't determine if work is needed.
         """
-        from issue_filter import fetch_issues_for_labels, pick_actionable_issue
-        from pr_checks import enrich_issues_with_pr_status
+        from penny_team.utils.issue_filter import fetch_issues_for_labels, pick_actionable_issue
+        from penny_team.utils.pr_checks import enrich_issues_with_pr_status
+
+        if not self.required_labels:
+            return True
 
         try:
             issues = fetch_issues_for_labels(
@@ -209,7 +222,8 @@ class Agent:
             prompt,
             "--dangerously-skip-permissions",
             "--verbose",
-            "--output-format", "stream-json",
+            "--output-format",
+            "stream-json",
         ]
         if self.model:
             cmd.extend(["--model", self.model])
@@ -217,43 +231,12 @@ class Agent:
             cmd.extend(["--allowedTools", *self.allowed_tools])
         return cmd
 
-    def run(self) -> AgentRun:
-        logger.info(f"[{self.name}] Starting cycle #{self.run_count + 1}")
-        start = datetime.now()
+    def _execute_claude(self, prompt: str) -> tuple[bool, str]:
+        """Execute Claude CLI with the given prompt, streaming output.
 
-        prompt = self.prompt_path.read_text()
-
-        # Pre-fetch, filter, and pick one actionable issue
-        if self.required_labels:
-            from issue_filter import fetch_issues_for_labels, format_issues_for_prompt, pick_actionable_issue
-
-            all_issues = fetch_issues_for_labels(self.required_labels, trusted_users=self.trusted_users, env=self._get_env())
-
-            # Enrich in-review issues with CI and merge conflict status (no-op if none match)
-            from pr_checks import enrich_issues_with_pr_status
-            enrich_issues_with_pr_status(all_issues, env=self._get_env())
-
-            issue = pick_actionable_issue(all_issues, self._bot_logins)
-
-            if issue is None:
-                duration = (datetime.now() - start).total_seconds()
-                self.last_run = datetime.now()
-                self.run_count += 1
-                logger.info(f"[{self.name}] No actionable issues (bot has last comment on all), skipping")
-                try:
-                    self._save_state(self._fetch_issue_timestamps())
-                except (subprocess.TimeoutExpired, OSError, RuntimeError) as e:
-                    logger.warning(f"[{self.name}] Failed to save issue state: {e}")
-                return AgentRun(
-                    agent_name=self.name,
-                    success=True,
-                    output="No actionable issues",
-                    duration=duration,
-                    timestamp=start,
-                )
-
-            prompt += format_issues_for_prompt([issue])
-
+        Returns (success, result_text) tuple. Handles subprocess creation,
+        stream-json event parsing, timeout, and cleanup.
+        """
         cmd = self._build_command(prompt)
 
         try:
@@ -285,41 +268,81 @@ class Agent:
             process.wait(timeout=self.timeout_seconds)
             self._process = None
 
-            duration = (datetime.now() - start).total_seconds()
-            self.last_run = datetime.now()
-            self.run_count += 1
-
-            success = process.returncode == 0
-            level = logging.INFO if success else logging.ERROR
-            logger.log(level, f"[{self.name}] Cycle #{self.run_count} {'OK' if success else 'FAILED'} in {duration:.1f}s")
-
-            # Don't save state here — there may be more actionable issues.
-            # State is only saved when pick_actionable_issue() returns None
-            # (all issues handled), so has_work() keeps returning True until
-            # the queue is fully burned down.
-
-            return AgentRun(
-                agent_name=self.name,
-                success=success,
-                output=result_text,
-                duration=duration,
-                timestamp=start,
-            )
+            return process.returncode == 0, result_text
 
         except subprocess.TimeoutExpired:
             process.kill()
             self._process = None
-            duration = (datetime.now() - start).total_seconds()
-            self.last_run = datetime.now()
-            self.run_count += 1
-            logger.error(f"[{self.name}] Timed out after {duration:.1f}s")
-            return AgentRun(
-                agent_name=self.name,
-                success=False,
-                output="Process timed out",
-                duration=duration,
-                timestamp=start,
+            return False, "Process timed out"
+
+    def run(self) -> AgentRun:
+        logger.info(f"[{self.name}] Starting cycle #{self.run_count + 1}")
+        start = datetime.now()
+
+        prompt = self.prompt_path.read_text()
+
+        # Pre-fetch, filter, and pick one actionable issue
+        if self.required_labels:
+            from penny_team.utils.issue_filter import (
+                fetch_issues_for_labels,
+                format_issues_for_prompt,
+                pick_actionable_issue,
             )
+
+            all_issues = fetch_issues_for_labels(
+                self.required_labels, trusted_users=self.trusted_users, env=self._get_env()
+            )
+
+            # Enrich in-review issues with CI and merge conflict status (no-op if none match)
+            from penny_team.utils.pr_checks import enrich_issues_with_pr_status
+
+            enrich_issues_with_pr_status(all_issues, env=self._get_env())
+
+            issue = pick_actionable_issue(all_issues, self._bot_logins)
+
+            if issue is None:
+                duration = (datetime.now() - start).total_seconds()
+                self.last_run = datetime.now()
+                self.run_count += 1
+                logger.info(
+                    f"[{self.name}] No actionable issues (bot has last comment on all), skipping"
+                )
+                try:
+                    self._save_state(self._fetch_issue_timestamps())
+                except (subprocess.TimeoutExpired, OSError, RuntimeError) as e:
+                    logger.warning(f"[{self.name}] Failed to save issue state: {e}")
+                return AgentRun(
+                    agent_name=self.name,
+                    success=True,
+                    output="No actionable issues",
+                    duration=duration,
+                    timestamp=start,
+                )
+
+            prompt += format_issues_for_prompt([issue])
+
+        success, result_text = self._execute_claude(prompt)
+
+        duration = (datetime.now() - start).total_seconds()
+        self.last_run = datetime.now()
+        self.run_count += 1
+
+        level = logging.INFO if success else logging.ERROR
+        status = "OK" if success else "FAILED"
+        logger.log(level, f"[{self.name}] Cycle #{self.run_count} {status} in {duration:.1f}s")
+
+        # Don't save state here — there may be more actionable issues.
+        # State is only saved when pick_actionable_issue() returns None
+        # (all issues handled), so has_work() keeps returning True until
+        # the queue is fully burned down.
+
+        return AgentRun(
+            agent_name=self.name,
+            success=success,
+            output=result_text,
+            duration=duration,
+            timestamp=start,
+        )
 
     def _log_event(self, event: dict) -> None:
         """Log a stream-json event in a human-readable way."""

@@ -10,13 +10,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from penny_team.constants import CODEOWNERS_PATHS
 
-CODEOWNERS_PATHS = [
-    ".github/CODEOWNERS",
-    "CODEOWNERS",
-    "docs/CODEOWNERS",
-]
+logger = logging.getLogger(__name__)
 
 
 def parse_codeowners(project_root: Path) -> set[str]:
