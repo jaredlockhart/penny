@@ -1,11 +1,13 @@
 """Integration tests for the Worker agent flow, plus PR status edge cases.
 
-The Worker implements features from specs (in-progress) and handles
+The Worker implements features from specs (in-progress), handles
 PR feedback including failing CI, merge conflicts, and review comments
-(in-review). It's the only agent that transitions labels itself:
-in-progress → in-review after creating a PR.
+(in-review), and fixes bugs with a specialized test-driven workflow (bug).
+It's the only agent that transitions labels itself:
+in-progress → in-review and bug → in-review after creating a PR.
 
 Flow: specification (Architect) → in-progress (Worker) → in-review (Worker) → closed
+      bug → in-review (Worker) → closed
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from tests.conftest import (
 
 
 class TestWorkerFlow:
-    """Worker agent processes issues labeled 'in-progress' or 'in-review'."""
+    """Worker agent processes issues labeled 'in-progress', 'in-review', or 'bug'."""
 
     def test_new_in_progress_issue_implements(
         self, tmp_path, mock_subprocess, capture_popen, monkeypatch
@@ -48,7 +50,7 @@ class TestWorkerFlow:
         → pick_actionable_issue returns it (no bot comment)
         → prompt assembled with Worker CLAUDE.md + issue + spec.
         """
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
@@ -93,7 +95,7 @@ class TestWorkerFlow:
         → pick_actionable_issue returns it (CI failure is always actionable)
         → prompt includes CI failure details so Claude can fix them.
         """
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
@@ -156,7 +158,7 @@ class TestWorkerFlow:
         → pick_actionable_issue returns it (merge conflict always actionable)
         → prompt includes "Merge Status: CONFLICTING" with branch name.
         """
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
@@ -200,7 +202,7 @@ class TestWorkerFlow:
         → pick_actionable_issue returns it (review feedback always actionable)
         → prompt includes the issue so Claude can read PR and address feedback.
         """
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
@@ -251,7 +253,7 @@ class TestWorkerFlow:
         signals → pick_actionable_issue returns None → agent skips.
         This represents a PR waiting for human review.
         """
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
         monkeypatch.setattr(
             type(agent), "_state_path", property(lambda self: tmp_path / "worker.state.json")
@@ -310,7 +312,7 @@ class TestWorkerFlow:
         → pick_actionable_issue checks CI-failing first (always actionable)
         → returns #42 → Worker fixes CI, not implementing #43.
         """
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         mock_subprocess.add_response(
@@ -390,7 +392,7 @@ class TestWorkerInReviewActionability:
         self, tmp_path, mock_subprocess, capture_popen, monkeypatch
     ):
         """in-review issue with no comments → waiting for human review → skip."""
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
         monkeypatch.setattr(
             type(agent), "_state_path", property(lambda self: tmp_path / "w.state.json")
@@ -422,7 +424,7 @@ class TestWorkerInReviewActionability:
         Bug fix: external signals (CI failure, merge conflict, review feedback)
         should override the "no comments → skip" logic for in-review issues.
         """
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
@@ -463,7 +465,7 @@ class TestWorkerInReviewActionability:
         self, tmp_path, mock_subprocess, capture_popen, monkeypatch
     ):
         """in-review with no comments but merge conflict → still actionable."""
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
@@ -491,7 +493,7 @@ class TestWorkerInReviewActionability:
         self, tmp_path, mock_subprocess, capture_popen, monkeypatch
     ):
         """in-review with no comments but review feedback → still actionable."""
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
@@ -525,7 +527,7 @@ class TestWorkerInReviewActionability:
         Bug fix: bot having the last comment should not prevent the worker
         from waking when there are external signals (failing CI).
         """
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
@@ -583,7 +585,7 @@ class TestWorkerDeduplicatesAcrossLabels:
         self, tmp_path, mock_subprocess, capture_popen, monkeypatch
     ):
         """Same issue number from both in-progress and in-review → fetched once."""
-        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review"])
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
         # Both label searches return issue #42
@@ -725,3 +727,118 @@ class TestWorkerPREnrichFailure:
         enrich_issues_with_pr_status([issue])
         assert issue.ci_status is None
         assert issue.merge_conflict is False
+
+
+# =============================================================================
+# Bug fix flow — integration tests through agent.run()
+#
+# Bug issues bypass PM and Architect entirely. Worker picks them up directly
+# from the 'bug' label and follows a test-driven bug fix workflow.
+# =============================================================================
+
+
+class TestWorkerBugFixFlow:
+    """Worker handles bug issues with a specialized workflow.
+
+    Bugs bypass the PM/Architect pipeline — Worker picks them up directly.
+    Bug fixes are prioritized over feature work (in-progress).
+    """
+
+    def test_bug_issue_triggers_worker(
+        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+    ):
+        """Bug issue with no comments → Claude runs bug fix workflow.
+
+        Flow: issue labeled 'bug' with no comments → bypasses PM/Architect
+        → pick_actionable_issue returns it → prompt assembled with Worker
+        CLAUDE.md + issue data. Worker follows bug fix workflow.
+        """
+        agent = make_agent(
+            tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"]
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+
+        # Issue list returns #50 for all labels (dedup handles duplicates)
+        mock_subprocess.add_response("issue list", stdout=issue_list_response(50))
+        mock_subprocess.add_response(
+            "issue view",
+            stdout=issue_view_response(
+                number=50,
+                title="Search fails when query is empty",
+                body="When a user sends an empty search query, the app crashes.",
+                labels=["bug"],
+                comments=[],
+            ),
+        )
+        # PR enrichment: no open PRs
+        mock_subprocess.add_response("pr list", stdout="[]")
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        result = agent.run()
+
+        assert result.success is True
+        prompt = extract_prompt(calls)
+        assert "Worker Agent Prompt" in prompt
+        assert "Search fails when query is empty" in prompt
+        assert "Issue #50" in prompt
+
+    def test_bug_prioritized_over_in_progress(
+        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+    ):
+        """Both bug and in-progress issues exist → picks bug first.
+
+        Flow: issue #50 is labeled 'bug', issue #43 is labeled 'in-progress'
+        → pick_actionable_issue sorts bugs before non-bugs
+        → returns #50 → Worker fixes bug, not implementing #43.
+
+        This verifies that bug fixes are prioritized over new feature work.
+        """
+        agent = make_agent(
+            tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"]
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+
+        # Issue list returns both issues (first match wins; dedup prevents re-fetch)
+        mock_subprocess.add_response(
+            "issue list",
+            stdout=json.dumps([{"number": 43}, {"number": 50}]),
+        )
+        # Issue views — matched by "issue view 43" vs "issue view 50"
+        mock_subprocess.add_response(
+            "issue view 43",
+            stdout=issue_view_response(
+                number=43,
+                title="Add user profiles",
+                labels=["in-progress"],
+                comments=[
+                    {
+                        "author": {"login": "alice"},
+                        "body": "Go ahead and implement this.",
+                        "createdAt": "2024-01-07T00:00:00Z",
+                    },
+                ],
+            ),
+        )
+        mock_subprocess.add_response(
+            "issue view 50",
+            stdout=issue_view_response(
+                number=50,
+                title="Search fails when query is empty",
+                body="When a user sends an empty search query, the app crashes.",
+                labels=["bug"],
+                comments=[],
+            ),
+        )
+        # PR enrichment: no open PRs
+        mock_subprocess.add_response("pr list", stdout="[]")
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        result = agent.run()
+
+        assert result.success is True
+        prompt = extract_prompt(calls)
+        # Should be working on #50 (bug), not #43 (feature)
+        assert "Search fails when query is empty" in prompt
+        assert "Issue #50" in prompt

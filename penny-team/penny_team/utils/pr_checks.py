@@ -15,9 +15,8 @@ import subprocess
 from dataclasses import dataclass
 
 from penny_team.base import GH_CLI
+from penny_team.constants import Label
 from penny_team.utils.issue_filter import CI_STATUS_FAILING, CI_STATUS_PASSING, FilteredIssue
-
-LABEL_IN_REVIEW = "in-review"
 
 # GitHub check conclusions that count as passing
 PASSING_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED", ""}
@@ -58,7 +57,7 @@ def enrich_issues_with_pr_status(
     ci_failure_details, merge_conflict, and merge_conflict_branch.
     Fail-open: if gh fails, issues are left unchanged.
     """
-    in_review = [i for i in issues if LABEL_IN_REVIEW in i.labels]
+    in_review = [i for i in issues if Label.IN_REVIEW in i.labels]
     if not in_review:
         return
 

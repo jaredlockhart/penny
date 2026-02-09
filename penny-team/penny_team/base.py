@@ -14,12 +14,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from penny_team.constants import LABELS_WITH_EXTERNAL_STATE
 from penny_team.utils.github_app import GitHubApp
 
 CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
 GH_CLI = os.getenv("GH_CLI", "gh")
-# Labels where external state (CI checks) can change without updating issue timestamps
-LABELS_WITH_EXTERNAL_STATE = {"in-review"}
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "penny-team"

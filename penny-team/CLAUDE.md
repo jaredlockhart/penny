@@ -11,6 +11,7 @@ penny-team/
   penny_team/
     orchestrator.py     — Agent lifecycle manager, runs on schedule
     base.py             — Agent base class: wraps Claude CLI, has_work() pre-check
+    constants.py        — Shared constants: Label enum, external state config
     utils/
       github_app.py     — GitHub App JWT token generation
       codeowners.py     — Parses .github/CODEOWNERS for trusted usernames
@@ -29,13 +30,12 @@ penny-team/
     test_agent_shared.py     — Shared Agent base class behavior (integration)
     test_product_manager.py  — Product Manager agent flow tests (integration)
     test_architect.py        — Architect agent flow tests (integration)
-    test_worker.py           — Worker agent flow + PR status edge case tests (integration + unit)
+    test_worker.py           — Worker agent flow + PR status + bug fix tests (integration + unit)
 
   Tests strongly prefer integration style — test through agent.run() / has_work()
   entry points with mocked subprocess (gh CLI, Claude CLI). Unit tests are only
   used for pure utility functions with many edge cases (CODEOWNERS parsing, PR
   matching logic).
-
   scripts/
     entrypoint.sh       — Claude CLI setup + orchestrator launch
   Dockerfile            — Agent container image (Python 3.12 + Node.js + Claude CLI + gh)
@@ -46,17 +46,20 @@ penny-team/
 
 - **Product Manager**: 300s interval, 600s timeout, label: `requirements`
 - **Architect**: 300s interval, 600s timeout, label: `specification`
-- **Worker**: 300s interval, 1800s timeout, labels: `in-progress`, `in-review`
+- **Worker**: 300s interval, 1800s timeout, labels: `in-progress`, `in-review`, `bug`
 
 ## GitHub Labels Workflow
 
 ```
-backlog → requirements → specification → in-progress → in-review → closed
+backlog → requirements → specification → in-progress → in-review → closed   (features)
+bug → in-review → closed                                                     (bug fixes)
 ```
 
 - Each label maps to exactly one agent (1:1 mapping)
 - Transitions between agents are human-initiated (user moves label)
-- Worker moves `in-progress` → `in-review` after pushing PR (only agent-initiated transition)
+- Worker moves `in-progress` → `in-review` and `bug` → `in-review` after pushing PR (only agent-initiated transitions)
+- Bug issues bypass PM and Architect entirely — Worker picks them up directly
+- Bugs are prioritized over feature work (`in-progress`)
 
 ## Orchestrator Architecture
 
@@ -85,8 +88,8 @@ Worker agent automatically detects and fixes failing CI and merge conflicts on i
 - `penny_team/utils/pr_checks.py`: Fetches PR check statuses and merge conflict status via `gh pr list --json statusCheckRollup,mergeable`, matches PRs to issues by branch naming convention (`issue-<N>-*`)
 - For failing PRs, fetches error logs via `gh run view --log-failed` (truncated to ~3000 chars)
 - Enriches `FilteredIssue` with `ci_status`, `ci_failure_details`, `merge_conflict`, and `merge_conflict_branch` before prompt injection
-- `pick_actionable_issue()` treats failing-CI and merge-conflict issues as actionable even when bot has last comment
-- Worker priority: merge conflicts (rebase) > failing CI (fix) > review comments
+- `pick_actionable_issue()` treats failing-CI and merge-conflict issues as actionable even when bot has last comment; prioritizes bug issues over non-bug issues
+- Worker priority: merge conflicts (rebase) > failing CI (fix) > review comments > bugs > features
 - Fail-open: if `gh` fails, worker proceeds normally without CI/merge info
 
 ## Docker Setup

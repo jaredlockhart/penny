@@ -27,7 +27,7 @@ class TestGetAgents:
         labels_by_name = {a.name: a.required_labels for a in agents}
         assert labels_by_name["product-manager"] == ["requirements"]
         assert labels_by_name["architect"] == ["specification"]
-        assert labels_by_name["worker"] == ["in-progress", "in-review"]
+        assert labels_by_name["worker"] == ["in-progress", "in-review", "bug"]
 
     def test_agent_intervals(self, project_root, monkeypatch):
         monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)

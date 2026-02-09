@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from penny_team.base import Agent
+from penny_team.constants import Label
 from penny_team.utils.codeowners import parse_codeowners
 from penny_team.utils.github_app import BOT_SUFFIX, GitHubApp
 
@@ -33,12 +34,6 @@ PROJECT_ROOT = AGENTS_DIR.parent.parent
 LOG_DIR = PROJECT_ROOT / "data" / "logs"
 ENV_FILENAME = ".env"
 ORCHESTRATOR_LOG = "orchestrator.log"
-
-# GitHub issue labels — each label maps to exactly one agent
-LABEL_REQUIREMENTS = "requirements"
-LABEL_SPECIFICATION = "specification"
-LABEL_IN_PROGRESS = "in-progress"
-LABEL_IN_REVIEW = "in-review"
 
 # Agent names
 AGENT_PM = "product-manager"
@@ -109,7 +104,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             name=AGENT_PM,
             interval_seconds=PM_INTERVAL,
             timeout_seconds=PM_TIMEOUT,
-            required_labels=[LABEL_REQUIREMENTS],
+            required_labels=[Label.REQUIREMENTS],
             github_app=github_app,
             trusted_users=trusted,
         ),
@@ -117,7 +112,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             name=AGENT_ARCHITECT,
             interval_seconds=ARCHITECT_INTERVAL,
             timeout_seconds=ARCHITECT_TIMEOUT,
-            required_labels=[LABEL_SPECIFICATION],
+            required_labels=[Label.SPECIFICATION],
             github_app=github_app,
             trusted_users=trusted,
         ),
@@ -125,7 +120,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             name=AGENT_WORKER,
             interval_seconds=WORKER_INTERVAL,
             timeout_seconds=WORKER_TIMEOUT,
-            required_labels=[LABEL_IN_PROGRESS, LABEL_IN_REVIEW],
+            required_labels=[Label.IN_PROGRESS, Label.IN_REVIEW, Label.BUG],
             github_app=github_app,
             trusted_users=trusted,
         ),

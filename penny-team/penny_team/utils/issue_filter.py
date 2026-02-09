@@ -13,6 +13,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from penny_team.base import GH_CLI, GH_FIELD_NUMBER
+from penny_team.constants import Label
 
 # gh CLI JSON field sets for --json flag
 GH_LIST_FIELDS = str(GH_FIELD_NUMBER)
@@ -24,9 +25,6 @@ GH_ISSUE_LIMIT = "20"
 # CI status values set by pr_checks.enrich_issues_with_ci_status()
 CI_STATUS_PASSING = "passing"
 CI_STATUS_FAILING = "failing"
-
-# Label constants
-LABEL_IN_REVIEW = "in-review"
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +197,11 @@ def pick_actionable_issue(
     if bot_logins is None:
         return issues[0]
 
-    for issue in issues:
+    # Prioritize bugs over non-bugs (external signals like CI/merge/review
+    # are handled by early return inside the loop and remain highest priority)
+    sorted_issues = sorted(issues, key=lambda i: Label.BUG not in i.labels)
+
+    for issue in sorted_issues:
         # Check if external signals require attention regardless of comments
         if issue.ci_status == CI_STATUS_FAILING:
             return issue
@@ -209,7 +211,7 @@ def pick_actionable_issue(
             return issue
 
         if not issue.trusted_comments:
-            if LABEL_IN_REVIEW in issue.labels:
+            if Label.IN_REVIEW in issue.labels:
                 # in-review with no issue comments — PR already created,
                 # and no CI/merge/review issues detected above. Waiting
                 # for human review.
