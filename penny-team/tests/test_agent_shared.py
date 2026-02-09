@@ -533,3 +533,133 @@ class TestGhFailureDuringRun:
         assert result.success is True
         assert result.output == "No actionable issues"
         assert len(calls) == 0
+
+
+# =============================================================================
+# post_output_as_comment — orchestrator posts agent output on the issue
+# =============================================================================
+
+
+class TestPostOutputAsComment:
+    @staticmethod
+    def _gh_comment_calls(mock_subprocess):
+        """Filter subprocess.run calls to only gh issue comment invocations."""
+        return [
+            c for c in mock_subprocess.calls if "comment" in c[0] and "issue" in c[0]
+        ]
+
+    def test_successful_run_posts_comment(
+        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+    ):
+        """post_output_as_comment=True → agent output posted via gh issue comment."""
+        agent = make_agent(
+            tmp_path,
+            required_labels=["requirements"],
+            post_output_as_comment=True,
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+
+        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
+        mock_subprocess.add_response(
+            "issue view",
+            stdout=issue_view_response(number=42, labels=["requirements"]),
+        )
+        mock_subprocess.add_response("issue comment", stdout="")
+
+        calls = capture_popen(
+            stdout_lines=[result_event("## Requirements (Draft)\n\nSpec content")],
+            returncode=0,
+        )
+
+        result = agent.run()
+
+        assert result.success is True
+        comment_calls = self._gh_comment_calls(mock_subprocess)
+        assert len(comment_calls) == 1
+        cmd = comment_calls[0][0]
+        assert "42" in cmd
+        assert "## Requirements (Draft)\n\nSpec content" in cmd
+
+    def test_failed_claude_run_does_not_post_comment(
+        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+    ):
+        """Failed Claude CLI run → no comment posted, no mark_processed."""
+        agent = make_agent(
+            tmp_path,
+            required_labels=["requirements"],
+            post_output_as_comment=True,
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+
+        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
+        mock_subprocess.add_response(
+            "issue view",
+            stdout=issue_view_response(number=42, labels=["requirements"]),
+        )
+
+        capture_popen(stdout_lines=[result_event("some output")], returncode=1)
+
+        result = agent.run()
+
+        assert result.success is False
+        assert len(self._gh_comment_calls(mock_subprocess)) == 0
+
+    def test_comment_failure_prevents_mark_processed(
+        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+    ):
+        """Comment posting fails → _mark_processed NOT called, agent retries next cycle."""
+        agent = make_agent(
+            tmp_path,
+            required_labels=["requirements"],
+            post_output_as_comment=True,
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "pm.state.json"
+        monkeypatch.setattr(
+            type(agent), "_state_path", property(lambda self: state_path)
+        )
+
+        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
+        mock_subprocess.add_response(
+            "issue view",
+            stdout=issue_view_response(number=42, labels=["requirements"]),
+        )
+        # Comment posting fails
+        mock_subprocess.add_response("issue comment", returncode=1, stderr="API error")
+
+        capture_popen(
+            stdout_lines=[result_event("## Requirements (Draft)\n\nContent")],
+            returncode=0,
+        )
+
+        result = agent.run()
+
+        assert result.success is False
+        # Verify issue was NOT marked as processed
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+        processed = state.get("processed", {})
+        assert "42" not in processed
+
+    def test_post_output_disabled_does_not_post(
+        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+    ):
+        """post_output_as_comment=False (default) → no gh issue comment call."""
+        agent = make_agent(
+            tmp_path,
+            required_labels=["requirements"],
+            post_output_as_comment=False,
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+
+        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
+        mock_subprocess.add_response(
+            "issue view",
+            stdout=issue_view_response(number=42, labels=["requirements"]),
+        )
+
+        capture_popen(stdout_lines=[result_event("Task completed")], returncode=0)
+
+        result = agent.run()
+
+        assert result.success is True
+        assert len(self._gh_comment_calls(mock_subprocess)) == 0

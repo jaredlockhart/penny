@@ -45,6 +45,7 @@ def make_agent(
     allowed_tools: list[str] | None = None,
     github_app: MagicMock | None = None,
     trusted_users: set[str] | None = TRUSTED_USERS,
+    post_output_as_comment: bool = False,
 ) -> Agent:
     """Create an agent with a temporary prompt file for integration testing."""
     agent_dir = tmp_path / "penny_team" / name
@@ -62,6 +63,7 @@ def make_agent(
         required_labels=required_labels,
         github_app=github_app,
         trusted_users=trusted_users,
+        post_output_as_comment=post_output_as_comment,
     )
     agent.prompt_path = agent_dir / "CLAUDE.md"
     return agent

@@ -73,6 +73,7 @@ class Agent:
         required_labels: list[str] | None = None,
         github_app: GitHubApp | None = None,
         trusted_users: set[str] | None = None,
+        post_output_as_comment: bool = False,
     ):
         self.name = name
         self.prompt_path = AGENTS_DIR / name / PROMPT_FILENAME
@@ -84,6 +85,7 @@ class Agent:
         self.required_labels = required_labels
         self.github_app = github_app
         self.trusted_users = trusted_users
+        self.post_output_as_comment = post_output_as_comment
         self.last_run: datetime | None = None
         self.run_count = 0
         self._process: subprocess.Popen | None = None
@@ -158,6 +160,26 @@ class Agent:
         state = self._load_full_state()
         state.processed[str(issue_number)] = datetime.now().isoformat()
         self._save_full_state(state)
+
+    def _post_comment(self, issue_number: int, body: str) -> bool:
+        """Post a comment on a GitHub issue via gh CLI.
+
+        Returns True if the comment was posted successfully.
+        """
+        result = subprocess.run(
+            [GH_CLI, "issue", "comment", str(issue_number), "--body", body],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=self._get_env(),
+        )
+        if result.returncode != 0:
+            logger.error(
+                f"[{self.name}] Failed to post comment on issue #{issue_number}: {result.stderr}"
+            )
+            return False
+        logger.info(f"[{self.name}] Posted comment on issue #{issue_number}")
+        return True
 
     def _fetch_issue_timestamps(self) -> dict[str, str]:
         """Fetch updatedAt timestamps for all issues matching required labels.
@@ -369,7 +391,14 @@ class Agent:
         success, result_text = self._execute_claude(prompt)
 
         if success and selected_issue is not None:
-            self._mark_processed(selected_issue.number)
+            if (
+                self.post_output_as_comment
+                and result_text
+                and not self._post_comment(selected_issue.number, result_text)
+            ):
+                success = False
+            if success:
+                self._mark_processed(selected_issue.number)
 
         duration = (datetime.now() - start).total_seconds()
         self.last_run = datetime.now()

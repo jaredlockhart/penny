@@ -136,6 +136,10 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - **Unit tests only for pure utility functions**: CODEOWNERS parsing, config loading, and similar pure functions with many edge cases are acceptable as unit tests
 - **Mock at system boundaries**: Mock external services (Ollama, Signal, GitHub CLI, Claude CLI) but let internal code execute end-to-end
 
+## Design Principles
+
+- **Python-space over model-space**: When an action can be handled deterministically in Python (e.g., posting a comment, creating a label, validating output), do it in the orchestrator rather than relying on the model to use the right tool. Model-space logic is non-deterministic and harder to test. Reserve model-space for tasks that genuinely need reasoning (writing specs, analyzing code, generating responses).
+
 ## Code Style
 
 - **Pydantic for all structured data**: All structured data (API payloads, config, internal messages) must be brokered through Pydantic models — no raw dicts
