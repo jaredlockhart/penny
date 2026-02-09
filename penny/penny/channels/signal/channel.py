@@ -8,6 +8,7 @@ import logging
 import re
 import socket
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 import httpx
 import websockets
@@ -60,6 +61,62 @@ class SignalChannel(MessageChannel):
     def sender_id(self) -> str:
         """Get the identifier for outgoing messages (the Signal phone number)."""
         return self.phone_number
+
+    async def validate_connectivity(self) -> None:
+        """
+        Validate that the Signal API is reachable.
+
+        Raises:
+            ConnectionError: If the Signal API hostname cannot be resolved or is unreachable
+        """
+        try:
+            parsed = urlparse(self.api_url)
+            hostname = parsed.hostname or parsed.netloc
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+            if not hostname:
+                raise ValueError(f"Invalid Signal API URL: {self.api_url}")
+
+            # Test DNS resolution
+            logger.info("Validating Signal API connectivity: %s", self.api_url)
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.getaddrinfo(
+                    hostname, port, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM
+                )
+            except socket.gaierror as e:
+                raise ConnectionError(
+                    f"Cannot resolve Signal API hostname '{hostname}'. "
+                    f"Please check SIGNAL_API_URL in your .env file. "
+                    f"In Docker Compose, use 'http://signal-api:8080' not 'http://localhost:8080'. "
+                    f"Original error: {e}"
+                ) from e
+
+            # Test HTTP connectivity
+            try:
+                response = await self.http_client.get(f"{self.api_url}/v1/about", timeout=5.0)
+                response.raise_for_status()
+                logger.info("Signal API connectivity validated successfully")
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                raise ConnectionError(
+                    f"Cannot connect to Signal API at {self.api_url}. "
+                    f"Please ensure signal-cli-rest-api is running and accessible. "
+                    f"Original error: {e}"
+                ) from e
+            except httpx.HTTPStatusError as e:
+                # 404 is expected if the /v1/about endpoint doesn't exist - that's fine
+                if e.response.status_code == 404:
+                    logger.info("Signal API is reachable (HTTP %d)", e.response.status_code)
+                else:
+                    raise ConnectionError(
+                        f"Signal API returned error status {e.response.status_code}: {e}"
+                    ) from e
+
+        except (ValueError, ConnectionError):
+            # Re-raise these specific errors
+            raise
+        except Exception as e:
+            raise ConnectionError(f"Failed to validate Signal API connectivity: {e}") from e
 
     async def listen(self) -> None:
         """Listen for incoming messages via WebSocket."""
