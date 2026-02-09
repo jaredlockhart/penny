@@ -247,17 +247,25 @@ class TestWorkerFlow:
     def test_in_review_all_passing_no_feedback_skips(
         self, tmp_path, mock_subprocess, capture_popen, monkeypatch
     ):
-        """In-review, CI passing, no conflicts, no feedback, bot last → skip.
+        """In-review, CI passing, no conflicts, no feedback, already processed → skip.
 
-        Flow: everything looks good, bot has the last comment, no external
-        signals → pick_actionable_issue returns None → agent skips.
+        Flow: everything looks good, agent already processed this issue,
+        no new human comments, no external signals
+        → pick_actionable_issue returns None → agent skips.
         This represents a PR waiting for human review.
         """
         agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "worker.state.json"
         monkeypatch.setattr(
-            type(agent), "_state_path", property(lambda self: tmp_path / "worker.state.json")
+            type(agent), "_state_path", property(lambda self: state_path)
         )
+
+        # Pre-populate: worker already processed issue 42
+        state_path.write_text(json.dumps({
+            "timestamps": {},
+            "processed": {"42": "2024-01-09T00:00:00Z"},
+        }))
 
         mock_subprocess.add_response(
             "issue list",

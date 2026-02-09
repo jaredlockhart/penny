@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from penny_team.constants import (
     APP_PREFIX,
     BLOCK_TEXT,
@@ -34,6 +36,20 @@ PROJECT_ROOT = AGENTS_DIR.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "penny-team"
 
 logger = logging.getLogger(__name__)
+
+
+class AgentState(BaseModel):
+    """Persisted state for an agent, stored as JSON on disk.
+
+    timestamps: issue updatedAt values for fast has_work() change detection.
+    processed: per-agent record of when each issue was last processed,
+               keyed by issue number (str). Used to distinguish "this agent
+               handled it" from "another agent using the same bot identity
+               handled it".
+    """
+
+    timestamps: dict[str, str] = {}
+    processed: dict[str, str] = {}
 
 
 @dataclass
@@ -104,17 +120,44 @@ class Agent:
     def _state_path(self) -> Path:
         return DATA_DIR / f"{self.name}.state.json"
 
+    def _load_full_state(self) -> AgentState:
+        """Load full agent state from disk.
+
+        Handles backward compat with old flat format (plain timestamp dict).
+        """
+        try:
+            data = json.loads(self._state_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return AgentState()
+        if "timestamps" not in data:
+            # Old format: flat dict of {number: updatedAt}
+            return AgentState(timestamps=data)
+        return AgentState.model_validate(data)
+
+    def _save_full_state(self, state: AgentState) -> None:
+        """Persist full agent state to disk."""
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._state_path.write_text(state.model_dump_json())
+
     def _load_state(self) -> dict[str, str]:
         """Load saved issue timestamps from disk."""
-        try:
-            return json.loads(self._state_path.read_text())
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
+        return self._load_full_state().timestamps
 
     def _save_state(self, timestamps: dict[str, str]) -> None:
         """Persist issue timestamps to disk."""
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(json.dumps(timestamps))
+        state = self._load_full_state()
+        state.timestamps = timestamps
+        self._save_full_state(state)
+
+    def _load_processed(self) -> dict[str, str]:
+        """Load per-agent processed issue timestamps."""
+        return self._load_full_state().processed
+
+    def _mark_processed(self, issue_number: int) -> None:
+        """Record that this agent processed an issue."""
+        state = self._load_full_state()
+        state.processed[str(issue_number)] = datetime.now().isoformat()
+        self._save_full_state(state)
 
     def _fetch_issue_timestamps(self) -> dict[str, str]:
         """Fetch updatedAt timestamps for all issues matching required labels.
@@ -205,7 +248,7 @@ class Agent:
                 env=self._get_env(),
             )
             enrich_issues_with_pr_status(issues, env=self._get_env())
-            issue = pick_actionable_issue(issues, self._bot_logins)
+            issue = pick_actionable_issue(issues, self._bot_logins, self._load_processed())
         except Exception:
             # Fail open — if anything goes wrong, let the agent run
             return True
@@ -280,6 +323,7 @@ class Agent:
         start = datetime.now()
 
         prompt = self.prompt_path.read_text()
+        selected_issue = None
 
         # Pre-fetch, filter, and pick one actionable issue
         if self.required_labels:
@@ -298,7 +342,7 @@ class Agent:
 
             enrich_issues_with_pr_status(all_issues, env=self._get_env())
 
-            issue = pick_actionable_issue(all_issues, self._bot_logins)
+            issue = pick_actionable_issue(all_issues, self._bot_logins, self._load_processed())
 
             if issue is None:
                 duration = (datetime.now() - start).total_seconds()
@@ -319,9 +363,13 @@ class Agent:
                     timestamp=start,
                 )
 
+            selected_issue = issue
             prompt += format_issues_for_prompt([issue])
 
         success, result_text = self._execute_claude(prompt)
+
+        if success and selected_issue is not None:
+            self._mark_processed(selected_issue.number)
 
         duration = (datetime.now() - start).total_seconds()
         self.last_run = datetime.now()

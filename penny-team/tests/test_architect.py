@@ -104,19 +104,27 @@ class TestArchitectFlow:
         assert "Detailed Specification" in prompt
         assert "dateparser" in prompt
 
-    def test_bot_last_comment_on_spec_skips(
+    def test_already_processed_no_feedback_skips(
         self, tmp_path, mock_subprocess, capture_popen, monkeypatch
     ):
-        """Bot posted spec, no user feedback → skip.
+        """Architect already processed issue, no new human feedback → skip.
 
-        Flow: bot has last comment → pick_actionable_issue returns None
+        Flow: architect previously processed issue 42, bot has last comment,
+        no human comments since → pick_actionable_issue returns None
         → agent returns "No actionable issues" → Claude CLI not invoked.
         """
         agent = make_agent(tmp_path, name="architect", required_labels=["specification"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "arch.state.json"
         monkeypatch.setattr(
-            type(agent), "_state_path", property(lambda self: tmp_path / "arch.state.json")
+            type(agent), "_state_path", property(lambda self: state_path)
         )
+
+        # Pre-populate: architect already processed issue 42
+        state_path.write_text(json.dumps({
+            "timestamps": {},
+            "processed": {"42": "2024-01-05T00:00:00Z"},
+        }))
 
         mock_subprocess.add_response(
             "issue list",

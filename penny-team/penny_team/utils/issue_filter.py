@@ -175,15 +175,20 @@ def _fetch_and_filter_issue(
 def pick_actionable_issue(
     issues: list[FilteredIssue],
     bot_logins: set[str] | None = None,
+    processed_at: dict[str, str] | None = None,
 ) -> FilteredIssue | None:
     """Pick the first issue that needs agent attention.
 
-    An issue needs attention if it has no trusted comments, or if the
-    last trusted comment is NOT from the bot. Issues where the bot has
-    the last word are waiting for human feedback and should be skipped.
+    Uses per-agent processed timestamps to determine actionability.
+    An issue needs attention if this agent has never processed it, or
+    if a human has commented since the agent last processed it.
 
-    bot_logins should include both the app slug and slug[bot] forms,
-    since GitHub uses different formats in different API responses.
+    processed_at maps issue number (str) to ISO timestamp of when
+    this specific agent last processed that issue. This allows agents
+    sharing the same bot identity to independently track their work.
+
+    bot_logins is used to distinguish human comments from bot comments
+    when checking for new feedback after processing.
 
     When bot_logins is None (no GitHub App), returns the first issue.
     """
@@ -206,18 +211,26 @@ def pick_actionable_issue(
         if issue.has_review_feedback:
             return issue
 
-        if not issue.trusted_comments:
-            if Label.IN_REVIEW in issue.labels:
+        issue_key = str(issue.number)
+        last_processed = (processed_at or {}).get(issue_key)
+
+        if last_processed is None:
+            # Agent has never processed this issue
+            if not issue.trusted_comments and Label.IN_REVIEW in issue.labels:
                 # in-review with no issue comments — PR already created,
                 # and no CI/merge/review issues detected above. Waiting
                 # for human review.
                 continue
-            # New issue with no comments — needs initial processing
+            # New to this agent — needs processing
             return issue
 
-        last_comment = issue.trusted_comments[-1]
-        if last_comment.author not in bot_logins:
-            # Human commented last — needs agent response
+        # Agent has processed this issue before.
+        # Check if a human has commented since we last processed it.
+        has_new_human_comment = any(
+            c.created_at > last_processed and c.author not in bot_logins
+            for c in issue.trusted_comments
+        )
+        if has_new_human_comment:
             return issue
 
     # All issues handled or waiting for human action — nothing to do
