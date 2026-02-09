@@ -92,8 +92,16 @@ class SignalChannel(MessageChannel):
                             logger.warning("Failed to parse message JSON: %s", e)
                             continue
 
+            except (
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.ConnectionClosedOK,
+            ) as e:
+                logger.info("WebSocket connection closed: %s - reconnecting in 5 seconds...", e)
+                if self._running:
+                    await asyncio.sleep(5)
+
             except websockets.exceptions.WebSocketException as e:
-                logger.error("WebSocket error: %s", e)
+                logger.error("Unexpected WebSocket error: %s", e)
                 if self._running:
                     logger.info("Reconnecting in 5 seconds...")
                     await asyncio.sleep(5)
