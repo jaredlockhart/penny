@@ -10,6 +10,10 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Set working directory
 WORKDIR /penny
 
+# Accept build arg for git commit (set at build time)
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=${GIT_COMMIT}
+
 # Copy dependency files and install dependencies (cached layer)
 COPY pyproject.toml ./
 RUN uv pip install --system -r pyproject.toml --group dev

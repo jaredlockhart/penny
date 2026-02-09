@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -83,18 +84,20 @@ class DebugCommand(Command):
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Execute debug command."""
-        # Git commit
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            commit = result.stdout.strip() if result.returncode == 0 else "unknown"
-        except Exception as e:
-            logger.warning("Failed to get git commit: %s", e)
-            commit = "unknown"
+        # Git commit - try environment variable first (set at build time), then git command
+        commit = os.environ.get("GIT_COMMIT")
+        if not commit:
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                commit = result.stdout.strip() if result.returncode == 0 else "unknown"
+            except Exception as e:
+                logger.debug("Failed to get git commit: %s", e)
+                commit = "unknown"
 
         # Uptime
         uptime = datetime.now() - context.start_time
@@ -140,7 +143,8 @@ class DebugCommand(Command):
 
     def _get_agent_status(self) -> str:
         """Get agent run status from state files."""
-        agents_dir = Path("data/agents")
+        # Agent state files are in /penny/data/agents (mounted from host data/)
+        agents_dir = Path("/penny/data/agents")
         if not agents_dir.exists():
             return "unknown (no state directory)"
 
