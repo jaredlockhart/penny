@@ -65,7 +65,7 @@ async def test_startup_announcement_with_commit(
 async def test_startup_announcement_fallback_no_git(
     signal_server, test_config, mock_ollama, running_penny, monkeypatch
 ):
-    """Test that Penny falls back to 'i just restarted!' when git commit message unavailable."""
+    """Test that Penny falls back to 'I just restarted!' when git commit message unavailable."""
     # First run: populate database
     mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
 
@@ -98,7 +98,7 @@ async def test_startup_announcement_fallback_no_git(
         )
         announcement = signal_server.outgoing_messages[0]
         message = announcement["message"]
-        assert message == "👋 i just restarted!", f"Expected fallback message, got: {message}"
+        assert message == "👋 I just restarted!", f"Expected fallback message, got: {message}"
 
 
 @pytest.mark.asyncio
@@ -143,7 +143,7 @@ async def test_startup_announcement_fallback_llm_error(
         )
         announcement = signal_server.outgoing_messages[0]
         message = announcement["message"]
-        assert message == "👋 i just restarted!", f"Expected fallback message, got: {message}"
+        assert message == "👋 I just restarted!", f"Expected fallback message, got: {message}"
 
 
 @pytest.mark.asyncio
