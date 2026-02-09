@@ -98,20 +98,27 @@ class TestProductManagerFlow:
         assert "Requirements (Draft)" in prompt
         assert "cancelling reminders" in prompt
 
-    def test_bot_last_comment_skips(
+    def test_already_processed_no_new_feedback_skips(
         self, tmp_path, mock_subprocess, capture_popen, monkeypatch
     ):
-        """Issue where bot has the last comment → no actionable issues → skip.
+        """Issue already processed by this agent with no new human feedback → skip.
 
-        Flow: bot posted requirements, no user feedback since
-        → pick_actionable_issue returns None → agent returns early
-        → Claude CLI is NOT invoked.
+        Flow: agent previously processed issue 42, bot has last comment,
+        no human comments since → pick_actionable_issue returns None
+        → agent returns early → Claude CLI is NOT invoked.
         """
         agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "pm.state.json"
         monkeypatch.setattr(
-            type(agent), "_state_path", property(lambda self: tmp_path / "pm.state.json")
+            type(agent), "_state_path", property(lambda self: state_path)
         )
+
+        # Pre-populate: agent already processed issue 42
+        state_path.write_text(json.dumps({
+            "timestamps": {},
+            "processed": {"42": "2024-01-02T00:00:00Z"},
+        }))
 
         mock_subprocess.add_response(
             "issue list",
@@ -140,15 +147,16 @@ class TestProductManagerFlow:
         assert result.output == "No actionable issues"
         assert len(calls) == 0
 
-    def test_skip_saves_state_success_does_not(
+    def test_skip_saves_timestamps_success_saves_only_processed(
         self, tmp_path, mock_subprocess, capture_popen, monkeypatch
     ):
-        """State is saved when agent skips (no actionable issues) but NOT after
-        a successful Claude CLI run.
+        """Timestamp state is saved when agent skips but NOT after success.
+        Processed state IS saved after success (to track per-agent processing).
 
-        Bug fix: state is only saved when pick_actionable_issue() returns None
-        (all issues handled). This ensures has_work() keeps returning True until
-        the entire queue is burned down across multiple cycles.
+        Timestamps are only saved when pick_actionable_issue() returns None
+        (all issues handled). This ensures has_work() keeps returning True
+        until the queue is burned down. But processed state is saved after
+        each successful run so the agent knows which issues it has handled.
         """
         agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
@@ -157,7 +165,7 @@ class TestProductManagerFlow:
             type(agent), "_state_path", property(lambda self: state_path)
         )
 
-        # --- Run 1: actionable issue → Claude runs, state NOT saved ---
+        # --- Run 1: actionable issue → Claude runs ---
         mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
         mock_subprocess.add_response(
             "issue view",
@@ -170,4 +178,7 @@ class TestProductManagerFlow:
         agent.run()
 
         assert len(calls) == 1  # Claude CLI was called
-        assert not state_path.exists()  # State NOT saved after success
+        # Processed state IS saved, but timestamps are NOT
+        state = json.loads(state_path.read_text())
+        assert "42" in state["processed"]
+        assert state["timestamps"] == {}

@@ -199,6 +199,16 @@ class MockPopen:
 # --- Fixtures ---
 
 
+@pytest.fixture(autouse=True)
+def isolate_state_dir(tmp_path, monkeypatch):
+    """Isolate agent state files to tmp_path for all tests.
+
+    Prevents _mark_processed and _save_state from writing to the real
+    data directory, which would leak state between tests.
+    """
+    monkeypatch.setattr("penny_team.base.DATA_DIR", tmp_path)
+
+
 @pytest.fixture
 def mock_subprocess(monkeypatch):
     """Monkeypatch subprocess.run with a MockSubprocess instance.

@@ -54,18 +54,27 @@ class TestStateManagement:
     ):
         """State saved after skip (no actionable issues) makes has_work() return False.
 
-        Flow: run() with bot-last-comment → saves state → has_work() with
-        same timestamps → returns False (no changes).
+        Flow: agent already processed issue 42, bot has last comment,
+        no new human comments → agent skips → saves timestamps state
+        → has_work() with same timestamps → returns False.
         """
         agent = make_agent(tmp_path, required_labels=["requirements"])
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "state.json"
         monkeypatch.setattr(
-            type(agent), "_state_path", property(lambda self: tmp_path / "state.json")
+            type(agent), "_state_path", property(lambda self: state_path)
         )
+
+        # Pre-populate: agent already processed issue 42
+        state_path.write_text(json.dumps({
+            "timestamps": {},
+            "processed": {"42": "2024-01-02T00:00:00Z"},
+        }))
 
         issue_ts = json.dumps([{"number": 42, "updatedAt": "2024-01-01T00:00:00Z"}])
 
-        # run() — bot has last comment, agent skips and saves state
+        # run() — agent already processed, bot has last comment, no new
+        # human comments → skips and saves timestamps state
         mock_subprocess.add_response("issue list", stdout=issue_ts)
         mock_subprocess.add_response(
             "issue view",
@@ -115,6 +124,113 @@ class TestStateManagement:
         )
 
         assert agent.has_work() is True
+
+    def test_old_state_format_backward_compat(self, tmp_path, mock_subprocess, monkeypatch):
+        """Old flat state format is handled by backward compat migration."""
+        state_path = tmp_path / "old.json"
+        # Old format: flat dict of {number: timestamp}
+        state_path.write_text(json.dumps({"1": "2024-01-01T00:00:00Z"}))
+        agent = make_agent(tmp_path, required_labels=["requirements"])
+        monkeypatch.setattr(type(agent), "_state_path", property(lambda self: state_path))
+        mock_subprocess.add_response(
+            "issue list",
+            stdout=json.dumps([{"number": 1, "updatedAt": "2024-01-01T00:00:00Z"}]),
+        )
+
+        # Old format should be read correctly — timestamps unchanged → no work
+        assert agent.has_work() is False
+
+
+# =============================================================================
+# Cross-agent actionability — different agent's bot comment doesn't block
+# =============================================================================
+
+
+class TestCrossAgentActionability:
+    def test_other_agent_bot_comment_does_not_block(
+        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+    ):
+        """Issue with bot comment from another agent → still actionable.
+
+        Bug fix: all agents share the same bot identity. When the PM
+        comments on an issue and the label moves to 'specification',
+        the architect should still process it — the PM's bot comment
+        should not cause the architect to skip.
+        """
+        agent = make_agent(tmp_path, name="architect", required_labels=["specification"])
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+
+        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
+        mock_subprocess.add_response(
+            "issue view",
+            stdout=issue_view_response(
+                number=42,
+                labels=["specification"],
+                comments=[
+                    {
+                        "author": {"login": BOT_LOGIN},
+                        "body": "*[Product Manager Agent]*\n\n## Requirements",
+                        "createdAt": "2024-01-01T00:00:00Z",
+                    },
+                ],
+            ),
+        )
+        mock_subprocess.add_response("pr list", stdout="[]")
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        result = agent.run()
+
+        assert result.success is True
+        assert len(calls) == 1  # Claude CLI WAS called
+        prompt = extract_prompt(calls)
+        assert "Issue #42" in prompt
+
+    def test_same_agent_processed_with_new_human_comment_is_actionable(
+        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+    ):
+        """Issue processed by this agent, then human commented → actionable again."""
+        agent = make_agent(tmp_path, name="architect", required_labels=["specification"])
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "arch.state.json"
+        monkeypatch.setattr(
+            type(agent), "_state_path", property(lambda self: state_path)
+        )
+
+        # Agent processed issue 42 at T1
+        state_path.write_text(json.dumps({
+            "timestamps": {},
+            "processed": {"42": "2024-01-02T00:00:00Z"},
+        }))
+
+        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
+        mock_subprocess.add_response(
+            "issue view",
+            stdout=issue_view_response(
+                number=42,
+                labels=["specification"],
+                comments=[
+                    {
+                        "author": {"login": BOT_LOGIN},
+                        "body": "## Detailed Specification\n\nPosted spec.",
+                        "createdAt": "2024-01-02T00:00:00Z",
+                    },
+                    {
+                        "author": {"login": "alice"},
+                        "body": "Can you add error handling details?",
+                        "createdAt": "2024-01-03T00:00:00Z",
+                    },
+                ],
+            ),
+        )
+        mock_subprocess.add_response("pr list", stdout="[]")
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        result = agent.run()
+
+        assert result.success is True
+        assert len(calls) == 1  # Claude CLI WAS called (human commented after processing)
 
 
 # =============================================================================
