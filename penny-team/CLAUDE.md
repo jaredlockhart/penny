@@ -2,7 +2,7 @@
 
 ## Overview
 
-Python-based orchestrator that manages autonomous Claude CLI agents. Agents process work from GitHub Issues on a schedule, using labels as a state machine.
+Python-based orchestrator that manages autonomous Claude CLI agents. Agents process work from GitHub Issues on a schedule, using labels as a state machine. A Monitor Agent watches production logs for errors and files bug issues automatically.
 
 ## Directory Structure
 
@@ -12,6 +12,9 @@ penny-team/
     orchestrator.py     — Agent lifecycle manager, runs on schedule
     base.py             — Agent base class: wraps Claude CLI, has_work() pre-check
     constants.py        — Shared constants: Label enum, external state config
+    monitor.py          — MonitorAgent: log file reader, error extraction, bug issue filing
+    monitor/
+      CLAUDE.md         — Monitor agent prompt (error analysis, dedup, issue creation)
     utils/
       github_app.py     — GitHub App JWT token generation
       codeowners.py     — Parses .github/CODEOWNERS for trusted usernames
@@ -31,6 +34,7 @@ penny-team/
     test_product_manager.py  — Product Manager agent flow tests (integration)
     test_architect.py        — Architect agent flow tests (integration)
     test_worker.py           — Worker agent flow + PR status + bug fix tests (integration + unit)
+    test_monitor.py          — Monitor agent flow + error extraction tests (integration + unit)
 
   Tests strongly prefer integration style — test through agent.run() / has_work()
   entry points with mocked subprocess (gh CLI, Claude CLI). Unit tests are only
@@ -47,6 +51,7 @@ penny-team/
 - **Product Manager**: 300s interval, 600s timeout, label: `requirements`
 - **Architect**: 300s interval, 600s timeout, label: `specification`
 - **Worker**: 300s interval, 1800s timeout, labels: `in-progress`, `in-review`, `bug`
+- **Monitor**: 300s interval, 600s timeout, no labels (reads log files)
 
 ## GitHub Labels Workflow
 
@@ -92,9 +97,20 @@ Worker agent automatically detects and fixes failing CI and merge conflicts on i
 - Worker priority: merge conflicts (rebase) > failing CI (fix) > review comments > bugs > features
 - Fail-open: if `gh` fails, worker proceeds normally without CI/merge info
 
+## Log Monitoring
+
+Monitor agent automatically detects errors in penny's production logs and files bug issues:
+- `penny_team/monitor.py`: `MonitorAgent` subclass that reads `data/penny.log` instead of GitHub issues
+- Tracks byte offset in `data/penny-team/monitor.state.json` to only process new log content
+- Python code extracts ERROR/CRITICAL lines and tracebacks from new content
+- Claude CLI analyzes errors, deduplicates against existing bug issues, and creates new issues
+- First run reads last 100KB of log to avoid processing entire history
+- Log rotation detected by file size < saved offset (resets to 0)
+- Filed issues get the `bug` label, which the Worker agent picks up via its bug fix workflow
+
 ## Docker Setup
 
-- Agents run in Docker containers (pm, architect, and worker services in `docker-compose.yml`) with `profiles: [team]` — only started with `make up`
+- Agents run in Docker containers (pm, architect, worker, and monitor services in `docker-compose.yml`) with `profiles: [team]` — only started with `make up`
 - Repo is snapshotted into the Docker image at build time (not volume-mounted) — agent edits don't bleed into the host working tree
 - Only `data/` is volume-mounted for shared state files and logs (`data/logs/`)
 - `PYTHONDONTWRITEBYTECODE=1` prevents `__pycache__` generation in containers

@@ -10,16 +10,16 @@ from penny_team.orchestrator import get_agents, load_github_app, save_agent_log
 
 
 class TestGetAgents:
-    def test_returns_three_agents(self, project_root, monkeypatch):
+    def test_returns_four_agents(self, project_root, monkeypatch):
         monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
         agents = get_agents()
-        assert len(agents) == 3
+        assert len(agents) == 4
 
     def test_agent_names(self, project_root, monkeypatch):
         monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
         agents = get_agents()
         names = {a.name for a in agents}
-        assert names == {"product-manager", "architect", "worker"}
+        assert names == {"product-manager", "architect", "worker", "monitor"}
 
     def test_agent_labels(self, project_root, monkeypatch):
         monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
@@ -28,6 +28,7 @@ class TestGetAgents:
         assert labels_by_name["product-manager"] == ["requirements"]
         assert labels_by_name["architect"] == ["specification"]
         assert labels_by_name["worker"] == ["in-progress", "in-review", "bug"]
+        assert labels_by_name["monitor"] is None
 
     def test_agent_intervals(self, project_root, monkeypatch):
         monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
@@ -36,6 +37,14 @@ class TestGetAgents:
         assert intervals["product-manager"] == 300
         assert intervals["architect"] == 300
         assert intervals["worker"] == 300
+        assert intervals["monitor"] == 300
+
+    def test_monitor_has_no_required_labels(self, project_root, monkeypatch):
+        """Monitor reads logs, not issues, so it has no required_labels."""
+        monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
+        agents = get_agents()
+        monitor = [a for a in agents if a.name == "monitor"][0]
+        assert monitor.required_labels is None
 
     def test_worker_has_longer_timeout(self, project_root, monkeypatch):
         monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)

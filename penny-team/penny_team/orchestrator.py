@@ -27,6 +27,7 @@ from pathlib import Path
 from penny_team.base import Agent
 from penny_team.constants import (
     AGENT_ARCHITECT,
+    AGENT_MONITOR,
     AGENT_PM,
     AGENT_WORKER,
     ARCHITECT_INTERVAL,
@@ -36,6 +37,8 @@ from penny_team.constants import (
     ENV_FILENAME,
     ENV_INSTALL_ID,
     ENV_KEY_PATH,
+    MONITOR_INTERVAL,
+    MONITOR_TIMEOUT,
     ORCHESTRATOR_LOG,
     PM_INTERVAL,
     PM_TIMEOUT,
@@ -43,6 +46,7 @@ from penny_team.constants import (
     WORKER_TIMEOUT,
     Label,
 )
+from penny_team.monitor import MonitorAgent
 from penny_team.utils.codeowners import parse_codeowners
 from penny_team.utils.github_app import GitHubApp
 
@@ -118,6 +122,13 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             interval_seconds=WORKER_INTERVAL,
             timeout_seconds=WORKER_TIMEOUT,
             required_labels=[Label.IN_PROGRESS, Label.IN_REVIEW, Label.BUG],
+            github_app=github_app,
+            trusted_users=trusted,
+        ),
+        MonitorAgent(
+            name=AGENT_MONITOR,
+            interval_seconds=MONITOR_INTERVAL,
+            timeout_seconds=MONITOR_TIMEOUT,
             github_app=github_app,
             trusted_users=trusted,
         ),
