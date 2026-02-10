@@ -52,8 +52,6 @@ Start every response with `*[Product Manager Agent]*` on its own line.
 
 ## Context About Penny
 
-Refer to `CLAUDE.md` for full technical context. Key points:
-
 - **Architecture**: Agent-based system with specialized agents (MessageAgent, SummarizeAgent, FollowupAgent, ProfileAgent, DiscoveryAgent)
 - **Platforms**: Signal and Discord (could expand to Slack, Telegram, etc.)
 - **Stack**: Python 3.12, asyncio, SQLite, Ollama for LLM, Perplexity for search

@@ -277,6 +277,12 @@ class Agent:
             "--verbose",
             "--output-format",
             "stream-json",
+            # Prevent Claude CLI from auto-loading CLAUDE.md files from the
+            # working directory.  Agent prompts are self-contained; leaking the
+            # project-level CLAUDE.md causes agents to pick up instructions
+            # meant for human developers (e.g. "use gh directly").
+            "--system-prompt",
+            "",
         ]
         if self.allowed_tools is None:
             # Full tool access (worker, monitor)
@@ -435,12 +441,18 @@ class Agent:
         success, result_text = self._execute_claude(prompt)
 
         if success and selected_issue is not None:
-            if (
-                self.post_output_as_comment
-                and result_text
-                and not self._post_comment(selected_issue.number, result_text)
-            ):
-                success = False
+            if self.post_output_as_comment:
+                if result_text:
+                    if not self._post_comment(selected_issue.number, result_text):
+                        success = False
+                else:
+                    # Agent was supposed to comment but produced no output.
+                    # Don't mark as processed — the issue should be retried.
+                    logger.warning(
+                        f"[{self.name}] Empty output for issue #{selected_issue.number}, "
+                        f"will not mark as processed"
+                    )
+                    success = False
             if success:
                 self._mark_processed(selected_issue.number)
 

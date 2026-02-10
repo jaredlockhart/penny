@@ -239,6 +239,17 @@ class TestBuildCommand:
         assert "--verbose" in cmd
         assert "stream-json" in cmd
 
+    def test_system_prompt_override_prevents_project_context(self, tmp_path, capture_popen):
+        """run() passes --system-prompt '' to prevent CLAUDE.md auto-loading."""
+        agent = make_agent(tmp_path)
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        agent.run()
+
+        cmd = calls[0][0][0]
+        idx = cmd.index("--system-prompt")
+        assert cmd[idx + 1] == ""
+
     def test_model_flag(self, tmp_path, capture_popen):
         """run() passes --model when agent has a model configured."""
         agent = make_agent(tmp_path, model="claude-sonnet-4-5-20250929")
@@ -633,6 +644,41 @@ class TestPostOutputAsComment:
 
         assert result.success is False
         # Verify issue was NOT marked as processed
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+        processed = state.get("processed", {})
+        assert "42" not in processed
+
+    def test_empty_output_not_marked_processed(
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
+    ):
+        """Empty result_text with post_output_as_comment → not marked processed."""
+        agent = make_agent(
+            tmp_path,
+            required_labels=["requirements"],
+            post_output_as_comment=True,
+            github_api=mock_github_api,
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "pm.state.json"
+        monkeypatch.setattr(
+            type(agent), "_state_path", property(lambda self: state_path)
+        )
+
+        mock_github_api.set_issues("requirements", make_issue_list_items((42, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("requirements", [
+            make_issue_detail(number=42, labels=["requirements"]),
+        ])
+
+        # Claude returns success but empty output (model wasted turns on tool calls)
+        capture_popen(stdout_lines=[result_event("")], returncode=0)
+
+        result = agent.run()
+
+        assert result.success is False
+        # No comment posted
+        comment_calls = [c for c in mock_github_api.calls if c[0] == "comment_issue"]
+        assert len(comment_calls) == 0
+        # Issue NOT marked as processed — will be retried next cycle
         state = json.loads(state_path.read_text()) if state_path.exists() else {}
         processed = state.get("processed", {})
         assert "42" not in processed

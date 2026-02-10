@@ -43,7 +43,7 @@ Start every response with `*[Architect Agent]*` on its own line.
 
 ## Context About Penny
 
-Refer to `CLAUDE.md` for full technical context. Key points:
+Key points:
 
 - **Architecture**: Agent-based system with specialized agents (MessageAgent, SummarizeAgent, FollowupAgent, ProfileAgent, DiscoveryAgent)
 - **Platforms**: Signal and Discord (could expand to Slack, Telegram, etc.)
