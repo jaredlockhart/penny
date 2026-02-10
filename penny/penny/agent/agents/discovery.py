@@ -63,11 +63,21 @@ class DiscoveryAgent(Agent):
         random_like = random.choice(likes)
         logger.info("Discovering something new for user %s about: %s", recipient, random_like.topic)
 
-        # Use the random like as context for discovery
+        # Build context with likes and dislikes
+        context_parts = [f"User likes: {random_like.topic}"]
+
+        # Get user's dislikes to exclude from search
+        dislikes = self.db.get_preferences(recipient, PreferenceType.DISLIKE)
+        if dislikes:
+            dislike_topics = [d.topic for d in dislikes]
+            context_parts.append(
+                f"Don't include any of the following in your search: {', '.join(dislike_topics)}"
+            )
+
         history = [
             (
                 MessageRole.SYSTEM.value,
-                f"User likes: {random_like.topic}",
+                "\n".join(context_parts),
             )
         ]
         response = await self.run(prompt=DISCOVERY_PROMPT, history=history)

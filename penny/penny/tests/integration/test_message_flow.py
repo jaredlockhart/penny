@@ -565,3 +565,158 @@ async def test_name_not_redacted_when_user_says_it(
         assert len(search_logs) >= 1, "Search should have been logged"
         logged_query = search_logs[0].query
         assert "Test User" in logged_query, "Name should NOT be redacted when user said it"
+
+
+@pytest.mark.asyncio
+async def test_followup_excludes_dislikes(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that FollowupAgent excludes disliked topics from searches:
+    1. Create a conversation with a leaf
+    2. Add a dislike preference for the user
+    3. Manually trigger FollowupAgent
+    4. Verify the prompt includes dislike exclusions
+    """
+    config = make_config()
+    mock_ollama.set_default_flow(
+        search_query="coffee shops",
+        final_response="check out Blue Bottle Coffee! ☕",
+    )
+
+    async with running_penny(config) as penny:
+        # Send initial message and get response
+        await signal_server.push_message(sender=TEST_SENDER, content="recommend a coffee shop")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Add a dislike preference
+        penny.db.add_preference(TEST_SENDER, "Starbucks", "dislike")
+
+        # Verify the preference was added
+        dislikes = penny.db.get_preferences(TEST_SENDER, "dislike")
+        assert len(dislikes) == 1
+        assert dislikes[0].topic == "Starbucks"
+
+        # Clear Ollama requests
+        mock_ollama.requests.clear()
+
+        # Manually trigger followup
+        from penny.agent.agents import FollowupAgent
+        from penny.constants import SYSTEM_PROMPT
+
+        followup_agent = FollowupAgent(
+            system_prompt=SYSTEM_PROMPT,
+            model=penny.message_agent.model,
+            ollama_api_url=config.ollama_api_url,
+            tools=penny.message_agent.tools,
+            db=penny.db,
+        )
+        followup_agent.set_channel(penny.channel)
+
+        # Execute the followup agent
+        await followup_agent.execute()
+
+        # If there's a conversation leaf, followup should have run
+        leaves = penny.db.get_conversation_leaves()
+        if leaves:
+            # Check that Ollama was called
+            assert len(mock_ollama.requests) >= 1, "Followup should have called Ollama"
+
+            # Check that the prompt includes dislike exclusions
+            followup_request = mock_ollama.requests[-1]
+            messages = followup_request.get("messages", [])
+            system_messages = [m for m in messages if m.get("role") == "system"]
+
+            # Should have a system message mentioning dislikes
+            exclusion_found = False
+            for msg in system_messages:
+                content = msg.get("content", "")
+                if "don't include" in content.lower() or "avoid" in content.lower():
+                    assert "starbucks" in content.lower(), "Dislike should be in exclusions"
+                    exclusion_found = True
+                    break
+
+            assert exclusion_found, "Followup prompt should include dislike exclusions"
+
+
+@pytest.mark.asyncio
+async def test_discovery_excludes_dislikes(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that DiscoveryAgent excludes disliked topics from searches:
+    1. Build a user profile
+    2. Add a dislike preference
+    3. Manually trigger DiscoveryAgent
+    4. Verify the prompt includes dislike exclusions
+    """
+    config = make_config()
+    mock_ollama.set_default_flow(
+        search_query="jazz music",
+        final_response="check out John Coltrane! 🎷",
+    )
+
+    async with running_penny(config) as penny:
+        # Send a message to establish an interest
+        await signal_server.push_message(sender=TEST_SENDER, content="i love jazz music")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Add a like preference (required for discovery to run)
+        penny.db.add_preference(TEST_SENDER, "jazz music", "like")
+
+        # Add a dislike preference
+        penny.db.add_preference(TEST_SENDER, "Kenny G", "dislike")
+
+        # Verify the preference was added
+        dislikes = penny.db.get_preferences(TEST_SENDER, "dislike")
+        assert len(dislikes) == 1
+        assert dislikes[0].topic == "Kenny G"
+
+        # Clear Ollama requests
+        mock_ollama.requests.clear()
+
+        # Manually trigger discovery
+        from penny.agent.agents import DiscoveryAgent
+        from penny.constants import SYSTEM_PROMPT
+
+        discovery_agent = DiscoveryAgent(
+            system_prompt=SYSTEM_PROMPT,
+            model=penny.message_agent.model,
+            ollama_api_url=config.ollama_api_url,
+            tools=penny.message_agent.tools,
+            db=penny.db,
+        )
+        discovery_agent.set_channel(penny.channel)
+
+        # Execute the discovery agent
+        result = await discovery_agent.execute()
+
+        # Discovery should have run since we have a profile
+        assert result is True, "Discovery should have executed"
+        assert len(mock_ollama.requests) >= 1, "Discovery should have called Ollama"
+
+        # Check that the prompt includes dislike exclusions
+        discovery_request = mock_ollama.requests[-1]
+        messages = discovery_request.get("messages", [])
+        system_messages = [m for m in messages if m.get("role") == "system"]
+
+        # Should have a system message mentioning dislikes
+        exclusion_found = False
+        for msg in system_messages:
+            content = msg.get("content", "")
+            if "don't include" in content.lower() or "avoid" in content.lower():
+                assert "kenny g" in content.lower(), "Dislike should be in exclusions"
+                exclusion_found = True
+                break
+
+        assert exclusion_found, "Discovery prompt should include dislike exclusions"
