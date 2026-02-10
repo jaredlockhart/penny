@@ -210,3 +210,44 @@ async def test_test_mode_snapshot_created_at_startup(test_config, running_penny)
         test_messages = test_db.get_user_messages(TEST_SENDER)
         assert len(test_messages) == 1, "Test db should contain production message"
         assert test_messages[0].content == "production message"
+
+
+@pytest.mark.asyncio
+async def test_test_mode_shows_typing_indicator(
+    signal_server, mock_ollama, test_config, _mock_search, running_penny
+):
+    """
+    Test that /test command shows typing indicator while processing.
+    """
+    mock_ollama.set_default_flow(
+        search_query="test search query",
+        final_response="here's what i found! 🌟",
+    )
+
+    async with running_penny(test_config):
+        # Clear any startup typing events
+        signal_server.typing_events.clear()
+
+        # Send /test message
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="/test what's the weather like today?",
+        )
+
+        # Wait for response
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify the response
+        assert response["recipients"] == [TEST_SENDER]
+        assert response["message"].startswith(TEST_MODE_PREFIX)
+
+        # Verify typing indicators were sent (at least one start and one stop)
+        assert len(signal_server.typing_events) >= 2, "Should have typing events"
+        assert signal_server.typing_events[0] == (
+            "start",
+            TEST_SENDER,
+        ), "First typing event should be start"
+        assert signal_server.typing_events[-1] == (
+            "stop",
+            TEST_SENDER,
+        ), "Last typing event should be stop"
