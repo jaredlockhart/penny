@@ -65,18 +65,6 @@ class UserInfo(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class UserTopics(SQLModel, table=True):
-    """Cached user topics/interests generated from message history."""
-
-    __tablename__ = "usertopics"
-
-    id: int | None = Field(default=None, primary_key=True)
-    sender: str = Field(unique=True, index=True)
-    profile_text: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
-    last_message_timestamp: datetime  # Timestamp of newest message included in profile
-
-
 class CommandLog(SQLModel, table=True):
     """Log of every command invocation and its response."""
 
@@ -101,3 +89,13 @@ class RuntimeConfig(SQLModel, table=True):
     value: str  # Store as string, parse to correct type on load
     description: str  # Human-readable description with units
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class Preference(SQLModel, table=True):
+    """User preferences (likes/dislikes) for discovery."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)  # Signal number or Discord user ID
+    topic: str  # Arbitrary natural language phrase
+    type: str  # "like" or "dislike"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

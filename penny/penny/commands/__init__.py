@@ -7,6 +7,7 @@ from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
 from penny.commands.index import IndexCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
+from penny.commands.preferences import DislikeCommand, LikeCommand, UndislikeCommand, UnlikeCommand
 from penny.commands.profile import ProfileCommand
 from penny.commands.test import TestCommand
 
@@ -43,6 +44,10 @@ def create_command_registry(
     registry.register(DebugCommand())
     registry.register(ConfigCommand())
     registry.register(ProfileCommand())
+    registry.register(LikeCommand())
+    registry.register(DislikeCommand())
+    registry.register(UnlikeCommand())
+    registry.register(UndislikeCommand())
 
     # Register test command if factory provided
     if message_agent_factory:

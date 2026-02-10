@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from penny.agent.base import Agent
 from penny.agent.models import MessageRole
-from penny.constants import DISCOVERY_PROMPT
+from penny.constants import DISCOVERY_PROMPT, PreferenceType
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -44,25 +44,30 @@ class DiscoveryAgent(Agent):
             logger.error("DiscoveryAgent: no channel set")
             return False
 
-        # Get users who have topics
-        users = self.db.get_users_with_topics()
+        # Get all users who have sent messages
+        users = self.db.get_all_senders()
         if not users:
-            logger.debug("DiscoveryAgent: no users with topics")
+            logger.debug("DiscoveryAgent: no users found")
             return False
 
         # Pick a random user
         recipient = random.choice(users)
-        topics = self.db.get_user_topics(recipient)
-        if not topics:
+
+        # Get user's likes
+        likes = self.db.get_preferences(recipient, PreferenceType.LIKE)
+        if not likes:
+            logger.debug("DiscoveryAgent: user %s has no likes yet", recipient)
             return False
 
-        logger.info("Discovering something new for user %s", recipient)
+        # Pick a random like
+        random_like = random.choice(likes)
+        logger.info("Discovering something new for user %s about: %s", recipient, random_like.topic)
 
-        # Use topics as context for the discovery
+        # Use the random like as context for discovery
         history = [
             (
                 MessageRole.SYSTEM.value,
-                f"User topics:\n{topics.profile_text}",
+                f"User likes: {random_like.topic}",
             )
         ]
         response = await self.run(prompt=DISCOVERY_PROMPT, history=history)

@@ -11,6 +11,18 @@ class MessageDirection(StrEnum):
     OUTGOING = "outgoing"
 
 
+class PreferenceType(StrEnum):
+    """Type of user preference."""
+
+    LIKE = "like"
+    DISLIKE = "dislike"
+
+
+# Reaction emoji mappings for sentiment analysis
+LIKE_REACTIONS = ("❤️", "👍", "😆")
+DISLIKE_REACTIONS = ("😠", "👎", "😢")
+
+
 SYSTEM_PROMPT = (
     "You are Penny, a chill search assistant. "
     "You're continuing an ongoing conversation with a friend, not meeting them for the first time. "
