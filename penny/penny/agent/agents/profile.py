@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from penny.agent.base import Agent
-from penny.constants import DISLIKE_REACTIONS, LIKE_REACTIONS, PROFILE_PROMPT, PreferenceType
+from penny.constants import DISLIKE_REACTIONS, LIKE_REACTIONS, PreferenceType
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -49,13 +49,8 @@ class ProfileAgent(Agent):
         Returns:
             True if work was done, False if nothing to do
         """
-        # First, analyze reactions for all users
-        reaction_work = await self._analyze_reactions()
-
-        # Then, generate topics for users needing profile updates
-        profile_work = await self._generate_topics()
-
-        return reaction_work or profile_work
+        # Analyze reactions for all users
+        return await self._analyze_reactions()
 
     async def _analyze_reactions(self) -> bool:
         """
@@ -194,43 +189,3 @@ class ProfileAgent(Agent):
         finally:
             typing_task.cancel()
             await self._channel.send_typing(recipient, False)
-
-    async def _generate_topics(self) -> bool:
-        """
-        Generate topics for users needing profile updates.
-
-        Returns:
-            True if a profile was generated/updated, False if nothing to do
-        """
-        users = self.db.get_users_needing_profile_update()
-        if not users:
-            return False
-
-        # Process one user per execution (like SummarizeAgent)
-        sender = users[0]
-        messages = self.db.get_user_messages(sender)
-
-        if not messages:
-            return False
-
-        logger.info("Generating profile for user %s (%d messages)", sender, len(messages))
-
-        # Format messages for the prompt
-        messages_text = self._format_messages(messages)
-        prompt = f"{PROFILE_PROMPT}{messages_text}"
-
-        response = await self.run(prompt=prompt)
-        profile_text = response.answer.strip() if response.answer else None
-
-        if profile_text:
-            # Use the timestamp of the newest message
-            last_timestamp = messages[-1].timestamp
-            self.db.save_user_topics(sender, profile_text, last_timestamp)
-            logger.info("Generated topics for %s (length: %d)", sender, len(profile_text))
-            return True
-
-        return False
-
-    def _format_messages(self, messages: list[MessageLog]) -> str:
-        """Format user messages for profile generation."""
-        return "\n".join(f"[{m.timestamp.strftime('%Y-%m-%d')}] {m.content}" for m in messages)

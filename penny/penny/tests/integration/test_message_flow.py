@@ -176,27 +176,18 @@ async def test_profile_background_task(
         background_response="curious user interested in animals, especially cats.",
     )
 
-    async with running_penny(config) as penny:
+    async with running_penny(config):
         await signal_server.push_message(
             sender=TEST_SENDER, content="tell me something cool about cats!"
         )
         response = await signal_server.wait_for_message(timeout=10.0)
         assert "cats" in response["message"].lower()
 
-        # Verify no user topics profile exists yet
-        topics = penny.db.get_user_topics(TEST_SENDER)
-        assert topics is None, "User topics should not exist yet"
+        # Note: ProfileAgent now maintains preferences via reactions,
+        # not by generating topics from message history.
+        # The old UserTopics infrastructure has been removed.
 
-        # Wait for profile task to trigger (idle time + scheduler tick)
-        await asyncio.sleep(2.0)
-
-        # Verify user topics profile was generated
-        topics = penny.db.get_user_topics(TEST_SENDER)
-        assert topics is not None, "User topics should have been generated"
-        assert len(topics.profile_text) > 0
-        assert "cat" in topics.profile_text.lower() or "animal" in topics.profile_text.lower()
-
-        assert len(mock_ollama.requests) >= 3, "Expected at least 3 Ollama calls"
+        assert len(mock_ollama.requests) >= 2, "Expected at least 2 Ollama calls"
 
 
 @pytest.mark.asyncio

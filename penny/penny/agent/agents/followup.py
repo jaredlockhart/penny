@@ -64,7 +64,6 @@ class FollowupAgent(Agent):
         )
 
         history = self._format_history(thread)
-        history = self._inject_profile(recipient, history)
         response = await self.run(prompt=FOLLOWUP_PROMPT, history=history)
 
         answer = response.answer.strip() if response.answer else None
@@ -103,15 +102,3 @@ class FollowupAgent(Agent):
             )
             for m in thread
         ]
-
-    def _inject_profile(self, sender: str, history: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        """Inject user topics at the start of history if available."""
-        topics = self.db.get_user_topics(sender)
-        if not topics:
-            return history
-
-        topics_entry = (
-            MessageRole.SYSTEM.value,
-            f"User topics for this conversation:\n{topics.profile_text}",
-        )
-        return [topics_entry, *history]

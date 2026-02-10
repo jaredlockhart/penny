@@ -17,7 +17,6 @@ from penny.database.models import (
     PromptLog,
     SearchLog,
     UserInfo,
-    UserTopics,
 )
 
 logger = logging.getLogger(__name__)
@@ -428,68 +427,6 @@ class Database:
                 ).all()
             )
 
-    def get_users_needing_profile_update(self) -> list[str]:
-        """
-        Get senders who have messages newer than their last profile update.
-
-        Returns:
-            List of sender IDs that need profile updates
-        """
-        with self.get_session() as session:
-            # Get all distinct incoming message senders
-            all_senders = list(
-                session.exec(
-                    select(MessageLog.sender)
-                    .where(MessageLog.direction == MessageDirection.INCOMING)
-                    .distinct()
-                ).all()
-            )
-
-            users_needing_update = []
-            for sender in all_senders:
-                profile = session.exec(
-                    select(UserTopics).where(UserTopics.sender == sender)
-                ).first()
-
-                latest_msg = session.exec(
-                    select(MessageLog.timestamp)
-                    .where(
-                        MessageLog.sender == sender,
-                        MessageLog.direction == MessageDirection.INCOMING,
-                    )
-                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
-                    .limit(1)
-                ).first()
-
-                if latest_msg and (not profile or profile.last_message_timestamp < latest_msg):
-                    users_needing_update.append(sender)
-
-            return users_needing_update
-
-    def get_user_topics(self, sender: str) -> UserTopics | None:
-        """
-        Get the cached topics for a user.
-
-        Args:
-            sender: The user's identifier
-
-        Returns:
-            The UserTopics if it exists, None otherwise
-        """
-        with self.get_session() as session:
-            return session.exec(select(UserTopics).where(UserTopics.sender == sender)).first()
-
-    def get_users_with_topics(self) -> list[str]:
-        """
-        Get all users who have topics.
-
-        Returns:
-            List of sender IDs that have topics
-        """
-        with self.get_session() as session:
-            profiles = session.exec(select(UserTopics.sender)).all()
-            return list(profiles)
-
     def get_all_senders(self) -> list[str]:
         """
         Get all unique senders who have sent messages.
@@ -504,44 +441,6 @@ class Database:
                 .distinct()
             ).all()
             return list(senders)
-
-    def save_user_topics(
-        self,
-        sender: str,
-        profile_text: str,
-        last_message_timestamp: "datetime",
-    ) -> None:
-        """
-        Create or update user topics.
-
-        Args:
-            sender: The user's identifier
-            profile_text: The generated topics content
-            last_message_timestamp: Timestamp of the newest message included
-        """
-        try:
-            with self.get_session() as session:
-                existing = session.exec(
-                    select(UserTopics).where(UserTopics.sender == sender)
-                ).first()
-
-                if existing:
-                    existing.profile_text = profile_text
-                    existing.updated_at = datetime.now(UTC)
-                    existing.last_message_timestamp = last_message_timestamp
-                    session.add(existing)
-                else:
-                    topics = UserTopics(
-                        sender=sender,
-                        profile_text=profile_text,
-                        last_message_timestamp=last_message_timestamp,
-                    )
-                    session.add(topics)
-
-                session.commit()
-                logger.debug("Saved topics for %s", sender)
-        except Exception as e:
-            logger.error("Failed to save topics: %s", e)
 
     def get_user_info(self, sender: str) -> UserInfo | None:
         """

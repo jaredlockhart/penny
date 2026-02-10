@@ -44,48 +44,33 @@ class DiscoveryAgent(Agent):
             logger.error("DiscoveryAgent: no channel set")
             return False
 
-        # Get users who have topics (fallback for backward compatibility)
-        users = self.db.get_users_with_topics()
+        # Get all users who have sent messages
+        users = self.db.get_all_senders()
         if not users:
-            logger.debug("DiscoveryAgent: no users with topics")
+            logger.debug("DiscoveryAgent: no users found")
             return False
 
         # Pick a random user
         recipient = random.choice(users)
 
-        # Try to use structured preferences first
+        # Get user's likes
         likes = self.db.get_preferences(recipient, PreferenceType.LIKE)
-        if likes:
-            # Pick a random like
-            random_like = random.choice(likes)
-            logger.info(
-                "Discovering something new for user %s about: %s", recipient, random_like.topic
+        if not likes:
+            logger.debug("DiscoveryAgent: user %s has no likes yet", recipient)
+            return False
+
+        # Pick a random like
+        random_like = random.choice(likes)
+        logger.info("Discovering something new for user %s about: %s", recipient, random_like.topic)
+
+        # Use the random like as context for discovery
+        history = [
+            (
+                MessageRole.SYSTEM.value,
+                f"User likes: {random_like.topic}",
             )
-
-            # Use the random like as context for discovery
-            history = [
-                (
-                    MessageRole.SYSTEM.value,
-                    f"User likes: {random_like.topic}",
-                )
-            ]
-            response = await self.run(prompt=DISCOVERY_PROMPT, history=history)
-        else:
-            # Fallback to old-style topics if no structured preferences
-            topics = self.db.get_user_topics(recipient)
-            if not topics:
-                return False
-
-            logger.info("Discovering something new for user %s (using topics)", recipient)
-
-            # Use topics as context for the discovery
-            history = [
-                (
-                    MessageRole.SYSTEM.value,
-                    f"User topics:\n{topics.profile_text}",
-                )
-            ]
-            response = await self.run(prompt=DISCOVERY_PROMPT, history=history)
+        ]
+        response = await self.run(prompt=DISCOVERY_PROMPT, history=history)
 
         answer = response.answer.strip() if response.answer else None
         if not answer:
