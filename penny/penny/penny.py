@@ -119,13 +119,6 @@ class Penny:
             command_registry=self.command_registry,
         )
 
-        # Set command context on channel
-        self.channel.set_command_context(
-            config=config,
-            channel_type=config.channel_type,
-            start_time=self.start_time,
-        )
-
         # Connect agents that send messages to channel
         self.followup_agent.set_channel(self.channel)
         self.discovery_agent.set_channel(self.channel)
@@ -153,6 +146,13 @@ class Penny:
 
         # Connect scheduler to channel for message notifications
         self.channel.set_scheduler(self.scheduler)
+
+        # Set command context on channel (must be after scheduler initialization)
+        self.channel.set_command_context(
+            config=config,
+            channel_type=config.channel_type,
+            start_time=self.start_time,
+        )
 
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
