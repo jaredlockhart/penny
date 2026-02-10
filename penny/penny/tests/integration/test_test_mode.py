@@ -127,6 +127,50 @@ async def test_test_mode_uses_real_external_services(
 
 
 @pytest.mark.asyncio
+async def test_test_mode_blocks_threading_to_test_responses(
+    signal_server, mock_ollama, test_config, _mock_search, running_penny
+):
+    """
+    Test that threading/replying to a test mode response is rejected.
+
+    Scenario:
+    1. User: /test some prompt
+    2. Penny: [TEST] Blah blah response
+    3. User: quotetext(Blah blah response) hello
+    4. Penny: "Threading is not supported for test mode responses."
+    """
+    mock_ollama.set_default_flow(
+        search_query="test search query",
+        final_response="here's what i found! 🌟",
+    )
+
+    async with running_penny(test_config):
+        # Send /test message
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="/test what's the weather like today?",
+        )
+
+        # Wait for test response
+        test_response = await signal_server.wait_for_message(timeout=10.0)
+        assert test_response["message"].startswith(TEST_MODE_PREFIX)
+
+        # Try to thread-reply to the test response
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="tell me more",
+            quote={"id": 12345, "text": test_response["message"]},
+        )
+
+        # Wait for error response
+        error_response = await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify error message
+        assert error_response["recipients"] == [TEST_SENDER]
+        assert "threading is not supported for test mode" in error_response["message"].lower()
+
+
+@pytest.mark.asyncio
 async def test_test_mode_snapshot_created_at_startup(test_config, running_penny):
     """
     Test that test database snapshot is created (via entrypoint in production).

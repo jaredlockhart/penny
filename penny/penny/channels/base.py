@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from penny.config import Config
-from penny.constants import MessageDirection
+from penny.constants import TEST_MODE_PREFIX, MessageDirection
 from penny.database.models import MessageLog
 
 if TYPE_CHECKING:
@@ -266,6 +266,13 @@ class MessageChannel(ABC):
             if message.quoted_text and message.quoted_text.strip().startswith("/"):
                 await self.send_status_message(
                     message.sender, "Threading is not supported for commands."
+                )
+                return
+
+            # Check if thread-replying to a test mode response
+            if message.quoted_text and message.quoted_text.strip().startswith(TEST_MODE_PREFIX):
+                await self.send_status_message(
+                    message.sender, "Threading is not supported for test mode responses."
                 )
                 return
 
