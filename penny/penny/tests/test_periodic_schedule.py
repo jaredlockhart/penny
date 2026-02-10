@@ -84,8 +84,9 @@ async def test_periodic_schedule_integration_with_scheduler(
     from penny.tests.conftest import TEST_SENDER
 
     # Use very short intervals for testing
+    # Use a longer idle threshold to ensure summarize doesn't run before we check
     config = make_config(
-        idle_seconds=0.3,
+        idle_seconds=2.0,
         maintenance_interval_seconds=0.5,
     )
     setup_ollama_flow(
@@ -109,8 +110,8 @@ async def test_periodic_schedule_integration_with_scheduler(
             message_id = outgoing.id
             assert outgoing.parent_summary is None
 
-        # Wait for idle + first interval (0.3 + 0.5 = 0.8s, add buffer)
-        await asyncio.sleep(1.5)
+        # Wait for idle + first interval (2.0 + 0.5 = 2.5s, add buffer)
+        await asyncio.sleep(3.0)
 
         # Verify summary was generated (first run)
         with penny.db.get_session() as session:
