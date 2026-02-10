@@ -40,6 +40,7 @@ class OllamaClient:
         self,
         messages: list[dict[str, str]],
         tools: list[dict] | None = None,
+        format: dict | str | None = None,
     ) -> ChatResponse:
         """
         Generate a chat completion with optional tool calling.
@@ -47,6 +48,7 @@ class OllamaClient:
         Args:
             messages: List of message dicts with 'role' and 'content'
             tools: Optional list of tool definitions in Ollama format
+            format: Optional format specification (JSON schema dict, "json", or None)
 
         Returns:
             ChatResponse with message, thinking, tool calls, etc.
@@ -66,11 +68,17 @@ class OllamaClient:
                 # exactly what was sent, not the mutated list.
                 messages_snapshot = list(messages)
 
-                raw = await self.client.chat(
-                    model=self.model,
-                    messages=messages,
-                    tools=tools,
-                )
+                # Build kwargs for chat call
+                chat_kwargs: dict = {
+                    "model": self.model,
+                    "messages": messages,
+                }
+                if tools is not None:
+                    chat_kwargs["tools"] = tools
+                if format is not None:
+                    chat_kwargs["format"] = format
+
+                raw = await self.client.chat(**chat_kwargs)
 
                 duration_ms = int((time.time() - start) * 1000)
 
@@ -114,19 +122,22 @@ class OllamaClient:
         logger.error("Ollama chat failed after %d attempts: %s", self.max_retries, last_error)
         raise last_error  # type: ignore[misc]
 
-    async def generate(self, prompt: str, tools: list[dict] | None = None) -> ChatResponse:
+    async def generate(
+        self, prompt: str, tools: list[dict] | None = None, format: dict | str | None = None
+    ) -> ChatResponse:
         """
         Generate a completion for a prompt (converts to chat format internally).
 
         Args:
             prompt: The prompt to generate from
             tools: Optional list of tool definitions
+            format: Optional format specification (JSON schema dict, "json", or None)
 
         Returns:
             ChatResponse
         """
         messages = [{"role": "user", "content": prompt}]
-        return await self.chat(messages, tools)
+        return await self.chat(messages, tools, format)
 
     async def close(self) -> None:
         """Close the client (SDK handles cleanup automatically)."""

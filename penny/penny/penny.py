@@ -175,6 +175,7 @@ class Penny:
             await validate_fn()
 
         await self._send_startup_announcement()
+        await self._prompt_for_missing_profiles()
 
         try:
             await asyncio.gather(
@@ -216,6 +217,36 @@ class Penny:
                     logger.warning("Failed to send startup announcement to %s: %s", sender, e)
         except Exception as e:
             logger.warning("Failed to send startup announcement: %s", e)
+
+    async def _prompt_for_missing_profiles(self) -> None:
+        """Prompt users who don't have a profile set up yet."""
+        try:
+            senders = self.db.get_all_senders()
+            if not senders:
+                logger.info("No recipients to check for missing profiles")
+                return
+
+            prompt_msg = (
+                "Hey! I need to collect some basic info about you before we can chat. "
+                "Please run `/profile <name> <location> <date of birth>` "
+                "to set up your profile.\n\n"
+                "For example: `/profile alex seattle january 10 1995` 📝"
+            )
+
+            for sender in senders:
+                try:
+                    user_info = self.db.get_user_info(sender)
+                    if not user_info:
+                        logger.info("User %s has no profile, sending prompt", sender)
+                        try:
+                            await self.channel.send_status_message(sender, prompt_msg)
+                        except Exception as e:
+                            logger.warning("Failed to send profile prompt to %s: %s", sender, e)
+                except Exception:
+                    # Silently skip if userinfo table doesn't exist yet
+                    pass
+        except Exception as e:
+            logger.warning("Failed to send profile prompts: %s", e)
 
     async def shutdown(self) -> None:
         """Clean shutdown of resources."""

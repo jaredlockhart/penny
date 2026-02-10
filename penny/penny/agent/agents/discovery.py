@@ -44,25 +44,25 @@ class DiscoveryAgent(Agent):
             logger.error("DiscoveryAgent: no channel set")
             return False
 
-        # Get users who have profiles
-        users = self.db.get_users_with_profiles()
+        # Get users who have topics
+        users = self.db.get_users_with_topics()
         if not users:
-            logger.debug("DiscoveryAgent: no users with profiles")
+            logger.debug("DiscoveryAgent: no users with topics")
             return False
 
         # Pick a random user
         recipient = random.choice(users)
-        profile = self.db.get_user_profile(recipient)
-        if not profile:
+        topics = self.db.get_user_topics(recipient)
+        if not topics:
             return False
 
         logger.info("Discovering something new for user %s", recipient)
 
-        # Use profile as context for the discovery
+        # Use topics as context for the discovery
         history = [
             (
                 MessageRole.SYSTEM.value,
-                f"User profile:\n{profile.profile_text}",
+                f"User topics:\n{topics.profile_text}",
             )
         ]
         response = await self.run(prompt=DISCOVERY_PROMPT, history=history)

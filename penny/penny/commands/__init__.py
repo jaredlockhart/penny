@@ -7,6 +7,7 @@ from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
 from penny.commands.index import IndexCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
+from penny.commands.profile import ProfileCommand
 from penny.commands.test import TestCommand
 
 __all__ = [
@@ -41,6 +42,7 @@ def create_command_registry(
     # Register other builtin commands
     registry.register(DebugCommand())
     registry.register(ConfigCommand())
+    registry.register(ProfileCommand())
 
     # Register test command if factory provided
     if message_agent_factory:

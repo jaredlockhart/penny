@@ -10,7 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from penny.agent.models import MessageRole
 from penny.constants import MessageDirection
-from penny.database.models import CommandLog, MessageLog, PromptLog, SearchLog, UserProfile
+from penny.database.models import CommandLog, MessageLog, PromptLog, SearchLog, UserInfo, UserTopics
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +415,7 @@ class Database:
             users_needing_update = []
             for sender in all_senders:
                 profile = session.exec(
-                    select(UserProfile).where(UserProfile.sender == sender)
+                    select(UserTopics).where(UserTopics.sender == sender)
                 ).first()
 
                 latest_msg = session.exec(
@@ -433,28 +433,28 @@ class Database:
 
             return users_needing_update
 
-    def get_user_profile(self, sender: str) -> UserProfile | None:
+    def get_user_topics(self, sender: str) -> UserTopics | None:
         """
-        Get the cached profile for a user.
+        Get the cached topics for a user.
 
         Args:
             sender: The user's identifier
 
         Returns:
-            The UserProfile if it exists, None otherwise
+            The UserTopics if it exists, None otherwise
         """
         with self.get_session() as session:
-            return session.exec(select(UserProfile).where(UserProfile.sender == sender)).first()
+            return session.exec(select(UserTopics).where(UserTopics.sender == sender)).first()
 
-    def get_users_with_profiles(self) -> list[str]:
+    def get_users_with_topics(self) -> list[str]:
         """
-        Get all users who have a profile.
+        Get all users who have topics.
 
         Returns:
-            List of sender IDs that have profiles
+            List of sender IDs that have topics
         """
         with self.get_session() as session:
-            profiles = session.exec(select(UserProfile.sender)).all()
+            profiles = session.exec(select(UserTopics.sender)).all()
             return list(profiles)
 
     def get_all_senders(self) -> list[str]:
@@ -472,24 +472,24 @@ class Database:
             ).all()
             return list(senders)
 
-    def save_user_profile(
+    def save_user_topics(
         self,
         sender: str,
         profile_text: str,
         last_message_timestamp: "datetime",
     ) -> None:
         """
-        Create or update a user profile.
+        Create or update user topics.
 
         Args:
             sender: The user's identifier
-            profile_text: The generated profile content
+            profile_text: The generated topics content
             last_message_timestamp: Timestamp of the newest message included
         """
         try:
             with self.get_session() as session:
                 existing = session.exec(
-                    select(UserProfile).where(UserProfile.sender == sender)
+                    select(UserTopics).where(UserTopics.sender == sender)
                 ).first()
 
                 if existing:
@@ -498,17 +498,74 @@ class Database:
                     existing.last_message_timestamp = last_message_timestamp
                     session.add(existing)
                 else:
-                    profile = UserProfile(
+                    topics = UserTopics(
                         sender=sender,
                         profile_text=profile_text,
                         last_message_timestamp=last_message_timestamp,
                     )
-                    session.add(profile)
+                    session.add(topics)
 
                 session.commit()
-                logger.debug("Saved profile for %s", sender)
+                logger.debug("Saved topics for %s", sender)
         except Exception as e:
-            logger.error("Failed to save profile: %s", e)
+            logger.error("Failed to save topics: %s", e)
+
+    def get_user_info(self, sender: str) -> UserInfo | None:
+        """
+        Get the basic user info for a user.
+
+        Args:
+            sender: The user's identifier
+
+        Returns:
+            The UserInfo if it exists, None otherwise
+        """
+        with self.get_session() as session:
+            return session.exec(select(UserInfo).where(UserInfo.sender == sender)).first()
+
+    def save_user_info(
+        self,
+        sender: str,
+        name: str,
+        location: str,
+        timezone: str,
+        date_of_birth: str,
+    ) -> None:
+        """
+        Create or update user info.
+
+        Args:
+            sender: The user's identifier
+            name: User's preferred name
+            location: Natural language location
+            timezone: IANA timezone string
+            date_of_birth: Date of birth in YYYY-MM-DD format
+        """
+        try:
+            with self.get_session() as session:
+                existing = session.exec(select(UserInfo).where(UserInfo.sender == sender)).first()
+
+                if existing:
+                    existing.name = name
+                    existing.location = location
+                    existing.timezone = timezone
+                    existing.date_of_birth = date_of_birth
+                    existing.updated_at = datetime.now(UTC)
+                    session.add(existing)
+                else:
+                    info = UserInfo(
+                        sender=sender,
+                        name=name,
+                        location=location,
+                        timezone=timezone,
+                        date_of_birth=date_of_birth,
+                    )
+                    session.add(info)
+
+                session.commit()
+                logger.debug("Saved user info for %s", sender)
+        except Exception as e:
+            logger.error("Failed to save user info: %s", e)
 
     def count_messages(self) -> int:
         """

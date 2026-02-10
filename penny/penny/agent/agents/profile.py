@@ -52,8 +52,8 @@ class ProfileAgent(Agent):
         if profile_text:
             # Use the timestamp of the newest message
             last_timestamp = messages[-1].timestamp
-            self.db.save_user_profile(sender, profile_text, last_timestamp)
-            logger.info("Generated profile for %s (length: %d)", sender, len(profile_text))
+            self.db.save_user_topics(sender, profile_text, last_timestamp)
+            logger.info("Generated topics for %s (length: %d)", sender, len(profile_text))
             return True
 
         return False
