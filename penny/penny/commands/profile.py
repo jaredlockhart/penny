@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 try:
-    from penny.profile.utils import get_timezone
+    from penny.datetime_utils import get_timezone
 
     HAS_GEO = True
 except ImportError:
@@ -21,10 +22,33 @@ except ImportError:
     dateparser = None  # type: ignore[assignment]
     HAS_DATEPARSER = False
 
+from pydantic import BaseModel, Field
+
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 
 logger = logging.getLogger(__name__)
+
+
+class ProfileUpdateParse(BaseModel):
+    """Schema for parsing profile update arguments."""
+
+    name: str | None = Field(
+        default=None, description="User's name, or null if not specified in the input"
+    )
+    location: str | None = Field(
+        default=None, description="User's location, or null if not specified in the input"
+    )
+
+
+class ProfileCreateParse(BaseModel):
+    """Schema for parsing profile creation arguments."""
+
+    name: str = Field(description="User's name")
+    location: str = Field(description="User's location")
+    date_of_birth: str = Field(
+        description="User's date of birth in natural language (e.g., 'January 10, 1995')"
+    )
 
 
 class ProfileCommand(Command):
@@ -44,6 +68,70 @@ class ProfileCommand(Command):
         "- `/profile seattle` (update location only)\n\n"
         "**Note**: Timezone is automatically derived from your location."
     )
+
+    async def _parse_profile_create(
+        self, args: str, ollama_client: Any
+    ) -> ProfileCreateParse | None:
+        """
+        Parse profile creation arguments using LLM.
+
+        Args:
+            args: User input string
+            ollama_client: Ollama client for structured parsing
+
+        Returns:
+            ProfileCreateParse if parsing succeeded, None otherwise
+        """
+        try:
+            prompt = (
+                f'Extract the user\'s name, location, and date of birth from this input: "{args}"'
+            )
+
+            response = await ollama_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=ProfileCreateParse.model_json_schema(),
+            )
+
+            # Parse JSON response with Pydantic schema
+            return ProfileCreateParse.model_validate_json(response.content)
+
+        except Exception as e:
+            logger.warning("Failed to parse profile creation args: %s", e)
+            return None
+
+    async def _parse_profile_update(
+        self, args: str, ollama_client: Any
+    ) -> ProfileUpdateParse | None:
+        """
+        Parse profile update arguments using LLM.
+
+        Args:
+            args: User input string
+            ollama_client: Ollama client for structured parsing
+
+        Returns:
+            ProfileUpdateParse if parsing succeeded, None otherwise
+        """
+        try:
+            prompt = (
+                f'Extract the user\'s name and/or location from this input: "{args}". '
+                "If name is not mentioned, set it to null. "
+                "If location is not mentioned, set it to null."
+            )
+
+            response = await ollama_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=ProfileUpdateParse.model_json_schema(),
+            )
+
+            # Parse JSON response with Pydantic schema
+            return ProfileUpdateParse.model_validate_json(response.content)
+
+        except Exception as e:
+            logger.warning("Failed to parse profile update args: %s", e)
+            return None
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Execute profile command."""
@@ -86,28 +174,25 @@ class ProfileCommand(Command):
                     text="profile creation not available (missing dependencies) 😞"
                 )
 
-            # Parse args as "<name> <location> <dob>"
-            # We need at least 3 tokens (name, location, dob-start)
-            parts = args.split(maxsplit=2)
-            if len(parts) < 3:
+            # Use LLM to parse profile creation arguments
+            parsed = await self._parse_profile_create(args, context.ollama_client)
+            if not parsed:
                 return CommandResult(
                     text=(
-                        "to create your profile, i need name, location, and date of birth.\n\n"
-                        "usage: `/profile <name> <location> <date of birth>`\n"
+                        "i couldn't understand that. please provide your name, location, "
+                        "and date of birth.\n\n"
                         "example: `/profile alex seattle january 10 1995`"
                     )
                 )
 
-            new_name = parts[0].strip()
-            new_location = parts[1].strip()
-            dob_text = parts[2].strip()
-
             # Parse date of birth
-            dob_date = dateparser.parse(dob_text, settings={"PREFER_DATES_FROM": "past"})
+            dob_date = dateparser.parse(
+                parsed.date_of_birth, settings={"PREFER_DATES_FROM": "past"}
+            )
             if not dob_date:
                 return CommandResult(
                     text=(
-                        f"i couldn't parse '{dob_text}' as a date. "
+                        f"i couldn't parse '{parsed.date_of_birth}' as a date. "
                         "try something like 'january 10 1995' 📅"
                     )
                 )
@@ -115,6 +200,48 @@ class ProfileCommand(Command):
             dob_formatted = dob_date.strftime("%Y-%m-%d")
 
             # Derive timezone from location
+            timezone = await get_timezone(parsed.location)
+            if not timezone:
+                return CommandResult(
+                    text=(
+                        f"i couldn't find a timezone for '{parsed.location}'. "
+                        "can you be more specific? 🗺️"
+                    )
+                )
+
+            # Save new profile
+            context.db.save_user_info(
+                sender=context.user,
+                name=parsed.name,
+                location=parsed.location,
+                timezone=timezone,
+                date_of_birth=dob_formatted,
+            )
+
+            return CommandResult(text=f"got it! your profile is set up. welcome, {parsed.name}! 🎉")
+
+        # PROFILE UPDATE (existing profile)
+        if not HAS_GEO:
+            return CommandResult(
+                text="profile updates not available (missing geopy/timezonefinder) 😞"
+            )
+
+        # Use LLM to parse profile update arguments
+        parsed = await self._parse_profile_update(args, context.ollama_client)
+        if not parsed:
+            return CommandResult(
+                text=(
+                    "i couldn't understand that. please provide name and/or location.\n\n"
+                    "example: `/profile jared toronto`"
+                )
+            )
+
+        # Use parsed values or keep existing
+        new_name = parsed.name if parsed.name else user_info.name
+        new_location = parsed.location if parsed.location else user_info.location
+
+        # Derive new timezone from location if it changed
+        if new_location != user_info.location:
             timezone = await get_timezone(new_location)
             if not timezone:
                 return CommandResult(
@@ -123,45 +250,8 @@ class ProfileCommand(Command):
                         "can you be more specific? 🗺️"
                     )
                 )
-
-            # Save new profile
-            context.db.save_user_info(
-                sender=context.user,
-                name=new_name,
-                location=new_location,
-                timezone=timezone,
-                date_of_birth=dob_formatted,
-            )
-
-            return CommandResult(text=f"got it! your profile is set up. welcome, {new_name}! 🎉")
-
-        # PROFILE UPDATE (existing profile)
-        parts = args.split(maxsplit=1)
-        if len(parts) == 0:
-            return CommandResult(
-                text="usage: `/profile <name> <location>` or `/profile <location>`"
-            )
-
-        # If two parts, first is name, second is location
-        # If one part, it's location (keep existing name)
-        if len(parts) == 2:
-            new_name = parts[0].strip()
-            new_location = parts[1].strip()
         else:
-            new_name = user_info.name
-            new_location = parts[0].strip()
-
-        # Derive new timezone from location
-        if not HAS_GEO:
-            return CommandResult(
-                text="profile updates not available (missing geopy/timezonefinder) 😞"
-            )
-
-        timezone = await get_timezone(new_location)
-        if not timezone:
-            return CommandResult(
-                text=f"i couldn't find a timezone for '{new_location}'. can you be more specific? 🗺️"
-            )
+            timezone = user_info.timezone
 
         # Update database
         context.db.save_user_info(

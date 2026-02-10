@@ -70,10 +70,21 @@ class MessageChannel(ABC):
             start_time: Penny startup time
         """
         from penny.commands import CommandContext
+        from penny.ollama import OllamaClient
+
+        # Create an Ollama client for command execution
+        ollama_client = OllamaClient(
+            api_url=config.ollama_api_url,
+            model=config.ollama_foreground_model,
+            db=self._db,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+        )
 
         self._command_context = CommandContext(
             db=self._db,
             config=config,
+            ollama_client=ollama_client,
             user="",  # Will be set per-command
             channel_type=channel_type,
             start_time=start_time,

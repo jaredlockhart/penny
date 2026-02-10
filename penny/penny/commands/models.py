@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from penny.config import Config
 from penny.database import Database
+from penny.ollama import OllamaClient
 
 
 @dataclass
@@ -15,6 +16,7 @@ class CommandContext:
 
     db: Database
     config: Config
+    ollama_client: OllamaClient
     user: str  # Signal number or Discord user ID
     channel_type: str  # "signal" or "discord"
     start_time: datetime  # Penny startup time for uptime calculation

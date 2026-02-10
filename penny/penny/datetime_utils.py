@@ -1,4 +1,4 @@
-"""Utility functions for profile management."""
+"""Utility functions for date/time operations."""
 
 from __future__ import annotations
 
