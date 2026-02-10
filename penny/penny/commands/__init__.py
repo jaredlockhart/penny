@@ -3,9 +3,9 @@
 from collections.abc import Callable
 
 from penny.commands.base import Command, CommandRegistry
-from penny.commands.index import IndexCommand
 from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
+from penny.commands.index import IndexCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
 from penny.commands.test import TestCommand
 
