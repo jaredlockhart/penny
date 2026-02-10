@@ -404,14 +404,14 @@ class Database:
 
     def get_user_reactions(self, sender: str, limit: int = 50) -> list[MessageLog]:
         """
-        Get recent reactions from a specific user.
+        Get recent unprocessed reactions from a specific user.
 
         Args:
             sender: The user's identifier (phone number, discord ID, etc.)
             limit: Maximum number of reactions to return
 
         Returns:
-            Most recent reactions ordered by timestamp descending (newest first)
+            Most recent unprocessed reactions ordered by timestamp descending (newest first)
         """
         with self.get_session() as session:
             return list(
@@ -421,11 +421,30 @@ class Database:
                         MessageLog.sender == sender,
                         MessageLog.direction == MessageDirection.INCOMING,
                         MessageLog.is_reaction == True,  # noqa: E712
+                        MessageLog.processed == False,  # noqa: E712
                     )
                     .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
+
+    def mark_reaction_processed(self, message_id: int) -> None:
+        """
+        Mark a reaction message as processed.
+
+        Args:
+            message_id: The ID of the reaction message to mark
+        """
+        try:
+            with self.get_session() as session:
+                msg = session.get(MessageLog, message_id)
+                if msg and msg.is_reaction:
+                    msg.processed = True
+                    session.add(msg)
+                    session.commit()
+                    logger.debug("Marked reaction %d as processed", message_id)
+        except Exception as e:
+            logger.error("Failed to mark reaction as processed: %s", e)
 
     def get_all_senders(self) -> list[str]:
         """

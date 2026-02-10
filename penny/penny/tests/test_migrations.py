@@ -89,13 +89,14 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 4  # 0001, 0002, 0003, and 0004
+        assert count == 5  # 0001, 0002, 0003, 0004, and 0005
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("PRAGMA table_info(messagelog)")
         columns = {row[1] for row in cursor.fetchall()}
         assert "is_reaction" in columns
         assert "external_id" in columns
+        assert "processed" in columns
         conn.close()
 
     def test_idempotent(self, tmp_path):
@@ -146,7 +147,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 3  # 0002, 0003, and 0004 are applied
+        assert count == 4  # 0002, 0003, 0004, and 0005 are applied
 
     def test_bootstrap_with_columns_already_present(self, tmp_path):
         """If columns already exist (from old migration system), 0001 should succeed."""
@@ -163,7 +164,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 4  # All four migrations (0001, 0002, 0003, 0004) recorded as applied
+        assert count == 5  # All five migrations (0001, 0002, 0003, 0004, 0005) recorded as applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
@@ -172,4 +173,5 @@ class TestMigrate:
         assert "0002_add_runtime_config_table" in applied
         assert "0003_split_user_profiles" in applied
         assert "0004_add_preference_table" in applied
+        assert "0005_add_reaction_processed_field" in applied
         conn.close()

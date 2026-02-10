@@ -48,6 +48,9 @@ class MessageLog(SQLModel, table=True):
     signal_timestamp: int | None = Field(default=None)  # Original Signal timestamp (ms since epoch)
     external_id: str | None = Field(default=None, index=True)  # Platform-specific message ID
     is_reaction: bool = Field(default=False, index=True)  # True if this is a reaction message
+    processed: bool = Field(
+        default=False
+    )  # True if this reaction has been processed by ProfileAgent
 
 
 class UserInfo(SQLModel, table=True):
