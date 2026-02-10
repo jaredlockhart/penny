@@ -142,6 +142,9 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 ## Design Principles
 
 - **Python-space over model-space**: When an action can be handled deterministically in Python (e.g., posting a comment, creating a label, validating output), do it in the orchestrator rather than relying on the model to use the right tool. Model-space logic is non-deterministic and harder to test. Reserve model-space for tasks that genuinely need reasoning (writing specs, analyzing code, generating responses).
+- **Pass parameters, don't swap state**: Never temporarily swap instance state (e.g., `self.db`) to change behavior. Pass the dependency as a parameter through the call chain. Refactor interfaces to accept parameters rather than mutating shared state.
+- **Capture static data at build time**: Data that doesn't change during a session (e.g., git commit info) should be captured at Docker build time via build args and environment variables, not parsed at runtime via subprocess calls.
+- **Initialize at startup, not in handlers**: Heavyweight setup (copying databases, creating resources) belongs at startup (entrypoint scripts, Makefile, build steps), not lazily inside message or request handlers.
 
 ## Code Style
 
