@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from penny.agent.base import Agent
 from penny.agent.models import ControllerResponse, MessageRole
@@ -49,10 +50,14 @@ class MessageAgent(Agent):
                 history = [(MessageRole.SYSTEM.value, profile_summary), *history]
                 logger.debug("Injected profile context for %s", sender)
 
-                # Redact user name from outbound search queries
+                # Redact user name from outbound search queries, but only
+                # if the user didn't use their own name in the message
+                # (e.g. "jared leto tron" should not be redacted)
+                name = user_info.name
+                user_said_name = bool(re.search(rf"\b{re.escape(name)}\b", content, re.IGNORECASE))
                 search_tool = self._tool_registry.get("search")
                 if isinstance(search_tool, SearchTool):
-                    search_tool.redact_terms = [user_info.name]
+                    search_tool.redact_terms = [] if user_said_name else [name]
         except Exception:
             # Silently skip if userinfo table doesn't exist (e.g., in test mode)
             pass

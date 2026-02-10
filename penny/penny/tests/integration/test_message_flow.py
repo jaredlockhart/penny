@@ -543,3 +543,34 @@ async def test_profile_context_excludes_dob_and_redacts_name_from_search(
         logged_query = search_logs[0].query
         assert "Test User" not in logged_query, "User name should be redacted from search query"
         assert "Toronto weather forecast" in logged_query, "Rest of query should be preserved"
+
+
+@pytest.mark.asyncio
+async def test_name_not_redacted_when_user_says_it(
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+):
+    """
+    When the user's message contains their own name (e.g. searching for
+    a celebrity with the same name), the name should NOT be redacted from
+    the search query.
+    """
+    # Model echoes the name back in the search query
+    mock_ollama.set_default_flow(
+        search_query="Test User celebrity gossip",
+        final_response="here's what i found! 🌟",
+    )
+
+    async with running_penny(test_config) as penny:
+        # User explicitly typed their own name in the message
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="search for Test User celebrity gossip",
+        )
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Name should be preserved in the search query since the user said it
+        with penny.db.get_session() as session:
+            search_logs = list(session.exec(select(SearchLog)).all())
+        assert len(search_logs) >= 1, "Search should have been logged"
+        logged_query = search_logs[0].query
+        assert "Test User" in logged_query, "Name should NOT be redacted when user said it"
