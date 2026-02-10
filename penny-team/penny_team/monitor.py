@@ -21,6 +21,7 @@ from penny_team.constants import (
     MONITOR_MAX_ERROR_CONTEXT,
     MONITOR_STATE_OFFSET,
 )
+from penny_team.utils.github_api import GitHubAPI
 from penny_team.utils.github_app import GitHubApp
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,7 @@ class MonitorAgent(Agent):
         model: str | None = None,
         allowed_tools: list[str] | None = None,
         github_app: GitHubApp | None = None,
+        github_api: GitHubAPI | None = None,
         trusted_users: set[str] | None = None,
     ) -> None:
         from penny_team.base import PROJECT_ROOT
@@ -149,6 +151,7 @@ class MonitorAgent(Agent):
             model=model,
             allowed_tools=allowed_tools,
             github_app=github_app,
+            github_api=github_api,
             trusted_users=trusted_users,
         )
         if log_path is not None:

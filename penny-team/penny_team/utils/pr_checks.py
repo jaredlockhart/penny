@@ -1,32 +1,20 @@
 """PR status detection for worker agent PRs.
 
 Fetches PR check statuses, merge conflict status, and review feedback
-via gh CLI and enriches FilteredIssue objects with CI failure details,
-merge conflict information, and review state. This enables the worker
-agent to detect and fix failing checks, rebase conflicting branches,
-and address review feedback.
+via the GitHub API and enriches FilteredIssue objects with CI failure
+details, merge conflict information, and review state. This enables the
+worker agent to detect and fix failing checks, rebase conflicting
+branches, and address review feedback.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import subprocess
-import urllib.request
 from dataclasses import dataclass
 
-from pydantic import BaseModel, Field
-
 from penny_team.constants import (
-    API_PR_REVIEW_COMMENTS,
     CI_STATUS_FAILING,
     CI_STATUS_PASSING,
-    ENV_GH_TOKEN,
-    GH_CLI,
-    GH_PR_FIELDS,
-    GITHUB_API,
-    GITHUB_REPO_NAME,
-    GITHUB_REPO_OWNER,
     MAX_LOG_CHARS,
     MERGE_STATUS_CONFLICTING,
     PASSING_CONCLUSIONS,
@@ -34,46 +22,16 @@ from penny_team.constants import (
     REVIEW_STATE_CHANGES_REQUESTED,
     Label,
 )
+from penny_team.utils.github_api import (
+    CheckStatus,
+    GitHubAPI,
+    PRComment,
+    PRReview,
+    PullRequest,
+)
 from penny_team.utils.issue_filter import FilteredIssue
 
 logger = logging.getLogger(__name__)
-
-
-class CommentAuthor(BaseModel):
-    """Author of a PR comment or review."""
-
-    login: str = ""
-
-
-class PRComment(BaseModel):
-    """A top-level PR comment (from gh pr list --json comments)."""
-
-    author: CommentAuthor = CommentAuthor()
-    body: str = ""
-    created_at: str = Field("", alias="createdAt")
-
-
-class PRReview(BaseModel):
-    """A formal PR review (from gh pr list --json reviews)."""
-
-    author: CommentAuthor = CommentAuthor()
-    state: str = ""
-    submitted_at: str = Field("", alias="submittedAt")
-
-
-class ReviewCommentUser(BaseModel):
-    """Author of an inline PR review comment (REST API format)."""
-
-    login: str = ""
-
-
-class ReviewComment(BaseModel):
-    """An inline review comment on a pull request (from REST API)."""
-
-    user: ReviewCommentUser = ReviewCommentUser()
-    body: str = ""
-    path: str = ""
-    created_at: str = ""
 
 
 @dataclass
@@ -86,7 +44,7 @@ class FailedCheck:
 
 def enrich_issues_with_pr_status(
     issues: list[FilteredIssue],
-    env: dict[str, str] | None = None,
+    api: GitHubAPI | None = None,
     bot_logins: set[str] | None = None,
     processed_at: dict[str, str] | None = None,
 ) -> None:
@@ -97,15 +55,15 @@ def enrich_issues_with_pr_status(
     When processed_at is provided, only review feedback newer than
     the agent's last processing time is included (prevents re-addressing
     already-handled comments).
-    Fail-open: if gh fails, issues are left unchanged.
+    Fail-open: if the API fails, issues are left unchanged.
     """
     in_review = [i for i in issues if Label.IN_REVIEW in i.labels]
     if not in_review:
         return
 
     try:
-        prs = _fetch_open_prs(env)
-    except (subprocess.TimeoutExpired, OSError, RuntimeError):
+        prs = _fetch_open_prs(api)
+    except (OSError, RuntimeError):
         logger.warning("Failed to fetch PR statuses, skipping CI/merge detection")
         return
 
@@ -121,24 +79,24 @@ def enrich_issues_with_pr_status(
         since = (processed_at or {}).get(str(issue.number))
 
         # Merge conflict detection
-        if pr.get("mergeable", "") == MERGE_STATUS_CONFLICTING:
+        if pr.mergeable == MERGE_STATUS_CONFLICTING:
             issue.merge_conflict = True
-            issue.merge_conflict_branch = pr["headRefName"]
+            issue.merge_conflict_branch = pr.head_ref_name
 
         # Review feedback detection: formal reviews, top-level comments, or inline review comments
         # Only include feedback newer than when we last processed this issue.
         review_parts: list[str] = []
 
-        if _has_changes_requested(pr.get("reviews", []), since=since):
+        if _has_changes_requested(pr.reviews, since=since):
             issue.has_review_feedback = True
 
-        human_comments = _collect_human_comments(pr.get("comments", []), bot_logins, since=since)
+        human_comments = _collect_human_comments(pr.comments, bot_logins, since=since)
         if human_comments:
             issue.has_review_feedback = True
             review_parts.append("**PR comments:**\n")
             review_parts.extend(human_comments)
 
-        inline_comments = _collect_human_review_comments(pr["number"], bot_logins, env, since=since)
+        inline_comments = _collect_human_review_comments(pr.number, bot_logins, api, since=since)
         if inline_comments:
             issue.has_review_feedback = True
             review_parts.append("**Inline review comments (on specific code lines):**\n")
@@ -148,7 +106,7 @@ def enrich_issues_with_pr_status(
             issue.review_comments = "\n".join(review_parts)
 
         # CI check detection
-        failed = _extract_failed_checks(pr.get("statusCheckRollup", []))
+        failed = _extract_failed_checks(pr.status_check_rollup)
 
         if not failed:
             issue.ci_status = CI_STATUS_PASSING
@@ -156,8 +114,8 @@ def enrich_issues_with_pr_status(
 
         issue.ci_status = CI_STATUS_FAILING
 
-        branch = pr["headRefName"]
-        log_output = _fetch_failure_log(branch, env)
+        branch = pr.head_ref_name
+        log_output = _fetch_failure_log(branch, api)
 
         check_names = ", ".join(f.name for f in failed)
         details = f"**Failing checks**: {check_names}\n"
@@ -167,30 +125,23 @@ def enrich_issues_with_pr_status(
 
 
 def _fetch_open_prs(
-    env: dict[str, str] | None = None,
-) -> list[dict]:
+    api: GitHubAPI | None = None,
+) -> list[PullRequest]:
     """Fetch all open PRs with check status data."""
-    result = subprocess.run(
-        [GH_CLI, "pr", "list", "--state", "open", "--json", GH_PR_FIELDS, "--limit", "20"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"gh pr list failed: {result.stderr}")
-    return json.loads(result.stdout)
+    if api is None:
+        raise RuntimeError("No GitHub API configured")
+    return api.list_open_prs()
 
 
 def _match_prs_to_issues(
-    prs: list[dict],
+    prs: list[PullRequest],
     issues: list[FilteredIssue],
-) -> dict[int, dict]:
+) -> dict[int, PullRequest]:
     """Match PRs to issues by branch naming convention (issue-N-*)."""
     issue_numbers = {i.number for i in issues}
-    result: dict[int, dict] = {}
+    result: dict[int, PullRequest] = {}
     for pr in prs:
-        branch = pr.get("headRefName", "")
+        branch = pr.head_ref_name
         parts = branch.split("-", 2)
         if len(parts) >= 2 and parts[0] == "issue":
             try:
@@ -202,7 +153,7 @@ def _match_prs_to_issues(
     return result
 
 
-def _has_changes_requested(raw_reviews: list[dict], since: str | None = None) -> bool:
+def _has_changes_requested(reviews: list[PRReview], since: str | None = None) -> bool:
     """Check if any reviewer's latest review requests changes.
 
     A reviewer might request changes then later approve. We only care
@@ -211,8 +162,7 @@ def _has_changes_requested(raw_reviews: list[dict], since: str | None = None) ->
     count (already-addressed reviews are ignored).
     """
     latest_by_reviewer: dict[str, PRReview] = {}
-    for raw in raw_reviews:
-        review = PRReview.model_validate(raw)
+    for review in reviews:
         if review.author.login and review.state:
             latest_by_reviewer[review.author.login] = review
     for review in latest_by_reviewer.values():
@@ -226,43 +176,35 @@ def _has_changes_requested(raw_reviews: list[dict], since: str | None = None) ->
 def _collect_human_review_comments(
     pr_number: int,
     bot_logins: set[str] | None,
-    env: dict[str, str] | None,
+    api: GitHubAPI | None,
     since: str | None = None,
 ) -> list[str]:
     """Fetch inline review comments from human (non-bot) users.
 
     These are comments left on specific lines of code during a review,
-    which are not included in gh pr list --json comments or reviews.
+    which are not included in the PR comments or reviews from GraphQL.
     When since is set, only comments created after that ISO timestamp
     are included (filters out already-addressed feedback).
     Fail-open: returns empty list if the API call fails.
     """
+    if api is None:
+        return []
     try:
-        api_path = API_PR_REVIEW_COMMENTS.format(
-            owner=GITHUB_REPO_OWNER, repo=GITHUB_REPO_NAME, pr_number=pr_number
-        )
-        url = f"{GITHUB_API}{api_path}"
-        token = (env or {}).get(ENV_GH_TOKEN, "")
-        req = urllib.request.Request(url)
-        req.add_header("Authorization", f"Bearer {token}")
-        req.add_header("Accept", "application/vnd.github+json")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            raw_comments = json.loads(resp.read())
+        comments = api.list_pr_review_comments(pr_number)
         parts: list[str] = []
-        for raw in raw_comments:
-            comment = ReviewComment.model_validate(raw)
+        for comment in comments:
             if since and comment.created_at and comment.created_at <= since:
                 continue
             if comment.user.login and (bot_logins is None or comment.user.login not in bot_logins):
                 location = f" (`{comment.path}`)" if comment.path else ""
                 parts.append(f"**{comment.user.login}**{location}:\n{comment.body}\n")
         return parts
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (OSError, ValueError, RuntimeError):
         return []
 
 
 def _collect_human_comments(
-    raw_comments: list[dict],
+    comments: list[PRComment],
     bot_logins: set[str] | None,
     since: str | None = None,
 ) -> list[str]:
@@ -272,8 +214,7 @@ def _collect_human_comments(
     are included (filters out already-addressed feedback).
     """
     parts: list[str] = []
-    for raw in raw_comments:
-        comment = PRComment.model_validate(raw)
+    for comment in comments:
         if not comment.author.login:
             continue
         if since and comment.created_at and comment.created_at <= since:
@@ -283,19 +224,17 @@ def _collect_human_comments(
     return parts
 
 
-def _extract_failed_checks(status_rollup: list[dict]) -> list[FailedCheck]:
+def _extract_failed_checks(status_rollup: list[CheckStatus]) -> list[FailedCheck]:
     """Extract failing checks from statusCheckRollup data."""
     failed: list[FailedCheck] = []
     for check in status_rollup:
-        state = check.get("state", "")
-        conclusion = check.get("conclusion", "")
-        if state in PENDING_STATES:
+        if check.state in PENDING_STATES:
             continue
-        if conclusion not in PASSING_CONCLUSIONS:
+        if check.conclusion not in PASSING_CONCLUSIONS:
             failed.append(
                 FailedCheck(
-                    name=check.get("context", check.get("name", "unknown")),
-                    conclusion=conclusion,
+                    name=check.name,
+                    conclusion=check.conclusion,
                 )
             )
     return failed
@@ -303,54 +242,25 @@ def _extract_failed_checks(status_rollup: list[dict]) -> list[FailedCheck]:
 
 def _fetch_failure_log(
     branch: str,
-    env: dict[str, str] | None = None,
+    api: GitHubAPI | None = None,
 ) -> str:
     """Fetch truncated log output from the most recent failing run."""
+    if api is None:
+        return ""
     try:
-        result = subprocess.run(
-            [
-                GH_CLI,
-                "run",
-                "list",
-                "--branch",
-                branch,
-                "--status",
-                "failure",
-                "--json",
-                "databaseId",
-                "--limit",
-                "1",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=env,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return ""
-
-        runs = json.loads(result.stdout)
+        runs = api.list_failed_runs(branch, limit=1)
         if not runs:
             return ""
 
-        run_id = str(runs[0]["databaseId"])
-
-        result = subprocess.run(
-            [GH_CLI, "run", "view", run_id, "--log-failed"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
-        )
-        if result.returncode != 0:
+        log = api.get_failed_job_log(runs[0].id)
+        if not log:
             return ""
 
-        log = result.stdout.strip()
         if len(log) > MAX_LOG_CHARS:
             log = log[-MAX_LOG_CHARS:]
             log = f"... (truncated)\n{log}"
         return log
 
-    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+    except (OSError, RuntimeError, ValueError) as e:
         logger.warning(f"Failed to fetch failure log for branch {branch}: {e}")
         return ""

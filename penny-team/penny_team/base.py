@@ -24,13 +24,11 @@ from penny_team.constants import (
     CLAUDE_CLI,
     EVENT_ASSISTANT,
     EVENT_RESULT,
-    GH_CLI,
-    GH_FIELD_NUMBER,
-    GH_FIELD_UPDATED_AT,
     LABELS_WITH_EXTERNAL_STATE,
     MAX_CI_FIX_ATTEMPTS,
     PROMPT_FILENAME,
 )
+from penny_team.utils.github_api import GitHubAPI
 from penny_team.utils.github_app import GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
@@ -79,6 +77,7 @@ class Agent:
         allowed_tools: list[str] | None = None,
         required_labels: list[str] | None = None,
         github_app: GitHubApp | None = None,
+        github_api: GitHubAPI | None = None,
         trusted_users: set[str] | None = None,
         post_output_as_comment: bool = False,
     ):
@@ -91,6 +90,7 @@ class Agent:
         self.allowed_tools = allowed_tools
         self.required_labels = required_labels
         self.github_app = github_app
+        self.github_api = github_api
         self.trusted_users = trusted_users
         self.post_output_as_comment = post_output_as_comment
         self.last_run: datetime | None = None
@@ -169,54 +169,33 @@ class Agent:
         self._save_full_state(state)
 
     def _post_comment(self, issue_number: int, body: str) -> bool:
-        """Post a comment on a GitHub issue via gh CLI.
+        """Post a comment on a GitHub issue via the GitHub API.
 
         Returns True if the comment was posted successfully.
         """
-        result = subprocess.run(
-            [GH_CLI, "issue", "comment", str(issue_number), "--body", body],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=self._get_env(),
-        )
-        if result.returncode != 0:
-            logger.error(
-                f"[{self.name}] Failed to post comment on issue #{issue_number}: {result.stderr}"
-            )
+        if self.github_api is None:
+            logger.warning(f"[{self.name}] No GitHub API configured, cannot post comment")
             return False
-        logger.info(f"[{self.name}] Posted comment on issue #{issue_number}")
-        return True
+        try:
+            self.github_api.comment_issue(issue_number, body)
+            logger.info(f"[{self.name}] Posted comment on issue #{issue_number}")
+            return True
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.error(f"[{self.name}] Failed to post comment on issue #{issue_number}: {e}")
+            return False
 
     def _fetch_issue_timestamps(self) -> dict[str, str]:
         """Fetch updatedAt timestamps for all issues matching required labels.
 
         Returns a dict mapping issue number (str) to updatedAt timestamp.
-        Raises RuntimeError if any gh call fails (caller should fail open).
+        Raises RuntimeError if no API is configured or a query fails.
         """
+        if self.github_api is None:
+            raise RuntimeError("No GitHub API configured")
         timestamps: dict[str, str] = {}
         for label in self.required_labels or []:
-            result = subprocess.run(
-                [
-                    GH_CLI,
-                    "issue",
-                    "list",
-                    "--label",
-                    label,
-                    "--json",
-                    f"{GH_FIELD_NUMBER},{GH_FIELD_UPDATED_AT}",
-                    "--limit",
-                    "20",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                env=self._get_env(),
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"gh issue list failed for label '{label}'")
-            for issue in json.loads(result.stdout):
-                timestamps[str(issue[GH_FIELD_NUMBER])] = issue[GH_FIELD_UPDATED_AT]
+            for item in self.github_api.list_issues(label):
+                timestamps[str(item.number)] = item.updated_at
         return timestamps
 
     def has_work(self) -> bool:
@@ -236,7 +215,7 @@ class Agent:
 
         try:
             current = self._fetch_issue_timestamps()
-        except (subprocess.TimeoutExpired, OSError, RuntimeError):
+        except (OSError, RuntimeError):
             return True
 
         if not current:
@@ -274,11 +253,11 @@ class Agent:
             issues = fetch_issues_for_labels(
                 self.required_labels,
                 trusted_users=self.trusted_users,
-                env=self._get_env(),
+                api=self.github_api,
             )
             processed = self._load_processed()
             enrich_issues_with_pr_status(
-                issues, env=self._get_env(), bot_logins=self._bot_logins, processed_at=processed
+                issues, api=self.github_api, bot_logins=self._bot_logins, processed_at=processed
             )
             issue = pick_actionable_issue(issues, self._bot_logins, processed)
         except Exception:
@@ -375,7 +354,7 @@ class Agent:
             )
 
             all_issues = fetch_issues_for_labels(
-                self.required_labels, trusted_users=self.trusted_users, env=self._get_env()
+                self.required_labels, trusted_users=self.trusted_users, api=self.github_api
             )
 
             # Enrich in-review issues with CI and merge conflict status (no-op if none match)
@@ -383,7 +362,7 @@ class Agent:
 
             processed = self._load_processed()
             enrich_issues_with_pr_status(
-                all_issues, env=self._get_env(), bot_logins=self._bot_logins, processed_at=processed
+                all_issues, api=self.github_api, bot_logins=self._bot_logins, processed_at=processed
             )
 
             issue = pick_actionable_issue(all_issues, self._bot_logins, processed)
@@ -397,7 +376,7 @@ class Agent:
                 )
                 try:
                     self._save_state(self._fetch_issue_timestamps())
-                except (subprocess.TimeoutExpired, OSError, RuntimeError) as e:
+                except (OSError, RuntimeError) as e:
                     logger.warning(f"[{self.name}] Failed to save issue state: {e}")
                 return AgentRun(
                     agent_name=self.name,

@@ -1,7 +1,7 @@
 """Shared test fixtures and helpers for penny-team tests.
 
-Provides subprocess mocking for gh CLI and Claude CLI interactions,
-agent factories, and data builders used across all test files.
+Provides MockGitHubAPI for GitHub API interactions, subprocess mocking
+for Claude CLI, agent factories, and data builders used across all test files.
 """
 
 from __future__ import annotations
@@ -15,6 +15,21 @@ from unittest.mock import MagicMock
 import pytest
 
 from penny_team.base import Agent
+from penny_team.utils.github_api import (
+    CheckStatus,
+    CommentAuthor,
+    IssueAuthor,
+    IssueComment,
+    IssueDetail,
+    IssueLabel,
+    IssueListItem,
+    PRComment,
+    PRReview,
+    PullRequest,
+    ReviewComment,
+    ReviewCommentUser,
+    WorkflowRun,
+)
 
 # Ensure penny-team package is importable (matches PYTHONPATH in Dockerfile)
 PENNY_TEAM_ROOT = Path(__file__).parent.parent
@@ -32,6 +47,87 @@ TRUSTED_USERS = {"alice", "bob", BOT_SLUG, BOT_LOGIN}
 CODEOWNERS_USERS = {"alice", "bob"}
 
 
+# --- MockGitHubAPI ---
+
+
+class MockGitHubAPI:
+    """Mock GitHubAPI for tests — returns canned Pydantic model instances.
+
+    Set up return values with set_* methods, then pass as github_api to agents.
+    Tracks all method calls for assertion.
+    """
+
+    def __init__(self):
+        self.calls: list[tuple[str, tuple, dict]] = []
+        self._issues: dict[str, list[IssueListItem]] = {}
+        self._issues_detailed: dict[str, list[IssueDetail]] = {}
+        self._prs: list[PullRequest] = []
+        self._review_comments: dict[int, list[ReviewComment]] = {}
+        self._failed_runs: dict[str, list[WorkflowRun]] = {}
+        self._failed_logs: dict[int, str] = {}
+        self._comment_issue_fail: bool = False
+        self._list_issues_fail: bool = False
+        self._list_issues_detailed_fail: bool = False
+        self._list_prs_fail: bool = False
+
+    # --- Setup methods ---
+
+    def set_issues(self, label: str, items: list[IssueListItem]) -> None:
+        self._issues[label] = items
+
+    def set_issues_detailed(self, label: str, items: list[IssueDetail]) -> None:
+        self._issues_detailed[label] = items
+
+    def set_prs(self, prs: list[PullRequest]) -> None:
+        self._prs = prs
+
+    def set_review_comments(self, pr_number: int, comments: list[ReviewComment]) -> None:
+        self._review_comments[pr_number] = comments
+
+    def set_failed_runs(self, branch: str, runs: list[WorkflowRun]) -> None:
+        self._failed_runs[branch] = runs
+
+    def set_failed_log(self, run_id: int, log: str) -> None:
+        self._failed_logs[run_id] = log
+
+    # --- API methods (matching GitHubAPI interface) ---
+
+    def list_issues(self, label: str, limit: int = 20) -> list[IssueListItem]:
+        self.calls.append(("list_issues", (label,), {"limit": limit}))
+        if self._list_issues_fail:
+            raise RuntimeError("Mock list_issues failure")
+        return self._issues.get(label, [])
+
+    def list_issues_detailed(self, label: str, limit: int = 20) -> list[IssueDetail]:
+        self.calls.append(("list_issues_detailed", (label,), {"limit": limit}))
+        if self._list_issues_detailed_fail:
+            raise RuntimeError("Mock list_issues_detailed failure")
+        return self._issues_detailed.get(label, [])
+
+    def comment_issue(self, number: int, body: str) -> None:
+        self.calls.append(("comment_issue", (number, body), {}))
+        if self._comment_issue_fail:
+            raise RuntimeError("Mock comment_issue failure")
+
+    def list_open_prs(self, limit: int = 20) -> list[PullRequest]:
+        self.calls.append(("list_open_prs", (), {"limit": limit}))
+        if self._list_prs_fail:
+            raise RuntimeError("Mock list_open_prs failure")
+        return self._prs
+
+    def list_pr_review_comments(self, pr_number: int) -> list[ReviewComment]:
+        self.calls.append(("list_pr_review_comments", (pr_number,), {}))
+        return self._review_comments.get(pr_number, [])
+
+    def list_failed_runs(self, branch: str, limit: int = 1) -> list[WorkflowRun]:
+        self.calls.append(("list_failed_runs", (branch,), {"limit": limit}))
+        return self._failed_runs.get(branch, [])
+
+    def get_failed_job_log(self, run_id: int) -> str:
+        self.calls.append(("get_failed_job_log", (run_id,), {}))
+        return self._failed_logs.get(run_id, "")
+
+
 # --- Agent factory ---
 
 
@@ -44,6 +140,7 @@ def make_agent(
     model: str | None = None,
     allowed_tools: list[str] | None = None,
     github_app: MagicMock | None = None,
+    github_api: MockGitHubAPI | None = None,
     trusted_users: set[str] | None = TRUSTED_USERS,
     post_output_as_comment: bool = False,
 ) -> Agent:
@@ -62,6 +159,7 @@ def make_agent(
         allowed_tools=allowed_tools,
         required_labels=required_labels,
         github_app=github_app,
+        github_api=github_api,
         trusted_users=trusted_users,
         post_output_as_comment=post_output_as_comment,
     )
@@ -77,44 +175,69 @@ def result_event(text: str = "Task completed") -> str:
     return json.dumps({"type": "result", "result": text})
 
 
-def issue_list_response(*numbers: int) -> str:
-    """Create a gh issue list JSON response."""
-    return json.dumps([{"number": n} for n in numbers])
+def make_issue_list_items(*numbers_and_timestamps: tuple[int, str]) -> list[IssueListItem]:
+    """Create IssueListItem instances from (number, updatedAt) tuples."""
+    return [
+        IssueListItem(number=n, updated_at=ts)
+        for n, ts in numbers_and_timestamps
+    ]
 
 
-def issue_view_response(
+def make_issue_detail(
     number: int = 42,
     title: str = "Add reminders feature",
     body: str = "Users should be able to set reminders via natural language.",
     author: str = "alice",
     labels: list[str] | None = None,
     comments: list[dict] | None = None,
-) -> str:
-    """Create a gh issue view JSON response."""
-    return json.dumps({
-        "title": title,
-        "body": body,
-        "author": {"login": author},
-        "labels": [{"name": label} for label in (labels or ["requirements"])],
-        "comments": comments or [],
-    })
+) -> IssueDetail:
+    """Create an IssueDetail instance for testing."""
+    issue_comments = []
+    for c in (comments or []):
+        issue_comments.append(
+            IssueComment(
+                author=IssueAuthor(login=c.get("author", {}).get("login", "")),
+                body=c.get("body", ""),
+                created_at=c.get("createdAt", ""),
+            )
+        )
+
+    return IssueDetail(
+        number=number,
+        title=title,
+        body=body,
+        author=IssueAuthor(login=author),
+        labels=[IssueLabel(name=l) for l in (labels or ["requirements"])],
+        comments=issue_comments,
+    )
 
 
-def make_pr_response(
+def make_pull_request(
     number: int,
     branch: str,
-    checks: list[dict] | None = None,
+    checks: list[CheckStatus] | None = None,
     mergeable: str = "MERGEABLE",
-    reviews: list[dict] | None = None,
-) -> dict:
-    """Create a PR data dict matching gh pr list --json output."""
-    return {
-        "number": number,
-        "headRefName": branch,
-        "statusCheckRollup": checks or [],
-        "mergeable": mergeable,
-        "reviews": reviews or [],
-    }
+    reviews: list[PRReview] | None = None,
+    comments: list[PRComment] | None = None,
+) -> PullRequest:
+    """Create a PullRequest instance for testing."""
+    return PullRequest(
+        number=number,
+        head_ref_name=branch,
+        status_check_rollup=checks or [],
+        mergeable=mergeable,
+        reviews=reviews or [],
+        comments=comments or [],
+    )
+
+
+def make_check_status(
+    name: str = "check",
+    state: str = "COMPLETED",
+    conclusion: str = "SUCCESS",
+) -> CheckStatus:
+    """Create a CheckStatus instance for testing."""
+    return CheckStatus(name=name, state=state, conclusion=conclusion)
 
 
 # --- Prompt extraction ---
@@ -129,48 +252,6 @@ def extract_prompt(calls: list[tuple[tuple, dict]]) -> str:
 
 
 # --- Mock classes ---
-
-
-class MockSubprocess:
-    """Intercepts subprocess.run() calls with canned responses by command pattern.
-
-    Register responses with add_response(pattern, ...). When subprocess.run()
-    is called, the command is joined into a string and matched against
-    registered patterns. First match wins. Unmatched commands return
-    returncode=0, stdout="[]".
-    """
-
-    def __init__(self):
-        self.calls: list[tuple[list[str], dict]] = []
-        self._responses: list[tuple[str, subprocess.CompletedProcess]] = []
-
-    def add_response(
-        self,
-        pattern: str,
-        stdout: str = "",
-        returncode: int = 0,
-        stderr: str = "",
-    ) -> None:
-        """Register a canned response for commands containing pattern."""
-        self._responses.append(
-            (
-                pattern,
-                subprocess.CompletedProcess(
-                    args=[],
-                    returncode=returncode,
-                    stdout=stdout,
-                    stderr=stderr,
-                ),
-            )
-        )
-
-    def __call__(self, cmd, **kwargs):
-        self.calls.append((list(cmd), kwargs))
-        cmd_str = " ".join(str(c) for c in cmd)
-        for pattern, response in self._responses:
-            if pattern in cmd_str:
-                return response
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="[]")
 
 
 class MockPopen:
@@ -212,14 +293,9 @@ def isolate_state_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def mock_subprocess(monkeypatch):
-    """Monkeypatch subprocess.run with a MockSubprocess instance.
-
-    Returns the MockSubprocess so tests can register responses and inspect calls.
-    """
-    mock = MockSubprocess()
-    monkeypatch.setattr(subprocess, "run", mock)
-    return mock
+def mock_github_api():
+    """Create a MockGitHubAPI instance for testing."""
+    return MockGitHubAPI()
 
 
 @pytest.fixture

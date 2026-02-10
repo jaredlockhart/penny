@@ -49,6 +49,7 @@ from penny_team.constants import (
 )
 from penny_team.monitor import MonitorAgent
 from penny_team.utils.codeowners import parse_codeowners
+from penny_team.utils.github_api import GitHubAPI
 from penny_team.utils.github_app import GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
@@ -105,6 +106,9 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
         trusted.add(f"{slug}{BOT_SUFFIX}")
         trusted.add(f"{APP_PREFIX}{slug}")
 
+    # Create shared GitHub API client for all agents
+    github_api = GitHubAPI(github_app.get_token) if github_app else None
+
     return [
         Agent(
             name=AGENT_PM,
@@ -112,6 +116,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             timeout_seconds=PM_TIMEOUT,
             required_labels=[Label.REQUIREMENTS],
             github_app=github_app,
+            github_api=github_api,
             trusted_users=trusted,
             post_output_as_comment=True,
             allowed_tools=[],
@@ -122,6 +127,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             timeout_seconds=ARCHITECT_TIMEOUT,
             required_labels=[Label.SPECIFICATION],
             github_app=github_app,
+            github_api=github_api,
             trusted_users=trusted,
             post_output_as_comment=True,
             allowed_tools=[],
@@ -132,6 +138,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             timeout_seconds=WORKER_TIMEOUT,
             required_labels=[Label.IN_PROGRESS, Label.IN_REVIEW, Label.BUG],
             github_app=github_app,
+            github_api=github_api,
             trusted_users=trusted,
         ),
         MonitorAgent(
@@ -139,6 +146,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             interval_seconds=MONITOR_INTERVAL,
             timeout_seconds=MONITOR_TIMEOUT,
             github_app=github_app,
+            github_api=github_api,
             trusted_users=trusted,
         ),
     ]
