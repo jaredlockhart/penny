@@ -34,14 +34,14 @@ async def get_timezone(location: str) -> str | None:
 
     try:
         # Geocode location to lat/lon
-        geolocator = Nominatim(user_agent="penny_profile")
+        geolocator = Nominatim(user_agent="penny_profile")  # type: ignore[misc]
         geo_result = geolocator.geocode(location)
         if not geo_result:
             logger.warning("Geocoding failed for location: %s", location)
             return None
 
         # Get timezone from lat/lon
-        tf = TimezoneFinder()
+        tf = TimezoneFinder()  # type: ignore[misc]
         timezone = tf.timezone_at(lat=geo_result.latitude, lng=geo_result.longitude)
         if not timezone:
             logger.warning(
