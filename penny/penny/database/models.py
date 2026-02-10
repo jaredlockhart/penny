@@ -101,3 +101,13 @@ class RuntimeConfig(SQLModel, table=True):
     value: str  # Store as string, parse to correct type on load
     description: str  # Human-readable description with units
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class Preference(SQLModel, table=True):
+    """User preferences (likes/dislikes) for discovery."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)  # Signal number or Discord user ID
+    topic: str  # Arbitrary natural language phrase
+    type: str  # "like" or "dislike"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

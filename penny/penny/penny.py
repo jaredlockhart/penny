@@ -129,6 +129,7 @@ class Penny:
         # Connect agents that send messages to channel
         self.followup_agent.set_channel(self.channel)
         self.discovery_agent.set_channel(self.channel)
+        self.profile_agent.set_channel(self.channel)
 
         # Create schedules (priority order: summarize, profile, followup, discovery)
         schedules = [

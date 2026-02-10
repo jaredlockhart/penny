@@ -10,7 +10,15 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from penny.agent.models import MessageRole
 from penny.constants import MessageDirection
-from penny.database.models import CommandLog, MessageLog, PromptLog, SearchLog, UserInfo, UserTopics
+from penny.database.models import (
+    CommandLog,
+    MessageLog,
+    Preference,
+    PromptLog,
+    SearchLog,
+    UserInfo,
+    UserTopics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +403,31 @@ class Database:
             messages.reverse()  # Return in chronological order (oldest first)
             return messages
 
+    def get_user_reactions(self, sender: str, limit: int = 50) -> list[MessageLog]:
+        """
+        Get recent reactions from a specific user.
+
+        Args:
+            sender: The user's identifier (phone number, discord ID, etc.)
+            limit: Maximum number of reactions to return
+
+        Returns:
+            Most recent reactions ordered by timestamp descending (newest first)
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == MessageDirection.INCOMING,
+                        MessageLog.is_reaction == True,  # noqa: E712
+                    )
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+
     def get_users_needing_profile_update(self) -> list[str]:
         """
         Get senders who have messages newer than their last profile update.
@@ -639,3 +672,169 @@ class Database:
                 logger.debug("Logged command: /%s %s", command_name, command_args)
         except Exception as e:
             logger.error("Failed to log command: %s", e)
+
+    def get_preferences(self, user: str, pref_type: str) -> list[Preference]:
+        """
+        Get all preferences of a specific type for a user.
+
+        Args:
+            user: User identifier (phone number or Discord user ID)
+            pref_type: Preference type ("like" or "dislike")
+
+        Returns:
+            List of matching Preference objects
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Preference)
+                    .where(
+                        Preference.user == user,
+                        Preference.type == pref_type,
+                    )
+                    .order_by(Preference.created_at.asc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
+    def add_preference(self, user: str, topic: str, pref_type: str) -> bool:
+        """
+        Add a preference for a user.
+
+        Args:
+            user: User identifier (phone number or Discord user ID)
+            topic: The topic/phrase to add
+            pref_type: Preference type ("like" or "dislike")
+
+        Returns:
+            True if added, False if already exists
+        """
+        try:
+            with self.get_session() as session:
+                # Check if already exists
+                existing = session.exec(
+                    select(Preference).where(
+                        Preference.user == user,
+                        Preference.topic == topic,
+                        Preference.type == pref_type,
+                    )
+                ).first()
+
+                if existing:
+                    return False
+
+                pref = Preference(
+                    user=user,
+                    topic=topic,
+                    type=pref_type,
+                )
+                session.add(pref)
+                session.commit()
+                logger.debug("Added %s preference for %s: %s", pref_type, user, topic)
+                return True
+        except Exception as e:
+            logger.error("Failed to add preference: %s", e)
+            return False
+
+    def remove_preference(self, user: str, topic: str, pref_type: str) -> bool:
+        """
+        Remove a preference for a user.
+
+        Args:
+            user: User identifier (phone number or Discord user ID)
+            topic: The topic/phrase to remove
+            pref_type: Preference type ("like" or "dislike")
+
+        Returns:
+            True if removed, False if not found
+        """
+        try:
+            with self.get_session() as session:
+                pref = session.exec(
+                    select(Preference).where(
+                        Preference.user == user,
+                        Preference.topic == topic,
+                        Preference.type == pref_type,
+                    )
+                ).first()
+
+                if not pref:
+                    return False
+
+                session.delete(pref)
+                session.commit()
+                logger.debug("Removed %s preference for %s: %s", pref_type, user, topic)
+                return True
+        except Exception as e:
+            logger.error("Failed to remove preference: %s", e)
+            return False
+
+    def find_conflicting_preference(
+        self, user: str, topic: str, pref_type: str
+    ) -> Preference | None:
+        """
+        Find a conflicting preference (opposite type with same topic).
+
+        Args:
+            user: User identifier (phone number or Discord user ID)
+            topic: The topic/phrase to check
+            pref_type: Preference type to check against
+
+        Returns:
+            The conflicting Preference if found, None otherwise
+        """
+        opposite_type = "dislike" if pref_type == "like" else "like"
+        with self.get_session() as session:
+            return session.exec(
+                select(Preference).where(
+                    Preference.user == user,
+                    Preference.topic == topic,
+                    Preference.type == opposite_type,
+                )
+            ).first()
+
+    def move_preference(self, user: str, topic: str, from_type: str, to_type: str) -> bool:
+        """
+        Move a preference from one type to another (e.g., like → dislike).
+
+        Args:
+            user: User identifier (phone number or Discord user ID)
+            topic: The topic/phrase to move
+            from_type: Source preference type
+            to_type: Target preference type
+
+        Returns:
+            True if moved successfully, False otherwise
+        """
+        try:
+            with self.get_session() as session:
+                # Find the existing preference
+                existing = session.exec(
+                    select(Preference).where(
+                        Preference.user == user,
+                        Preference.topic == topic,
+                        Preference.type == from_type,
+                    )
+                ).first()
+
+                if not existing:
+                    return False
+
+                # Remove it
+                session.delete(existing)
+                session.flush()
+
+                # Add new one with opposite type
+                new_pref = Preference(
+                    user=user,
+                    topic=topic,
+                    type=to_type,
+                )
+                session.add(new_pref)
+                session.commit()
+                logger.debug(
+                    "Moved preference for %s: %s from %s to %s", user, topic, from_type, to_type
+                )
+                return True
+        except Exception as e:
+            logger.error("Failed to move preference: %s", e)
+            return False

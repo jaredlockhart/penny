@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from penny.agent.base import Agent
 from penny.agent.models import MessageRole
-from penny.constants import DISCOVERY_PROMPT
+from penny.constants import DISCOVERY_PROMPT, PreferenceType
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -44,7 +44,7 @@ class DiscoveryAgent(Agent):
             logger.error("DiscoveryAgent: no channel set")
             return False
 
-        # Get users who have topics
+        # Get users who have topics (fallback for backward compatibility)
         users = self.db.get_users_with_topics()
         if not users:
             logger.debug("DiscoveryAgent: no users with topics")
@@ -52,20 +52,40 @@ class DiscoveryAgent(Agent):
 
         # Pick a random user
         recipient = random.choice(users)
-        topics = self.db.get_user_topics(recipient)
-        if not topics:
-            return False
 
-        logger.info("Discovering something new for user %s", recipient)
-
-        # Use topics as context for the discovery
-        history = [
-            (
-                MessageRole.SYSTEM.value,
-                f"User topics:\n{topics.profile_text}",
+        # Try to use structured preferences first
+        likes = self.db.get_preferences(recipient, PreferenceType.LIKE)
+        if likes:
+            # Pick a random like
+            random_like = random.choice(likes)
+            logger.info(
+                "Discovering something new for user %s about: %s", recipient, random_like.topic
             )
-        ]
-        response = await self.run(prompt=DISCOVERY_PROMPT, history=history)
+
+            # Use the random like as context for discovery
+            history = [
+                (
+                    MessageRole.SYSTEM.value,
+                    f"User likes: {random_like.topic}",
+                )
+            ]
+            response = await self.run(prompt=DISCOVERY_PROMPT, history=history)
+        else:
+            # Fallback to old-style topics if no structured preferences
+            topics = self.db.get_user_topics(recipient)
+            if not topics:
+                return False
+
+            logger.info("Discovering something new for user %s (using topics)", recipient)
+
+            # Use topics as context for the discovery
+            history = [
+                (
+                    MessageRole.SYSTEM.value,
+                    f"User topics:\n{topics.profile_text}",
+                )
+            ]
+            response = await self.run(prompt=DISCOVERY_PROMPT, history=history)
 
         answer = response.answer.strip() if response.answer else None
         if not answer:
