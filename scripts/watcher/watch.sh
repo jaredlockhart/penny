@@ -45,10 +45,11 @@ while true; do
         git reset --hard origin/main
     fi
 
-    # Rebuild all images and recreate changed containers
-    log "Rebuilding and restarting all services..."
+    # Rebuild all images and recreate changed containers (exclude watcher to avoid self-kill)
+    log "Rebuilding and restarting services..."
     GIT_MSG=$(git log -1 --pretty=%B "$CURRENT" | tr '\n' ' ' | sed 's/ *$//')
-    if GIT_COMMIT="${CURRENT:0:7}" GIT_COMMIT_MESSAGE="$GIT_MSG" $COMPOSE --profile team up -d --build; then
+    SERVICES="penny signal-api pm architect worker monitor"
+    if GIT_COMMIT="${CURRENT:0:7}" GIT_COMMIT_MESSAGE="$GIT_MSG" $COMPOSE up -d --build $SERVICES; then
         log "All services rebuilt and restarted"
     else
         log "Restart failed, will retry next cycle"
