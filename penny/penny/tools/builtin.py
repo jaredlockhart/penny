@@ -50,6 +50,7 @@ class SearchTool(Tool):
     def __init__(self, perplexity_api_key: str, db=None):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
+        self.redact_terms: list[str] = []
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -70,9 +71,10 @@ class SearchTool(Tool):
     async def execute(self, **kwargs) -> Any:
         """Run Perplexity text search and DuckDuckGo image search in parallel."""
         query: str = kwargs["query"]
+        redacted_query = self._redact_query(query)
         text_result, image_result = await asyncio.gather(
-            self._search_text(query),
-            self._search_image(query),
+            self._search_text(redacted_query),
+            self._search_image(redacted_query),
             return_exceptions=True,
         )
 
@@ -88,6 +90,16 @@ class SearchTool(Tool):
             return SearchResult(text=text, urls=urls)
 
         return SearchResult(text=text, image_base64=image_result, urls=urls)
+
+    def _redact_query(self, query: str) -> str:
+        """Remove redact_terms from query (case-insensitive, whole-word)."""
+        redacted = query
+        for term in self.redact_terms:
+            if not term:
+                continue
+            redacted = re.sub(rf"\b{re.escape(term)}\b", "", redacted, flags=re.IGNORECASE)
+        # Collapse extra whitespace left by redaction
+        return re.sub(r"\s{2,}", " ", redacted).strip()
 
     async def _search_text(self, query: str) -> tuple[str, list[str]]:
         """Search via Perplexity. Returns (text, urls)."""
