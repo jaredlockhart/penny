@@ -458,6 +458,15 @@ async def test_startup_announcement(
         senders = penny.db.get_all_senders()
         assert TEST_SENDER in senders
 
+        # Create user profile so they get startup announcements
+        penny.db.save_user_info(
+            sender=TEST_SENDER,
+            name="Test User",
+            location="Seattle, WA",
+            timezone="America/Los_Angeles",
+            date_of_birth="1990-01-01",
+        )
+
     # Clear the outgoing messages from the first run
     signal_server.outgoing_messages.clear()
 

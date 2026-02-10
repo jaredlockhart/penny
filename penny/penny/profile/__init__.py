@@ -1,5 +1,3 @@
-"""User profile module for collecting and managing user information."""
+"""User profile module for managing user information."""
 
-from penny.profile.handler import ProfilePromptHandler
-
-__all__ = ["ProfilePromptHandler"]
+__all__ = []

@@ -22,7 +22,6 @@ from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
-from penny.profile import ProfilePromptHandler
 from penny.scheduler import BackgroundScheduler, DelayedSchedule, ImmediateSchedule
 from penny.startup import get_restart_message
 from penny.tools import SearchTool
@@ -64,17 +63,6 @@ class Penny:
 
         # Create message agent for production use
         self.message_agent = create_message_agent(self.db)
-
-        # Create profile prompt handler and attach to message agent
-        profile_ollama = OllamaClient(
-            api_url=config.ollama_api_url,
-            model=config.ollama_foreground_model,
-            db=self.db,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-        )
-        profile_handler = ProfilePromptHandler(self.db, profile_ollama)
-        self.message_agent.set_profile_handler(profile_handler)
 
         # Create command registry with message agent factory for test command
         self.command_registry = create_command_registry(message_agent_factory=create_message_agent)
@@ -187,6 +175,7 @@ class Penny:
             await validate_fn()
 
         await self._send_startup_announcement()
+        await self._prompt_for_missing_profiles()
 
         try:
             await asyncio.gather(
@@ -228,6 +217,36 @@ class Penny:
                     logger.warning("Failed to send startup announcement to %s: %s", sender, e)
         except Exception as e:
             logger.warning("Failed to send startup announcement: %s", e)
+
+    async def _prompt_for_missing_profiles(self) -> None:
+        """Prompt users who don't have a profile set up yet."""
+        try:
+            senders = self.db.get_all_senders()
+            if not senders:
+                logger.info("No recipients to check for missing profiles")
+                return
+
+            prompt_msg = (
+                "hey! i need to collect some basic info about you before we can chat. "
+                "please run `/profile <name> <location> <date of birth>` "
+                "to set up your profile.\n\n"
+                "for example: `/profile alex seattle january 10 1995` 📝"
+            )
+
+            for sender in senders:
+                try:
+                    user_info = self.db.get_user_info(sender)
+                    if not user_info:
+                        logger.info("User %s has no profile, sending prompt", sender)
+                        try:
+                            await self.channel.send_status_message(sender, prompt_msg)
+                        except Exception as e:
+                            logger.warning("Failed to send profile prompt to %s: %s", sender, e)
+                except Exception:
+                    # Silently skip if userinfo table doesn't exist yet
+                    pass
+        except Exception as e:
+            logger.warning("Failed to send profile prompts: %s", e)
 
     async def shutdown(self) -> None:
         """Clean shutdown of resources."""

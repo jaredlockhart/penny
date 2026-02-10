@@ -1,4 +1,4 @@
-"""The /profile command — view or update user profile (name, location)."""
+"""The /profile command — view or update user profile (name, location, DOB)."""
 
 from __future__ import annotations
 
@@ -6,12 +6,20 @@ import logging
 from datetime import datetime
 
 try:
-    from geopy.geocoders import Nominatim
-    from timezonefinder import TimezoneFinder
+    from penny.profile.utils import get_timezone
 
     HAS_GEO = True
 except ImportError:
+    get_timezone = None  # type: ignore[assignment]
     HAS_GEO = False
+
+try:
+    import dateparser
+
+    HAS_DATEPARSER = True
+except ImportError:
+    dateparser = None  # type: ignore[assignment]
+    HAS_DATEPARSER = False
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
@@ -20,18 +28,20 @@ logger = logging.getLogger(__name__)
 
 
 class ProfileCommand(Command):
-    """View or update your basic user profile (name, location)."""
+    """View or update your basic user profile (name, location, date of birth)."""
 
     name = "profile"
-    description = "View or update your profile (name, location)"
+    description = "View or update your profile (name, location, DOB)"
     help_text = (
-        "View your current profile or update your name and location.\n\n"
+        "View your current profile or create/update your profile information.\n\n"
         "**Usage**:\n"
         "- `/profile` — View your current profile\n"
-        "- `/profile <name> <location>` — Update your profile\n\n"
+        "- `/profile <name> <location> <date of birth>` — Create profile (if new)\n"
+        "- `/profile <name> <location>` — Update name/location (if profile exists)\n\n"
         "**Examples**:\n"
-        "- `/profile Jared Toronto`\n"
-        "- `/profile Seattle` (updates location only if name unchanged)\n\n"
+        "- `/profile alex seattle january 10 1995` (initial setup)\n"
+        "- `/profile jared toronto` (update existing)\n"
+        "- `/profile seattle` (update location only)\n\n"
         "**Note**: Timezone is automatically derived from your location."
     )
 
@@ -45,7 +55,11 @@ class ProfileCommand(Command):
             user_info = context.db.get_user_info(context.user)
             if not user_info:
                 return CommandResult(
-                    text="You don't have a profile set up yet. Send me a message to get started!"
+                    text=(
+                        "you don't have a profile yet! set it up with:\n"
+                        "`/profile <name> <location> <date of birth>`\n\n"
+                        "for example: `/profile alex seattle january 10 1995` 📝"
+                    )
                 )
 
             # Format date of birth for display
@@ -63,17 +77,69 @@ class ProfileCommand(Command):
             ]
             return CommandResult(text="\n".join(lines))
 
-        # Parse update args - expecting "<name> <location>" or just "<location>"
+        user_info = context.db.get_user_info(context.user)
+
+        # NEW PROFILE CREATION (no existing profile)
+        if not user_info:
+            if not HAS_GEO or not HAS_DATEPARSER:
+                return CommandResult(
+                    text="profile creation not available (missing dependencies) 😞"
+                )
+
+            # Parse args as "<name> <location> <dob>"
+            # We need at least 3 tokens (name, location, dob-start)
+            parts = args.split(maxsplit=2)
+            if len(parts) < 3:
+                return CommandResult(
+                    text=(
+                        "to create your profile, i need name, location, and date of birth.\n\n"
+                        "usage: `/profile <name> <location> <date of birth>`\n"
+                        "example: `/profile alex seattle january 10 1995`"
+                    )
+                )
+
+            new_name = parts[0].strip()
+            new_location = parts[1].strip()
+            dob_text = parts[2].strip()
+
+            # Parse date of birth
+            dob_date = dateparser.parse(dob_text, settings={"PREFER_DATES_FROM": "past"})
+            if not dob_date:
+                return CommandResult(
+                    text=(
+                        f"i couldn't parse '{dob_text}' as a date. "
+                        "try something like 'january 10 1995' 📅"
+                    )
+                )
+
+            dob_formatted = dob_date.strftime("%Y-%m-%d")
+
+            # Derive timezone from location
+            timezone = await get_timezone(new_location)
+            if not timezone:
+                return CommandResult(
+                    text=(
+                        f"i couldn't find a timezone for '{new_location}'. "
+                        "can you be more specific? 🗺️"
+                    )
+                )
+
+            # Save new profile
+            context.db.save_user_info(
+                sender=context.user,
+                name=new_name,
+                location=new_location,
+                timezone=timezone,
+                date_of_birth=dob_formatted,
+            )
+
+            return CommandResult(text=f"got it! your profile is set up. welcome, {new_name}! 🎉")
+
+        # PROFILE UPDATE (existing profile)
         parts = args.split(maxsplit=1)
         if len(parts) == 0:
             return CommandResult(
-                text="Usage: `/profile <name> <location>` or `/profile <location>`"
-            )
-
-        user_info = context.db.get_user_info(context.user)
-        if not user_info:
-            return CommandResult(
-                text="You don't have a profile set up yet. Send me a message to get started!"
+                text="usage: `/profile <name> <location>` or `/profile <location>`"
             )
 
         # If two parts, first is name, second is location
@@ -88,14 +154,13 @@ class ProfileCommand(Command):
         # Derive new timezone from location
         if not HAS_GEO:
             return CommandResult(
-                text="Profile updates are not available (missing geopy/timezonefinder)."
+                text="profile updates not available (missing geopy/timezonefinder) 😞"
             )
 
-        timezone = await self._get_timezone(new_location)
+        timezone = await get_timezone(new_location)
         if not timezone:
             return CommandResult(
-                text=f"I couldn't determine a timezone for '{new_location}'. "
-                "Can you be more specific?"
+                text=f"i couldn't find a timezone for '{new_location}'. can you be more specific? 🗺️"
             )
 
         # Update database
@@ -116,36 +181,6 @@ class ProfileCommand(Command):
 
         if changes:
             change_text = " and ".join(changes)
-            return CommandResult(text=f"Okay, I updated your {change_text}!")
+            return CommandResult(text=f"okay, i updated your {change_text}! ✅")
         else:
-            return CommandResult(text="Your profile is unchanged.")
-
-    async def _get_timezone(self, location: str) -> str | None:
-        """
-        Derive IANA timezone from natural language location.
-
-        Args:
-            location: Natural language location
-
-        Returns:
-            IANA timezone string or None if lookup failed
-        """
-        try:
-            geolocator = Nominatim(user_agent="penny_profile_command")
-            geo_result = geolocator.geocode(location)
-            if not geo_result:
-                logger.warning("Geocoding failed for location: %s", location)
-                return None
-
-            tf = TimezoneFinder()
-            timezone = tf.timezone_at(lat=geo_result.latitude, lng=geo_result.longitude)
-            if not timezone:
-                logger.warning("Timezone lookup failed for location: %s", location)
-                return None
-
-            logger.debug("Resolved timezone for %s: %s", location, timezone)
-            return timezone
-
-        except Exception as e:
-            logger.warning("Timezone derivation failed for %s: %s", location, e)
-            return None
+            return CommandResult(text="your profile is unchanged 🤷")

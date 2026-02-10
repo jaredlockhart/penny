@@ -21,6 +21,15 @@ async def test_startup_announcement_with_commit(
         senders = penny.db.get_all_senders()
         assert TEST_SENDER in senders
 
+        # Create user profile so they get startup announcements
+        penny.db.save_user_info(
+            sender=TEST_SENDER,
+            name="Test User",
+            location="Seattle, WA",
+            timezone="America/Los_Angeles",
+            date_of_birth="1990-01-01",
+        )
+
     # Clear messages from first run
     signal_server.outgoing_messages.clear()
 
@@ -76,6 +85,15 @@ async def test_startup_announcement_fallback_no_git(
         senders = penny.db.get_all_senders()
         assert TEST_SENDER in senders
 
+        # Create user profile so they get startup announcements
+        penny.db.save_user_info(
+            sender=TEST_SENDER,
+            name="Test User",
+            location="Seattle, WA",
+            timezone="America/Los_Angeles",
+            date_of_birth="1990-01-01",
+        )
+
     # Clear messages
     signal_server.outgoing_messages.clear()
 
@@ -115,6 +133,15 @@ async def test_startup_announcement_fallback_llm_error(
 
         senders = penny.db.get_all_senders()
         assert TEST_SENDER in senders
+
+        # Create user profile so they get startup announcements
+        penny.db.save_user_info(
+            sender=TEST_SENDER,
+            name="Test User",
+            location="Seattle, WA",
+            timezone="America/Los_Angeles",
+            date_of_birth="1990-01-01",
+        )
 
     # Clear messages
     signal_server.outgoing_messages.clear()
@@ -186,6 +213,22 @@ async def test_startup_announcement_multiple_recipients(
         senders = penny.db.get_all_senders()
         assert sender1 in senders
         assert sender2 in senders
+
+        # Create user profiles for both senders so they get startup announcements
+        penny.db.save_user_info(
+            sender=sender1,
+            name="Test User 1",
+            location="Seattle, WA",
+            timezone="America/Los_Angeles",
+            date_of_birth="1990-01-01",
+        )
+        penny.db.save_user_info(
+            sender=sender2,
+            name="Test User 2",
+            location="New York, NY",
+            timezone="America/New_York",
+            date_of_birth="1985-05-15",
+        )
 
     # Clear messages from first run
     signal_server.outgoing_messages.clear()
