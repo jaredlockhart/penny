@@ -227,10 +227,10 @@ class Penny:
                 return
 
             prompt_msg = (
-                "hey! i need to collect some basic info about you before we can chat. "
-                "please run `/profile <name> <location> <date of birth>` "
+                "Hey! I need to collect some basic info about you before we can chat. "
+                "Please run `/profile <name> <location> <date of birth>` "
                 "to set up your profile.\n\n"
-                "for example: `/profile alex seattle january 10 1995` 📝"
+                "For example: `/profile alex seattle january 10 1995` 📝"
             )
 
             for sender in senders:

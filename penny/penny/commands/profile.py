@@ -6,26 +6,13 @@ import logging
 from datetime import datetime
 from typing import Any
 
-try:
-    from penny.datetime_utils import get_timezone
-
-    HAS_GEO = True
-except ImportError:
-    get_timezone = None  # type: ignore[assignment]
-    HAS_GEO = False
-
-try:
-    import dateparser
-
-    HAS_DATEPARSER = True
-except ImportError:
-    dateparser = None  # type: ignore[assignment]
-    HAS_DATEPARSER = False
+import dateparser
 
 from pydantic import BaseModel, Field
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
+from penny.datetime_utils import get_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +71,13 @@ class ProfileCommand(Command):
         """
         try:
             prompt = (
-                f'Extract the user\'s name, location, and date of birth from this input: "{args}"'
+                f"Extract the user's name, location, and date of birth "
+                f'from this input: "{args}"\n\n'
+                "Return your response as JSON matching this schema:\n"
+                "- name (string): user's name\n"
+                "- location (string): user's location\n"
+                "- date_of_birth (string): date of birth in natural language format "
+                "(e.g., 'January 10, 1995')"
             )
 
             response = await ollama_client.generate(
@@ -115,9 +108,10 @@ class ProfileCommand(Command):
         """
         try:
             prompt = (
-                f'Extract the user\'s name and/or location from this input: "{args}". '
-                "If name is not mentioned, set it to null. "
-                "If location is not mentioned, set it to null."
+                f'Extract the user\'s name and/or location from this input: "{args}"\n\n'
+                "Return your response as JSON matching this schema:\n"
+                "- name (string or null): user's name, or null if not mentioned\n"
+                "- location (string or null): user's location, or null if not mentioned"
             )
 
             response = await ollama_client.generate(
@@ -144,9 +138,9 @@ class ProfileCommand(Command):
             if not user_info:
                 return CommandResult(
                     text=(
-                        "you don't have a profile yet! set it up with:\n"
+                        "You don't have a profile yet! Set it up with:\n"
                         "`/profile <name> <location> <date of birth>`\n\n"
-                        "for example: `/profile alex seattle january 10 1995` 📝"
+                        "For example: `/profile alex seattle january 10 1995` 📝"
                     )
                 )
 
@@ -169,19 +163,14 @@ class ProfileCommand(Command):
 
         # NEW PROFILE CREATION (no existing profile)
         if not user_info:
-            if not HAS_GEO or not HAS_DATEPARSER:
-                return CommandResult(
-                    text="profile creation not available (missing dependencies) 😞"
-                )
-
             # Use LLM to parse profile creation arguments
             parsed = await self._parse_profile_create(args, context.ollama_client)
             if not parsed:
                 return CommandResult(
                     text=(
-                        "i couldn't understand that. please provide your name, location, "
+                        "I couldn't understand that. Please provide your name, location, "
                         "and date of birth.\n\n"
-                        "example: `/profile alex seattle january 10 1995`"
+                        "Example: `/profile alex seattle january 10 1995`"
                     )
                 )
 
@@ -192,8 +181,8 @@ class ProfileCommand(Command):
             if not dob_date:
                 return CommandResult(
                     text=(
-                        f"i couldn't parse '{parsed.date_of_birth}' as a date. "
-                        "try something like 'january 10 1995' 📅"
+                        f"I couldn't parse '{parsed.date_of_birth}' as a date. "
+                        "Try something like 'january 10 1995' 📅"
                     )
                 )
 
@@ -204,8 +193,8 @@ class ProfileCommand(Command):
             if not timezone:
                 return CommandResult(
                     text=(
-                        f"i couldn't find a timezone for '{parsed.location}'. "
-                        "can you be more specific? 🗺️"
+                        f"I couldn't find a timezone for '{parsed.location}'. "
+                        "Can you be more specific? 🗺️"
                     )
                 )
 
@@ -218,21 +207,17 @@ class ProfileCommand(Command):
                 date_of_birth=dob_formatted,
             )
 
-            return CommandResult(text=f"got it! your profile is set up. welcome, {parsed.name}! 🎉")
+            return CommandResult(text=f"Got it! Your profile is set up. Welcome, {parsed.name}! 🎉")
 
         # PROFILE UPDATE (existing profile)
-        if not HAS_GEO:
-            return CommandResult(
-                text="profile updates not available (missing geopy/timezonefinder) 😞"
-            )
 
         # Use LLM to parse profile update arguments
         parsed = await self._parse_profile_update(args, context.ollama_client)
         if not parsed:
             return CommandResult(
                 text=(
-                    "i couldn't understand that. please provide name and/or location.\n\n"
-                    "example: `/profile jared toronto`"
+                    "I couldn't understand that. Please provide name and/or location.\n\n"
+                    "Example: `/profile jared toronto`"
                 )
             )
 
@@ -246,8 +231,8 @@ class ProfileCommand(Command):
             if not timezone:
                 return CommandResult(
                     text=(
-                        f"i couldn't find a timezone for '{new_location}'. "
-                        "can you be more specific? 🗺️"
+                        f"I couldn't find a timezone for '{new_location}'. "
+                        "Can you be more specific? 🗺️"
                     )
                 )
         else:
@@ -271,6 +256,6 @@ class ProfileCommand(Command):
 
         if changes:
             change_text = " and ".join(changes)
-            return CommandResult(text=f"okay, i updated your {change_text}! ✅")
+            return CommandResult(text=f"Okay, I updated your {change_text}! ✅")
         else:
-            return CommandResult(text="your profile is unchanged 🤷")
+            return CommandResult(text="Your profile is unchanged 🤷")
