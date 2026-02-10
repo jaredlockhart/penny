@@ -176,6 +176,243 @@ class WorkflowJob(BaseModel):
 
 
 # =============================================================================
+# Internal models — GraphQL response shapes
+# =============================================================================
+#
+# These mirror the exact structure of GraphQL/REST responses so raw JSON
+# is parsed into a Pydantic tree immediately. Public API models (above)
+# are the normalized, flattened interface for consumers.
+
+
+class _GqlAuthor(BaseModel):
+    """Nullable author node in GraphQL responses."""
+
+    login: str = ""
+
+
+_NULL_AUTHOR = _GqlAuthor()
+
+
+# --- Issues (lightweight) response ---
+
+
+class _GqlIssueLwNodeList(BaseModel):
+    nodes: list[IssueListItem] = []
+
+
+class _GqlIssueLwRepo(BaseModel):
+    issues: _GqlIssueLwNodeList = _GqlIssueLwNodeList()
+
+
+class _GqlIssueLwData(BaseModel):
+    repository: _GqlIssueLwRepo = _GqlIssueLwRepo()
+
+
+class _GqlIssueLwResponse(BaseModel):
+    data: _GqlIssueLwData = _GqlIssueLwData()
+
+
+# --- Issues (detailed) response ---
+
+
+class _GqlIssueCommentNode(BaseModel):
+    author: _GqlAuthor | None = None
+    body: str = ""
+    created_at: str = Field("", alias="createdAt")
+
+
+class _GqlIssueCommentNodeList(BaseModel):
+    nodes: list[_GqlIssueCommentNode] = []
+
+
+class _GqlLabelNodeList(BaseModel):
+    nodes: list[IssueLabel] = []
+
+
+class _GqlIssueDetailNode(BaseModel):
+    number: int
+    title: str = ""
+    body: str = ""
+    author: _GqlAuthor | None = None
+    labels: _GqlLabelNodeList = _GqlLabelNodeList()
+    comments: _GqlIssueCommentNodeList = _GqlIssueCommentNodeList()
+
+
+class _GqlIssueDetailNodeList(BaseModel):
+    nodes: list[_GqlIssueDetailNode] = []
+
+
+class _GqlIssueDetailRepo(BaseModel):
+    issues: _GqlIssueDetailNodeList = _GqlIssueDetailNodeList()
+
+
+class _GqlIssueDetailData(BaseModel):
+    repository: _GqlIssueDetailRepo = _GqlIssueDetailRepo()
+
+
+class _GqlIssueDetailResponse(BaseModel):
+    data: _GqlIssueDetailData = _GqlIssueDetailData()
+
+
+# --- PRs response ---
+
+
+class _GqlCheckContext(BaseModel):
+    """Raw statusCheckRollup context — union of CheckRun | StatusContext."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    typename: str = Field("", alias="__typename")
+    # CheckRun fields
+    name: str = ""
+    conclusion: str | None = None
+    status: str = ""
+    # StatusContext fields
+    context: str = ""
+    state: str = ""
+
+
+class _GqlCheckContextNodeList(BaseModel):
+    nodes: list[_GqlCheckContext] = []
+
+
+class _GqlRollup(BaseModel):
+    contexts: _GqlCheckContextNodeList = _GqlCheckContextNodeList()
+
+
+class _GqlCommitObj(BaseModel):
+    status_check_rollup: _GqlRollup | None = Field(None, alias="statusCheckRollup")
+
+
+class _GqlCommitNode(BaseModel):
+    commit: _GqlCommitObj = _GqlCommitObj()
+
+
+class _GqlCommitNodeList(BaseModel):
+    nodes: list[_GqlCommitNode] = []
+
+
+class _GqlReviewNode(BaseModel):
+    author: _GqlAuthor | None = None
+    state: str = ""
+    submitted_at: str = Field("", alias="submittedAt")
+
+
+class _GqlReviewNodeList(BaseModel):
+    nodes: list[_GqlReviewNode] = []
+
+
+class _GqlPRCommentNode(BaseModel):
+    author: _GqlAuthor | None = None
+    body: str = ""
+    created_at: str = Field("", alias="createdAt")
+
+
+class _GqlPRCommentNodeList(BaseModel):
+    nodes: list[_GqlPRCommentNode] = []
+
+
+class _GqlPRNode(BaseModel):
+    number: int
+    head_ref_name: str = Field("", alias="headRefName")
+    mergeable: str = ""
+    reviews: _GqlReviewNodeList = _GqlReviewNodeList()
+    comments: _GqlPRCommentNodeList = _GqlPRCommentNodeList()
+    commits: _GqlCommitNodeList = _GqlCommitNodeList()
+
+
+class _GqlPRNodeList(BaseModel):
+    nodes: list[_GqlPRNode] = []
+
+
+class _GqlPRRepo(BaseModel):
+    pull_requests: _GqlPRNodeList = Field(_GqlPRNodeList(), alias="pullRequests")
+
+
+class _GqlPRData(BaseModel):
+    repository: _GqlPRRepo = _GqlPRRepo()
+
+
+class _GqlPRResponse(BaseModel):
+    data: _GqlPRData = _GqlPRData()
+
+
+# --- REST response wrappers ---
+
+
+class _RestWorkflowRunsResponse(BaseModel):
+    workflow_runs: list[WorkflowRun] = []
+
+
+class _RestJobsResponse(BaseModel):
+    jobs: list[WorkflowJob] = []
+
+
+# =============================================================================
+# Conversion helpers — GraphQL response nodes → public API models
+# =============================================================================
+
+
+def _to_issue_comment(node: _GqlIssueCommentNode) -> IssueComment:
+    author = node.author or _NULL_AUTHOR
+    return IssueComment.model_validate(
+        {"author": {"login": author.login}, "body": node.body, "createdAt": node.created_at}
+    )
+
+
+def _to_issue_detail(node: _GqlIssueDetailNode) -> IssueDetail:
+    author = node.author or _NULL_AUTHOR
+    return IssueDetail(
+        number=node.number,
+        title=node.title,
+        body=node.body,
+        author=IssueAuthor(login=author.login),
+        labels=node.labels.nodes,
+        comments=[_to_issue_comment(c) for c in node.comments.nodes],
+    )
+
+
+_TYPENAME_CHECK_RUN = "CheckRun"
+
+
+def _to_check_status(ctx: _GqlCheckContext) -> CheckStatus:
+    if ctx.typename == _TYPENAME_CHECK_RUN:
+        return CheckStatus(name=ctx.name, state=ctx.status, conclusion=ctx.conclusion or "")
+    return CheckStatus(name=ctx.context, state=ctx.state, conclusion="")
+
+
+def _to_pr_review(node: _GqlReviewNode) -> PRReview:
+    author = node.author or _NULL_AUTHOR
+    return PRReview.model_validate(
+        {"author": {"login": author.login}, "state": node.state, "submittedAt": node.submitted_at}
+    )
+
+
+def _to_pr_comment(node: _GqlPRCommentNode) -> PRComment:
+    author = node.author or _NULL_AUTHOR
+    return PRComment.model_validate(
+        {"author": {"login": author.login}, "body": node.body, "createdAt": node.created_at}
+    )
+
+
+def _to_pull_request(node: _GqlPRNode) -> PullRequest:
+    checks: list[CheckStatus] = []
+    if node.commits.nodes:
+        rollup = node.commits.nodes[0].commit.status_check_rollup
+        if rollup:
+            checks = [_to_check_status(ctx) for ctx in rollup.contexts.nodes]
+
+    return PullRequest(
+        number=node.number,
+        head_ref_name=node.head_ref_name,  # type: ignore[unknown-argument]
+        mergeable=node.mergeable,
+        status_check_rollup=checks,
+        reviews=[_to_pr_review(r) for r in node.reviews.nodes],
+        comments=[_to_pr_comment(c) for c in node.comments.nodes],
+    )
+
+
+# =============================================================================
 # GitHubAPI client
 # =============================================================================
 
@@ -243,7 +480,7 @@ class GitHubAPI:
 
         Used by has_work() for fast timestamp comparison.
         """
-        data = self._graphql(
+        raw = self._graphql(
             GQL_ISSUES_LIGHTWEIGHT,
             variables={
                 "owner": GITHUB_REPO_OWNER,
@@ -252,8 +489,8 @@ class GitHubAPI:
                 "limit": limit,
             },
         )
-        nodes = data["data"]["repository"]["issues"]["nodes"]
-        return [IssueListItem.model_validate(node) for node in nodes]
+        response = _GqlIssueLwResponse.model_validate(raw)
+        return response.data.repository.issues.nodes
 
     def list_issues_detailed(self, label: str, limit: int = 20) -> list[IssueDetail]:
         """List issues by label with full details including comments.
@@ -261,7 +498,7 @@ class GitHubAPI:
         Replaces the N+1 pattern of gh issue list + N x gh issue view
         with a single GraphQL query per label.
         """
-        data = self._graphql(
+        raw = self._graphql(
             GQL_ISSUES_DETAILED,
             variables={
                 "owner": GITHUB_REPO_OWNER,
@@ -270,34 +507,8 @@ class GitHubAPI:
                 "limit": limit,
             },
         )
-        nodes = data["data"]["repository"]["issues"]["nodes"]
-        results: list[IssueDetail] = []
-        for node in nodes:
-            # Flatten nested GraphQL structure into IssueDetail
-            labels_raw = node.get("labels", {}).get("nodes", [])
-            comments_raw = node.get("comments", {}).get("nodes", [])
-            results.append(
-                IssueDetail(
-                    number=node["number"],
-                    title=node.get("title", ""),
-                    body=node.get("body", ""),
-                    author=IssueAuthor(
-                        login=(node.get("author") or {}).get("login", ""),
-                    ),
-                    labels=[IssueLabel(name=lbl["name"]) for lbl in labels_raw],
-                    comments=[
-                        IssueComment.model_validate(
-                            {
-                                "author": {"login": (c.get("author") or {}).get("login", "")},
-                                "body": c.get("body", ""),
-                                "createdAt": c.get("createdAt", ""),
-                            }
-                        )
-                        for c in comments_raw
-                    ],
-                )
-            )
-        return results
+        response = _GqlIssueDetailResponse.model_validate(raw)
+        return [_to_issue_detail(node) for node in response.data.repository.issues.nodes]
 
     # --- Issues (REST) ---
 
@@ -321,7 +532,7 @@ class GitHubAPI:
         The statusCheckRollup union type (CheckRun | StatusContext) is
         normalized into CheckStatus objects for uniform handling.
         """
-        data = self._graphql(
+        raw = self._graphql(
             GQL_OPEN_PRS,
             variables={
                 "owner": GITHUB_REPO_OWNER,
@@ -329,71 +540,8 @@ class GitHubAPI:
                 "limit": limit,
             },
         )
-        nodes = data["data"]["repository"]["pullRequests"]["nodes"]
-        results: list[PullRequest] = []
-        for node in nodes:
-            # Extract statusCheckRollup from last commit
-            checks: list[CheckStatus] = []
-            commits = node.get("commits", {}).get("nodes", [])
-            if commits:
-                rollup = commits[0].get("commit", {}).get("statusCheckRollup")
-                if rollup:
-                    for ctx in rollup.get("contexts", {}).get("nodes", []):
-                        typename = ctx.get("__typename", "")
-                        if typename == "CheckRun":
-                            checks.append(
-                                CheckStatus(
-                                    name=ctx.get("name", ""),
-                                    state=ctx.get("status", ""),
-                                    conclusion=ctx.get("conclusion") or "",
-                                )
-                            )
-                        elif typename == "StatusContext":
-                            checks.append(
-                                CheckStatus(
-                                    name=ctx.get("context", ""),
-                                    state=ctx.get("state", ""),
-                                    conclusion="",
-                                )
-                            )
-
-            # Parse reviews
-            reviews_raw = node.get("reviews", {}).get("nodes", [])
-            reviews = [
-                PRReview.model_validate(
-                    {
-                        "author": {"login": (r.get("author") or {}).get("login", "")},
-                        "state": r.get("state", ""),
-                        "submittedAt": r.get("submittedAt", ""),
-                    }
-                )
-                for r in reviews_raw
-            ]
-
-            # Parse comments
-            comments_raw = node.get("comments", {}).get("nodes", [])
-            comments = [
-                PRComment.model_validate(
-                    {
-                        "author": {"login": (c.get("author") or {}).get("login", "")},
-                        "body": c.get("body", ""),
-                        "createdAt": c.get("createdAt", ""),
-                    }
-                )
-                for c in comments_raw
-            ]
-
-            results.append(
-                PullRequest(
-                    number=node["number"],
-                    head_ref_name=node.get("headRefName", ""),  # type: ignore[unknown-argument]
-                    mergeable=node.get("mergeable", ""),
-                    status_check_rollup=checks,
-                    reviews=reviews,
-                    comments=comments,
-                )
-            )
-        return results
+        response = _GqlPRResponse.model_validate(raw)
+        return [_to_pull_request(node) for node in response.data.repository.pull_requests.nodes]
 
     # --- PR Review Comments (REST) ---
 
@@ -417,9 +565,8 @@ class GitHubAPI:
         )
         params = f"?branch={urllib.parse.quote(branch)}&status=failure&per_page={limit}"
         data = self._rest_request("GET", f"{path}{params}")
-        if not data or "workflow_runs" not in data:
-            return []
-        return [WorkflowRun(id=run["id"]) for run in data["workflow_runs"][:limit]]
+        response = _RestWorkflowRunsResponse.model_validate(data or {})
+        return response.workflow_runs[:limit]
 
     def get_failed_job_log(self, run_id: int) -> str:
         """Fetch logs from failed jobs in a workflow run.
@@ -427,26 +574,18 @@ class GitHubAPI:
         Equivalent to `gh run view <id> --log-failed`. Lists jobs for
         the run, finds failed ones, and fetches each job's log text.
         """
-        # List jobs for this run
         jobs_path = API_RUN_JOBS.format(
             owner=GITHUB_REPO_OWNER,
             repo=GITHUB_REPO_NAME,
             run_id=run_id,
         )
         jobs_data = self._rest_request("GET", jobs_path)
-        if not jobs_data or "jobs" not in jobs_data:
-            return ""
-
-        failed_jobs = [
-            WorkflowJob(id=j["id"], conclusion=j.get("conclusion", ""))
-            for j in jobs_data["jobs"]
-            if j.get("conclusion") == "failure"
-        ]
+        response = _RestJobsResponse.model_validate(jobs_data or {})
+        failed_jobs = [j for j in response.jobs if j.conclusion == "failure"]
 
         if not failed_jobs:
             return ""
 
-        # Fetch log for each failed job
         log_parts: list[str] = []
         for job in failed_jobs:
             try:
