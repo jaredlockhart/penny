@@ -10,11 +10,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from github_api.api import GitHubAPI, IssueDetail
+
 from penny_team.constants import (
     CI_STATUS_FAILING,
     Label,
 )
-from penny_team.utils.github_api import GitHubAPI, IssueDetail
 
 logger = logging.getLogger(__name__)
 

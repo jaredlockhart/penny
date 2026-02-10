@@ -48,6 +48,11 @@ class Config:
     # Optional fields with defaults
     log_file: str | None = None
 
+    # GitHub App Configuration (optional, needed for /bug command)
+    github_app_id: str | None = None
+    github_app_private_key_path: str | None = None
+    github_app_installation_id: str | None = None
+
     # Agent runtime configuration
     message_max_steps: int = 5
 
@@ -140,6 +145,11 @@ class Config:
         db_path = os.getenv("DB_PATH", "/penny/data/penny.db")
         log_file = os.getenv("LOG_FILE")  # Optional, defaults to None
 
+        # GitHub App configuration (optional, needed for /bug command)
+        github_app_id = os.getenv("GITHUB_APP_ID")  # Optional
+        github_app_private_key_path = os.getenv("GITHUB_APP_PRIVATE_KEY_PATH")  # Optional
+        github_app_installation_id = os.getenv("GITHUB_APP_INSTALLATION_ID")  # Optional
+
         # Global idle threshold for all background tasks
         idle_seconds = float(os.getenv("IDLE_SECONDS", "300"))
 
@@ -167,6 +177,9 @@ class Config:
             ollama_foreground_model=ollama_foreground_model,
             ollama_background_model=ollama_background_model,
             perplexity_api_key=perplexity_api_key,
+            github_app_id=github_app_id,
+            github_app_private_key_path=github_app_private_key_path,
+            github_app_installation_id=github_app_installation_id,
             log_level=log_level,
             db_path=db_path,
             log_file=log_file,

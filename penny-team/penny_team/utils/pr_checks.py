@@ -12,6 +12,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from github_api.api import (
+    CheckStatus,
+    GitHubAPI,
+    PRComment,
+    PRReview,
+    PullRequest,
+)
+
 from penny_team.constants import (
     CI_STATUS_FAILING,
     CI_STATUS_PASSING,
@@ -21,13 +29,6 @@ from penny_team.constants import (
     PENDING_STATES,
     REVIEW_STATE_CHANGES_REQUESTED,
     Label,
-)
-from penny_team.utils.github_api import (
-    CheckStatus,
-    GitHubAPI,
-    PRComment,
-    PRReview,
-    PullRequest,
 )
 from penny_team.utils.issue_filter import FilteredIssue
 

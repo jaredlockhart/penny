@@ -108,3 +108,7 @@ SCHEDULE_ADDED = "Added {timing}: {prompt} ✅"
 # Test mode constants
 TEST_DB_PATH = Path("data/penny-test.db")
 TEST_MODE_PREFIX = "[TEST] "
+
+# GitHub constants
+GITHUB_REPO_OWNER = "jaredlockhart"
+GITHUB_REPO_NAME = "penny"

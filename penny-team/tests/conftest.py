@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from penny_team.base import Agent
-from penny_team.utils.github_api import (
+from github_api.api import (
     CheckStatus,
     CommentAuthor,
     IssueAuthor,

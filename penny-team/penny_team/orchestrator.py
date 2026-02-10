@@ -24,6 +24,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from github_api.api import GitHubAPI
+from github_api.app import GitHubApp
+
 from penny_team.base import Agent
 from penny_team.constants import (
     AGENT_ARCHITECT,
@@ -38,6 +41,8 @@ from penny_team.constants import (
     ENV_FILENAME,
     ENV_INSTALL_ID,
     ENV_KEY_PATH,
+    GITHUB_REPO_NAME,
+    GITHUB_REPO_OWNER,
     MONITOR_INTERVAL,
     MONITOR_TIMEOUT,
     ORCHESTRATOR_LOG,
@@ -49,8 +54,6 @@ from penny_team.constants import (
 )
 from penny_team.monitor import MonitorAgent
 from penny_team.utils.codeowners import parse_codeowners
-from penny_team.utils.github_api import GitHubAPI
-from penny_team.utils.github_app import GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent.parent
@@ -107,7 +110,9 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
         trusted.add(f"{APP_PREFIX}{slug}")
 
     # Create shared GitHub API client for all agents
-    github_api = GitHubAPI(github_app.get_token) if github_app else None
+    github_api = (
+        GitHubAPI(github_app.get_token, GITHUB_REPO_OWNER, GITHUB_REPO_NAME) if github_app else None
+    )
 
     return [
         Agent(

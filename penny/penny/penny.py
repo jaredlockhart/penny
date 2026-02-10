@@ -70,8 +70,39 @@ class Penny:
         # Create message agent for production use
         self.message_agent = create_message_agent(self.db)
 
+        # Initialize GitHub client if configured
+        github_api = None
+        if (
+            config.github_app_id
+            and config.github_app_private_key_path
+            and config.github_app_installation_id
+        ):
+            try:
+                from pathlib import Path
+
+                from github_api.api import GitHubAPI
+                from github_api.app import GitHubApp
+
+                from penny.constants import GITHUB_REPO_NAME, GITHUB_REPO_OWNER
+
+                key_path = Path(config.github_app_private_key_path)
+                if not key_path.is_absolute():
+                    key_path = Path.cwd() / key_path
+
+                github_app = GitHubApp(
+                    app_id=int(config.github_app_id),
+                    private_key_path=key_path,
+                    installation_id=int(config.github_app_installation_id),
+                )
+                github_api = GitHubAPI(github_app.get_token, GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
+                logger.info("GitHub API client initialized")
+            except Exception:
+                logger.exception("Failed to initialize GitHub client")
+
         # Create command registry with message agent factory for test command
-        self.command_registry = create_command_registry(message_agent_factory=create_message_agent)
+        self.command_registry = create_command_registry(
+            message_agent_factory=create_message_agent, github_api=github_api
+        )
 
         self.followup_agent = FollowupAgent(
             system_prompt=SYSTEM_PROMPT,

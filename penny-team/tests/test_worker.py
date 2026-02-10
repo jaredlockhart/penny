@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from penny_team.utils.github_api import CheckStatus, CommentAuthor, PRReview, PullRequest, WorkflowRun
+from github_api.api import CheckStatus, CommentAuthor, PRReview, PullRequest, WorkflowRun
 from penny_team.utils.issue_filter import FilteredIssue
 from penny_team.utils.pr_checks import (
     _extract_failed_checks,

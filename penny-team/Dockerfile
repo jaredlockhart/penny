@@ -35,7 +35,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONPATH=/repo/penny-team
+ENV PYTHONPATH=/shared:/repo/penny-team
 
 # Snapshot the entire repo into the image (build context is project root)
 COPY . /repo

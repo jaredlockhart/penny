@@ -7,6 +7,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Disable __pycache__
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Add /shared to PYTHONPATH for shared github_api module
+ENV PYTHONPATH=/shared
+
 # Set working directory
 WORKDIR /penny
 

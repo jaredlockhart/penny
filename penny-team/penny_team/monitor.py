@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from github_api.api import GitHubAPI
+from github_api.app import GitHubApp
+
 from penny_team.base import Agent, AgentRun
 from penny_team.constants import (
     LOG_LEVELS_ERROR,
@@ -21,8 +24,6 @@ from penny_team.constants import (
     MONITOR_MAX_ERROR_CONTEXT,
     MONITOR_STATE_OFFSET,
 )
-from penny_team.utils.github_api import GitHubAPI
-from penny_team.utils.github_app import GitHubApp
 
 logger = logging.getLogger(__name__)
 

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from github_api.api import GitHubAPI
+from github_api.app import GitHubApp
 from pydantic import BaseModel
 
 from penny_team.constants import (
@@ -28,8 +30,6 @@ from penny_team.constants import (
     MAX_CI_FIX_ATTEMPTS,
     PROMPT_FILENAME,
 )
-from penny_team.utils.github_api import GitHubAPI
-from penny_team.utils.github_app import GitHubApp
 
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent.parent

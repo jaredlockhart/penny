@@ -54,3 +54,4 @@ testpaths = ["tests"]
 python = "/usr/local/bin/python"
 
 [tool.ty.rules]
+unresolved-import = "ignore"

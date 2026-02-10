@@ -20,6 +20,7 @@ services:
     volumes:
       - ./data:/penny/data
       - ./.env:/penny/.env
+      - ./github_api:/shared/github_api:ro
     environment:
       - PYTHONUNBUFFERED=1
       - SIGNAL_API_URL=http://signal-api:8080
@@ -34,6 +35,7 @@ services:
     command: ["--agent", "product-manager"]
     volumes:
       - ./data:/repo/data
+      - ./github_api:/shared/github_api:ro
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
@@ -48,6 +50,7 @@ services:
     command: ["--agent", "architect"]
     volumes:
       - ./data:/repo/data
+      - ./github_api:/shared/github_api:ro
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
@@ -63,6 +66,7 @@ services:
     command: ["--agent", "worker"]
     volumes:
       - ./data:/repo/data
+      - ./github_api:/shared/github_api:ro
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
@@ -77,6 +81,7 @@ services:
     command: ["--agent", "monitor"]
     volumes:
       - ./data:/repo/data
+      - ./github_api:/shared/github_api:ro
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
