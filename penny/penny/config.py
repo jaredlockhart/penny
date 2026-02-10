@@ -72,6 +72,9 @@ class Config:
     discovery_min_seconds: float = 7200.0
     discovery_max_seconds: float = 14400.0
 
+    # Periodic maintenance (summarize, profile) interval while idle
+    maintenance_interval_seconds: float = 3600.0
+
     _db: Database | None = None
 
     @classmethod
@@ -148,6 +151,9 @@ class Config:
         discovery_min_seconds = float(os.getenv("DISCOVERY_MIN_SECONDS", "7200"))
         discovery_max_seconds = float(os.getenv("DISCOVERY_MAX_SECONDS", "14400"))
 
+        # Periodic maintenance interval (summarize, profile)
+        maintenance_interval_seconds = float(os.getenv("MAINTENANCE_INTERVAL_SECONDS", "3600"))
+
         # Tool execution timeout
         tool_timeout = float(os.getenv("TOOL_TIMEOUT", "60.0"))
 
@@ -170,6 +176,7 @@ class Config:
             followup_max_seconds=followup_max_seconds,
             discovery_min_seconds=discovery_min_seconds,
             discovery_max_seconds=discovery_max_seconds,
+            maintenance_interval_seconds=maintenance_interval_seconds,
         )
 
         # Store database reference for runtime config lookups

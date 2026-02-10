@@ -22,7 +22,7 @@ from penny.constants import PREFERENCE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
-from penny.scheduler import BackgroundScheduler, DelayedSchedule, ImmediateSchedule
+from penny.scheduler import BackgroundScheduler, DelayedSchedule, PeriodicSchedule
 from penny.startup import get_restart_message
 from penny.tools import SearchTool
 
@@ -129,10 +129,16 @@ class Penny:
         self.discovery_agent.set_channel(self.channel)
         self.preference_agent.set_channel(self.channel)
 
-        # Create schedules (priority order: summarize, profile, followup, discovery)
+        # Create schedules (priority order: summarize, preference, followup, discovery)
         schedules = [
-            ImmediateSchedule(agent=self.summarize_agent),
-            ImmediateSchedule(agent=self.preference_agent),
+            PeriodicSchedule(
+                agent=self.summarize_agent,
+                interval=config.maintenance_interval_seconds,
+            ),
+            PeriodicSchedule(
+                agent=self.preference_agent,
+                interval=config.maintenance_interval_seconds,
+            ),
             DelayedSchedule(
                 agent=self.followup_agent,
                 min_delay=config.followup_min_seconds,
@@ -275,6 +281,7 @@ async def main() -> None:
     logger.info("  ollama_background_model: %s", config.ollama_background_model)
     logger.info("  ollama_api_url: %s", config.ollama_api_url)
     logger.info("  idle_threshold: %.0fs", config.idle_seconds)
+    logger.info("  maintenance_interval: %.0fs", config.maintenance_interval_seconds)
     logger.info(
         "  followup_delay: %.0fs-%.0fs",
         config.followup_min_seconds,
