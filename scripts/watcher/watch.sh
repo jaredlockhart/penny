@@ -38,7 +38,8 @@ while true; do
 
     # Rebuild all images and recreate changed containers
     log "Rebuilding and restarting all services..."
-    if GIT_COMMIT="${CURRENT:0:7}" $COMPOSE --profile team up -d --build; then
+    GIT_MSG=$(git log -1 --pretty=%B "$CURRENT" | tr '\n' ' ' | sed 's/ *$//')
+    if GIT_COMMIT="${CURRENT:0:7}" GIT_COMMIT_MESSAGE="$GIT_MSG" $COMPOSE --profile team up -d --build; then
         log "All services rebuilt and restarted"
     else
         log "Restart failed, will retry next cycle"
