@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import urllib.request
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
@@ -20,8 +21,12 @@ from penny_team.constants import (
     API_PR_REVIEW_COMMENTS,
     CI_STATUS_FAILING,
     CI_STATUS_PASSING,
+    ENV_GH_TOKEN,
     GH_CLI,
     GH_PR_FIELDS,
+    GITHUB_API,
+    GITHUB_REPO_NAME,
+    GITHUB_REPO_OWNER,
     MAX_LOG_CHARS,
     MERGE_STATUS_CONFLICTING,
     PASSING_CONCLUSIONS,
@@ -233,17 +238,16 @@ def _collect_human_review_comments(
     Fail-open: returns empty list if the API call fails.
     """
     try:
-        api_path = API_PR_REVIEW_COMMENTS.format(pr_number=pr_number)
-        result = subprocess.run(
-            [GH_CLI, "api", api_path],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=env,
+        api_path = API_PR_REVIEW_COMMENTS.format(
+            owner=GITHUB_REPO_OWNER, repo=GITHUB_REPO_NAME, pr_number=pr_number
         )
-        if result.returncode != 0:
-            return []
-        raw_comments = json.loads(result.stdout)
+        url = f"{GITHUB_API}{api_path}"
+        token = (env or {}).get(ENV_GH_TOKEN, "")
+        req = urllib.request.Request(url)
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Accept", "application/vnd.github+json")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw_comments = json.loads(resp.read())
         parts: list[str] = []
         for raw in raw_comments:
             comment = ReviewComment.model_validate(raw)
@@ -253,7 +257,7 @@ def _collect_human_review_comments(
                 location = f" (`{comment.path}`)" if comment.path else ""
                 parts.append(f"**{comment.user.login}**{location}:\n{comment.body}\n")
         return parts
-    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError, ValueError):
+    except (OSError, json.JSONDecodeError, ValueError):
         return []
 
 

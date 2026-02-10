@@ -134,6 +134,8 @@ CODEOWNERS_PATHS = [
 # =============================================================================
 
 GITHUB_API = "https://api.github.com"
+GITHUB_REPO_OWNER = "jaredlockhart"
+GITHUB_REPO_NAME = "penny"
 JWT_ALGORITHM = "RS256"
 BOT_SUFFIX = "[bot]"
 APP_PREFIX = "app/"
@@ -142,8 +144,7 @@ NOREPLY_DOMAIN = "users.noreply.github.com"
 # API paths
 API_APP = "/app"
 API_ACCESS_TOKENS = "/app/installations/{install_id}/access_tokens"
-# Note: {owner}/{repo} are gh CLI placeholders (auto-replaced), not Python format vars
-API_PR_REVIEW_COMMENTS = "repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments"
+API_PR_REVIEW_COMMENTS = "/repos/{owner}/{repo}/pulls/{pr_number}/comments"
 
 # Environment variable keys for bot identity
 ENV_GH_TOKEN = "GH_TOKEN"
