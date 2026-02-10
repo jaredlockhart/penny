@@ -11,6 +11,15 @@ log() { echo "[watcher $(date +%H:%M:%S)] $*"; }
 
 cd /repo
 
+# Symlink HOST_PROJECT_DIR to /repo so docker compose can resolve env_file
+# paths inside the container while --project-directory keeps host paths for
+# volume mounts resolved by the Docker daemon.
+if [ -n "${HOST_PROJECT_DIR:-}" ] && [ "$HOST_PROJECT_DIR" != "/repo" ]; then
+    mkdir -p "$(dirname "$HOST_PROJECT_DIR")"
+    ln -sfn /repo "$HOST_PROJECT_DIR"
+    log "Symlinked $HOST_PROJECT_DIR -> /repo"
+fi
+
 # Record the current origin/main ref as our baseline
 LAST_REF=$(git rev-parse origin/main 2>/dev/null || echo "unknown")
 log "Baseline: origin/main at ${LAST_REF:0:7}"

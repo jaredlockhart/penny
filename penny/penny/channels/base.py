@@ -388,7 +388,8 @@ class MessageChannel(ABC):
             )
             return
 
-        # Execute command
+        # Execute command with typing indicator
+        typing_task = asyncio.create_task(self._typing_loop(message.sender))
         try:
             # Update context with current user
             context = self._command_context
@@ -423,3 +424,6 @@ class MessageChannel(ABC):
                 response=error_response,
                 error=str(e),
             )
+        finally:
+            typing_task.cancel()
+            await self.send_typing(message.sender, False)

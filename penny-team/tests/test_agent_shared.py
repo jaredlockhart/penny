@@ -238,6 +238,10 @@ class TestBuildCommand:
         assert "--dangerously-skip-permissions" in cmd
         assert "--verbose" in cmd
         assert "stream-json" in cmd
+        assert "--system-prompt" in cmd
+        # Verify empty string follows --system-prompt to prevent auto-loading CLAUDE.md
+        system_prompt_idx = cmd.index("--system-prompt")
+        assert cmd[system_prompt_idx + 1] == ""
 
     def test_model_flag(self, tmp_path, capture_popen):
         """run() passes --model when agent has a model configured."""
@@ -628,6 +632,43 @@ class TestPostOutputAsComment:
             stdout_lines=[result_event("## Requirements (Draft)\n\nContent")],
             returncode=0,
         )
+
+        result = agent.run()
+
+        assert result.success is False
+        # Verify issue was NOT marked as processed
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+        processed = state.get("processed", {})
+        assert "42" not in processed
+
+    def test_empty_output_prevents_mark_processed(
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
+    ):
+        """Empty output with post_output_as_comment → NOT marked as processed.
+
+        This prevents the bug where agents with allowed_tools=[] attempt tool
+        calls (due to project CLAUDE.md leaking), fail, produce empty output,
+        but still mark the issue as processed — permanently silencing it.
+        """
+        agent = make_agent(
+            tmp_path,
+            required_labels=["requirements"],
+            post_output_as_comment=True,
+            github_api=mock_github_api,
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "pm.state.json"
+        monkeypatch.setattr(
+            type(agent), "_state_path", property(lambda self: state_path)
+        )
+
+        mock_github_api.set_issues("requirements", make_issue_list_items((42, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("requirements", [
+            make_issue_detail(number=42, labels=["requirements"]),
+        ])
+
+        # Claude returns success but empty result (e.g., tool calls failed)
+        capture_popen(stdout_lines=[result_event("")], returncode=0)
 
         result = agent.run()
 
