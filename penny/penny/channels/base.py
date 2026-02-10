@@ -88,6 +88,7 @@ class MessageChannel(ABC):
             user="",  # Will be set per-command
             channel_type=channel_type,
             start_time=start_time,
+            scheduler=self._scheduler,
         )
 
     @property

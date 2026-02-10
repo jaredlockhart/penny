@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 try:
@@ -63,8 +61,8 @@ class DebugCommand(Command):
         total_messages = context.db.count_messages()
         active_threads = context.db.count_active_threads()
 
-        # Agent status (read from orchestrator state files)
-        agent_status = self._get_agent_status()
+        # Background task status
+        task_status = self._get_task_status(context)
 
         # Memory
         if not HAS_PSUTIL or psutil is None:
@@ -89,46 +87,27 @@ class DebugCommand(Command):
 **Channel**: {context.channel_type.title()}
 **Database**: {total_messages:,} messages, {active_threads} active threads
 **Models**: {fg_model} (foreground), {bg_model} (background)
-**Agents**: {agent_status}
+**Background Tasks**: {task_status}
 **Memory**: {mem_str}
 """
         return CommandResult(text=response)
 
-    def _get_agent_status(self) -> str:
-        """Get agent run status from state files."""
-        # Agent state files are in /penny/data/penny-team (mounted from host data/)
-        agents_dir = Path("/penny/data/penny-team")
-        if not agents_dir.exists():
-            return "unknown (no state directory)"
+    def _get_task_status(self, context: CommandContext) -> str:
+        """Get background task run status from scheduler."""
+        if context.scheduler is None:
+            return "unknown (no scheduler)"
 
-        agent_names = ["product-manager", "architect", "worker"]
+        agent_status = context.scheduler.get_agent_status()
         status_parts = []
 
-        for agent_name in agent_names:
-            state_file = agents_dir / f"{agent_name}.state.json"
-            if not state_file.exists():
+        for agent_name, seconds_ago in agent_status.items():
+            if seconds_ago is None:
                 status_parts.append(f"{agent_name}: never run")
-                continue
-
-            try:
-                with open(state_file) as f:
-                    state = json.load(f)
-                last_run = state.get("last_run")
-                if last_run:
-                    # Parse ISO timestamp
-                    last_run_dt = datetime.fromisoformat(last_run.replace("Z", "+00:00"))
-                    ago = datetime.now(last_run_dt.tzinfo) - last_run_dt
-                    if ago.total_seconds() < 60:
-                        ago_str = f"{int(ago.total_seconds())}s ago"
-                    elif ago.total_seconds() < 3600:
-                        ago_str = f"{int(ago.total_seconds() / 60)}m ago"
-                    else:
-                        ago_str = f"{int(ago.total_seconds() / 3600)}h ago"
-                    status_parts.append(f"{agent_name}: {ago_str}")
-                else:
-                    status_parts.append(f"{agent_name}: never run")
-            except Exception as e:
-                logger.warning("Failed to read state for %s: %s", agent_name, e)
-                status_parts.append(f"{agent_name}: error")
+            elif seconds_ago < 60:
+                status_parts.append(f"{agent_name}: {int(seconds_ago)}s ago")
+            elif seconds_ago < 3600:
+                status_parts.append(f"{agent_name}: {int(seconds_ago / 60)}m ago")
+            else:
+                status_parts.append(f"{agent_name}: {int(seconds_ago / 3600)}h ago")
 
         return ", ".join(status_parts)

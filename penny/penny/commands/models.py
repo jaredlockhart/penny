@@ -1,13 +1,19 @@
 """Models for command system."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 from penny.config import Config
 from penny.database import Database
 from penny.ollama import OllamaClient
+
+if TYPE_CHECKING:
+    from penny.scheduler import BackgroundScheduler
 
 
 @dataclass
@@ -20,6 +26,7 @@ class CommandContext:
     user: str  # Signal number or Discord user ID
     channel_type: str  # "signal" or "discord"
     start_time: datetime  # Penny startup time for uptime calculation
+    scheduler: BackgroundScheduler | None = None  # Background task scheduler
 
 
 class CommandResult(BaseModel):
