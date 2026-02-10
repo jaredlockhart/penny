@@ -1,7 +1,9 @@
 """Command system for Penny."""
 
+from collections.abc import Callable
+
 from penny.commands.base import Command, CommandRegistry
-from penny.commands.builtin import CommandsCommand, DebugCommand
+from penny.commands.builtin import CommandsCommand, DebugCommand, TestCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
 
 __all__ = [
@@ -14,9 +16,15 @@ __all__ = [
 ]
 
 
-def create_command_registry() -> CommandRegistry:
+def create_command_registry(
+    message_agent_factory: Callable | None = None,
+) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
+
+    Args:
+        message_agent_factory: Optional factory for creating MessageAgent instances
+                              (required for test command)
 
     Returns:
         CommandRegistry with all builtin commands registered
@@ -29,5 +37,9 @@ def create_command_registry() -> CommandRegistry:
 
     # Register other builtin commands
     registry.register(DebugCommand())
+
+    # Register test command if factory provided
+    if message_agent_factory:
+        registry.register(TestCommand(message_agent_factory))
 
     return registry

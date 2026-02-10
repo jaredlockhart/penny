@@ -251,18 +251,22 @@ class MessageChannel(ABC):
 
             logger.info("Received message from %s: %s", message.sender, message.content)
 
-            # Check if thread-replying to a command
+            # Check if message is a command
+            if message.content.strip().startswith("/"):
+                # Reject if trying to send a command as a thread reply
+                if message.quoted_text:
+                    await self.send_status_message(
+                        message.sender, "Threading is not supported for commands."
+                    )
+                    return
+                await self._handle_command(message)
+                return
+
+            # Check if thread-replying to a command (quoted text is a command)
             if message.quoted_text and message.quoted_text.strip().startswith("/"):
                 await self.send_status_message(
                     message.sender, "Threading is not supported for commands."
                 )
-                return
-
-            # Check if message is a command (but allow /test to pass through to agent)
-            if message.content.strip().startswith("/") and not message.content.strip().startswith(
-                "/test "
-            ):
-                await self._handle_command(message)
                 return
 
             typing_task = asyncio.create_task(self._typing_loop(message.sender))

@@ -74,20 +74,25 @@ async def test_test_mode_rejects_threading(
     signal_server, mock_ollama, test_config, _mock_search, running_penny
 ):
     """
-    Test that /test rejects threaded messages.
+    Test that /test rejects threaded messages (blocked at channel layer like all commands).
     """
-    # We test threading rejection by directly calling MessageAgent.handle()
-    # since the channel layer doesn't pass quotes through for commands
-    async with running_penny(test_config) as penny:
-        # Call handle with /test and a quoted_text (threading)
-        parent_id, response = await penny.message_agent.handle(
-            content="/test what about test mode?",
+    async with running_penny(test_config):
+        # Send /test as a threaded message (quote reply)
+        await signal_server.push_message(
             sender=TEST_SENDER,
-            quoted_text="some quoted text",
+            content="/test what about test mode?",
+            quote={"id": 12345, "text": "some previous message"},
         )
 
-        # Verify error message
-        assert "test prompts cannot be threaded" in response.answer.lower()
+        # Wait for error response
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify error message from channel layer
+        assert response["recipients"] == [TEST_SENDER]
+        assert "threading is not supported for commands" in response["message"].lower()
+
+        # Verify Ollama was NOT called
+        assert len(mock_ollama.requests) == 0, "Ollama should not be called for threaded commands"
 
 
 @pytest.mark.asyncio

@@ -40,30 +40,35 @@ class Penny:
         migrate(config.db_path)
         self.db.create_tables()
 
-        # Create command registry
-        self.command_registry = create_command_registry()
-
-        def search_tools():
+        def search_tools(db):
             if config.perplexity_api_key:
-                return [SearchTool(perplexity_api_key=config.perplexity_api_key, db=self.db)]
+                return [SearchTool(perplexity_api_key=config.perplexity_api_key, db=db)]
             return []
 
-        self.message_agent = MessageAgent(
-            system_prompt=SYSTEM_PROMPT,
-            model=config.ollama_foreground_model,
-            ollama_api_url=config.ollama_api_url,
-            tools=search_tools(),
-            db=self.db,
-            max_steps=config.message_max_steps,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-        )
+        def create_message_agent(db):
+            """Factory for creating MessageAgent with a given database."""
+            return MessageAgent(
+                system_prompt=SYSTEM_PROMPT,
+                model=config.ollama_foreground_model,
+                ollama_api_url=config.ollama_api_url,
+                tools=search_tools(db),
+                db=db,
+                max_steps=config.message_max_steps,
+                max_retries=config.ollama_max_retries,
+                retry_delay=config.ollama_retry_delay,
+            )
+
+        # Create message agent for production use
+        self.message_agent = create_message_agent(self.db)
+
+        # Create command registry with message agent factory for test command
+        self.command_registry = create_command_registry(message_agent_factory=create_message_agent)
 
         self.followup_agent = FollowupAgent(
             system_prompt=SYSTEM_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
-            tools=search_tools(),
+            tools=search_tools(self.db),
             db=self.db,
             max_steps=config.message_max_steps,
             max_retries=config.ollama_max_retries,
@@ -96,7 +101,7 @@ class Penny:
             system_prompt=SYSTEM_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
-            tools=search_tools(),
+            tools=search_tools(self.db),
             db=self.db,
             max_steps=config.message_max_steps,
             max_retries=config.ollama_max_retries,
