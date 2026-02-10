@@ -48,6 +48,7 @@ class Agent:
         max_steps: int = 5,
         max_retries: int = 3,
         retry_delay: float = 0.5,
+        tool_timeout: float = 60.0,
     ):
         self.system_prompt = system_prompt
         self.model = model
@@ -67,7 +68,7 @@ class Agent:
         for tool in self.tools:
             self._tool_registry.register(tool)
 
-        self._tool_executor = ToolExecutor(self._tool_registry)
+        self._tool_executor = ToolExecutor(self._tool_registry, timeout=tool_timeout)
 
         Agent._instances.append(self)
 
