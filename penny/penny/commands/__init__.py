@@ -3,7 +3,7 @@
 from collections.abc import Callable
 
 from penny.commands.base import Command, CommandRegistry
-from penny.commands.builtin import CommandsCommand, DebugCommand, TestCommand
+from penny.commands.builtin import CommandsCommand, ConfigCommand, DebugCommand, TestCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
 
 __all__ = [
@@ -37,6 +37,7 @@ def create_command_registry(
 
     # Register other builtin commands
     registry.register(DebugCommand())
+    registry.register(ConfigCommand())
 
     # Register test command if factory provided
     if message_agent_factory:

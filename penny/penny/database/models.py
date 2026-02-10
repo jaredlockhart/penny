@@ -73,3 +73,14 @@ class CommandLog(SQLModel, table=True):
     command_args: str  # e.g., "" or "debug" (for /commands debug)
     response: str  # Full response text sent to user
     error: str | None = None  # Error message if command failed
+
+
+class RuntimeConfig(SQLModel, table=True):
+    """User-configurable runtime settings stored in database."""
+
+    __tablename__ = "runtime_config"
+
+    key: str = Field(primary_key=True)
+    value: str  # Store as string, parse to correct type on load
+    description: str  # Human-readable description with units
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

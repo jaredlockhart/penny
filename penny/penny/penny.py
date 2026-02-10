@@ -40,6 +40,9 @@ class Penny:
         migrate(config.db_path)
         self.db.create_tables()
 
+        # Load runtime config overrides from database
+        config.load_runtime_overrides(self.db)
+
         def search_tools(db):
             if config.perplexity_api_key:
                 return [SearchTool(perplexity_api_key=config.perplexity_api_key, db=db)]
