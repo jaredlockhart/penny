@@ -52,7 +52,6 @@ class MessageAgent(Agent):
 
                 # Redact user name from outbound search queries, but only
                 # if the user didn't use their own name in the message
-                # (e.g. "jared leto tron" should not be redacted)
                 name = user_info.name
                 user_said_name = bool(re.search(rf"\b{re.escape(name)}\b", content, re.IGNORECASE))
                 search_tool = self._tool_registry.get("search")
