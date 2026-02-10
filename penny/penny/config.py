@@ -55,6 +55,9 @@ class Config:
     ollama_max_retries: int = 3
     ollama_retry_delay: float = 0.5
 
+    # Tool execution timeout (seconds)
+    tool_timeout: float = 60.0
+
     # Global idle threshold for background tasks
     idle_seconds: float = 300.0
 
@@ -142,6 +145,9 @@ class Config:
         discovery_min_seconds = float(os.getenv("DISCOVERY_MIN_SECONDS", "7200"))
         discovery_max_seconds = float(os.getenv("DISCOVERY_MAX_SECONDS", "14400"))
 
+        # Tool execution timeout
+        tool_timeout = float(os.getenv("TOOL_TIMEOUT", "60.0"))
+
         config = cls(
             channel_type=channel_type,
             signal_number=signal_number,
@@ -155,6 +161,7 @@ class Config:
             log_level=log_level,
             db_path=db_path,
             log_file=log_file,
+            tool_timeout=tool_timeout,
             idle_seconds=idle_seconds,
             followup_min_seconds=followup_min_seconds,
             followup_max_seconds=followup_max_seconds,

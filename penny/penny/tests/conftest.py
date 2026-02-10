@@ -37,6 +37,7 @@ DEFAULT_TEST_CONFIG = {
     "ollama_background_model": "test-model",
     "perplexity_api_key": "test-api-key",
     "log_level": "DEBUG",
+    "tool_timeout": 60.0,
     # Disable background tasks by default
     "idle_seconds": 99999.0,
     "followup_min_seconds": 99999.0,

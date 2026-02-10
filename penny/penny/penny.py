@@ -59,6 +59,7 @@ class Penny:
                 max_steps=config.message_max_steps,
                 max_retries=config.ollama_max_retries,
                 retry_delay=config.ollama_retry_delay,
+                tool_timeout=config.tool_timeout,
             )
 
         # Create message agent for production use
@@ -76,6 +77,7 @@ class Penny:
             max_steps=config.message_max_steps,
             max_retries=config.ollama_max_retries,
             retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
         )
 
         self.summarize_agent = SummarizeAgent(
@@ -87,6 +89,7 @@ class Penny:
             max_steps=1,
             max_retries=config.ollama_max_retries,
             retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
         )
 
         self.profile_agent = ProfileAgent(
@@ -98,6 +101,7 @@ class Penny:
             max_steps=1,
             max_retries=config.ollama_max_retries,
             retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
         )
 
         self.discovery_agent = DiscoveryAgent(
@@ -109,6 +113,7 @@ class Penny:
             max_steps=config.message_max_steps,
             max_retries=config.ollama_max_retries,
             retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
         )
 
         # Create channel (needs message_agent and db)
