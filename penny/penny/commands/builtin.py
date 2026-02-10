@@ -340,7 +340,5 @@ class ConfigCommand(Command):
 
             session.commit()
 
-        # Reload config from database
-        context.config.reload_from_db(context.db)
-
+        # Config changes take effect immediately via __getattribute__
         return CommandResult(text=f"ok, updated {key} to {parsed_value}")
