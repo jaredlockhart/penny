@@ -2,7 +2,7 @@
 
 ## What Is Penny
 
-Penny is a local-first AI agent that communicates via Signal or Discord. Users send messages, Penny searches the web via Perplexity, reasons using Ollama (local LLM), and replies in a casual, lowercase, emoji-ending style. It runs in Docker with host networking.
+Penny is a local-first AI agent that communicates via Signal or Discord. Users send messages, Penny searches the web via Perplexity, reasons using Ollama (local LLM), and replies in a casual, relaxed style. It runs in Docker with host networking.
 
 Penny also has an autonomous development team (`penny-team/`) — Claude CLI agents that process GitHub Issues on a schedule, handling requirements, architecture, and implementation.
 
