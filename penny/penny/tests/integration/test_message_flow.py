@@ -720,3 +720,63 @@ async def test_discovery_excludes_dislikes(
                 break
 
         assert exclusion_found, "Discovery prompt should include dislike exclusions"
+
+
+@pytest.mark.asyncio
+async def test_profile_reaction_processing_idempotency(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that ProfileAgent only processes each reaction once:
+    1. Insert a reaction directly into the database
+    2. Mark it as processed
+    3. Verify get_user_reactions() returns empty list (no unprocessed reactions)
+    4. Add another reaction without marking it processed
+    5. Verify get_user_reactions() returns only the new unprocessed reaction
+    """
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        # Insert a processed reaction directly
+        processed_reaction_id = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="❤️",
+            parent_id=None,
+            is_reaction=True,
+        )
+        assert processed_reaction_id is not None
+        penny.db.mark_reaction_processed(processed_reaction_id)
+
+        # Verify get_user_reactions returns empty (processed reaction is excluded)
+        reactions = penny.db.get_user_reactions(TEST_SENDER)
+        assert len(reactions) == 0
+
+        # Insert an unprocessed reaction
+        unprocessed_reaction_id = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="👍",
+            parent_id=None,
+            is_reaction=True,
+        )
+        assert unprocessed_reaction_id is not None
+
+        # Verify get_user_reactions returns only the unprocessed reaction
+        reactions = penny.db.get_user_reactions(TEST_SENDER)
+        assert len(reactions) == 1
+        assert reactions[0].id == unprocessed_reaction_id
+        assert reactions[0].content == "👍"
+        assert reactions[0].processed is False
+
+        # Mark the second reaction as processed
+        penny.db.mark_reaction_processed(unprocessed_reaction_id)
+
+        # Verify get_user_reactions now returns empty again
+        reactions = penny.db.get_user_reactions(TEST_SENDER)
+        assert len(reactions) == 0

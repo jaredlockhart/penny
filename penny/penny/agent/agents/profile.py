@@ -77,7 +77,12 @@ class ProfileAgent(Agent):
 
             # Process each reaction
             for reaction_msg in reactions:
-                if await self._process_reaction(sender, reaction_msg):
+                processed = await self._process_reaction(sender, reaction_msg)
+                # Mark as processed regardless of whether we updated preferences
+                # (we've analyzed it, even if no action was needed)
+                if reaction_msg.id is not None:
+                    self.db.mark_reaction_processed(reaction_msg.id)
+                if processed:
                     work_done = True
 
         return work_done
