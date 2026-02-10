@@ -147,7 +147,7 @@ class ProfileAgent(Agent):
                 self.db.move_preference(sender, topic, opposite_type, pref_type)
                 await self._send_notification(
                     sender,
-                    f"i moved {topic} from your {opposite_type}s to your {pref_type}s",
+                    f"I moved {topic} from your {opposite_type}s to your {pref_type}s",
                 )
                 logger.info(
                     "Moved preference for %s: %s (%s → %s)", sender, topic, opposite_type, pref_type
@@ -164,7 +164,7 @@ class ProfileAgent(Agent):
                 self.db.add_preference(sender, topic, pref_type)
                 await self._send_notification(
                     sender,
-                    f"i added {topic} to your {pref_type}s",
+                    f"I added {topic} to your {pref_type}s",
                 )
                 logger.info("Added %s preference for %s: %s", pref_type, sender, topic)
                 return True
