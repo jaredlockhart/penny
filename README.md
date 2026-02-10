@@ -94,6 +94,15 @@ The scheduler resets all timers when a new message arrives.
 - **Persistence**: SQLite on host filesystem via volume mount
 - **Channel Abstraction**: Signal and Discord share the same interface
 
+### Commands
+
+Penny supports slash commands sent as messages:
+
+- **/commands**: List all available commands
+- **/debug**: Show agent status, git commit, background task state
+- **/config**: View and modify runtime settings (e.g., `/config idle_seconds 600`)
+- **/test**: Enter isolated test mode with a separate DB for development
+
 ## Data Model
 
 Penny stores four types of data in SQLite:
@@ -142,16 +151,20 @@ make up
 ### Make Commands
 
 ```bash
-make up          # Build and start all services (foreground)
-make prod        # Deploy penny only (no team, no override)
-make kill        # Tear down containers and remove local images
-make build       # Build the Docker image
-make check       # Build, format check, lint, typecheck, and run tests
-make pytest      # Run integration tests
-make fmt         # Format with ruff
-make lint        # Lint with ruff
-make fix         # Format + autofix lint issues
-make typecheck   # Type check with ty
+make up               # Build and start all services (foreground)
+make prod             # Deploy penny only (no team, no override)
+make kill             # Tear down containers and remove local images
+make build            # Build the penny Docker image
+make team-build       # Build the penny-team Docker image
+make check            # Build, format check, lint, typecheck, and run tests
+make pytest           # Run integration tests
+make fmt              # Format with ruff
+make lint             # Lint with ruff
+make fix              # Format + autofix lint issues
+make typecheck        # Type check with ty
+make token            # Generate GitHub App installation token for gh CLI
+make migrate-test     # Test database migrations against a copy of prod DB
+make migrate-validate # Check for duplicate migration number prefixes
 ```
 
 All dev tool commands run in temporary Docker containers via `docker compose run --rm`, with source volume-mounted so changes write back to the host filesystem.
@@ -279,6 +292,8 @@ CI runs `make check` in Docker on every push to `main` and on pull requests via 
 **Test Coverage:**
 - Message flow: tool calls, direct responses, typing indicators, DB logging
 - Background tasks: summarization, user profile generation, spontaneous followups
+- Commands: /debug, /config, /test, /commands
+- Startup announcements, Signal channel integration
 
 Tests use mock servers and SDK patches:
 - `MockSignalServer`: Simulates Signal WebSocket + REST API
@@ -292,12 +307,16 @@ Tests use mock servers and SDK patches:
 
 Penny includes a Python-based agent orchestrator that manages autonomous Claude CLI agents. Agents process work from GitHub Issues on a schedule, using labels as a state machine:
 
-`backlog` → `requirements` → `specification` → `in-progress` → `in-review` → closed
+```
+backlog → requirements → specification → in-progress → in-review → closed   (features)
+bug → in-review → closed                                                     (bug fixes)
+```
 
 **Agents:**
 - **Product Manager**: Gathers requirements for `requirements` issues (5-min cycle, 600s timeout)
 - **Architect**: Writes detailed specs for `specification` issues, handles spec feedback (5-min cycle, 600s timeout)
-- **Worker**: Implements `in-progress` issues — creates branches, writes code/tests, runs `make check`, opens PRs; addresses PR feedback on `in-review` issues (5-min cycle, 1800s timeout)
+- **Worker**: Implements `in-progress` issues — creates branches, writes code/tests, runs `make check`, opens PRs; addresses PR feedback on `in-review` issues; fixes `bug` issues directly (5-min cycle, 1800s timeout)
+- **Monitor**: Watches production logs for errors, deduplicates against existing issues, and files `bug` issues automatically (5-min cycle, 600s timeout)
 
 Each agent checks for matching GitHub issue labels before waking Claude CLI, so idle cycles cost ~1 second instead of a full Claude invocation.
 

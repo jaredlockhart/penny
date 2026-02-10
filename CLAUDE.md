@@ -65,17 +65,20 @@ data/                           — Runtime data (gitignored)
 The project runs inside Docker Compose. A top-level Makefile wraps all commands:
 
 ```bash
-make up          # Start all services (penny + team) with Docker Compose
-make prod        # Deploy penny only (no team, no override)
-make kill        # Tear down containers and remove local images
-make build       # Build the penny Docker image
-make team-build  # Build the penny-team Docker image
-make check       # Format check, lint, typecheck, and run tests (penny + penny-team)
-make pytest      # Run integration tests
-make fmt         # Format with ruff (penny + penny-team)
-make lint        # Lint with ruff (penny + penny-team)
-make fix         # Format + autofix lint issues (penny + penny-team)
-make typecheck   # Type check with ty (penny + penny-team)
+make up               # Start all services (penny + team) with Docker Compose
+make prod             # Deploy penny only (no team, no override)
+make kill             # Tear down containers and remove local images
+make build            # Build the penny Docker image
+make team-build       # Build the penny-team Docker image
+make token            # Generate GitHub App installation token for gh CLI
+make check            # Format check, lint, typecheck, and run tests (penny + penny-team)
+make pytest           # Run integration tests
+make fmt              # Format with ruff (penny + penny-team)
+make lint             # Lint with ruff (penny + penny-team)
+make fix              # Format + autofix lint issues (penny + penny-team)
+make typecheck        # Type check with ty (penny + penny-team)
+make migrate-test     # Test database migrations against a copy of prod DB
+make migrate-validate # Check for duplicate migration number prefixes
 ```
 
 On the host, dev tool commands run via `docker compose run --rm` in a temporary container (penny service for `penny/`, team service for `penny-team/`). Inside agent containers (where `LOCAL=1` is set), the same `make` targets run tools directly — no Docker-in-Docker needed.

@@ -31,7 +31,9 @@ flowchart TD
 penny/
   penny.py            — Entry point. Penny class: creates agents, channel, scheduler
   config.py           — Config dataclass loaded from .env, channel auto-detection
+  config_params.py    — ConfigParam definitions for runtime-configurable settings
   constants.py        — System prompt, followup prompt, discovery prompt, summarize prompt
+  startup.py          — Startup announcement message generation (git commit info)
   agent/
     base.py           — Agent base class: agentic loop, tool execution, Ollama integration
     models.py         — ChatMessage, ControllerResponse, MessageRole
@@ -43,9 +45,16 @@ penny/
       profile.py      — ProfileAgent: background user profile generation
       discovery.py    — DiscoveryAgent: proactive content sharing based on user interests
   scheduler/
-    base.py           — Schedule ABC: defines schedule interface
-    scheduler.py      — BackgroundScheduler: runs scheduled tasks in priority order
-    schedules.py      — IdleSchedule, TwoPhaseSchedule implementations
+    base.py           — BackgroundScheduler + Schedule ABC
+    schedules.py      — ImmediateSchedule, DelayedSchedule implementations
+  commands/
+    __init__.py       — create_command_registry() factory
+    base.py           — Command ABC, CommandRegistry
+    models.py         — CommandContext, CommandResult, CommandError
+    config.py         — /config: view and modify runtime settings
+    debug.py          — /debug: show agent status, git commit, system info
+    index.py          — /commands: list available commands
+    test.py           — /test: isolated test mode for development
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult
@@ -69,12 +78,17 @@ penny/
     models.py         — ChatResponse, ChatResponseMessage
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
+    test_migrations.py — Migration validation tests
     mocks/
       signal_server.py  — Mock Signal WebSocket + REST server (aiohttp)
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
     integration/
-      test_message_flow.py — End-to-end message flow tests
+      test_message_flow.py        — End-to-end message flow tests
+      test_signal_channel.py      — Signal channel integration tests
+      test_startup_announcement.py — Startup announcement tests
+      test_test_mode.py           — /test command integration tests
+      test_commands.py            — Command system integration tests
 Dockerfile            — Python 3.12-slim
 pyproject.toml        — Dependencies and project metadata
 ```
@@ -163,6 +177,26 @@ The `scheduler/` module manages background tasks:
 ### Channel Factory (`channels/__init__.py`)
 - `create_channel()` creates appropriate channel based on config
 - Auto-detects channel type from credentials if not explicit
+
+## Command System
+
+Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Commands are handled before the message reaches the agent loop.
+
+### Architecture (`commands/`)
+- **Command ABC** (`base.py`): Each command implements `name`, `description`, `aliases`, and `async execute(context) → CommandResult`
+- **CommandRegistry** (`base.py`): Maps command names/aliases to handlers, dispatches messages starting with `/`
+- **Factory** (`__init__.py`): `create_command_registry()` registers all built-in commands
+
+### Built-in Commands
+- **/commands** (`index.py`): Lists all available commands with descriptions
+- **/debug** (`debug.py`): Shows agent status, git commit, system info, background task state
+- **/config** (`config.py`): View and modify runtime settings (e.g., `/config idle_seconds 600`)
+- **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`.
+
+### Runtime Configuration
+- `/config` reads and writes to a `RuntimeConfig` table in SQLite (migration `0002_add_runtime_config_table.py`)
+- `ConfigParam` definitions in `config_params.py` declare which settings are runtime-configurable, with types and validation
+- Config values are read on each use (not cached), so changes take effect immediately
 
 ## Message Flow
 

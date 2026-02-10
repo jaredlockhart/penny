@@ -72,6 +72,8 @@ bug → in-review → closed                                                    
 - `penny_team/orchestrator.py`: Main loop checks agents every 30s, runs those that are due; creates `GitHubAPI` instance with token provider from `GitHubApp`, passes to all agents
 - `penny_team/base.py`: Agent class wraps `claude -p <prompt> --dangerously-skip-permissions --verbose --output-format stream-json`
 - `--agent <name>` flag: Run a single agent instead of the full orchestrator loop
+- `--once` flag: Run a single tick (all due agents) then exit
+- `--list` flag: List registered agents and their configurations
 - `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `GitHubAPI.list_issues()`, compares to saved state in `data/penny-team/<name>.state.json` — skips Claude CLI if no issues changed since last run
 - State saved after successful runs; re-fetched to capture agent's own changes
 - Fail-open design: If API calls fail, agent runs anyway
