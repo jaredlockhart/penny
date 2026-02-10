@@ -14,7 +14,7 @@ import logging
 import subprocess
 from dataclasses import dataclass
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from penny_team.constants import (
     API_PR_REVIEW_COMMENTS,
@@ -34,14 +34,36 @@ from penny_team.utils.issue_filter import FilteredIssue
 logger = logging.getLogger(__name__)
 
 
+class CommentAuthor(BaseModel):
+    """Author of a PR comment or review."""
+
+    login: str = ""
+
+
+class PRComment(BaseModel):
+    """A top-level PR comment (from gh pr list --json comments)."""
+
+    author: CommentAuthor = CommentAuthor()
+    body: str = ""
+    created_at: str = Field("", alias="createdAt")
+
+
+class PRReview(BaseModel):
+    """A formal PR review (from gh pr list --json reviews)."""
+
+    author: CommentAuthor = CommentAuthor()
+    state: str = ""
+    submitted_at: str = Field("", alias="submittedAt")
+
+
 class ReviewCommentUser(BaseModel):
-    """Author of an inline PR review comment."""
+    """Author of an inline PR review comment (REST API format)."""
 
     login: str = ""
 
 
 class ReviewComment(BaseModel):
-    """An inline review comment on a pull request."""
+    """An inline review comment on a pull request (from REST API)."""
 
     user: ReviewCommentUser = ReviewCommentUser()
     body: str = ""
@@ -175,7 +197,7 @@ def _match_prs_to_issues(
     return result
 
 
-def _has_changes_requested(reviews: list[dict], since: str | None = None) -> bool:
+def _has_changes_requested(raw_reviews: list[dict], since: str | None = None) -> bool:
     """Check if any reviewer's latest review requests changes.
 
     A reviewer might request changes then later approve. We only care
@@ -183,16 +205,14 @@ def _has_changes_requested(reviews: list[dict], since: str | None = None) -> boo
     When since is set, only reviews submitted after that ISO timestamp
     count (already-addressed reviews are ignored).
     """
-    latest_by_reviewer: dict[str, tuple[str, str]] = {}
-    for review in reviews:
-        login = review.get("author", {}).get("login", "")
-        state = review.get("state", "")
-        submitted_at = review.get("submittedAt", "")
-        if login and state:
-            latest_by_reviewer[login] = (state, submitted_at)
-    for state, submitted_at in latest_by_reviewer.values():
-        if state == REVIEW_STATE_CHANGES_REQUESTED and (
-            since is None or not submitted_at or submitted_at > since
+    latest_by_reviewer: dict[str, PRReview] = {}
+    for raw in raw_reviews:
+        review = PRReview.model_validate(raw)
+        if review.author.login and review.state:
+            latest_by_reviewer[review.author.login] = review
+    for review in latest_by_reviewer.values():
+        if review.state == REVIEW_STATE_CHANGES_REQUESTED and (
+            since is None or not review.submitted_at or review.submitted_at > since
         ):
             return True
     return False
@@ -238,7 +258,7 @@ def _collect_human_review_comments(
 
 
 def _collect_human_comments(
-    comments: list[dict],
+    raw_comments: list[dict],
     bot_logins: set[str] | None,
     since: str | None = None,
 ) -> list[str]:
@@ -248,16 +268,14 @@ def _collect_human_comments(
     are included (filters out already-addressed feedback).
     """
     parts: list[str] = []
-    for comment in comments:
-        login = comment.get("author", {}).get("login", "")
-        if not login:
+    for raw in raw_comments:
+        comment = PRComment.model_validate(raw)
+        if not comment.author.login:
             continue
-        created_at = comment.get("createdAt", "")
-        if since and created_at and created_at <= since:
+        if since and comment.created_at and comment.created_at <= since:
             continue
-        if bot_logins is None or login not in bot_logins:
-            body = comment.get("body", "")
-            parts.append(f"**{login}**:\n{body}\n")
+        if bot_logins is None or comment.author.login not in bot_logins:
+            parts.append(f"**{comment.author.login}**:\n{comment.body}\n")
     return parts
 
 
