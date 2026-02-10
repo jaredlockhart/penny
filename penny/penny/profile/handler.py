@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import dateparser
-from geopy.geocoders import Nominatim
-from timezonefinder import TimezoneFinder
+try:
+    import dateparser
+
+    HAS_DATEPARSER = True
+except ImportError:
+    dateparser: Any = None
+    HAS_DATEPARSER = False
+
+from penny.profile.utils import get_timezone
 
 if TYPE_CHECKING:
     from penny.database import Database
@@ -19,7 +25,7 @@ logger = logging.getLogger(__name__)
 PROFILE_COLLECTION_PROMPT = (
     "Hey! Before we dive in, I need to collect a bit of info about you. "
     "Can you tell me your name, location (city/country), and date of birth?\n\n"
-    "For example: 'Jared, Toronto, Canada, March 15 1990'"
+    "For example: 'Alex, Seattle, USA, January 10 1995'"
 )
 
 PROFILE_PARSE_PROMPT = (
@@ -32,7 +38,7 @@ PROFILE_PARSE_PROMPT = (
 
 PROFILE_ERROR_MESSAGE = (
     "I couldn't parse that. Can you try again with your name, location, and date of birth? "
-    "For example: 'Jared, Toronto, Canada, March 15 1990'"
+    "For example: 'Alex, Seattle, USA, January 10 1995'"
 )
 
 
@@ -49,8 +55,6 @@ class ProfilePromptHandler:
         """
         self.db = db
         self.ollama = ollama_client
-        self._tf = TimezoneFinder()
-        self._geolocator = Nominatim(user_agent="penny_profile_handler")
 
     def needs_profile(self, sender: str) -> bool:
         """
@@ -85,6 +89,10 @@ class ProfilePromptHandler:
         name, location, dob_str = parsed
 
         # Parse date of birth
+        if not HAS_DATEPARSER:
+            logger.error("dateparser not available")
+            return PROFILE_ERROR_MESSAGE, False
+
         dob_date = dateparser.parse(dob_str, settings={"PREFER_DATES_FROM": "past"})
         if not dob_date:
             return PROFILE_ERROR_MESSAGE, False
@@ -92,7 +100,7 @@ class ProfilePromptHandler:
         dob_formatted = dob_date.strftime("%Y-%m-%d")
 
         # Derive timezone from location
-        timezone = await self._get_timezone(location)
+        timezone = await get_timezone(location)
         if not timezone:
             return (
                 f"I couldn't determine a timezone for '{location}'. "
@@ -128,7 +136,7 @@ class ProfilePromptHandler:
         try:
             # Use generate (not chat) for simple extraction
             response = await self.ollama.generate(prompt=prompt)
-            answer = response.response.strip()
+            answer = response.content.strip()
 
             # Extract JSON from the response (handle markdown code blocks)
             json_match = re.search(r"\{[^}]+\}", answer)
@@ -152,41 +160,6 @@ class ProfilePromptHandler:
 
         except Exception as e:
             logger.warning("Failed to parse profile response: %s", e)
-            return None
-
-    async def _get_timezone(self, location: str) -> str | None:
-        """
-        Derive IANA timezone from natural language location.
-
-        Args:
-            location: Natural language location (e.g., "Toronto, Canada")
-
-        Returns:
-            IANA timezone string (e.g., "America/Toronto") or None if lookup failed
-        """
-        try:
-            # Geocode location to lat/lon
-            geo_result = self._geolocator.geocode(location)
-            if not geo_result:
-                logger.warning("Geocoding failed for location: %s", location)
-                return None
-
-            # Get timezone from lat/lon
-            timezone = self._tf.timezone_at(lat=geo_result.latitude, lng=geo_result.longitude)
-            if not timezone:
-                logger.warning(
-                    "Timezone lookup failed for location: %s (%f, %f)",
-                    location,
-                    geo_result.latitude,
-                    geo_result.longitude,
-                )
-                return None
-
-            logger.debug("Resolved timezone for %s: %s", location, timezone)
-            return timezone
-
-        except Exception as e:
-            logger.warning("Timezone derivation failed for %s: %s", location, e)
             return None
 
     def get_profile_summary(self, sender: str) -> str | None:

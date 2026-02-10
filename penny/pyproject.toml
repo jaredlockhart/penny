@@ -67,3 +67,5 @@ testpaths = ["penny/tests"]
 python = "/usr/local/bin/python"
 
 [tool.ty.rules]
+unresolved-import = "ignore"
+call-non-callable = "warn"

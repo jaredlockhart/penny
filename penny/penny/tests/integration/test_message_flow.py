@@ -11,7 +11,7 @@ from penny.tests.conftest import TEST_SENDER
 
 @pytest.mark.asyncio
 async def test_basic_message_flow(
-    signal_server, mock_ollama, test_config, _mock_search, running_penny
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
 ):
     """
     Test the complete message flow:
@@ -76,7 +76,7 @@ async def test_basic_message_flow(
 
 @pytest.mark.asyncio
 async def test_message_without_tool_call(
-    signal_server, mock_ollama, test_config, _mock_search, running_penny
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
 ):
     """Test handling a message where Ollama doesn't call a tool."""
 
@@ -103,7 +103,13 @@ async def test_message_without_tool_call(
 
 @pytest.mark.asyncio
 async def test_summarize_background_task(
-    signal_server, mock_ollama, _mock_search, make_config, running_penny, setup_ollama_flow
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+    setup_ollama_flow,
 ):
     """
     Test the summarize background task:
@@ -149,7 +155,13 @@ async def test_summarize_background_task(
 
 @pytest.mark.asyncio
 async def test_profile_background_task(
-    signal_server, mock_ollama, _mock_search, make_config, running_penny, setup_ollama_flow
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+    setup_ollama_flow,
 ):
     """
     Test the profile background task:
@@ -171,25 +183,31 @@ async def test_profile_background_task(
         response = await signal_server.wait_for_message(timeout=10.0)
         assert "cats" in response["message"].lower()
 
-        # Verify no profile exists yet
-        profile = penny.db.get_user_profile(TEST_SENDER)
-        assert profile is None, "Profile should not exist yet"
+        # Verify no user topics profile exists yet
+        topics = penny.db.get_user_topics(TEST_SENDER)
+        assert topics is None, "User topics should not exist yet"
 
         # Wait for profile task to trigger (idle time + scheduler tick)
         await asyncio.sleep(2.0)
 
-        # Verify profile was generated
-        profile = penny.db.get_user_profile(TEST_SENDER)
-        assert profile is not None, "Profile should have been generated"
-        assert len(profile.profile_text) > 0
-        assert "cat" in profile.profile_text.lower() or "animal" in profile.profile_text.lower()
+        # Verify user topics profile was generated
+        topics = penny.db.get_user_topics(TEST_SENDER)
+        assert topics is not None, "User topics should have been generated"
+        assert len(topics.profile_text) > 0
+        assert "cat" in topics.profile_text.lower() or "animal" in topics.profile_text.lower()
 
         assert len(mock_ollama.requests) >= 3, "Expected at least 3 Ollama calls"
 
 
 @pytest.mark.asyncio
 async def test_followup_background_task(
-    signal_server, mock_ollama, _mock_search, make_config, running_penny, setup_ollama_flow
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+    setup_ollama_flow,
 ):
     """
     Test the followup background task:
@@ -249,7 +267,13 @@ async def test_followup_background_task(
 
 @pytest.mark.asyncio
 async def test_signal_reaction_message(
-    signal_server, mock_ollama, _mock_search, make_config, running_penny, setup_ollama_flow
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+    setup_ollama_flow,
 ):
     """
     Test Signal reaction handling:

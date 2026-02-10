@@ -98,6 +98,36 @@ def test_config(make_config) -> Config:
 
 
 @pytest.fixture
+def test_user_info(test_config):
+    """
+    Create a test user profile to bypass profile prompting.
+
+    This sets up a UserInfo record for TEST_SENDER so tests don't get
+    intercepted by profile collection prompts. The DB is initialized (tables
+    created, then migrations run) before creating the user.
+    """
+    from penny.database import Database
+    from penny.database.migrate import migrate
+
+    # Create database and tables first
+    db = Database(test_config.db_path)
+    db.create_tables()
+
+    # Then run migrations
+    migrate(test_config.db_path)
+
+    # Now create the test user
+    db.save_user_info(
+        sender=TEST_SENDER,
+        name="Test User",
+        location="Seattle, WA",
+        timezone="America/Los_Angeles",
+        date_of_birth="1990-01-01",
+    )
+    return db
+
+
+@pytest.fixture
 def running_penny() -> Callable[[Config], AbstractAsyncContextManager[Penny]]:
     """
     Async context manager fixture for running Penny with proper cleanup.
