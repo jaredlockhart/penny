@@ -62,6 +62,7 @@ class BackgroundScheduler:
         self._last_message_time = time.monotonic()
         self._running = True
         self._current_task: str | None = None
+        self._last_run_times: dict[str, float] = {}
 
     def notify_message(self) -> None:
         """Called when a new message arrives. Resets all schedules."""
@@ -73,6 +74,23 @@ class BackgroundScheduler:
     def stop(self) -> None:
         """Signal the scheduler to stop."""
         self._running = False
+
+    def get_agent_status(self) -> dict[str, float | None]:
+        """
+        Get the time elapsed since each agent last ran.
+
+        Returns:
+            Dictionary mapping agent names to seconds since last run (None if never run)
+        """
+        now = time.monotonic()
+        return {
+            schedule.agent.name: (
+                now - self._last_run_times[schedule.agent.name]
+                if schedule.agent.name in self._last_run_times
+                else None
+            )
+            for schedule in self._schedules
+        }
 
     async def run(self) -> None:
         """Main scheduler loop."""
@@ -97,6 +115,7 @@ class BackgroundScheduler:
                     try:
                         did_work = await agent.execute()
                         schedule.mark_complete()
+                        self._last_run_times[agent.name] = time.monotonic()
 
                         if did_work:
                             logger.info("Background task completed: %s", agent.name)
