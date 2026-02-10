@@ -258,8 +258,10 @@ class MessageChannel(ABC):
                 )
                 return
 
-            # Check if message is a command
-            if message.content.strip().startswith("/"):
+            # Check if message is a command (but allow /test to pass through to agent)
+            if message.content.strip().startswith("/") and not message.content.strip().startswith(
+                "/test "
+            ):
                 await self._handle_command(message)
                 return
 

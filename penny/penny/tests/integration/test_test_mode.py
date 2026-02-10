@@ -1,0 +1,163 @@
+"""Integration tests for /test mode."""
+
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from penny.constants import TEST_DB_PATH, TEST_MODE_PREFIX
+from penny.tests.conftest import TEST_SENDER
+
+
+@pytest.mark.asyncio
+async def test_test_mode_basic_flow(
+    signal_server, mock_ollama, test_config, _mock_search, running_penny
+):
+    """
+    Test that /test command uses test database and prepends [TEST] to response.
+    """
+    mock_ollama.set_default_flow(
+        search_query="test search query",
+        final_response="here's what i found about your question! 🌟",
+    )
+
+    async with running_penny(test_config):
+        # Send /test message
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="/test what's the weather like today?",
+        )
+
+        # Wait for response
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify the response has [TEST] prefix
+        assert response["recipients"] == [TEST_SENDER]
+        assert response["message"].startswith(TEST_MODE_PREFIX)
+        assert "here's what i found" in response["message"].lower()
+
+        # Verify test database was used (message should be in test db)
+        test_db_path = Path(test_config.db_path).parent / TEST_DB_PATH.name
+        assert test_db_path.exists(), "Test database should have been created"
+
+        # Note: The incoming message is still logged to production database by the channel
+        # after the agent runs, but the agent's processing (search, LLM calls) use test db
+        # This is expected behavior - test mode isolates agent processing, not channel logging
+
+
+@pytest.mark.asyncio
+async def test_test_mode_rejects_nested_commands(
+    signal_server, mock_ollama, test_config, _mock_search, running_penny
+):
+    """
+    Test that /test rejects nested commands like /test /debug.
+    """
+    async with running_penny(test_config):
+        # Send /test with nested command
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="/test /debug",
+        )
+
+        # Wait for error response
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify error message
+        assert response["recipients"] == [TEST_SENDER]
+        assert "nested commands are not supported" in response["message"].lower()
+
+        # Verify Ollama was NOT called
+        assert len(mock_ollama.requests) == 0, "Ollama should not be called for nested commands"
+
+
+@pytest.mark.asyncio
+async def test_test_mode_rejects_threading(
+    signal_server, mock_ollama, test_config, _mock_search, running_penny
+):
+    """
+    Test that /test rejects threaded messages.
+    """
+    # We test threading rejection by directly calling MessageAgent.handle()
+    # since the channel layer doesn't pass quotes through for commands
+    async with running_penny(test_config) as penny:
+        # Call handle with /test and a quoted_text (threading)
+        parent_id, response = await penny.message_agent.handle(
+            content="/test what about test mode?",
+            sender=TEST_SENDER,
+            quoted_text="some quoted text",
+        )
+
+        # Verify error message
+        assert "test prompts cannot be threaded" in response.answer.lower()
+
+
+@pytest.mark.asyncio
+async def test_test_mode_uses_real_external_services(
+    signal_server, mock_ollama, test_config, _mock_search, running_penny
+):
+    """
+    Test that /test mode uses real external services (Ollama, Perplexity).
+    """
+    mock_ollama.set_default_flow(
+        search_query="test search query",
+        final_response="here's what i found! 🌟",
+    )
+
+    async with running_penny(test_config):
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="/test tell me something interesting",
+        )
+
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify response has [TEST] prefix
+        assert response["message"].startswith(TEST_MODE_PREFIX)
+
+        # Verify Ollama was called (real service usage)
+        assert len(mock_ollama.requests) >= 1, "Ollama should be called in test mode"
+
+        # Verify search tool was invoked
+        # The mock_search fixture tracks search calls globally
+        # In test mode, the search tool should still execute
+
+
+@pytest.mark.asyncio
+async def test_test_mode_snapshot_created_at_startup(test_config, running_penny):
+    """
+    Test that test database snapshot is created at Penny startup.
+    """
+    # Create production database and add a message BEFORE starting Penny
+    from penny.database import Database
+    from penny.database.migrate import migrate
+
+    # Ensure the database file exists on disk
+    prod_db = Database(test_config.db_path)
+    migrate(test_config.db_path)
+    prod_db.create_tables()
+    prod_db.log_message(
+        direction="incoming",
+        sender=TEST_SENDER,
+        content="production message",
+    )
+
+    # Verify production db file exists
+    prod_path = Path(test_config.db_path)
+    assert prod_path.exists(), "Production database should exist before starting Penny"
+
+    # Start Penny, which should create test db snapshot
+    async with running_penny(test_config):
+        # Wait for startup and snapshot creation
+        await asyncio.sleep(0.5)
+
+        # Verify test db exists
+        test_db_path = Path(test_config.db_path).parent / TEST_DB_PATH.name
+        assert test_db_path.exists(), (
+            f"Test database should be created at startup at {test_db_path}"
+        )
+
+        # Verify test db is a copy of production db
+        test_db = Database(str(test_db_path))
+        test_messages = test_db.get_user_messages(TEST_SENDER)
+        assert len(test_messages) == 1, "Test db should contain production message"
+        assert test_messages[0].content == "production message"

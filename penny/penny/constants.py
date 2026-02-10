@@ -1,6 +1,7 @@
 """Constants and prompts for Penny agent."""
 
 from enum import StrEnum
+from pathlib import Path
 
 
 class MessageDirection(StrEnum):
@@ -67,3 +68,7 @@ PROFILE_PROMPT = (
     "- Toronto\n\n"
     "Messages:\n"
 )
+
+# Test mode constants
+TEST_DB_PATH = Path("data/penny-test.db")
+TEST_MODE_PREFIX = "[TEST] "
