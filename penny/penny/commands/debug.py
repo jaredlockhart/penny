@@ -18,14 +18,6 @@ except ImportError:
     psutil: Any = None
     HAS_PSUTIL = False
 
-try:
-    from geopy.geocoders import Nominatim
-    from timezonefinder import TimezoneFinder
-
-    HAS_GEO = True
-except ImportError:
-    HAS_GEO = False
-
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 

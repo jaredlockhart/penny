@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Any
 
 import dateparser
-
 from pydantic import BaseModel, Field
 
 from penny.commands.base import Command
