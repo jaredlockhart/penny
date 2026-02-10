@@ -50,8 +50,25 @@ class MessageLog(SQLModel, table=True):
     is_reaction: bool = Field(default=False, index=True)  # True if this is a reaction message
 
 
-class UserProfile(SQLModel, table=True):
-    """Cached user profile generated from message history."""
+class UserInfo(SQLModel, table=True):
+    """Basic user information collected on first interaction."""
+
+    __tablename__ = "userinfo"
+
+    id: int | None = Field(default=None, primary_key=True)
+    sender: str = Field(unique=True, index=True)
+    name: str
+    location: str
+    timezone: str  # IANA timezone (e.g., "America/Los_Angeles")
+    date_of_birth: str  # YYYY-MM-DD format
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class UserTopics(SQLModel, table=True):
+    """Cached user topics/interests generated from message history."""
+
+    __tablename__ = "usertopics"
 
     id: int | None = Field(default=None, primary_key=True)
     sender: str = Field(unique=True, index=True)

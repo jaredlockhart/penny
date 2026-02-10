@@ -22,6 +22,7 @@ from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
+from penny.profile import ProfilePromptHandler
 from penny.scheduler import BackgroundScheduler, DelayedSchedule, ImmediateSchedule
 from penny.startup import get_restart_message
 from penny.tools import SearchTool
@@ -63,6 +64,17 @@ class Penny:
 
         # Create message agent for production use
         self.message_agent = create_message_agent(self.db)
+
+        # Create profile prompt handler and attach to message agent
+        profile_ollama = OllamaClient(
+            api_url=config.ollama_api_url,
+            model=config.ollama_foreground_model,
+            db=self.db,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+        )
+        profile_handler = ProfilePromptHandler(self.db, profile_ollama)
+        self.message_agent.set_profile_handler(profile_handler)
 
         # Create command registry with message agent factory for test command
         self.command_registry = create_command_registry(message_agent_factory=create_message_agent)
