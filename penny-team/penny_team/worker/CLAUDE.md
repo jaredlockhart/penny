@@ -63,8 +63,8 @@ Look at the pre-fetched issues for any with the `in-review` label.
 If an `in-review` issue exists, handle only the **highest-priority concern**, then exit:
 
 1. **Merge conflicts** — must be resolved before anything else
-2. **Failing CI** — must pass before review is meaningful
-3. **Review comments** — address human feedback
+2. **Review comments** — address human feedback first
+3. **Failing CI** — fix after review feedback is addressed
 
 #### 1a. Resolve Merge Conflicts
 
@@ -101,9 +101,41 @@ Check the pre-fetched issue data for a "Merge Status: CONFLICTING" section. If p
 
 **Do NOT check CI status or review comments if there are merge conflicts.** Resolve conflicts first — CI results are meaningless on a conflicting branch.
 
-#### 1b. Fix Failing CI
+#### 1b. Address Review Comments
 
-If no merge conflicts, check the pre-fetched issue data for a "CI Status: FAILING" section. If present:
+If no merge conflicts, check the pre-fetched issue data for a "Review Feedback" section. This section contains all human PR comments and inline code review comments, pre-fetched and injected for you.
+
+If a "Review Feedback" section is present:
+1. Read and understand the feedback
+2. Find the associated PR and checkout the branch:
+   ```bash
+   gh pr list --state open --json number,title,headRefName --limit 10
+   git fetch origin <branch>
+   git checkout <branch>
+   ```
+3. Address each comment with code changes
+4. Run `make check` to verify your changes
+5. Commit and push:
+   ```bash
+   git add <specific-files>
+   git commit -m "fix: address review feedback (#<N>)"
+   git push
+   ```
+6. Comment on the **PR** (not the issue) summarizing what you changed:
+   ```bash
+   gh pr comment <PR_NUMBER> --body "*[Worker Agent]*
+
+   Addressed review feedback: <brief description of changes made>"
+   ```
+7. Exit
+
+If no "Review Feedback" section is present: continue to 1c.
+
+**Address review comments before CI failures.** Human feedback takes priority — CI fixes may conflict with requested changes, and addressing reviews first avoids wasted work.
+
+#### 1c. Fix Failing CI
+
+If no merge conflicts and no unaddressed review comments, check the pre-fetched issue data for a "CI Status: FAILING" section. If present:
 
 1. Read the failure details (check names, error output) provided in the issue data
 2. Find the associated PR and checkout the branch:
@@ -112,41 +144,51 @@ If no merge conflicts, check the pre-fetched issue data for a "CI Status: FAILIN
    git fetch origin <branch>
    git checkout <branch>
    ```
-3. Fix the failing checks:
+3. **For formatting/lint failures** — auto-fix and skip to step 7:
    - Formatting: `make fmt`
    - Lint: `make fix`
-   - Type errors: fix manually
-   - Test failures: fix manually
-4. Run `make check` to verify fixes
-5. Commit and push:
+4. **For test failures or unclear errors** — do NOT guess at a fix. Instead, add debugging first:
+   a. Study the error output to form a hypothesis about what's going wrong
+   b. Add targeted debug logging (print statements, extra assertions, or verbose output) to the failing code paths to confirm your hypothesis
+   c. Run `make check` locally — if the failure **reproduces locally**, debug and fix it directly, then skip to step 7
+   d. If the failure does **not reproduce locally** (e.g., timing/environment issue), commit and push the debug logging:
+      ```bash
+      git add <specific-files>
+      git commit -m "debug: add logging to diagnose CI failure (#<N>)"
+      git push
+      ```
+   e. Wait for CI to run on the new push, then inspect the logs:
+      ```bash
+      # Poll until the run completes (check every 30 seconds, up to 10 minutes)
+      for i in $(seq 1 20); do
+        sleep 30
+        STATUS=$(gh run list --branch <branch> --json status,conclusion --limit 1 --jq '.[0].status')
+        if [ "$STATUS" = "completed" ]; then break; fi
+      done
+      # Get the logs
+      RUN_ID=$(gh run list --branch <branch> --json databaseId --limit 1 --jq '.[0].databaseId')
+      gh run view $RUN_ID --log-failed
+      ```
+   f. Analyze the CI logs with your debug output to identify the root cause
+   g. Apply the actual fix based on what the logs revealed
+   h. Remove the debug logging you added — do not leave it in
+5. **For type errors** — fix manually
+6. Run `make check` to verify fixes
+7. Commit and push:
    ```bash
    git add <specific-files>
    git commit -m "fix: address failing CI checks (#<N>)"
    git push
    ```
-6. Comment on the **PR** (not the issue) summarizing what you fixed:
+8. Comment on the **PR** (not the issue) summarizing what you fixed:
    ```bash
    gh pr comment <PR_NUMBER> --body "*[Worker Agent]*
 
    Fixed failing CI: <brief description of what was wrong and how you fixed it>"
    ```
-7. Exit
+9. Exit
 
-**Do NOT check review comments if CI is failing.** Fix CI first — the user cannot meaningfully review a PR with red checks.
-
-#### 1c. Address Review Comments
-
-If no merge conflicts and CI is passing (or no CI status shown):
-- Find the associated PR:
-  ```bash
-  gh pr list --state open --json number,title,headRefName --limit 10
-  ```
-- Read PR review comments:
-  ```bash
-  gh pr view <PR_NUMBER> --comments
-  ```
-- If there are unaddressed review comments: checkout the branch, address feedback, push, and exit
-- If no review comments (or all addressed): skip, exit cleanly
+**Never guess at test fixes.** If you don't understand why a test is failing, add debug logging and look at the CI output before changing any test logic.
 
 ### Step 2: Check for `bug` Work
 

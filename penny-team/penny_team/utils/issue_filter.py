@@ -50,6 +50,7 @@ class FilteredIssue:
     merge_conflict: bool = False
     merge_conflict_branch: str | None = None
     has_review_feedback: bool = False
+    review_comments: str | None = None
 
 
 def fetch_issues_for_labels(
@@ -282,7 +283,10 @@ def _format_single_issue(issue: FilteredIssue) -> str:
             f"with `main` and needs to be rebased."
         )
 
-    if issue.ci_failure_details:
+    if issue.review_comments:
+        parts.append(f"\n### Review Feedback\n\n{issue.review_comments}")
+
+    if issue.ci_failure_details and not issue.has_review_feedback:
         parts.append(f"\n### CI Status: FAILING\n\n{issue.ci_failure_details}")
 
     parts.append("\n---")

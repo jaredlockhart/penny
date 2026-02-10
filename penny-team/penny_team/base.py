@@ -20,6 +20,7 @@ from penny_team.constants import (
     APP_PREFIX,
     BLOCK_TEXT,
     BLOCK_TOOL_USE,
+    CI_STATUS_FAILING,
     CLAUDE_CLI,
     EVENT_ASSISTANT,
     EVENT_RESULT,
@@ -27,6 +28,7 @@ from penny_team.constants import (
     GH_FIELD_NUMBER,
     GH_FIELD_UPDATED_AT,
     LABELS_WITH_EXTERNAL_STATE,
+    MAX_CI_FIX_ATTEMPTS,
     PROMPT_FILENAME,
 )
 from penny_team.utils.github_app import GitHubApp
@@ -47,10 +49,14 @@ class AgentState(BaseModel):
                keyed by issue number (str). Used to distinguish "this agent
                handled it" from "another agent using the same bot identity
                handled it".
+    ci_fix_attempts: number of times the agent has tried to fix CI for each
+                     issue (keyed by issue number str). Reset when CI passes
+                     or a human leaves review feedback.
     """
 
     timestamps: dict[str, str] = {}
     processed: dict[str, str] = {}
+    ci_fix_attempts: dict[str, int] = {}
 
 
 @dataclass
@@ -270,8 +276,11 @@ class Agent:
                 trusted_users=self.trusted_users,
                 env=self._get_env(),
             )
-            enrich_issues_with_pr_status(issues, env=self._get_env())
-            issue = pick_actionable_issue(issues, self._bot_logins, self._load_processed())
+            processed = self._load_processed()
+            enrich_issues_with_pr_status(
+                issues, env=self._get_env(), bot_logins=self._bot_logins, processed_at=processed
+            )
+            issue = pick_actionable_issue(issues, self._bot_logins, processed)
         except Exception:
             # Fail open — if anything goes wrong, let the agent run
             return True
@@ -372,9 +381,12 @@ class Agent:
             # Enrich in-review issues with CI and merge conflict status (no-op if none match)
             from penny_team.utils.pr_checks import enrich_issues_with_pr_status
 
-            enrich_issues_with_pr_status(all_issues, env=self._get_env())
+            processed = self._load_processed()
+            enrich_issues_with_pr_status(
+                all_issues, env=self._get_env(), bot_logins=self._bot_logins, processed_at=processed
+            )
 
-            issue = pick_actionable_issue(all_issues, self._bot_logins, self._load_processed())
+            issue = pick_actionable_issue(all_issues, self._bot_logins, processed)
 
             if issue is None:
                 duration = (datetime.now() - start).total_seconds()
@@ -396,6 +408,49 @@ class Agent:
                 )
 
             selected_issue = issue
+
+            # CI fix attempt cap: if we've tried MAX_CI_FIX_ATTEMPTS times
+            # and CI is still failing (with no new review feedback), pause
+            # and ask for human help instead of burning more tokens.
+            issue_key = str(issue.number)
+            state = self._load_full_state()
+            attempts = state.ci_fix_attempts.get(issue_key, 0)
+
+            if (
+                issue.ci_status == CI_STATUS_FAILING
+                and not issue.has_review_feedback
+                and attempts >= MAX_CI_FIX_ATTEMPTS
+            ):
+                duration = (datetime.now() - start).total_seconds()
+                self.last_run = datetime.now()
+                self.run_count += 1
+                msg = (
+                    f"*[Worker Agent]*\n\n"
+                    f"I've attempted to fix CI {MAX_CI_FIX_ATTEMPTS} times without success. "
+                    f"Pausing automated attempts — a human needs to take a look at the "
+                    f"failing checks and provide guidance."
+                )
+                self._post_comment(issue.number, msg)
+                self._mark_processed(issue.number)
+                logger.warning(
+                    f"[{self.name}] CI fix attempt limit ({MAX_CI_FIX_ATTEMPTS}) reached "
+                    f"for issue #{issue.number}, pausing"
+                )
+                return AgentRun(
+                    agent_name=self.name,
+                    success=True,
+                    output=f"CI fix attempt limit reached for issue #{issue.number}",
+                    duration=duration,
+                    timestamp=start,
+                )
+
+            # Reset CI fix counter when CI passes or human has provided feedback
+            if (
+                issue.ci_status != CI_STATUS_FAILING or issue.has_review_feedback
+            ) and issue_key in state.ci_fix_attempts:
+                del state.ci_fix_attempts[issue_key]
+                self._save_full_state(state)
+
             prompt += format_issues_for_prompt([issue])
 
         success, result_text = self._execute_claude(prompt)
@@ -409,6 +464,16 @@ class Agent:
                 success = False
             if success:
                 self._mark_processed(selected_issue.number)
+
+                # Increment CI fix attempt counter if this run was for failing CI
+                if (
+                    selected_issue.ci_status == CI_STATUS_FAILING
+                    and not selected_issue.has_review_feedback
+                ):
+                    s = self._load_full_state()
+                    key = str(selected_issue.number)
+                    s.ci_fix_attempts[key] = s.ci_fix_attempts.get(key, 0) + 1
+                    self._save_full_state(s)
 
         duration = (datetime.now() - start).total_seconds()
         self.last_run = datetime.now()

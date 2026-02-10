@@ -14,7 +14,10 @@ import logging
 import subprocess
 from dataclasses import dataclass
 
+from pydantic import BaseModel
+
 from penny_team.constants import (
+    API_PR_REVIEW_COMMENTS,
     CI_STATUS_FAILING,
     CI_STATUS_PASSING,
     GH_CLI,
@@ -31,6 +34,21 @@ from penny_team.utils.issue_filter import FilteredIssue
 logger = logging.getLogger(__name__)
 
 
+class ReviewCommentUser(BaseModel):
+    """Author of an inline PR review comment."""
+
+    login: str = ""
+
+
+class ReviewComment(BaseModel):
+    """An inline review comment on a pull request."""
+
+    user: ReviewCommentUser = ReviewCommentUser()
+    body: str = ""
+    path: str = ""
+    created_at: str = ""
+
+
 @dataclass
 class FailedCheck:
     """A single failing CI check."""
@@ -42,11 +60,16 @@ class FailedCheck:
 def enrich_issues_with_pr_status(
     issues: list[FilteredIssue],
     env: dict[str, str] | None = None,
+    bot_logins: set[str] | None = None,
+    processed_at: dict[str, str] | None = None,
 ) -> None:
     """Enrich in-review issues with CI check and merge conflict status from their PRs.
 
     Mutates FilteredIssue objects in place, setting ci_status,
     ci_failure_details, merge_conflict, and merge_conflict_branch.
+    When processed_at is provided, only review feedback newer than
+    the agent's last processing time is included (prevents re-addressing
+    already-handled comments).
     Fail-open: if gh fails, issues are left unchanged.
     """
     in_review = [i for i in issues if Label.IN_REVIEW in i.labels]
@@ -66,14 +89,36 @@ def enrich_issues_with_pr_status(
         if pr is None:
             continue
 
+        # Timestamp of when the agent last processed this issue —
+        # comments older than this have already been addressed.
+        since = (processed_at or {}).get(str(issue.number))
+
         # Merge conflict detection
         if pr.get("mergeable", "") == MERGE_STATUS_CONFLICTING:
             issue.merge_conflict = True
             issue.merge_conflict_branch = pr["headRefName"]
 
-        # Review feedback detection (latest review per reviewer wins)
-        if _has_changes_requested(pr.get("reviews", [])):
+        # Review feedback detection: formal reviews, top-level comments, or inline review comments
+        # Only include feedback newer than when we last processed this issue.
+        review_parts: list[str] = []
+
+        if _has_changes_requested(pr.get("reviews", []), since=since):
             issue.has_review_feedback = True
+
+        human_comments = _collect_human_comments(pr.get("comments", []), bot_logins, since=since)
+        if human_comments:
+            issue.has_review_feedback = True
+            review_parts.append("**PR comments:**\n")
+            review_parts.extend(human_comments)
+
+        inline_comments = _collect_human_review_comments(pr["number"], bot_logins, env, since=since)
+        if inline_comments:
+            issue.has_review_feedback = True
+            review_parts.append("**Inline review comments (on specific code lines):**\n")
+            review_parts.extend(inline_comments)
+
+        if review_parts:
+            issue.review_comments = "\n".join(review_parts)
 
         # CI check detection
         failed = _extract_failed_checks(pr.get("statusCheckRollup", []))
@@ -130,19 +175,90 @@ def _match_prs_to_issues(
     return result
 
 
-def _has_changes_requested(reviews: list[dict]) -> bool:
+def _has_changes_requested(reviews: list[dict], since: str | None = None) -> bool:
     """Check if any reviewer's latest review requests changes.
 
     A reviewer might request changes then later approve. We only care
     about each reviewer's most recent review (last in the list).
+    When since is set, only reviews submitted after that ISO timestamp
+    count (already-addressed reviews are ignored).
     """
-    latest_by_reviewer: dict[str, str] = {}
+    latest_by_reviewer: dict[str, tuple[str, str]] = {}
     for review in reviews:
         login = review.get("author", {}).get("login", "")
         state = review.get("state", "")
+        submitted_at = review.get("submittedAt", "")
         if login and state:
-            latest_by_reviewer[login] = state
-    return any(state == REVIEW_STATE_CHANGES_REQUESTED for state in latest_by_reviewer.values())
+            latest_by_reviewer[login] = (state, submitted_at)
+    for state, submitted_at in latest_by_reviewer.values():
+        if state == REVIEW_STATE_CHANGES_REQUESTED and (
+            since is None or not submitted_at or submitted_at > since
+        ):
+            return True
+    return False
+
+
+def _collect_human_review_comments(
+    pr_number: int,
+    bot_logins: set[str] | None,
+    env: dict[str, str] | None,
+    since: str | None = None,
+) -> list[str]:
+    """Fetch inline review comments from human (non-bot) users.
+
+    These are comments left on specific lines of code during a review,
+    which are not included in gh pr list --json comments or reviews.
+    When since is set, only comments created after that ISO timestamp
+    are included (filters out already-addressed feedback).
+    Fail-open: returns empty list if the API call fails.
+    """
+    try:
+        api_path = API_PR_REVIEW_COMMENTS.format(pr_number=pr_number)
+        result = subprocess.run(
+            [GH_CLI, "api", api_path],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+        if result.returncode != 0:
+            return []
+        raw_comments = json.loads(result.stdout)
+        parts: list[str] = []
+        for raw in raw_comments:
+            comment = ReviewComment.model_validate(raw)
+            if since and comment.created_at and comment.created_at <= since:
+                continue
+            if comment.user.login and (bot_logins is None or comment.user.login not in bot_logins):
+                location = f" (`{comment.path}`)" if comment.path else ""
+                parts.append(f"**{comment.user.login}**{location}:\n{comment.body}\n")
+        return parts
+    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError, ValueError):
+        return []
+
+
+def _collect_human_comments(
+    comments: list[dict],
+    bot_logins: set[str] | None,
+    since: str | None = None,
+) -> list[str]:
+    """Collect PR comments authored by human (non-bot) users.
+
+    When since is set, only comments created after that ISO timestamp
+    are included (filters out already-addressed feedback).
+    """
+    parts: list[str] = []
+    for comment in comments:
+        login = comment.get("author", {}).get("login", "")
+        if not login:
+            continue
+        created_at = comment.get("createdAt", "")
+        if since and created_at and created_at <= since:
+            continue
+        if bot_logins is None or login not in bot_logins:
+            body = comment.get("body", "")
+            parts.append(f"**{login}**:\n{body}\n")
+    return parts
 
 
 def _extract_failed_checks(status_rollup: list[dict]) -> list[FailedCheck]:
