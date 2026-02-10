@@ -16,16 +16,16 @@ from tests.conftest import (
     BOT_LOGIN,
     BOT_LOGINS,
     extract_prompt,
-    issue_list_response,
-    issue_view_response,
     make_agent,
+    make_issue_detail,
+    make_issue_list_items,
     result_event,
 )
 
 
 class TestArchitectFlow:
     def test_new_spec_issue_writes_spec(
-        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):
         """Issue with approved requirements but no spec → Claude writes spec.
 
@@ -33,13 +33,12 @@ class TestArchitectFlow:
         → pick_actionable_issue returns it (PM comment is trusted, but PM is not
         the bot — user feedback exists) → prompt assembled with issue + requirements.
         """
-        agent = make_agent(tmp_path, name="architect", required_labels=["specification"])
+        agent = make_agent(tmp_path, name="architect", required_labels=["specification"], github_api=mock_github_api)
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
-        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
-        mock_subprocess.add_response(
-            "issue view",
-            stdout=issue_view_response(
+        mock_github_api.set_issues("specification", make_issue_list_items((42, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("specification", [
+            make_issue_detail(
                 number=42,
                 title="Add reminders feature",
                 labels=["specification"],
@@ -51,7 +50,7 @@ class TestArchitectFlow:
                     },
                 ],
             ),
-        )
+        ])
 
         calls = capture_popen(stdout_lines=[result_event()], returncode=0)
 
@@ -64,20 +63,19 @@ class TestArchitectFlow:
         assert "Issue #42" in prompt
 
     def test_user_feedback_on_spec_triggers_revision(
-        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):
         """Spec exists + user posted feedback → Claude revises spec.
 
         Flow: bot posted spec, user commented with questions
         → last comment from user → actionable → prompt includes spec + feedback.
         """
-        agent = make_agent(tmp_path, name="architect", required_labels=["specification"])
+        agent = make_agent(tmp_path, name="architect", required_labels=["specification"], github_api=mock_github_api)
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
-        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
-        mock_subprocess.add_response(
-            "issue view",
-            stdout=issue_view_response(
+        mock_github_api.set_issues("specification", make_issue_list_items((42, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("specification", [
+            make_issue_detail(
                 number=42,
                 labels=["specification"],
                 comments=[
@@ -93,7 +91,7 @@ class TestArchitectFlow:
                     },
                 ],
             ),
-        )
+        ])
 
         calls = capture_popen(stdout_lines=[result_event()], returncode=0)
 
@@ -105,7 +103,7 @@ class TestArchitectFlow:
         assert "dateparser" in prompt
 
     def test_already_processed_no_feedback_skips(
-        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):
         """Architect already processed issue, no new human feedback → skip.
 
@@ -113,7 +111,7 @@ class TestArchitectFlow:
         no human comments since → pick_actionable_issue returns None
         → agent returns "No actionable issues" → Claude CLI not invoked.
         """
-        agent = make_agent(tmp_path, name="architect", required_labels=["specification"])
+        agent = make_agent(tmp_path, name="architect", required_labels=["specification"], github_api=mock_github_api)
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
         state_path = tmp_path / "arch.state.json"
         monkeypatch.setattr(
@@ -126,13 +124,9 @@ class TestArchitectFlow:
             "processed": {"42": "2024-01-05T00:00:00Z"},
         }))
 
-        mock_subprocess.add_response(
-            "issue list",
-            stdout=json.dumps([{"number": 42, "updatedAt": "2024-01-04T00:00:00Z"}]),
-        )
-        mock_subprocess.add_response(
-            "issue view",
-            stdout=issue_view_response(
+        mock_github_api.set_issues("specification", make_issue_list_items((42, "2024-01-04T00:00:00Z")))
+        mock_github_api.set_issues_detailed("specification", [
+            make_issue_detail(
                 number=42,
                 labels=["specification"],
                 comments=[
@@ -143,7 +137,7 @@ class TestArchitectFlow:
                     },
                 ],
             ),
-        )
+        ])
 
         calls = capture_popen(stdout_lines=[result_event()], returncode=0)
 

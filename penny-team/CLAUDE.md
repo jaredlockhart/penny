@@ -16,6 +16,7 @@ penny-team/
     monitor/
       CLAUDE.md         — Monitor agent prompt (error analysis, dedup, issue creation)
     utils/
+      github_api.py     — GitHubAPI client: typed Pydantic models, GraphQL + REST calls
       github_app.py     — GitHub App JWT token generation
       codeowners.py     — Parses .github/CODEOWNERS for trusted usernames
       issue_filter.py   — Pre-fetches and filters issue content by trusted authors
@@ -37,9 +38,9 @@ penny-team/
     test_monitor.py          — Monitor agent flow + error extraction tests (integration + unit)
 
   Tests strongly prefer integration style — test through agent.run() / has_work()
-  entry points with mocked subprocess (gh CLI, Claude CLI). Unit tests are only
-  used for pure utility functions with many edge cases (CODEOWNERS parsing, PR
-  matching logic).
+  entry points with MockGitHubAPI (for GitHub data) and MockPopen (for Claude CLI).
+  Unit tests are only used for pure utility functions with many edge cases
+  (CODEOWNERS parsing, PR matching logic).
   scripts/
     entrypoint.sh       — Claude CLI setup + orchestrator launch
   Dockerfile            — Agent container image (Python 3.12 + Node.js + Claude CLI + gh)
@@ -68,12 +69,12 @@ bug → in-review → closed                                                    
 
 ## Orchestrator Architecture
 
-- `penny_team/orchestrator.py`: Main loop checks agents every 30s, runs those that are due
+- `penny_team/orchestrator.py`: Main loop checks agents every 30s, runs those that are due; creates `GitHubAPI` instance with token provider from `GitHubApp`, passes to all agents
 - `penny_team/base.py`: Agent class wraps `claude -p <prompt> --dangerously-skip-permissions --verbose --output-format stream-json`
 - `--agent <name>` flag: Run a single agent instead of the full orchestrator loop
-- `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `gh` CLI, compares to saved state in `data/penny-team/<name>.state.json` — skips Claude CLI if no issues changed since last run
+- `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `GitHubAPI.list_issues()`, compares to saved state in `data/penny-team/<name>.state.json` — skips Claude CLI if no issues changed since last run
 - State saved after successful runs; re-fetched to capture agent's own changes
-- Fail-open design: If `gh` fails, agent runs anyway
+- Fail-open design: If API calls fail, agent runs anyway
 - SIGTERM forwarding for graceful shutdown of Claude CLI subprocesses
 
 ## CODEOWNERS-Based Issue Filtering
@@ -81,7 +82,7 @@ bug → in-review → closed                                                    
 Security layer to prevent prompt injection via public GitHub issues:
 - `.github/CODEOWNERS` defines trusted maintainer usernames (trust anchor)
 - `penny_team/utils/codeowners.py`: Parses CODEOWNERS to extract `@username` tokens
-- `penny_team/utils/issue_filter.py`: Pre-fetches issues via `gh` JSON API, strips bodies from untrusted authors, drops comments from non-CODEOWNERS users
+- `penny_team/utils/issue_filter.py`: Pre-fetches issues via `GitHubAPI.list_issues_detailed()` (single GraphQL query per label), strips bodies from untrusted authors, drops comments from non-CODEOWNERS users
 - Filtered issue content is injected into the agent prompt by `base.py`, so agents never need to call `gh issue view --comments` (which would bypass the filter)
 - Agent CLAUDE.md prompts instruct agents to use pre-fetched content only and restrict `gh` to write operations
 - Fails open without CODEOWNERS (backward compatible, logs warning)
@@ -90,12 +91,24 @@ Security layer to prevent prompt injection via public GitHub issues:
 ## PR Status Detection (CI Checks & Merge Conflicts)
 
 Worker agent automatically detects and fixes failing CI and merge conflicts on its PRs:
-- `penny_team/utils/pr_checks.py`: Fetches PR check statuses and merge conflict status via `gh pr list --json statusCheckRollup,mergeable`, matches PRs to issues by branch naming convention (`issue-<N>-*`)
-- For failing PRs, fetches error logs via `gh run view --log-failed` (truncated to ~3000 chars)
-- Enriches `FilteredIssue` with `ci_status`, `ci_failure_details`, `merge_conflict`, and `merge_conflict_branch` before prompt injection
+- `penny_team/utils/pr_checks.py`: Fetches PR check statuses and merge conflict status via `GitHubAPI.list_open_prs()` (single GraphQL query with `statusCheckRollup` union type handling), matches PRs to issues by branch naming convention (`issue-<N>-*`)
+- For failing PRs, fetches error logs via `GitHubAPI.list_failed_runs()` + `get_failed_job_log()` (truncated to ~3000 chars)
+- Inline review comments fetched via `GitHubAPI.list_pr_review_comments()` (REST API)
+- Enriches `FilteredIssue` with `ci_status`, `ci_failure_details`, `merge_conflict`, `merge_conflict_branch`, `has_review_feedback`, and `review_comments` before prompt injection
 - `pick_actionable_issue()` treats failing-CI and merge-conflict issues as actionable even when bot has last comment; prioritizes bug issues over non-bug issues
 - Worker priority: merge conflicts (rebase) > failing CI (fix) > review comments > bugs > features
-- Fail-open: if `gh` fails, worker proceeds normally without CI/merge info
+- Fail-open: if API calls fail, worker proceeds normally without CI/merge info
+
+## GitHub API Module
+
+All orchestrator GitHub interactions use `penny_team/utils/github_api.py` — direct HTTP calls via `urllib.request` with typed Pydantic return values. The `gh` CLI is **not** used by production orchestrator code (only by Claude CLI agents inside their sandboxed sessions).
+
+- `GitHubAPI(token_provider: Callable[[], str])` — takes a callable that returns a fresh token (decoupled from `GitHubApp`)
+- **GraphQL** for complex queries: issues (lightweight + detailed), PRs with checks/reviews/comments
+- **REST** for simple operations: posting comments, Actions API (workflow runs/logs), PR inline review comments
+- Pydantic models for all return types: `IssueListItem`, `IssueDetail`, `PullRequest`, `CheckStatus`, `ReviewComment`, `WorkflowRun`, etc.
+- `statusCheckRollup` union type (`CheckRun | StatusContext`) normalized into uniform `CheckStatus` model
+- Constants (GraphQL queries, REST path templates) defined in `penny_team/constants.py`
 
 ## Log Monitoring
 

@@ -16,32 +16,31 @@ from tests.conftest import (
     BOT_LOGIN,
     BOT_LOGINS,
     extract_prompt,
-    issue_list_response,
-    issue_view_response,
     make_agent,
+    make_issue_detail,
+    make_issue_list_items,
     result_event,
 )
 
 
 class TestProductManagerFlow:
     def test_new_issue_posts_requirements(
-        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):
         """A fresh requirements issue with no comments triggers Claude CLI.
 
         Flow: issue has no comments → pick_actionable_issue returns it
         → prompt assembled with PM CLAUDE.md + issue data → Claude invoked.
         """
-        agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"])
+        agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"], github_api=mock_github_api)
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
-        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
-        mock_subprocess.add_response(
-            "issue view",
-            stdout=issue_view_response(
+        mock_github_api.set_issues("requirements", make_issue_list_items((42, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("requirements", [
+            make_issue_detail(
                 number=42, labels=["requirements"], comments=[]
             ),
-        )
+        ])
 
         calls = capture_popen(stdout_lines=[result_event()], returncode=0)
 
@@ -57,7 +56,7 @@ class TestProductManagerFlow:
         assert "Pre-Fetched, Filtered" in prompt
 
     def test_user_feedback_triggers_refinement(
-        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):
         """Issue with bot requirements comment + user feedback triggers Claude CLI.
 
@@ -65,13 +64,12 @@ class TestProductManagerFlow:
         → last comment is from user (not bot) → pick_actionable_issue returns it
         → prompt includes full comment history so Claude can refine.
         """
-        agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"])
+        agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"], github_api=mock_github_api)
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
 
-        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
-        mock_subprocess.add_response(
-            "issue view",
-            stdout=issue_view_response(
+        mock_github_api.set_issues("requirements", make_issue_list_items((42, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("requirements", [
+            make_issue_detail(
                 number=42,
                 labels=["requirements"],
                 comments=[
@@ -87,7 +85,7 @@ class TestProductManagerFlow:
                     },
                 ],
             ),
-        )
+        ])
 
         calls = capture_popen(stdout_lines=[result_event()], returncode=0)
 
@@ -99,7 +97,7 @@ class TestProductManagerFlow:
         assert "cancelling reminders" in prompt
 
     def test_already_processed_no_new_feedback_skips(
-        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):
         """Issue already processed by this agent with no new human feedback → skip.
 
@@ -107,7 +105,7 @@ class TestProductManagerFlow:
         no human comments since → pick_actionable_issue returns None
         → agent returns early → Claude CLI is NOT invoked.
         """
-        agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"])
+        agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"], github_api=mock_github_api)
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
         state_path = tmp_path / "pm.state.json"
         monkeypatch.setattr(
@@ -120,13 +118,9 @@ class TestProductManagerFlow:
             "processed": {"42": "2024-01-02T00:00:00Z"},
         }))
 
-        mock_subprocess.add_response(
-            "issue list",
-            stdout=json.dumps([{"number": 42, "updatedAt": "2024-01-01T00:00:00Z"}]),
-        )
-        mock_subprocess.add_response(
-            "issue view",
-            stdout=issue_view_response(
+        mock_github_api.set_issues("requirements", make_issue_list_items((42, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("requirements", [
+            make_issue_detail(
                 number=42,
                 labels=["requirements"],
                 comments=[
@@ -137,7 +131,7 @@ class TestProductManagerFlow:
                     },
                 ],
             ),
-        )
+        ])
 
         calls = capture_popen(stdout_lines=[result_event()], returncode=0)
 
@@ -148,7 +142,7 @@ class TestProductManagerFlow:
         assert len(calls) == 0
 
     def test_skip_saves_timestamps_success_saves_only_processed(
-        self, tmp_path, mock_subprocess, capture_popen, monkeypatch
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):
         """Timestamp state is saved when agent skips but NOT after success.
         Processed state IS saved after success (to track per-agent processing).
@@ -158,7 +152,7 @@ class TestProductManagerFlow:
         until the queue is burned down. But processed state is saved after
         each successful run so the agent knows which issues it has handled.
         """
-        agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"])
+        agent = make_agent(tmp_path, name="product-manager", required_labels=["requirements"], github_api=mock_github_api)
         monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
         state_path = tmp_path / "pm.state.json"
         monkeypatch.setattr(
@@ -166,13 +160,12 @@ class TestProductManagerFlow:
         )
 
         # --- Run 1: actionable issue → Claude runs ---
-        mock_subprocess.add_response("issue list", stdout=issue_list_response(42))
-        mock_subprocess.add_response(
-            "issue view",
-            stdout=issue_view_response(
+        mock_github_api.set_issues("requirements", make_issue_list_items((42, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("requirements", [
+            make_issue_detail(
                 number=42, labels=["requirements"], comments=[]
             ),
-        )
+        ])
         calls = capture_popen(stdout_lines=[result_event()], returncode=0)
 
         agent.run()

@@ -58,21 +58,70 @@ MONITOR_TIMEOUT = 600
 
 
 # =============================================================================
-# GitHub API field names
+# GitHub API — GraphQL queries
 # =============================================================================
 
-GH_FIELD_NUMBER = "number"
-GH_FIELD_UPDATED_AT = "updatedAt"
+GQL_ISSUES_LIGHTWEIGHT = """
+query($owner: String!, $repo: String!, $label: String!, $limit: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issues(labels: [$label], states: OPEN, first: $limit,
+           orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number updatedAt }
+    }
+  }
+}
+"""
 
+GQL_ISSUES_DETAILED = """
+query($owner: String!, $repo: String!, $label: String!, $limit: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issues(labels: [$label], states: OPEN, first: $limit,
+           orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number title body
+        author { login }
+        labels(first: 10) { nodes { name } }
+        comments(first: 50) {
+          nodes { author { login } body createdAt }
+        }
+      }
+    }
+  }
+}
+"""
 
-# =============================================================================
-# gh CLI query field sets
-# =============================================================================
-
-GH_ISSUE_LIST_FIELDS = str(GH_FIELD_NUMBER)
-GH_ISSUE_VIEW_FIELDS = "title,body,author,comments,labels"
-GH_ISSUE_LIMIT = "20"
-GH_PR_FIELDS = "number,headRefName,statusCheckRollup,mergeable,reviews,comments"
+GQL_OPEN_PRS = """
+query($owner: String!, $repo: String!, $limit: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequests(states: OPEN, first: $limit) {
+      nodes {
+        number headRefName mergeable
+        reviews(first: 50) {
+          nodes { author { login } state submittedAt }
+        }
+        comments(first: 50) {
+          nodes { author { login } body createdAt }
+        }
+        commits(last: 1) {
+          nodes {
+            commit {
+              statusCheckRollup {
+                contexts(first: 50) {
+                  nodes {
+                    __typename
+                    ... on CheckRun { name conclusion status }
+                    ... on StatusContext { context state }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
 
 
 # =============================================================================
@@ -141,10 +190,16 @@ BOT_SUFFIX = "[bot]"
 APP_PREFIX = "app/"
 NOREPLY_DOMAIN = "users.noreply.github.com"
 
-# API paths
+# API paths — GitHub App auth
 API_APP = "/app"
 API_ACCESS_TOKENS = "/app/installations/{install_id}/access_tokens"
+
+# API paths — repo-scoped REST endpoints
+API_ISSUE_COMMENTS = "/repos/{owner}/{repo}/issues/{number}/comments"
 API_PR_REVIEW_COMMENTS = "/repos/{owner}/{repo}/pulls/{pr_number}/comments"
+API_WORKFLOW_RUNS = "/repos/{owner}/{repo}/actions/runs"
+API_RUN_JOBS = "/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+API_JOB_LOGS = "/repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
 
 # Environment variable keys for bot identity
 ENV_GH_TOKEN = "GH_TOKEN"

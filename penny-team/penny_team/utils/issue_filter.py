@@ -1,26 +1,20 @@
 """GitHub issue fetcher with trust-based content filtering.
 
-Fetches issues via the gh CLI and strips content from authors not listed
-in CODEOWNERS. This prevents prompt injection through GitHub issue bodies
-and comments on public repositories.
+Fetches issues via the GitHub GraphQL API and strips content from
+authors not listed in CODEOWNERS. This prevents prompt injection
+through GitHub issue bodies and comments on public repositories.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import subprocess
 from dataclasses import dataclass, field
 
 from penny_team.constants import (
     CI_STATUS_FAILING,
-    GH_CLI,
-    GH_FIELD_NUMBER,
-    GH_ISSUE_LIMIT,
-    GH_ISSUE_LIST_FIELDS,
-    GH_ISSUE_VIEW_FIELDS,
     Label,
 )
+from penny_team.utils.github_api import GitHubAPI, IssueDetail
 
 logger = logging.getLogger(__name__)
 
@@ -56,114 +50,74 @@ class FilteredIssue:
 def fetch_issues_for_labels(
     labels: list[str],
     trusted_users: set[str] | None = None,
-    env: dict[str, str] | None = None,
+    api: GitHubAPI | None = None,
 ) -> list[FilteredIssue]:
     """Fetch all open issues matching any label, with untrusted content filtered out.
 
     Uses OR logic across labels — an issue matching any label is included.
     When trusted_users is None, all content is included unfiltered.
-    Skips labels where gh fails; may return partial results.
+    Skips labels where the API fails; may return partial results.
     """
+    if api is None:
+        return []
+
     issues: list[FilteredIssue] = []
     seen_numbers: set[int] = set()
 
     for label in labels:
         try:
-            result = subprocess.run(
-                [
-                    GH_CLI,
-                    "issue",
-                    "list",
-                    "--label",
-                    label,
-                    "--json",
-                    GH_ISSUE_LIST_FIELDS,
-                    "--limit",
-                    GH_ISSUE_LIMIT,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                env=env,
-            )
-            if result.returncode != 0:
-                stderr = (result.stderr or "").strip()
-                logger.warning(
-                    f"gh issue list failed for label '{label}' (exit {result.returncode}): {stderr}"
-                )
-                continue
-            if not result.stdout.strip():
-                continue
+            details = api.list_issues_detailed(label)
 
-            for ref in json.loads(result.stdout):
-                number = ref[GH_FIELD_NUMBER]
-                if number in seen_numbers:
+            for detail in details:
+                if detail.number in seen_numbers:
                     continue
 
-                filtered = _fetch_and_filter_issue(number, trusted_users, env=env)
-                if filtered is not None:
-                    issues.append(filtered)
-                    seen_numbers.add(number)
+                filtered = _filter_issue(detail, trusted_users)
+                issues.append(filtered)
+                seen_numbers.add(detail.number)
 
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.error(f"Failed to list issues for label '{label}': {e}")
 
     return issues
 
 
-def _fetch_and_filter_issue(
-    number: int,
+def _filter_issue(
+    detail: IssueDetail,
     trusted_users: set[str] | None,
-    env: dict[str, str] | None = None,
-) -> FilteredIssue | None:
-    """Fetch a single issue and filter out untrusted content."""
-    try:
-        result = subprocess.run(
-            [GH_CLI, "issue", "view", str(number), "--json", GH_ISSUE_VIEW_FIELDS],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=env,
-        )
-        if result.returncode != 0:
-            logger.error(f"Failed to fetch issue #{number}: {result.stderr}")
-            return None
-
-        data = json.loads(result.stdout)
-    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
-        logger.error(f"Failed to fetch issue #{number}: {e}")
-        return None
-
-    author_login = data.get("author", {}).get("login", "")
+) -> FilteredIssue:
+    """Apply trust filtering to an issue detail from the API."""
+    author_login = detail.author.login
     author_trusted = trusted_users is None or author_login in trusted_users
 
     # Filter title and body: only include if author is trusted
-    title = data.get("title", "") if author_trusted else "[Title hidden: untrusted author]"
-    body = data.get("body", "") if author_trusted else ""
+    title = detail.title if author_trusted else "[Title hidden: untrusted author]"
+    body = detail.body if author_trusted else ""
     if not author_trusted:
         logger.warning(
-            f"Issue #{number}: title/body filtered (author '{author_login}' not in CODEOWNERS)"
+            f"Issue #{detail.number}: title/body filtered "
+            f"(author '{author_login}' not in CODEOWNERS)"
         )
 
     # Filter comments: only include comments from trusted users
     trusted_comments: list[FilteredComment] = []
-    for comment in data.get("comments", []):
-        comment_author = comment.get("author", {}).get("login", "")
+    for comment in detail.comments:
+        comment_author = comment.author.login
         if trusted_users is None or comment_author in trusted_users:
             trusted_comments.append(
                 FilteredComment(
                     author=comment_author,
-                    body=comment.get("body", ""),
-                    created_at=comment.get("createdAt", ""),
+                    body=comment.body,
+                    created_at=comment.created_at,
                 )
             )
         else:
-            logger.info(f"Issue #{number}: comment by '{comment_author}' filtered out")
+            logger.info(f"Issue #{detail.number}: comment by '{comment_author}' filtered out")
 
-    labels = [label.get("name", "") for label in data.get("labels", [])]
+    labels = [label.name for label in detail.labels]
 
     return FilteredIssue(
-        number=number,
+        number=detail.number,
         title=title,
         body=body,
         author=author_login,
