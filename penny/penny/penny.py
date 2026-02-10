@@ -2,11 +2,9 @@
 
 import asyncio
 import logging
-import shutil
 import signal
 import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from penny.agent import (
@@ -20,7 +18,7 @@ from penny.agent import (
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
-from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT, TEST_DB_PATH
+from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
@@ -41,9 +39,6 @@ class Penny:
         self.db = Database(config.db_path)
         migrate(config.db_path)
         self.db.create_tables()
-
-        # Snapshot production database for test mode
-        self._create_test_db_snapshot()
 
         # Create command registry
         self.command_registry = create_command_registry()
@@ -152,34 +147,6 @@ class Penny:
 
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-
-    def _create_test_db_snapshot(self) -> None:
-        """Create a snapshot of the production database for test mode."""
-        try:
-            prod_db_path = Path(self.config.db_path)
-            # Use same directory as production db
-            test_db_path = prod_db_path.parent / TEST_DB_PATH.name
-
-            # Check if we need to create/update the test snapshot
-            should_snapshot = False
-            if not test_db_path.exists():
-                should_snapshot = True
-                logger.info("Test database does not exist, creating snapshot")
-            elif (
-                prod_db_path.exists()
-                and prod_db_path.stat().st_mtime > test_db_path.stat().st_mtime
-            ):
-                should_snapshot = True
-                logger.info("Production database is newer, updating test snapshot")
-
-            if should_snapshot and prod_db_path.exists():
-                # Ensure parent directory exists
-                test_db_path.parent.mkdir(parents=True, exist_ok=True)
-                # Copy production db to test db
-                shutil.copyfile(prod_db_path, test_db_path)
-                logger.info("Test database snapshot created: %s", test_db_path)
-        except Exception as e:
-            logger.warning("Failed to create test database snapshot: %s", e)
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""

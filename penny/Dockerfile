@@ -26,5 +26,10 @@ COPY penny/ ./penny/
 # Install the package itself
 RUN uv pip install --system --no-deps .
 
+# Copy and setup entrypoint
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Run the agent
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "penny.penny"]

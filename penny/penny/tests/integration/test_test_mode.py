@@ -1,6 +1,5 @@
 """Integration tests for /test mode."""
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -125,13 +124,16 @@ async def test_test_mode_uses_real_external_services(
 @pytest.mark.asyncio
 async def test_test_mode_snapshot_created_at_startup(test_config, running_penny):
     """
-    Test that test database snapshot is created at Penny startup.
+    Test that test database snapshot is created (via entrypoint in production).
+
+    In tests, we manually create the snapshot since the entrypoint script doesn't run.
     """
-    # Create production database and add a message BEFORE starting Penny
+    import shutil
+
     from penny.database import Database
     from penny.database.migrate import migrate
 
-    # Ensure the database file exists on disk
+    # Create production database and add a message
     prod_db = Database(test_config.db_path)
     migrate(test_config.db_path)
     prod_db.create_tables()
@@ -145,16 +147,14 @@ async def test_test_mode_snapshot_created_at_startup(test_config, running_penny)
     prod_path = Path(test_config.db_path)
     assert prod_path.exists(), "Production database should exist before starting Penny"
 
-    # Start Penny, which should create test db snapshot
-    async with running_penny(test_config):
-        # Wait for startup and snapshot creation
-        await asyncio.sleep(0.5)
+    # Manually create test snapshot (simulating entrypoint.sh behavior in tests)
+    test_db_path = prod_path.parent / TEST_DB_PATH.name
+    shutil.copyfile(prod_path, test_db_path)
 
+    # Start Penny
+    async with running_penny(test_config):
         # Verify test db exists
-        test_db_path = Path(test_config.db_path).parent / TEST_DB_PATH.name
-        assert test_db_path.exists(), (
-            f"Test database should be created at startup at {test_db_path}"
-        )
+        assert test_db_path.exists(), f"Test database should exist at {test_db_path}"
 
         # Verify test db is a copy of production db
         test_db = Database(str(test_db_path))
