@@ -3,8 +3,11 @@
 from collections.abc import Callable
 
 from penny.commands.base import Command, CommandRegistry
-from penny.commands.builtin import CommandsCommand, ConfigCommand, DebugCommand, TestCommand
+from penny.commands.index import IndexCommand
+from penny.commands.config import ConfigCommand
+from penny.commands.debug import DebugCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
+from penny.commands.test import TestCommand
 
 __all__ = [
     "Command",
@@ -31,8 +34,8 @@ def create_command_registry(
     """
     registry = CommandRegistry()
 
-    # Register CommandsCommand with self-reference for listing commands
-    commands_cmd = CommandsCommand(registry)
+    # Register IndexCommand with self-reference for listing commands
+    commands_cmd = IndexCommand(registry)
     registry.register(commands_cmd)
 
     # Register other builtin commands
