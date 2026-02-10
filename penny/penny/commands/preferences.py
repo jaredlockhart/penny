@@ -35,9 +35,9 @@ class LikeCommand(Command):
         if not args:
             likes = context.db.get_preferences(context.user, PreferenceType.LIKE)
             if not likes:
-                return CommandResult(text="you don't have any likes stored yet")
+                return CommandResult(text="You don't have any likes stored yet")
 
-            lines = ["here are your stored likes:", ""]
+            lines = ["Here are your stored likes:", ""]
             for i, pref in enumerate(likes, 1):
                 lines.append(f"{i}. {pref.topic}")
             return CommandResult(text="\n".join(lines))
@@ -54,13 +54,13 @@ class LikeCommand(Command):
             # Add to likes
             context.db.add_preference(context.user, topic, PreferenceType.LIKE)
             return CommandResult(
-                text=f"i added {topic} to your likes and removed it from your dislikes"
+                text=f"I added {topic} to your likes and removed it from your dislikes"
             )
         else:
             # Just add to likes
             added = context.db.add_preference(context.user, topic, PreferenceType.LIKE)
             if added:
-                return CommandResult(text=f"i added {topic} to your likes")
+                return CommandResult(text=f"I added {topic} to your likes")
             else:
                 return CommandResult(text=f"{topic} is already in your likes")
 
@@ -89,9 +89,9 @@ class DislikeCommand(Command):
         if not args:
             dislikes = context.db.get_preferences(context.user, PreferenceType.DISLIKE)
             if not dislikes:
-                return CommandResult(text="you don't have any dislikes stored yet")
+                return CommandResult(text="You don't have any dislikes stored yet")
 
-            lines = ["here are your stored dislikes:", ""]
+            lines = ["Here are your stored dislikes:", ""]
             for i, pref in enumerate(dislikes, 1):
                 lines.append(f"{i}. {pref.topic}")
             return CommandResult(text="\n".join(lines))
@@ -110,13 +110,13 @@ class DislikeCommand(Command):
             # Add to dislikes
             context.db.add_preference(context.user, topic, PreferenceType.DISLIKE)
             return CommandResult(
-                text=f"i added {topic} to your dislikes and removed it from your likes"
+                text=f"I added {topic} to your dislikes and removed it from your likes"
             )
         else:
             # Just add to dislikes
             added = context.db.add_preference(context.user, topic, PreferenceType.DISLIKE)
             if added:
-                return CommandResult(text=f"i added {topic} to your dislikes")
+                return CommandResult(text=f"I added {topic} to your dislikes")
             else:
                 return CommandResult(text=f"{topic} is already in your dislikes")
 
@@ -139,13 +139,13 @@ class UnlikeCommand(Command):
         args = args.strip()
 
         if not args:
-            return CommandResult(text="please specify what to remove, like: /unlike video games")
+            return CommandResult(text="Please specify what to remove, like: /unlike video games")
 
         topic = args
         removed = context.db.remove_preference(context.user, topic, PreferenceType.LIKE)
 
         if removed:
-            return CommandResult(text=f"i removed {topic} from your likes")
+            return CommandResult(text=f"I removed {topic} from your likes")
         else:
             return CommandResult(text=f"{topic} wasn't in your likes")
 
@@ -168,12 +168,12 @@ class UndislikeCommand(Command):
         args = args.strip()
 
         if not args:
-            return CommandResult(text="please specify what to remove, like: /undislike bananas")
+            return CommandResult(text="Please specify what to remove, like: /undislike bananas")
 
         topic = args
         removed = context.db.remove_preference(context.user, topic, PreferenceType.DISLIKE)
 
         if removed:
-            return CommandResult(text=f"i removed {topic} from your dislikes")
+            return CommandResult(text=f"I removed {topic} from your dislikes")
         else:
             return CommandResult(text=f"{topic} wasn't in your dislikes")
