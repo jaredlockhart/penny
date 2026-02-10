@@ -277,6 +277,8 @@ class Agent:
             "--verbose",
             "--output-format",
             "stream-json",
+            "--system-prompt",
+            "",
         ]
         if self.allowed_tools is None:
             # Full tool access (worker, monitor)
@@ -435,12 +437,19 @@ class Agent:
         success, result_text = self._execute_claude(prompt)
 
         if success and selected_issue is not None:
+            # If post_output_as_comment is enabled and result is empty, don't
+            # mark as processed — empty output means the agent failed to produce
+            # a response, not that it successfully handled the issue.
+            if self.post_output_as_comment and not result_text:
+                success = False
+
             if (
                 self.post_output_as_comment
                 and result_text
                 and not self._post_comment(selected_issue.number, result_text)
             ):
                 success = False
+
             if success:
                 self._mark_processed(selected_issue.number)
 
