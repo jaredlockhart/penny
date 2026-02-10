@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from penny.agent.base import Agent
 from penny.agent.models import MessageRole
-from penny.constants import FOLLOWUP_PROMPT, MessageDirection
+from penny.constants import FOLLOWUP_PROMPT, MessageDirection, PreferenceType
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -64,6 +64,20 @@ class FollowupAgent(Agent):
         )
 
         history = self._format_history(thread)
+
+        # Add dislike exclusions if the user has any
+        dislikes = self.db.get_preferences(recipient, PreferenceType.DISLIKE)
+        if dislikes:
+            dislike_topics = [d.topic for d in dislikes]
+            dislike_list = ", ".join(dislike_topics)
+            history.insert(
+                0,
+                (
+                    MessageRole.SYSTEM.value,
+                    f"Don't include any of the following in your search: {dislike_list}",
+                ),
+            )
+
         response = await self.run(prompt=FOLLOWUP_PROMPT, history=history)
 
         answer = response.answer.strip() if response.answer else None
