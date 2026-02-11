@@ -109,6 +109,7 @@ class PRReview(BaseModel):
     author: CommentAuthor = CommentAuthor()
     state: str = ""
     submitted_at: str = Field("", alias="submittedAt")
+    body: str = ""
 
 
 class CheckStatus(BaseModel):
@@ -296,6 +297,7 @@ class _GqlReviewNode(BaseModel):
     author: _GqlAuthor | None = None
     state: str = ""
     submitted_at: str = Field("", alias="submittedAt")
+    body: str = ""
 
 
 class _GqlReviewNodeList(BaseModel):
@@ -384,7 +386,12 @@ def _to_check_status(ctx: _GqlCheckContext) -> CheckStatus:
 def _to_pr_review(node: _GqlReviewNode) -> PRReview:
     author = node.author or _NULL_AUTHOR
     return PRReview.model_validate(
-        {"author": {"login": author.login}, "state": node.state, "submittedAt": node.submitted_at}
+        {
+            "author": {"login": author.login},
+            "state": node.state,
+            "submittedAt": node.submitted_at,
+            "body": node.body,
+        }
     )
 
 

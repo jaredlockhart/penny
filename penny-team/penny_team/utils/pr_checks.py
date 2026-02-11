@@ -89,6 +89,10 @@ def enrich_issues_with_pr_status(
 
         if _has_changes_requested(pr.reviews, since=since):
             issue.has_review_feedback = True
+            feedback = _collect_review_feedback(pr.reviews, since=since)
+            if feedback:
+                review_parts.append("**Review feedback:**\n")
+                review_parts.extend(feedback)
 
         human_comments = _collect_human_comments(pr.comments, bot_logins, since=since)
         if human_comments:
@@ -151,6 +155,28 @@ def _match_prs_to_issues(
             except ValueError:
                 continue
     return result
+
+
+def _collect_review_feedback(reviews: list[PRReview], since: str | None = None) -> list[str]:
+    """Collect body text from CHANGES_REQUESTED reviews.
+
+    Uses the same latest-per-reviewer logic as _has_changes_requested:
+    only the most recent review per reviewer is considered, and the
+    since filter excludes already-addressed feedback.
+    """
+    latest_by_reviewer: dict[str, PRReview] = {}
+    for review in reviews:
+        if review.author.login and review.state:
+            latest_by_reviewer[review.author.login] = review
+    parts: list[str] = []
+    for review in latest_by_reviewer.values():
+        if (
+            review.state == REVIEW_STATE_CHANGES_REQUESTED
+            and (since is None or not review.submitted_at or review.submitted_at > since)
+            and review.body
+        ):
+            parts.append(f"**{review.author.login}** (changes requested):\n{review.body}\n")
+    return parts
 
 
 def _has_changes_requested(reviews: list[PRReview], since: str | None = None) -> bool:
