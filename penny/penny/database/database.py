@@ -415,6 +415,32 @@ class Database:
             messages.reverse()  # Return in chronological order (oldest first)
             return messages
 
+    def get_unprocessed_messages(self, sender: str, limit: int = 50) -> list[MessageLog]:
+        """
+        Get recent unprocessed non-reaction messages from a specific user.
+
+        Args:
+            sender: The user's identifier (phone number, discord ID, etc.)
+            limit: Maximum number of messages to return
+
+        Returns:
+            Unprocessed messages ordered by timestamp ascending (oldest first)
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == MessageDirection.INCOMING,
+                        MessageLog.is_reaction == False,  # noqa: E712
+                        MessageLog.processed == False,  # noqa: E712
+                    )
+                    .order_by(MessageLog.timestamp.asc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+
     def get_user_reactions(self, sender: str, limit: int = 50) -> list[MessageLog]:
         """
         Get recent unprocessed reactions from a specific user.
@@ -440,6 +466,27 @@ class Database:
                     .limit(limit)
                 ).all()
             )
+
+    def mark_messages_processed(self, message_ids: list[int]) -> None:
+        """
+        Mark multiple messages as processed.
+
+        Args:
+            message_ids: List of message IDs to mark as processed
+        """
+        if not message_ids:
+            return
+        try:
+            with self.get_session() as session:
+                for message_id in message_ids:
+                    msg = session.get(MessageLog, message_id)
+                    if msg:
+                        msg.processed = True
+                        session.add(msg)
+                session.commit()
+                logger.debug("Marked %d messages as processed", len(message_ids))
+        except Exception as e:
+            logger.error("Failed to mark messages as processed: %s", e)
 
     def mark_reaction_processed(self, message_id: int) -> None:
         """

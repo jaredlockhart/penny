@@ -16,7 +16,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nSummarize · Followup · Profile · Discovery"]
+    Penny -.->|"schedule"| BG["Background Agents\nSummarize · Followup · Preference · Discovery"]
 ```
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
@@ -40,7 +40,7 @@ penny/
     message.py        — MessageAgent: handles incoming user messages
     summarize.py      — SummarizeAgent: background thread summarization
     followup.py       — FollowupAgent: spontaneous conversation followups
-    profile.py        — ProfileAgent: background user profile generation
+    preference.py     — PreferenceAgent: extracts user preferences from messages and reactions
     discovery.py      — DiscoveryAgent: proactive content sharing based on user interests
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
@@ -68,7 +68,7 @@ penny/
       models.py       — DiscordMessage, DiscordUser Pydantic models
   database/
     database.py       — Database: SQLite via SQLModel, thread walking, summarization storage
-    models.py         — PromptLog, SearchLog, MessageLog, UserProfile (SQLModel tables)
+    models.py         — PromptLog, SearchLog, MessageLog, Preference (SQLModel tables)
     migrate.py        — Migration runner: file discovery, tracking table, validation
     migrations/       — Numbered migration files (0001_*.py, 0002_*.py, ...)
   ollama/
@@ -81,7 +81,7 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_summarize.py, test_followup.py, test_profile.py, test_discovery.py
+      test_message.py, test_summarize.py, test_followup.py, test_preference.py, test_discovery.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_startup_announcement.py
     commands/         — Per-command tests
@@ -122,11 +122,12 @@ The base `Agent` class implements the core agentic loop:
 - Searches for something new about the topic
 - Sends response via channel
 
-**ProfileAgent** (`agents/profile.py`)
-- Background task: builds user profiles from message history
-- Queries all messages from users needing profile updates
-- Generates flat list of mentioned topics via LLM
-- Stores in `UserProfile` table for use by DiscoveryAgent
+**PreferenceAgent** (`agents/preference.py`)
+- Background task: extracts user preferences from messages and reactions
+- Analyzes emoji reactions to determine likes/dislikes from reacted-to messages
+- Batch-analyzes unprocessed user messages to find new preferences via LLM
+- Tracks processed messages via `processed` flag to avoid reprocessing
+- Stores preferences in `Preference` table for use by DiscoveryAgent
 
 **DiscoveryAgent** (`agents/discovery.py`)
 - Background task: shares new content based on user interests
@@ -139,7 +140,7 @@ The base `Agent` class implements the core agentic loop:
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (summarize → profile → followup → discovery)
+- Runs tasks in priority order (summarize → preference → followup → discovery)
 - Tracks global idle threshold (default: 300s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
@@ -149,7 +150,7 @@ The `scheduler/` module manages background tasks:
 
 **ImmediateSchedule**
 - Runs immediately when system becomes idle
-- Used for summarization and profile generation
+- Used for summarization and preference extraction
 - No additional delay beyond global idle threshold
 
 **DelayedSchedule**
@@ -228,8 +229,8 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **URL extraction**: URLs extracted from Perplexity results, appended as Sources list so the model can pick the most relevant one
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
-- **Specialized agents**: Each task type (message, summarize, followup, profile, discovery) has its own agent subclass
-- **Priority scheduling**: Summarize → profile → followup → discovery (quick tasks first)
+- **Specialized agents**: Each task type (message, summarize, followup, preference, discovery) has its own agent subclass
+- **Priority scheduling**: Summarize → preference → followup → discovery (quick tasks first)
 - **Global idle threshold**: Single configurable idle time (default: 300s) controls when all background tasks become eligible
 - **Delayed scheduling**: Followup and discovery add random delays after idle threshold to prevent predictable bot behavior
 - **Channel abstraction**: Signal and Discord share the same interface; easy to add more platforms

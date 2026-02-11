@@ -33,7 +33,7 @@ async def test_debug_command(signal_server, test_config, mock_ollama, running_pe
         # Should show at least one agent name from the scheduler
         assert any(
             agent in response["message"]
-            for agent in ["summarize", "profile", "followup", "discovery"]
+            for agent in ["summarize", "preference", "followup", "discovery"]
         )
 
 

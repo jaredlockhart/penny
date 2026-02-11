@@ -12,13 +12,13 @@ from penny.agents import (
     DiscoveryAgent,
     FollowupAgent,
     MessageAgent,
-    ProfileAgent,
+    PreferenceAgent,
     SummarizeAgent,
 )
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
-from penny.constants import PROFILE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
+from penny.constants import PREFERENCE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
@@ -92,8 +92,8 @@ class Penny:
             tool_timeout=config.tool_timeout,
         )
 
-        self.profile_agent = ProfileAgent(
-            system_prompt=PROFILE_PROMPT,
+        self.preference_agent = PreferenceAgent(
+            system_prompt=PREFERENCE_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
@@ -127,12 +127,12 @@ class Penny:
         # Connect agents that send messages to channel
         self.followup_agent.set_channel(self.channel)
         self.discovery_agent.set_channel(self.channel)
-        self.profile_agent.set_channel(self.channel)
+        self.preference_agent.set_channel(self.channel)
 
         # Create schedules (priority order: summarize, profile, followup, discovery)
         schedules = [
             ImmediateSchedule(agent=self.summarize_agent),
-            ImmediateSchedule(agent=self.profile_agent),
+            ImmediateSchedule(agent=self.preference_agent),
             DelayedSchedule(
                 agent=self.followup_agent,
                 min_delay=config.followup_min_seconds,

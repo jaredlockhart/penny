@@ -64,7 +64,7 @@ SUMMARIZE_PROMPT = (
     "Store all key points, facts, questions, and answers.\n\n"
 )
 
-PROFILE_PROMPT = (
+PREFERENCE_PROMPT = (
     "You are Penny, an AI assistant. "
     "Based on these messages from a user TO YOU, create a flat list of topics "
     "THE USER has mentioned or asked about (not yourself). "

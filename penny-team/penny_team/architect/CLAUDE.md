@@ -45,7 +45,7 @@ Start every response with `*[Architect Agent]*` on its own line.
 
 Refer to `CLAUDE.md` for full technical context. Key points:
 
-- **Architecture**: Agent-based system with specialized agents (MessageAgent, SummarizeAgent, FollowupAgent, ProfileAgent, DiscoveryAgent)
+- **Architecture**: Agent-based system with specialized agents (MessageAgent, SummarizeAgent, FollowupAgent, PreferenceAgent, DiscoveryAgent)
 - **Platforms**: Signal and Discord (could expand to Slack, Telegram, etc.)
 - **Stack**: Python 3.12, asyncio, SQLite, Ollama for LLM, Perplexity for search
 - **Design Principles**: Always search before answering, casual tone, local-first

@@ -1,14 +1,15 @@
-"""Integration tests for the ProfileAgent."""
+"""Integration tests for the PreferenceAgent."""
 
 import pytest
 from sqlmodel import select
 
+from penny.constants import PreferenceType
 from penny.database.models import MessageLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 @pytest.mark.asyncio
-async def test_profile_background_task(
+async def test_preference_background_task(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -18,16 +19,16 @@ async def test_profile_background_task(
     setup_ollama_flow,
 ):
     """
-    Test the profile background task:
+    Test the preference background task:
     1. Send a message and get a response
     2. Wait for idle time to pass
-    3. Verify ProfileAgent generates and stores a user profile
+    3. Verify PreferenceAgent runs and processes messages
     """
     config = make_config(idle_seconds=0.5)
     setup_ollama_flow(
         search_query="fun facts about cats",
         message_response="cats are amazing! 🐱",
-        background_response="curious user interested in animals, especially cats.",
+        background_response='{"preferences": []}',
     )
 
     async with running_penny(config):
@@ -37,15 +38,11 @@ async def test_profile_background_task(
         response = await signal_server.wait_for_message(timeout=10.0)
         assert "cats" in response["message"].lower()
 
-        # Note: ProfileAgent now maintains preferences via reactions,
-        # not by generating topics from message history.
-        # The old UserTopics infrastructure has been removed.
-
         assert len(mock_ollama.requests) >= 2, "Expected at least 2 Ollama calls"
 
 
 @pytest.mark.asyncio
-async def test_profile_reaction_processing_idempotency(
+async def test_preference_reaction_processing_idempotency(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -54,7 +51,7 @@ async def test_profile_reaction_processing_idempotency(
     running_penny,
 ):
     """
-    Test that ProfileAgent only processes each reaction once:
+    Test that PreferenceAgent only processes each reaction once:
     1. Insert a reaction directly into the database
     2. Mark it as processed
     3. Verify get_user_reactions() returns empty list (no unprocessed reactions)
@@ -105,7 +102,7 @@ async def test_profile_reaction_processing_idempotency(
 
 
 @pytest.mark.asyncio
-async def test_profile_agent_processes_reaction_into_preference(
+async def test_preference_agent_processes_reaction_into_preference(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -115,10 +112,10 @@ async def test_profile_agent_processes_reaction_into_preference(
     setup_ollama_flow,
 ):
     """
-    Test that ProfileAgent processes a reaction into a preference:
+    Test that PreferenceAgent processes a reaction into a preference:
     1. Send a message and get a response
     2. React to the response with a like emoji
-    3. Run ProfileAgent.execute() directly
+    3. Run PreferenceAgent.execute() directly
     4. Verify the preference was added to the database
     """
     config = make_config(idle_seconds=0.5)
@@ -181,13 +178,17 @@ async def test_profile_agent_processes_reaction_into_preference(
         reaction = reactions[0]
         assert reaction.parent_id is not None, "Reaction should have parent_id set"
 
-        # Run ProfileAgent directly
-        work_done = await penny.profile_agent.execute()
-        assert work_done, "ProfileAgent should have processed the reaction"
+        # Mark the user's initial message as processed so _analyze_messages
+        # doesn't also run an LLM call with a different response schema
+        penny.db.mark_messages_processed(
+            [m.id for m in penny.db.get_unprocessed_messages(TEST_SENDER) if m.id is not None]
+        )
+
+        # Run PreferenceAgent directly
+        work_done = await penny.preference_agent.execute()
+        assert work_done, "PreferenceAgent should have processed the reaction"
 
         # Verify preference was added
-        from penny.constants import PreferenceType
-
         prefs = penny.db.get_preferences(TEST_SENDER, PreferenceType.LIKE)
         assert len(prefs) == 1, f"Expected 1 like preference, got {len(prefs)}"
         assert prefs[0].topic == "cats"
@@ -198,7 +199,7 @@ async def test_profile_agent_processes_reaction_into_preference(
 
 
 @pytest.mark.asyncio
-async def test_profile_no_channel(
+async def test_preference_no_channel(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -206,14 +207,14 @@ async def test_profile_no_channel(
     test_user_info,
     running_penny,
 ):
-    """Test that ProfileAgent returns False when no channel is set."""
+    """Test that PreferenceAgent returns False when no channel is set."""
     config = make_config()
 
     async with running_penny(config) as penny:
-        from penny.agents import ProfileAgent
+        from penny.agents import PreferenceAgent
         from penny.constants import SYSTEM_PROMPT
 
-        profile_agent = ProfileAgent(
+        preference_agent = PreferenceAgent(
             system_prompt=SYSTEM_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
@@ -222,12 +223,12 @@ async def test_profile_no_channel(
         )
         # Don't set channel
 
-        result = await profile_agent.execute()
+        result = await preference_agent.execute()
         assert result is False, "Should return False when no channel set"
 
 
 @pytest.mark.asyncio
-async def test_profile_no_senders(
+async def test_preference_no_senders(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -235,18 +236,18 @@ async def test_profile_no_senders(
     test_user_info,
     running_penny,
 ):
-    """Test that ProfileAgent returns False when no senders exist."""
+    """Test that PreferenceAgent returns False when no senders exist."""
     config = make_config()
 
     async with running_penny(config) as penny:
-        # The penny.profile_agent already has channel set,
+        # The penny.preference_agent already has channel set,
         # but no messages have been sent, so no senders
-        result = await penny.profile_agent.execute()
+        result = await penny.preference_agent.execute()
         assert result is False, "Should return False when no senders"
 
 
 @pytest.mark.asyncio
-async def test_profile_unknown_emoji(
+async def test_preference_unknown_emoji(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -256,19 +257,24 @@ async def test_profile_unknown_emoji(
     setup_ollama_flow,
 ):
     """
-    Test that ProfileAgent skips unknown reaction emojis but still marks them processed.
+    Test that PreferenceAgent skips unknown reaction emojis but still marks them processed.
     """
     config = make_config()
     setup_ollama_flow(
         search_query="test query",
         message_response="interesting fact! 🌟",
-        background_response='{"topic": "facts"}',
+        background_response='{"preferences": []}',
     )
 
     async with running_penny(config) as penny:
         # Send message to create a sender
         await signal_server.push_message(sender=TEST_SENDER, content="tell me a fact")
         await signal_server.wait_for_message(timeout=10.0)
+
+        # Mark user messages as processed so _analyze_messages doesn't interfere
+        penny.db.mark_messages_processed(
+            [m.id for m in penny.db.get_unprocessed_messages(TEST_SENDER) if m.id is not None]
+        )
 
         # Get the outgoing message
         with penny.db.get_session() as session:
@@ -288,11 +294,114 @@ async def test_profile_unknown_emoji(
         )
         assert reaction_id is not None
 
-        # Run ProfileAgent
-        result = await penny.profile_agent.execute()
+        # Run PreferenceAgent
+        result = await penny.preference_agent.execute()
         # Unknown emoji doesn't create preference, but reaction is still processed
         assert result is False, "Should return False (no preference updated)"
 
         # Verify reaction was marked as processed
         reactions = penny.db.get_user_reactions(TEST_SENDER)
         assert len(reactions) == 0, "Reaction should be marked as processed even for unknown emoji"
+
+
+@pytest.mark.asyncio
+async def test_preference_agent_extracts_preferences_from_messages(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that PreferenceAgent extracts preferences from regular user messages:
+    1. Send a message mentioning a topic the user likes
+    2. Run PreferenceAgent.execute() directly
+    3. Verify preferences were extracted from message content
+    4. Verify messages are marked as processed
+    """
+    config = make_config()
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            # First call: message agent tool call
+            return mock_ollama._make_tool_call_response(
+                request, "search", {"query": "playing guitar"}
+            )
+        elif request_count[0] == 2:
+            # Second call: message agent final response
+            return mock_ollama._make_text_response(
+                request, "guitar is awesome! here are some tips 🎸"
+            )
+        else:
+            # Background task: preference extraction from messages
+            return mock_ollama._make_text_response(
+                request,
+                '{"preferences": [{"topic": "guitar", "type": "like"}]}',
+            )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Send a message about something the user likes
+        await signal_server.push_message(sender=TEST_SENDER, content="I love playing guitar!")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify unprocessed messages exist before running agent
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER)
+        assert len(unprocessed) == 1
+
+        # Run PreferenceAgent directly
+        work_done = await penny.preference_agent.execute()
+        assert work_done, "PreferenceAgent should have extracted preferences"
+
+        # Verify preference was added
+        prefs = penny.db.get_preferences(TEST_SENDER, PreferenceType.LIKE)
+        assert any(p.topic == "guitar" for p in prefs), f"Expected 'guitar' in likes, got {prefs}"
+
+        # Verify messages were marked processed
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER)
+        assert len(unprocessed) == 0, "Messages should be marked as processed"
+
+
+@pytest.mark.asyncio
+async def test_preference_agent_skips_processed_messages(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Messages already marked processed should not appear in get_unprocessed_messages."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        # Insert a message and mark it processed
+        msg_id = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="I love jazz music",
+        )
+        assert msg_id is not None
+        penny.db.mark_messages_processed([msg_id])
+
+        # Verify it doesn't appear in unprocessed
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER)
+        assert len(unprocessed) == 0
+
+        # Insert another message without marking it
+        msg_id2 = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="I also like rock music",
+        )
+        assert msg_id2 is not None
+
+        # Only the new message should be unprocessed
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER)
+        assert len(unprocessed) == 1
+        assert unprocessed[0].id == msg_id2

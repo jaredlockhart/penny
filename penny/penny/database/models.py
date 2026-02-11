@@ -50,7 +50,7 @@ class MessageLog(SQLModel, table=True):
     is_reaction: bool = Field(default=False, index=True)  # True if this is a reaction message
     processed: bool = Field(
         default=False
-    )  # True if this reaction has been processed by ProfileAgent
+    )  # True if this message has been processed by PreferenceAgent
 
 
 class UserInfo(SQLModel, table=True):

@@ -9,7 +9,7 @@ from penny.agents.models import (
     ControllerResponse,
     MessageRole,
 )
-from penny.agents.profile import ProfileAgent
+from penny.agents.preference import PreferenceAgent
 from penny.agents.summarize import SummarizeAgent
 
 __all__ = [
@@ -20,6 +20,6 @@ __all__ = [
     "FollowupAgent",
     "MessageAgent",
     "MessageRole",
-    "ProfileAgent",
+    "PreferenceAgent",
     "SummarizeAgent",
 ]

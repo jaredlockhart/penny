@@ -53,7 +53,7 @@ Penny uses specialized agent subclasses for different tasks:
 - **MessageAgent**: Handles incoming user messages, prepares context, runs agentic loop
 - **SummarizeAgent**: Background task that summarizes conversation threads when idle
 - **FollowupAgent**: Background task that spontaneously follows up on conversations
-- **ProfileAgent**: Background task that builds user profiles from message history
+- **PreferenceAgent**: Background task that extracts user preferences from messages and reactions
 - **DiscoveryAgent**: Background task that shares new content based on user interests
 
 Each agent owns its own OllamaClient instance and can have its own tools and prompts.

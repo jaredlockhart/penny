@@ -421,7 +421,7 @@ Your work is done for this cycle. Exit cleanly.
 Refer to `CLAUDE.md` for the full technical context. Key points:
 
 ### Architecture
-- **Agents**: MessageAgent, SummarizeAgent, FollowupAgent, ProfileAgent, DiscoveryAgent in `penny/penny/agent/agents/`
+- **Agents**: MessageAgent, SummarizeAgent, FollowupAgent, PreferenceAgent, DiscoveryAgent in `penny/penny/agent/agents/`
 - **Channels**: Signal and Discord in `penny/penny/channels/`
 - **Tools**: SearchTool (Perplexity + DuckDuckGo) in `penny/penny/tools/`
 - **Scheduler**: BackgroundScheduler with priority-based scheduling in `penny/penny/scheduler/`
