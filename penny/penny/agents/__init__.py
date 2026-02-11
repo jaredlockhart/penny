@@ -10,7 +10,6 @@ from penny.agents.models import (
     MessageRole,
 )
 from penny.agents.preference import PreferenceAgent
-from penny.agents.summarize import SummarizeAgent
 
 __all__ = [
     "Agent",
@@ -21,5 +20,4 @@ __all__ = [
     "MessageAgent",
     "MessageRole",
     "PreferenceAgent",
-    "SummarizeAgent",
 ]

@@ -44,7 +44,6 @@ class MessageLog(SQLModel, table=True):
     sender: str = Field(index=True)
     content: str
     parent_id: int | None = Field(default=None, foreign_key="messagelog.id", index=True)
-    parent_summary: str | None = Field(default=None)  # Summarized thread history
     signal_timestamp: int | None = Field(default=None)  # Original Signal timestamp (ms since epoch)
     external_id: str | None = Field(default=None, index=True)  # Platform-specific message ID
     is_reaction: bool = Field(default=False, index=True)  # True if this is a reaction message

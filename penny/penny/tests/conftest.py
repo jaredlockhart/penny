@@ -196,14 +196,14 @@ def setup_ollama_flow(mock_ollama):  # noqa: F811
         setup_ollama_flow(
             search_query="weather forecast",
             message_response="here's the weather! 🌤️",
-            background_response="summary of weather conversation",
+            background_response="background task response (optional)",
         )
     """
 
     def _setup(
         search_query: str,
         message_response: str,
-        background_response: str,
+        background_response: str = "",
     ) -> None:
         request_count = [0]
 

@@ -69,12 +69,6 @@ DISCOVERY_PROMPT = (
     "Open casually, keep it short, like texting a friend."
 )
 
-SUMMARIZE_PROMPT = (
-    "Summarize this conversation as concise bullet points. "
-    "Keep as much information intact as possible. "
-    "Store all key points, facts, questions, and answers.\n\n"
-)
-
 PREFERENCE_PROMPT = (
     f"{PENNY_IDENTITY}\n\n"
     "Your task: Based on these messages from the user, create a flat list of topics "

@@ -219,34 +219,6 @@ class Database:
         except Exception as e:
             logger.error("Failed to set external_id: %s", e)
 
-    def get_unsummarized_messages(self) -> list[MessageLog]:
-        """Get all outgoing messages that have a parent but no summary yet."""
-        with self.get_session() as session:
-            return list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.direction == MessageDirection.OUTGOING,
-                        MessageLog.parent_id.isnot(None),  # type: ignore[unresolved-attribute]
-                        MessageLog.parent_summary.is_(None),  # type: ignore[unresolved-attribute]
-                    )
-                    .order_by(MessageLog.timestamp.asc())  # type: ignore[unresolved-attribute]
-                ).all()
-            )
-
-    def set_parent_summary(self, message_id: int, summary: str) -> None:
-        """Store a thread summary on a message."""
-        try:
-            with self.get_session() as session:
-                msg = session.get(MessageLog, message_id)
-                if msg:
-                    msg.parent_summary = summary
-                    session.add(msg)
-                    session.commit()
-                    logger.debug("Set parent_summary on message %d", message_id)
-        except Exception as e:
-            logger.error("Failed to set parent_summary: %s", e)
-
     def get_conversation_leaves(self) -> list[MessageLog]:
         """Get outgoing leaf messages eligible for spontaneous continuation.
 
@@ -333,7 +305,7 @@ class Database:
     ) -> tuple[int | None, list[tuple[str, str]] | None]:
         """
         Look up a quoted message and return its id and conversation context.
-        Uses the cached summary if available, otherwise walks the parent chain.
+        Walks the parent chain to build the full thread history.
 
         Args:
             quoted_text: The text the user quoted/replied to
@@ -349,24 +321,18 @@ class Database:
             )
             return None, None
 
-        if parent_msg.parent_summary:
-            history = [
-                (MessageRole.SYSTEM, f"Previous conversation summary: {parent_msg.parent_summary}")
-            ]
-            logger.info("Using cached thread summary for context")
-        else:
-            assert parent_msg.id is not None
-            thread = self._walk_thread(parent_msg.id)
-            history = [
-                (
-                    MessageRole.USER
-                    if m.direction == MessageDirection.INCOMING
-                    else MessageRole.ASSISTANT,
-                    m.content,
-                )
-                for m in thread
-            ]
-            logger.info("Built thread history with %d messages", len(history))
+        assert parent_msg.id is not None
+        thread = self._walk_thread(parent_msg.id)
+        history = [
+            (
+                MessageRole.USER
+                if m.direction == MessageDirection.INCOMING
+                else MessageRole.ASSISTANT,
+                m.content,
+            )
+            for m in thread
+        ]
+        logger.info("Built thread history with %d messages", len(history))
 
         return parent_msg.id, history
 

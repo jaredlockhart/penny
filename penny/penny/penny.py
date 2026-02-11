@@ -13,12 +13,11 @@ from penny.agents import (
     FollowupAgent,
     MessageAgent,
     PreferenceAgent,
-    SummarizeAgent,
 )
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
-from penny.constants import PREFERENCE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
+from penny.constants import PREFERENCE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
@@ -86,18 +85,6 @@ class Penny:
             tool_timeout=config.tool_timeout,
         )
 
-        self.summarize_agent = SummarizeAgent(
-            system_prompt=SUMMARIZE_PROMPT,
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
-            tools=[],
-            db=self.db,
-            max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-            tool_timeout=config.tool_timeout,
-        )
-
         self.preference_agent = PreferenceAgent(
             system_prompt=PREFERENCE_PROMPT,
             model=config.ollama_background_model,
@@ -148,16 +135,12 @@ class Penny:
         self.preference_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Create schedules (priority order: schedule, summarize, preference, followup, discovery)
+        # Create schedules (priority order: schedule, preference, followup, discovery)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
         schedules = [
             AlwaysRunSchedule(
                 agent=self.schedule_executor,
                 interval=60.0,  # Check every minute for due schedules
-            ),
-            PeriodicSchedule(
-                agent=self.summarize_agent,
-                interval=config.maintenance_interval_seconds,
             ),
             PeriodicSchedule(
                 agent=self.preference_agent,
