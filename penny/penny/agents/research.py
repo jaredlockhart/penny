@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.agents.models import MessageRole
+from penny.config import Config
 from penny.constants import RESEARCH_PROMPT
 from penny.database.models import ResearchIteration, ResearchTask
 
@@ -24,9 +25,10 @@ logger = logging.getLogger(__name__)
 class ResearchAgent(Agent):
     """Agent for conducting autonomous multi-iteration research."""
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, config: Config, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._channel: MessageChannel | None = None
+        self._config = config
 
     @property
     def name(self) -> str:
@@ -106,13 +108,14 @@ class ResearchAgent(Agent):
         # Generate report
         report = self._generate_report(task.topic, iterations)
 
-        # Truncate if exceeds channel limits (2000 chars for Discord, ~64KB for Signal)
-        # We'll use a conservative 1500 char limit to ensure we fit even after formatting
-        if len(report) > 1500:
-            report = (
-                report[:1450]
-                + "\n\n[Report truncated due to length limits — reply to request full details]"
-            )
+        # Truncate if exceeds configured max length
+        max_length = self._config.research_output_max_length
+        truncation_message = (
+            "\n\n[Report truncated due to length limits — reply to request full details]"
+        )
+        if len(report) > max_length:
+            truncate_at = max_length - len(truncation_message)
+            report = report[:truncate_at] + truncation_message
 
         # Find recipient from thread
         recipient = self._find_recipient_for_thread(task.thread_id)
