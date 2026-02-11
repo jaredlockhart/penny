@@ -419,3 +419,76 @@ async def test_preference_agent_skips_processed_messages(
         unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(unprocessed) == 1
         assert unprocessed[0].id == msg_id2
+
+
+@pytest.mark.asyncio
+async def test_preference_agent_batches_notifications(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that PreferenceAgent sends a single batched message for multiple likes/dislikes
+    instead of one message per preference.
+    """
+    config = make_config()
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            # First call: message agent tool call
+            return mock_ollama._make_tool_call_response(request, "search", {"query": "hobbies"})
+        elif request_count[0] == 2:
+            # Second call: message agent final response
+            return mock_ollama._make_text_response(request, "great hobbies! here are some tips 🎨")
+        elif request_count[0] == 3:
+            # Likes pass: extract multiple topics
+            return mock_ollama._make_text_response(
+                request, '{"topics": ["painting", "drawing", "sculpting"]}'
+            )
+        else:
+            # Dislikes pass: nothing
+            return mock_ollama._make_text_response(request, '{"topics": []}')
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Send a message about multiple things the user likes
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="I love painting, drawing, and sculpting!"
+        )
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Clear outgoing messages so we can count only preference notifications
+        signal_server.outgoing_messages.clear()
+
+        # Run PreferenceAgent directly
+        work_done = await penny.preference_agent.execute()
+        assert work_done, "PreferenceAgent should have extracted preferences"
+
+        # Wait for notification messages
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+
+        # Verify preferences were added
+        prefs = penny.db.get_preferences(TEST_SENDER, PreferenceType.LIKE)
+        assert len(prefs) == 3
+        topics = {p.topic for p in prefs}
+        assert topics == {"painting", "drawing", "sculpting"}
+
+        # The bug: currently sends 3 separate messages
+        # The fix: should send 1 batched message
+        assert len(signal_server.outgoing_messages) == 1, (
+            "Should send a single batched message for all new preferences, "
+            f"but sent {len(signal_server.outgoing_messages)} messages"
+        )
+
+        # Verify the message contains all three topics in a bullet list
+        notification = signal_server.outgoing_messages[0]["message"]
+        assert "painting" in notification
+        assert "drawing" in notification
+        assert "sculpting" in notification

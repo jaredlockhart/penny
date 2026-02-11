@@ -177,7 +177,7 @@ class PreferenceAgent(Agent):
             )
             result = ExtractedTopics.model_validate_json(response.content)
 
-            added_any = False
+            added_topics: list[str] = []
             for raw_topic in result.topics:
                 topic = raw_topic.lower().strip()
                 if not topic:
@@ -188,14 +188,19 @@ class PreferenceAgent(Agent):
                     continue
 
                 self.db.add_preference(sender, topic, pref_type)
-                await self._send_notification(
-                    sender,
-                    f"I added {topic} to your {pref_type}s",
-                )
                 logger.info("Added %s preference for %s: %s", pref_type, sender, topic)
-                added_any = True
+                added_topics.append(topic)
 
-            return added_any
+            # Send a single batched notification for all new preferences
+            if added_topics:
+                if len(added_topics) == 1:
+                    message = f"I added {added_topics[0]} to your {pref_type}s"
+                else:
+                    bullet_list = "\n".join(f"• {topic}" for topic in added_topics)
+                    message = f"I added these to your {pref_type}s:\n{bullet_list}"
+                await self._send_notification(sender, message)
+
+            return len(added_topics) > 0
 
         except Exception as e:
             logger.error("Failed to extract %s preferences for %s: %s", pref_type, sender, e)
