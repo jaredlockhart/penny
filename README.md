@@ -62,15 +62,15 @@ Each agent owns its own OllamaClient instance and can have its own tools and pro
 
 Background tasks are managed by a priority-based scheduler with a global idle threshold. The scheduler runs tasks in priority order:
 
-1. **Summarize** (ImmediateSchedule) — runs first, quick task
-2. **Profile** (ImmediateSchedule) — generates user profiles
+1. **Summarize** (PeriodicSchedule) — runs periodically, summarizes conversation threads
+2. **Preference** (PeriodicSchedule) — extracts user preferences from messages
 3. **Followup** (DelayedSchedule) — spontaneous conversation followups
 4. **Discovery** (DelayedSchedule) — proactive content sharing
 
 **Global idle threshold** (default: 300s): All background tasks wait for the system to become idle before they can run.
 
 Schedule types:
-- **ImmediateSchedule**: Runs immediately when system becomes idle (used for summarization and profile generation)
+- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for summarization and preference extraction, default: 300s)
 - **DelayedSchedule**: Runs after system becomes idle + random delay (used for followups and discovery)
 
 The scheduler resets all timers when a new message arrives.

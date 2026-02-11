@@ -16,35 +16,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ImmediateSchedule(Schedule):
-    """Runs immediately when system becomes idle, then waits for reset."""
-
-    def __init__(self, agent: Agent):
-        """
-        Initialize immediate schedule.
-
-        Args:
-            agent: The agent to execute when schedule fires
-        """
-        self.agent = agent
-        self._fired = False
-        logger.info("ImmediateSchedule created for %s", agent.name)
-
-    def should_run(self, is_idle: bool) -> bool:
-        """Check if system is idle and hasn't fired yet."""
-        if self._fired:
-            return False
-        return is_idle
-
-    def reset(self) -> None:
-        """Reset fired state when a message arrives."""
-        self._fired = False
-
-    def mark_complete(self) -> None:
-        """Mark as fired so it won't run again until reset."""
-        self._fired = True
-
-
 class DelayedScheduleState(StrEnum):
     """State machine for delayed schedule."""
 
