@@ -143,6 +143,7 @@ def make_agent(
     github_api: MockGitHubAPI | None = None,
     trusted_users: set[str] | None = TRUSTED_USERS,
     post_output_as_comment: bool = False,
+    suppress_system_prompt: bool = True,
 ) -> Agent:
     """Create an agent with a temporary prompt file for integration testing."""
     agent_dir = tmp_path / "penny_team" / name
@@ -162,6 +163,7 @@ def make_agent(
         github_api=github_api,
         trusted_users=trusted_users,
         post_output_as_comment=post_output_as_comment,
+        suppress_system_prompt=suppress_system_prompt,
     )
     agent.prompt_path = agent_dir / "CLAUDE.md"
     return agent
