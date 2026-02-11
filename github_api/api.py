@@ -169,6 +169,7 @@ class PRReview(BaseModel):
     author: CommentAuthor = CommentAuthor()
     state: str = ""
     submitted_at: str = Field("", alias="submittedAt")
+    body: str = ""
 
 
 class CheckStatus(BaseModel):
