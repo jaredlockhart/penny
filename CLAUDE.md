@@ -138,6 +138,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - **Strongly prefer integration tests**: Test through public entry points (e.g., `agent.run()`, `has_work()`, full message flow) rather than testing internal functions in isolation
 - **Unit tests only for pure utility functions**: CODEOWNERS parsing, config loading, and similar pure functions with many edge cases are acceptable as unit tests
 - **Mock at system boundaries**: Mock external services (Ollama, Signal, GitHub CLI, Claude CLI) but let internal code execute end-to-end
+- **Never rely on real timers**: Use `wait_until(condition)` instead of `asyncio.sleep(N)` — poll for the expected side effect (DB state, message count, etc.) with a generous timeout. Fixed sleeps are fragile on slow CI and waste time on fast machines
 
 ## Design Principles
 

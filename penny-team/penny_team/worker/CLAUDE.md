@@ -481,17 +481,24 @@ Tests use pytest with asyncio. Key fixtures from `conftest.py`:
 - `make_config(overrides)` — factory for test configs
 - `running_penny(config)` — async context manager for the full app
 - `setup_ollama_flow(...)` — configures mock Ollama for multi-step flows
+- `wait_until(condition, timeout, interval)` — polls a condition every 50ms until true or timeout (10s default)
 
-Example test:
+**Never use `asyncio.sleep(N)` in tests.** Use `wait_until` to poll for expected side effects:
+
 ```python
+from penny.tests.conftest import TEST_SENDER, wait_until
+
 @pytest.mark.asyncio
 async def test_feature(signal_server, mock_ollama, test_config, running_penny):
     mock_ollama.set_default_flow(search_query="...", final_response="...")
     async with running_penny(test_config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="...")
-        response = await signal_server.wait_for_message(timeout=10.0)
-        assert response["message"] == "expected response"
+        # Poll for the expected side effect — never asyncio.sleep()
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+        assert signal_server.outgoing_messages[0]["message"] == "expected response"
 ```
+
+Test config sets `scheduler_tick_interval=0.05` (vs 1.0s production) so scheduler-dependent tests complete quickly.
 
 ## Database Migrations
 

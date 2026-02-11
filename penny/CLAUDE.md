@@ -277,13 +277,20 @@ Strongly prefer end-to-end integration tests over unit tests. Test through publi
 - `signal_server`: Starts mock Signal server on random port
 - `mock_ollama`: Patches Ollama SDK with configurable responses
 - `make_config`: Factory for creating test configs with custom overrides
-- `running_penny`: Async context manager for running Penny with cleanup
+- `running_penny`: Async context manager for running Penny with cleanup (uses WebSocket detection, not sleep)
 - `setup_ollama_flow`: Factory to configure mock Ollama for message + background task flow
+- `wait_until(condition, timeout, interval)`: Polls a condition every 50ms until true or timeout (10s default)
+
+**Test Timing** — never use `asyncio.sleep(N)` in tests:
+- Use `wait_until(lambda: <condition>)` to poll for expected side effects (DB state, message count, etc.)
+- `scheduler_tick_interval` is set to 0.05s in test config (vs 1.0s production) so scheduler-dependent tests complete quickly
+- `running_penny` detects WebSocket connection via `signal_server._websockets` instead of sleeping
+- For negative assertions (nothing should happen), verify immediately — don't sleep to "make sure"
 
 **Test Flow**:
 1. Start mock Signal server (random port)
 2. Monkeypatch Ollama and search SDKs
 3. Create Penny with test config pointing to Signal mock
 4. Push message through mock Signal WebSocket
-5. Wait for response at mock Signal REST endpoint
+5. `wait_until` the expected side effect (outgoing message, DB change, etc.)
 6. Assert on captured messages, Ollama requests, DB state
