@@ -15,7 +15,6 @@ from datetime import datetime
 from pathlib import Path
 
 from github_api.api import GitHubAPI
-from github_api.app import GitHubApp
 from pydantic import BaseModel
 
 from penny_team.constants import (
@@ -76,7 +75,7 @@ class Agent:
         model: str | None = None,
         allowed_tools: list[str] | None = None,
         required_labels: list[str] | None = None,
-        github_app: GitHubApp | None = None,
+        github_app=None,  # GitHub App instance, kept for backward compat
         github_api: GitHubAPI | None = None,
         trusted_users: set[str] | None = None,
         post_output_as_comment: bool = False,

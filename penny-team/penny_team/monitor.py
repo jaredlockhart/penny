@@ -15,7 +15,6 @@ from datetime import datetime
 from pathlib import Path
 
 from github_api.api import GitHubAPI
-from github_api.app import GitHubApp
 
 from penny_team.base import Agent, AgentRun
 from penny_team.constants import (
@@ -138,7 +137,7 @@ class MonitorAgent(Agent):
         timeout_seconds: int = 600,
         model: str | None = None,
         allowed_tools: list[str] | None = None,
-        github_app: GitHubApp | None = None,
+        github_app=None,  # GitHub App instance, kept for backward compat
         github_api: GitHubAPI | None = None,
         trusted_users: set[str] | None = None,
     ) -> None:

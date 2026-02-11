@@ -35,7 +35,7 @@ ENV_GIT_COMMITTER_EMAIL = "GIT_COMMITTER_EMAIL"
 logger = logging.getLogger(__name__)
 
 
-class GitHubApp:
+class GitHubAuth:
     def __init__(self, app_id: int, private_key_path: Path, installation_id: int):
         self.app_id = app_id
         self.private_key_path = private_key_path
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     if not key_path.is_absolute():
         key_path = project_root / key_path
 
-    app = GitHubApp(
+    app = GitHubAuth(
         app_id=int(os.environ["GITHUB_APP_ID"]),
         private_key_path=key_path,
         installation_id=int(os.environ["GITHUB_APP_INSTALLATION_ID"]),

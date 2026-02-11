@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from github_api.api import GitHubAPI
-from github_api.app import GitHubApp
+from github_api.app import GitHubAuth
 
 from penny_team.base import Agent
 from penny_team.constants import (
@@ -62,7 +62,7 @@ LOG_DIR = PROJECT_ROOT / "data" / "logs"
 logger = logging.getLogger(__name__)
 
 
-def load_github_app() -> GitHubApp | None:
+def load_github_app():
     """Load GitHub App config from environment variables."""
     import os
 
@@ -77,14 +77,14 @@ def load_github_app() -> GitHubApp | None:
     if not key_file.is_absolute():
         key_file = PROJECT_ROOT / key_file
 
-    return GitHubApp(
+    return GitHubAuth(
         app_id=int(app_id),
         private_key_path=key_file,
         installation_id=int(install_id),
     )
 
 
-def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
+def get_agents(github_app=None) -> list[Agent]:
     """All registered agents. Add new agents here."""
     trusted_users = parse_codeowners(PROJECT_ROOT)
 

@@ -81,7 +81,7 @@ class Penny:
                 from pathlib import Path
 
                 from github_api.api import GitHubAPI
-                from github_api.app import GitHubApp
+                from github_api.app import GitHubAuth
 
                 from penny.constants import GITHUB_REPO_NAME, GITHUB_REPO_OWNER
 
@@ -89,12 +89,12 @@ class Penny:
                 if not key_path.is_absolute():
                     key_path = Path.cwd() / key_path
 
-                github_app = GitHubApp(
+                github_auth = GitHubAuth(
                     app_id=int(config.github_app_id),
                     private_key_path=key_path,
                     installation_id=int(config.github_app_installation_id),
                 )
-                github_api = GitHubAPI(github_app.get_token, GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
+                github_api = GitHubAPI(github_auth.get_token, GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
                 logger.info("GitHub API client initialized")
             except Exception:
                 logger.exception("Failed to initialize GitHub client")
