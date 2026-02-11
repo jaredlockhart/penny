@@ -249,8 +249,8 @@ class ResearchAgent(Agent):
                 # Skip markdown headers (e.g., ## TL;DR)
                 if stripped.startswith("#"):
                     continue
-                # Skip markdown table delimiters (e.g., |---|---|)
-                if stripped.startswith("|") and "-" in stripped:
+                # Skip ALL markdown table rows (any line starting with |)
+                if stripped.startswith("|"):
                     continue
                 if stripped.startswith("•") or stripped.startswith("-") or stripped.startswith("*"):
                     report_lines.append(stripped)
@@ -277,8 +277,8 @@ class ResearchAgent(Agent):
                 # Skip markdown headers
                 if stripped.startswith("#"):
                     continue
-                # Skip markdown table delimiters
-                if stripped.startswith("|") and "-" in stripped:
+                # Skip ALL markdown table rows (any line starting with |)
+                if stripped.startswith("|"):
                     continue
                 if stripped:
                     cleaned_lines.append(stripped)
