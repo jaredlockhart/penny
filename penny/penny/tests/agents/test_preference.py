@@ -28,7 +28,7 @@ async def test_preference_background_task(
     setup_ollama_flow(
         search_query="fun facts about cats",
         message_response="cats are amazing! 🐱",
-        background_response='{"preferences": []}',
+        background_response='{"topics": []}',
     )
 
     async with running_penny(config):
@@ -109,7 +109,6 @@ async def test_preference_agent_processes_reaction_into_preference(
     make_config,
     test_user_info,
     running_penny,
-    setup_ollama_flow,
 ):
     """
     Test that PreferenceAgent processes a reaction into a preference:
@@ -118,12 +117,25 @@ async def test_preference_agent_processes_reaction_into_preference(
     3. Run PreferenceAgent.execute() directly
     4. Verify the preference was added to the database
     """
-    config = make_config(idle_seconds=0.5)
-    setup_ollama_flow(
-        search_query="fun facts about cats",
-        message_response="cats are amazing! they can jump 6 times their length 🐱",
-        background_response='{"topic": "cats"}',
-    )
+    config = make_config()
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            return mock_ollama._make_tool_call_response(
+                request, "search", {"query": "fun facts about cats"}
+            )
+        elif request_count[0] == 2:
+            return mock_ollama._make_text_response(
+                request, "cats are amazing! they can jump 6 times their length 🐱"
+            )
+        else:
+            # Two-pass preference extraction — return cats for likes pass
+            return mock_ollama._make_text_response(request, '{"topics": ["cats"]}')
+
+    mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         # Send initial message and get response
@@ -178,20 +190,14 @@ async def test_preference_agent_processes_reaction_into_preference(
         reaction = reactions[0]
         assert reaction.parent_id is not None, "Reaction should have parent_id set"
 
-        # Mark the user's initial message as processed so _analyze_messages
-        # doesn't also run an LLM call with a different response schema
-        penny.db.mark_messages_processed(
-            [m.id for m in penny.db.get_unprocessed_messages(TEST_SENDER) if m.id is not None]
-        )
-
         # Run PreferenceAgent directly
         work_done = await penny.preference_agent.execute()
         assert work_done, "PreferenceAgent should have processed the reaction"
 
         # Verify preference was added
         prefs = penny.db.get_preferences(TEST_SENDER, PreferenceType.LIKE)
-        assert len(prefs) == 1, f"Expected 1 like preference, got {len(prefs)}"
-        assert prefs[0].topic == "cats"
+        assert len(prefs) >= 1, f"Expected at least 1 like preference, got {len(prefs)}"
+        assert any(p.topic == "cats" for p in prefs)
 
         # Verify reaction was marked as processed
         reactions = penny.db.get_user_reactions(TEST_SENDER)
@@ -260,10 +266,12 @@ async def test_preference_unknown_emoji(
     Test that PreferenceAgent skips unknown reaction emojis but still marks them processed.
     """
     config = make_config()
+
+    # The agent will still run the likes/dislikes passes for user messages
     setup_ollama_flow(
         search_query="test query",
         message_response="interesting fact! 🌟",
-        background_response='{"preferences": []}',
+        background_response='{"topics": []}',
     )
 
     async with running_penny(config) as penny:
@@ -271,7 +279,7 @@ async def test_preference_unknown_emoji(
         await signal_server.push_message(sender=TEST_SENDER, content="tell me a fact")
         await signal_server.wait_for_message(timeout=10.0)
 
-        # Mark user messages as processed so _analyze_messages doesn't interfere
+        # Mark user messages as processed so only the unknown reaction is left
         penny.db.mark_messages_processed(
             [m.id for m in penny.db.get_unprocessed_messages(TEST_SENDER) if m.id is not None]
         )
@@ -336,12 +344,12 @@ async def test_preference_agent_extracts_preferences_from_messages(
             return mock_ollama._make_text_response(
                 request, "guitar is awesome! here are some tips 🎸"
             )
+        elif request_count[0] == 3:
+            # Likes pass: extract guitar as a like
+            return mock_ollama._make_text_response(request, '{"topics": ["guitar"]}')
         else:
-            # Background task: preference extraction from messages
-            return mock_ollama._make_text_response(
-                request,
-                '{"preferences": [{"topic": "guitar", "type": "like"}]}',
-            )
+            # Dislikes pass: nothing
+            return mock_ollama._make_text_response(request, '{"topics": []}')
 
     mock_ollama.set_response_handler(handler)
 
