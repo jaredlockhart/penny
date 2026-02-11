@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import UTC, datetime
+
+from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
+from penny.database.models import ResearchTask
 from penny.tools.builtin import SearchTool
 
 logger = logging.getLogger(__name__)
@@ -32,6 +36,12 @@ class MessageAgent(Agent):
         Returns:
             Tuple of (parent_id for thread linking, ControllerResponse with answer)
         """
+        # Check if this is a quote-reply to a research report
+        if quoted_text:
+            research_continuation = self._handle_research_continuation(sender, content, quoted_text)
+            if research_continuation:
+                return None, research_continuation
+
         # Get thread context if quoted
         parent_id = None
         history = None
@@ -65,3 +75,54 @@ class MessageAgent(Agent):
         response = await self.run(prompt=content, history=history)
 
         return parent_id, response
+
+    def _handle_research_continuation(
+        self, sender: str, content: str, quoted_text: str
+    ) -> ControllerResponse | None:
+        """
+        Check if quoted_text is a research report and create continuation task.
+
+        Args:
+            sender: User identifier
+            content: User's new research prompt
+            quoted_text: The quoted message text
+
+        Returns:
+            ControllerResponse if this is a research continuation, None otherwise
+        """
+        # Find the quoted message in database
+        quoted_message = self.db.find_outgoing_by_content(quoted_text)
+        if not quoted_message or not quoted_message.id:
+            return None
+
+        # Check if this message is associated with a completed research task
+        with Session(self.db.engine) as session:
+            research_task = session.exec(
+                select(ResearchTask).where(ResearchTask.message_id == str(quoted_message.id))
+            ).first()
+
+            if not research_task or research_task.status != "completed":
+                return None
+
+            logger.info("Detected research continuation for task %d: %s", research_task.id, content)
+
+            # Get max_iterations from config (not from database, use default)
+            # We can't easily access config here, so we'll use the default value
+            max_iterations = 10  # Default from config_params.py
+
+            # Create new research task as continuation
+            new_task = ResearchTask(
+                thread_id=research_task.thread_id,
+                parent_task_id=research_task.id,
+                topic=content,  # User's refinement becomes the new topic
+                status="in_progress",
+                max_iterations=max_iterations,
+                created_at=datetime.now(UTC),
+            )
+            session.add(new_task)
+            session.commit()
+            logger.info("Created continuation research task %d", new_task.id)
+
+        return ControllerResponse(
+            answer=f"ok, continuing research with focus: {content}. i'll post results when done"
+        )
