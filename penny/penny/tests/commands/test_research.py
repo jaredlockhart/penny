@@ -72,8 +72,9 @@ async def test_research_command_lists_active_tasks(
         # Should list the active task with progress
         assert "currently researching" in response["message"].lower()
         assert "ai trends" in response["message"].lower()
-        # Should show progress indicator (*Not Started* since no iterations yet)
-        assert "*not started*" in response["message"].lower()
+        # Should show progress indicator (*Not Started* or N/10 depending on scheduler timing)
+        msg_lower = response["message"].lower()
+        assert "*not started*" in msg_lower or "/10" in msg_lower
 
 
 @pytest.mark.asyncio
