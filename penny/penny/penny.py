@@ -14,10 +14,11 @@ from penny.agents import (
     MessageAgent,
     PreferenceAgent,
 )
+from penny.agents.research import ResearchAgent
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
-from penny.constants import PREFERENCE_PROMPT, SYSTEM_PROMPT
+from penny.constants import PREFERENCE_PROMPT, RESEARCH_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
@@ -140,6 +141,18 @@ class Penny:
             tool_timeout=config.tool_timeout,
         )
 
+        self.research_agent = ResearchAgent(
+            system_prompt=RESEARCH_PROMPT,
+            model=config.ollama_background_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=search_tools(self.db),
+            db=self.db,
+            max_steps=config.message_max_steps,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
+        )
+
         self.schedule_executor = ScheduleExecutor(
             system_prompt=SYSTEM_PROMPT,
             model=config.ollama_background_model,
@@ -164,14 +177,20 @@ class Penny:
         self.followup_agent.set_channel(self.channel)
         self.discovery_agent.set_channel(self.channel)
         self.preference_agent.set_channel(self.channel)
+        self.research_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Create schedules (priority order: schedule, preference, followup, discovery)
+        # Create schedules (priority order: schedule, research, preference, followup, discovery)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
+        # ResearchAgent runs always (whenever scheduler ticks) to process in-progress research
         schedules = [
             AlwaysRunSchedule(
                 agent=self.schedule_executor,
                 interval=60.0,  # Check every minute for due schedules
+            ),
+            AlwaysRunSchedule(
+                agent=self.research_agent,
+                interval=5.0,  # Check every 5 seconds for research work
             ),
             PeriodicSchedule(
                 agent=self.preference_agent,

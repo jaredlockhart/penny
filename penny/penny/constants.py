@@ -69,6 +69,14 @@ DISCOVERY_PROMPT = (
     "Open casually, keep it short, like texting a friend."
 )
 
+RESEARCH_PROMPT = (
+    "You are conducting deep research on a topic. "
+    "Search for comprehensive information and analyze the results. "
+    "Based on what you find, determine what specific aspect or angle to investigate next. "
+    "Be thorough and systematic - cover different perspectives, recent developments, "
+    "and key details."
+)
+
 PREFERENCE_PROMPT = (
     f"{PENNY_IDENTITY}\n\n"
     "Your task: Based on these messages from the user, create a flat list of topics "

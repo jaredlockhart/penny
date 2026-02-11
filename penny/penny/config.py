@@ -80,6 +80,9 @@ class Config:
     # Periodic maintenance (summarize, profile) interval while idle
     maintenance_interval_seconds: float = 300.0
 
+    # Research agent configuration
+    research_max_iterations: int = 10
+
     _db: Database | None = None
 
     @classmethod

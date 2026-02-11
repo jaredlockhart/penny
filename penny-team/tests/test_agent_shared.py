@@ -277,6 +277,20 @@ class TestBuildCommand:
         assert "--dangerously-skip-permissions" not in cmd
         assert "--allowedTools" not in cmd
 
+    def test_suppress_system_prompt_false_omits_flag(self, tmp_path, capture_popen):
+        """suppress_system_prompt=False → no --system-prompt flag, Claude reads CLAUDE.md.
+
+        Bug fix for #181: Worker agent needs access to CLAUDE.md to understand
+        project practices and testing philosophy.
+        """
+        agent = make_agent(tmp_path, suppress_system_prompt=False)
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        agent.run()
+
+        cmd = calls[0][0][0]
+        assert "--system-prompt" not in cmd
+
 
 # =============================================================================
 # prompt logging

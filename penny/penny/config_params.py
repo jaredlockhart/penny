@@ -92,4 +92,11 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {
         default_value=300.0,
         validator=_validate_positive_float,
     ),
+    "RESEARCH_MAX_ITERATIONS": ConfigParam(
+        key="RESEARCH_MAX_ITERATIONS",
+        description="Max search iterations per research task",
+        type=int,
+        default_value=10,
+        validator=_validate_positive_int,
+    ),
 }
