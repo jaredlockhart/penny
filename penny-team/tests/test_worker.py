@@ -234,6 +234,68 @@ class TestWorkerFlow:
         prompt = extract_prompt(calls)
         assert "Issue #42" in prompt
 
+    def test_in_review_review_body_included_in_prompt(
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
+    ):
+        """CHANGES_REQUESTED review body text appears in the prompt.
+
+        Regression test for #168: _has_changes_requested set the flag but
+        didn't capture the review body, so the agent couldn't see what
+        feedback to address.
+        """
+        agent = make_agent(tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"], github_api=mock_github_api)
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+        state_path = tmp_path / "worker.state.json"
+        monkeypatch.setattr(
+            type(agent), "_state_path", property(lambda self: state_path)
+        )
+
+        # Worker already processed issue 42 before the review was left
+        state_path.write_text(json.dumps({
+            "timestamps": {},
+            "processed": {"42": "2024-01-08T12:00:00Z"},
+        }))
+
+        mock_github_api.set_issues("in-progress", [])
+        mock_github_api.set_issues("in-review", make_issue_list_items((42, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues("bug", [])
+        mock_github_api.set_issues_detailed("in-progress", [])
+        mock_github_api.set_issues_detailed("in-review", [
+            make_issue_detail(
+                number=42,
+                labels=["in-review"],
+                comments=[
+                    {
+                        "author": {"login": BOT_LOGIN},
+                        "body": "Created PR for this issue.",
+                        "createdAt": "2024-01-08T00:00:00Z",
+                    },
+                ],
+            ),
+        ])
+        mock_github_api.set_issues_detailed("bug", [])
+        mock_github_api.set_prs([
+            make_pull_request(
+                10,
+                "issue-42-add-reminders",
+                reviews=[PRReview(
+                    author=CommentAuthor(login="alice"),
+                    state="CHANGES_REQUESTED",
+                    submitted_at="2024-01-09T00:00:00Z",
+                    body="Should we rename GithubApp to GithubAuth?",
+                )],
+            ),
+        ])
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        result = agent.run()
+
+        assert result.success is True
+        prompt = extract_prompt(calls)
+        assert "Issue #42" in prompt
+        assert "Should we rename GithubApp to GithubAuth?" in prompt
+
     def test_in_review_all_passing_no_feedback_skips(
         self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):

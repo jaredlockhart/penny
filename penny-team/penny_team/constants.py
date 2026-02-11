@@ -97,7 +97,7 @@ query($owner: String!, $repo: String!, $limit: Int!) {
       nodes {
         number headRefName mergeable
         reviews(first: 50) {
-          nodes { author { login } state submittedAt }
+          nodes { author { login } state submittedAt body }
         }
         comments(first: 50) {
           nodes { author { login } body createdAt }
