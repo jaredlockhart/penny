@@ -22,7 +22,13 @@ from penny.constants import PREFERENCE_PROMPT, SUMMARIZE_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
-from penny.scheduler import BackgroundScheduler, DelayedSchedule, PeriodicSchedule
+from penny.scheduler import (
+    AlwaysRunSchedule,
+    BackgroundScheduler,
+    DelayedSchedule,
+    PeriodicSchedule,
+)
+from penny.scheduler.schedule_runner import ScheduleExecutor
 from penny.startup import get_restart_message
 from penny.tools import SearchTool
 
@@ -116,6 +122,18 @@ class Penny:
             tool_timeout=config.tool_timeout,
         )
 
+        self.schedule_executor = ScheduleExecutor(
+            system_prompt=SYSTEM_PROMPT,
+            model=config.ollama_background_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=[],  # Schedule executor doesn't need tools itself
+            db=self.db,
+            max_steps=1,  # Just executes schedules, doesn't need multi-step loop
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
+        )
+
         # Create channel (needs message_agent and db)
         self.channel = channel or create_channel(
             config=config,
@@ -128,9 +146,15 @@ class Penny:
         self.followup_agent.set_channel(self.channel)
         self.discovery_agent.set_channel(self.channel)
         self.preference_agent.set_channel(self.channel)
+        self.schedule_executor.set_channel(self.channel)
 
-        # Create schedules (priority order: summarize, preference, followup, discovery)
+        # Create schedules (priority order: schedule, summarize, preference, followup, discovery)
+        # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
         schedules = [
+            AlwaysRunSchedule(
+                agent=self.schedule_executor,
+                interval=60.0,  # Check every minute for due schedules
+            ),
             PeriodicSchedule(
                 agent=self.summarize_agent,
                 interval=config.maintenance_interval_seconds,

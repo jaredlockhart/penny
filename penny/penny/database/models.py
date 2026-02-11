@@ -102,3 +102,15 @@ class Preference(SQLModel, table=True):
     topic: str  # Arbitrary natural language phrase
     type: str  # "like" or "dislike"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class Schedule(SQLModel, table=True):
+    """User-created scheduled background tasks."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)  # Signal number or Discord user ID
+    user_timezone: str = Field(default="UTC")  # IANA timezone (e.g., "America/Los_Angeles")
+    cron_expression: str  # Cron format for recurring execution
+    prompt_text: str  # Prompt to execute when schedule fires
+    timing_description: str  # Original human description for display (e.g., "daily 9am")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

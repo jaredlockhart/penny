@@ -19,6 +19,7 @@ dependencies = [
     "timezonefinder>=6.5.0",
     "geopy>=2.4.0",
     "pytz>=2024.1",
+    "croniter>=5.0.0",
 ]
 
 [build-system]
