@@ -91,6 +91,26 @@ PREFERENCE_PROMPT = (
     "Messages:\n"
 )
 
+# Schedule command response messages
+SCHEDULE_NO_TASKS = "You don't have any scheduled tasks yet 📅"
+SCHEDULE_NEED_TIMEZONE = (
+    "I need to know your timezone first. Send me your location or tell me your city 📍"
+)
+SCHEDULE_PARSE_ERROR = (
+    "Sorry, I couldn't understand that schedule format. "
+    "Try something like: /schedule daily 9am what's the news?"
+)
+SCHEDULE_INVALID_CRON = (
+    "Sorry, I couldn't figure out the timing. "
+    "Try something like: /schedule daily 9am what's the news?"
+)
+SCHEDULE_DELETED_NO_REMAINING = "No more scheduled tasks"
+SCHEDULE_STILL_SCHEDULED = "Still scheduled:"
+SCHEDULE_INVALID_NUMBER = "Invalid schedule number: {number}"
+SCHEDULE_NO_SCHEDULE_WITH_NUMBER = "No schedule with number {number}"
+SCHEDULE_DELETED_PREFIX = "Deleted '{timing} {prompt}' ✅"
+SCHEDULE_ADDED = "Added {timing}: {prompt} ✅"
+
 # Test mode constants
 TEST_DB_PATH = Path("data/penny-test.db")
 TEST_MODE_PREFIX = "[TEST] "

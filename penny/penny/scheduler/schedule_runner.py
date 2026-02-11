@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -108,15 +107,10 @@ class ScheduleExecutor(Agent):
             return
 
         # Send the response to the user
-        typing_task = asyncio.create_task(self._channel._typing_loop(schedule.user_id))
-        try:
-            await self._channel.send_response(
-                schedule.user_id,
-                answer,
-                parent_id=None,  # Scheduled prompts are not threaded
-                attachments=response.attachments or None,
-                quote_message=None,
-            )
-        finally:
-            typing_task.cancel()
-            await self._channel.send_typing(schedule.user_id, False)
+        await self._channel.send_response(
+            schedule.user_id,
+            answer,
+            parent_id=None,  # Scheduled prompts are not threaded
+            attachments=response.attachments or None,
+            quote_message=None,
+        )

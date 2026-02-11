@@ -29,7 +29,7 @@ async def test_schedule_list_empty(signal_server, test_config, mock_ollama, runn
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should show empty message
-        assert "you don't have any scheduled tasks yet" in response["message"]
+        assert "You don't have any scheduled tasks yet" in response["message"]
 
 
 @pytest.mark.asyncio
@@ -47,8 +47,8 @@ async def test_schedule_create_requires_timezone(
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should prompt for timezone
-        assert "i need to know your timezone first" in response["message"]
-        assert "send me your location" in response["message"]
+        assert "I need to know your timezone first" in response["message"]
+        assert "Send me your location" in response["message"]
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_schedule_create_and_list(signal_server, test_config, mock_ollama,
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should confirm creation
-        assert "added daily 9am: what's the news?" in response["message"]
+        assert "Added daily 9am: what's the news?" in response["message"]
 
         # List schedules
         await signal_server.push_message(sender=TEST_SENDER, content="/schedule")
@@ -139,7 +139,7 @@ async def test_schedule_delete(signal_server, test_config, mock_ollama, running_
 
         # Wait for response
         response = await signal_server.wait_for_message(timeout=5.0)
-        assert "added hourly: sports scores" in response["message"]
+        assert "Added hourly: sports scores" in response["message"]
 
         # Delete schedule
         await signal_server.push_message(sender=TEST_SENDER, content="/schedule delete 1")
@@ -148,8 +148,8 @@ async def test_schedule_delete(signal_server, test_config, mock_ollama, running_
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should confirm deletion
-        assert "deleted 'hourly sports scores'" in response["message"]
-        assert "no more scheduled tasks" in response["message"]
+        assert "Deleted 'hourly sports scores'" in response["message"]
+        assert "No more scheduled tasks" in response["message"]
 
 
 @pytest.mark.asyncio
@@ -177,4 +177,4 @@ async def test_schedule_delete_invalid_index(
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should show error
-        assert "no schedule with number 99" in response["message"]
+        assert "No schedule with number 99" in response["message"]

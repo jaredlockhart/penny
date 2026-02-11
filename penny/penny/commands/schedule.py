@@ -10,6 +10,18 @@ from sqlmodel import Session, select
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
+from penny.constants import (
+    SCHEDULE_ADDED,
+    SCHEDULE_DELETED_NO_REMAINING,
+    SCHEDULE_DELETED_PREFIX,
+    SCHEDULE_INVALID_CRON,
+    SCHEDULE_INVALID_NUMBER,
+    SCHEDULE_NEED_TIMEZONE,
+    SCHEDULE_NO_SCHEDULE_WITH_NUMBER,
+    SCHEDULE_NO_TASKS,
+    SCHEDULE_PARSE_ERROR,
+    SCHEDULE_STILL_SCHEDULED,
+)
 from penny.database.models import Schedule, UserInfo
 
 logger = logging.getLogger(__name__)
@@ -90,7 +102,7 @@ class ScheduleCommand(Command):
             )
 
             if not schedules:
-                return CommandResult(text="you don't have any scheduled tasks yet 📅")
+                return CommandResult(text=SCHEDULE_NO_TASKS)
 
             lines = []
             for idx, sched in enumerate(schedules, start=1):
@@ -103,7 +115,7 @@ class ScheduleCommand(Command):
         try:
             index = int(index_str)
         except ValueError:
-            return CommandResult(text=f"invalid schedule number: {index_str}")
+            return CommandResult(text=SCHEDULE_INVALID_NUMBER.format(number=index_str))
 
         with Session(context.db.engine) as session:
             schedules = list(
@@ -113,7 +125,7 @@ class ScheduleCommand(Command):
             )
 
             if index < 1 or index > len(schedules):
-                return CommandResult(text=f"no schedule with number {index}")
+                return CommandResult(text=SCHEDULE_NO_SCHEDULE_WITH_NUMBER.format(number=index))
 
             to_delete = schedules[index - 1]
             session.delete(to_delete)
@@ -122,16 +134,17 @@ class ScheduleCommand(Command):
             # Show remaining schedules
             remaining = [s for s in schedules if s.id != to_delete.id]
             if not remaining:
-                return CommandResult(
-                    text=(
-                        f"deleted '{to_delete.timing_description} {to_delete.prompt_text}' ✅\n\n"
-                        "no more scheduled tasks"
-                    )
+                deleted_msg = SCHEDULE_DELETED_PREFIX.format(
+                    timing=to_delete.timing_description, prompt=to_delete.prompt_text
                 )
+                return CommandResult(text=f"{deleted_msg}\n\n{SCHEDULE_DELETED_NO_REMAINING}")
 
+            deleted_msg = SCHEDULE_DELETED_PREFIX.format(
+                timing=to_delete.timing_description, prompt=to_delete.prompt_text
+            )
             lines = [
-                f"deleted '{to_delete.timing_description} {to_delete.prompt_text}' ✅\n",
-                "still scheduled:",
+                f"{deleted_msg}\n",
+                SCHEDULE_STILL_SCHEDULED,
             ]
             for idx, sched in enumerate(remaining, start=1):
                 lines.append(f"{idx}. {sched.timing_description} '{sched.prompt_text}'")
@@ -147,12 +160,7 @@ class ScheduleCommand(Command):
             ).first()
 
             if not user_info or not user_info.timezone:
-                return CommandResult(
-                    text=(
-                        "i need to know your timezone first. "
-                        "send me your location or tell me your city 📍"
-                    )
-                )
+                return CommandResult(text=SCHEDULE_NEED_TIMEZONE)
 
             user_timezone = user_info.timezone
 
@@ -170,23 +178,13 @@ class ScheduleCommand(Command):
 
         except Exception as e:
             logger.warning("Failed to parse schedule command: %s", e)
-            return CommandResult(
-                text=(
-                    "sorry, i couldn't understand that schedule format. "
-                    "try something like: /schedule daily 9am what's the news?"
-                )
-            )
+            return CommandResult(text=SCHEDULE_PARSE_ERROR)
 
         # Validate cron expression format (5 fields)
         cron_parts = result.cron_expression.split()
         if len(cron_parts) != 5:
             logger.warning("Invalid cron expression: %s", result.cron_expression)
-            return CommandResult(
-                text=(
-                    "sorry, i couldn't figure out the timing. "
-                    "try something like: /schedule daily 9am what's the news?"
-                )
-            )
+            return CommandResult(text=SCHEDULE_INVALID_CRON)
 
         # Create schedule in database
         with Session(context.db.engine) as session:
@@ -201,4 +199,6 @@ class ScheduleCommand(Command):
             session.add(new_schedule)
             session.commit()
 
-        return CommandResult(text=f"added {result.timing_description}: {result.prompt_text} ✅")
+        return CommandResult(
+            text=SCHEDULE_ADDED.format(timing=result.timing_description, prompt=result.prompt_text)
+        )
