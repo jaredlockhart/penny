@@ -107,6 +107,7 @@ async def test_research_agent_no_channel(
         from penny.constants import SYSTEM_PROMPT
 
         research_agent = ResearchAgent(
+            config=config,
             system_prompt=SYSTEM_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
@@ -136,6 +137,7 @@ async def test_research_agent_no_tasks(
         from penny.constants import SYSTEM_PROMPT
 
         research_agent = ResearchAgent(
+            config=config,
             system_prompt=SYSTEM_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
@@ -158,15 +160,17 @@ async def test_research_agent_truncates_long_reports(
     test_user_info,
     running_penny,
 ):
-    """Test ResearchAgent truncates reports exceeding message length limits."""
+    """Test ResearchAgent truncates reports exceeding configured max length."""
+    # Set a very low max length to force truncation (300 chars)
     config = make_config(
         research_max_iterations=2,
+        research_output_max_length=300,
         idle_seconds=0.3,
         scheduler_tick_interval=0.05,
     )
 
-    # Generate very long responses to trigger truncation
-    long_finding = "A" * 1000  # 1000 chars of 'A'
+    # Generate long responses that will definitely exceed 300 chars when formatted
+    long_finding = "A" * 200  # 200 chars of 'A' per iteration
     responses = [f"Iteration 1: {long_finding}", f"Iteration 2: {long_finding}"]
     response_index = [0]
 
@@ -187,9 +191,11 @@ async def test_research_agent_truncates_long_reports(
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
 
         report = signal_server.outgoing_messages[-1]
-        # If report is long enough, should contain truncation notice
-        if len(report["message"]) > 1450:
-            assert "Report truncated" in report["message"]
+        # Report should be truncated to 300 chars max
+        assert len(report["message"]) <= 300, (
+            f"Report should be <= 300 chars, got {len(report['message'])}"
+        )
+        assert "Report truncated" in report["message"]
 
 
 @pytest.mark.asyncio
