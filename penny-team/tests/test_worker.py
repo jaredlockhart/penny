@@ -788,6 +788,45 @@ class TestWorkerBugFixFlow:
     Bug fixes are prioritized over feature work (in-progress).
     """
 
+    def test_worker_has_access_to_claude_md(
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
+    ):
+        """Worker agent command does NOT include --system-prompt flag.
+
+        Bug fix for #181: Worker needs access to CLAUDE.md to understand
+        project practices, where to find things, and testing philosophy.
+        Other agents (PM, Architect) should still have system prompts
+        suppressed to avoid prompt pollution.
+        """
+        agent = make_agent(
+            tmp_path,
+            name="worker",
+            required_labels=["bug"],
+            github_api=mock_github_api,
+            suppress_system_prompt=False,
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+
+        mock_github_api.set_issues("bug", make_issue_list_items((50, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("bug", [
+            make_issue_detail(
+                number=50,
+                title="Test bug",
+                body="Bug description",
+                labels=["bug"],
+                comments=[],
+            ),
+        ])
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        agent.run()
+
+        # Verify the command does NOT contain --system-prompt flag
+        assert len(calls) == 1
+        cmd = calls[0][0][0]
+        assert "--system-prompt" not in cmd
+
     def test_bug_issue_triggers_worker(
         self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):

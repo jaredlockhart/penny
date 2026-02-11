@@ -80,6 +80,7 @@ class Agent:
         github_api: GitHubAPI | None = None,
         trusted_users: set[str] | None = None,
         post_output_as_comment: bool = False,
+        suppress_system_prompt: bool = True,
     ):
         self.name = name
         self.prompt_path = AGENTS_DIR / name / PROMPT_FILENAME
@@ -93,6 +94,7 @@ class Agent:
         self.github_api = github_api
         self.trusted_users = trusted_users
         self.post_output_as_comment = post_output_as_comment
+        self.suppress_system_prompt = suppress_system_prompt
         self.last_run: datetime | None = None
         self.run_count = 0
         self._process: subprocess.Popen | None = None
@@ -277,9 +279,9 @@ class Agent:
             "--verbose",
             "--output-format",
             "stream-json",
-            "--system-prompt",
-            "",
         ]
+        if self.suppress_system_prompt:
+            cmd.extend(["--system-prompt", ""])
         if self.allowed_tools is None:
             # Full tool access (worker, monitor)
             cmd.append("--dangerously-skip-permissions")

@@ -140,6 +140,7 @@ def get_agents(github_app: GitHubApp | None = None) -> list[Agent]:
             github_app=github_app,
             github_api=github_api,
             trusted_users=trusted,
+            suppress_system_prompt=False,
         ),
         MonitorAgent(
             name=AGENT_MONITOR,
