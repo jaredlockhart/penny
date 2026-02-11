@@ -108,15 +108,15 @@ class ProfileAgent(Agent):
             # Unknown reaction type, skip
             return False
 
-        # Find the message that was reacted to
-        if not reaction_msg.external_id:
-            logger.debug("Reaction has no external_id, skipping")
+        # Find the message that was reacted to via parent_id
+        if not reaction_msg.parent_id:
+            logger.debug("Reaction has no parent_id, skipping")
             return False
 
-        reacted_to_msg = self.db.find_message_by_external_id(reaction_msg.external_id)
+        reacted_to_msg = self.db.get_message_by_id(reaction_msg.parent_id)
         if not reacted_to_msg:
             logger.debug(
-                "Could not find message for reaction external_id: %s", reaction_msg.external_id
+                "Could not find message for reaction parent_id: %s", reaction_msg.parent_id
             )
             return False
 

@@ -59,6 +59,7 @@ class MockOllamaAsyncClient:
         model: str,
         messages: list[dict],
         tools: list[dict] | None = None,
+        format: dict | str | None = None,
     ) -> MockOllamaResponse:
         """Mock chat() call."""
         request_data = {"model": model, "messages": messages, "tools": tools}

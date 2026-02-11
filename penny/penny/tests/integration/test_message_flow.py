@@ -780,3 +780,82 @@ async def test_profile_reaction_processing_idempotency(
         # Verify get_user_reactions now returns empty again
         reactions = penny.db.get_user_reactions(TEST_SENDER)
         assert len(reactions) == 0
+
+
+@pytest.mark.asyncio
+async def test_profile_agent_processes_reaction_into_preference(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+    setup_ollama_flow,
+):
+    """
+    Test that ProfileAgent processes a reaction into a preference:
+    1. Send a message and get a response
+    2. React to the response with a like emoji
+    3. Run ProfileAgent.execute() directly
+    4. Verify the preference was added to the database
+    """
+    config = make_config(idle_seconds=0.5)
+    setup_ollama_flow(
+        search_query="fun facts about cats",
+        message_response="cats are amazing! they can jump 6 times their length 🐱",
+        background_response='{"topic": "cats"}',
+    )
+
+    async with running_penny(config) as penny:
+        # Send initial message and get response
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="tell me something cool about cats!"
+        )
+        response = await signal_server.wait_for_message(timeout=10.0)
+        assert "cats" in response["message"].lower()
+
+        # Get the outgoing message's external_id for reaction targeting
+        with penny.db.get_session() as session:
+            outgoing = session.exec(
+                select(MessageLog).where(MessageLog.direction == "outgoing")
+            ).first()
+            assert outgoing is not None
+            assert outgoing.external_id is not None
+            external_id = outgoing.external_id
+
+        # Send a like reaction to Penny's response
+        await signal_server.push_reaction(
+            sender=TEST_SENDER,
+            emoji="❤️",
+            target_timestamp=int(external_id),
+        )
+        await asyncio.sleep(0.5)
+
+        # Verify reaction was logged with parent_id set
+        with penny.db.get_session() as session:
+            reactions = list(
+                session.exec(
+                    select(MessageLog).where(
+                        MessageLog.is_reaction == True,  # noqa: E712
+                        MessageLog.sender == TEST_SENDER,
+                    )
+                ).all()
+            )
+        assert len(reactions) == 1
+        reaction = reactions[0]
+        assert reaction.parent_id is not None, "Reaction should have parent_id set"
+
+        # Run ProfileAgent directly
+        work_done = await penny.profile_agent.execute()
+        assert work_done, "ProfileAgent should have processed the reaction"
+
+        # Verify preference was added
+        from penny.constants import PreferenceType
+
+        prefs = penny.db.get_preferences(TEST_SENDER, PreferenceType.LIKE)
+        assert len(prefs) == 1, f"Expected 1 like preference, got {len(prefs)}"
+        assert prefs[0].topic == "cats"
+
+        # Verify reaction was marked as processed
+        reactions = penny.db.get_user_reactions(TEST_SENDER)
+        assert len(reactions) == 0, "Reaction should be marked as processed"

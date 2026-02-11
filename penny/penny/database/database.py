@@ -299,6 +299,19 @@ class Database:
                 .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
             ).first()
 
+    def get_message_by_id(self, message_id: int) -> MessageLog | None:
+        """
+        Get a message by its database ID.
+
+        Args:
+            message_id: The primary key ID of the message
+
+        Returns:
+            The matching MessageLog, or None
+        """
+        with self.get_session() as session:
+            return session.get(MessageLog, message_id)
+
     def find_message_by_external_id(self, external_id: str) -> MessageLog | None:
         """
         Find a message by its platform-specific external ID.
