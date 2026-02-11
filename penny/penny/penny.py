@@ -81,7 +81,7 @@ class Penny:
                 from pathlib import Path
 
                 from github_api.api import GitHubAPI
-                from github_api.app import GitHubAuth
+                from github_api.auth import GitHubAuth
 
                 from penny.constants import GITHUB_REPO_NAME, GITHUB_REPO_OWNER
 

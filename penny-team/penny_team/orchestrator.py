@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from github_api.api import GitHubAPI
-from github_api.app import GitHubAuth
+from github_api.auth import GitHubAuth
 
 from penny_team.base import Agent
 from penny_team.constants import (
