@@ -44,7 +44,7 @@ penny/
     discovery.py      — DiscoveryAgent: proactive content sharing based on user interests
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
-    schedules.py      — ImmediateSchedule, DelayedSchedule implementations
+    schedules.py      — PeriodicSchedule, DelayedSchedule implementations
   commands/
     __init__.py       — create_command_registry() factory
     base.py           — Command ABC, CommandRegistry
@@ -148,10 +148,11 @@ The `scheduler/` module manages background tasks:
 
 ### Schedule Types (`scheduler/schedules.py`)
 
-**ImmediateSchedule**
-- Runs immediately when system becomes idle
-- Used for summarization and preference extraction
-- No additional delay beyond global idle threshold
+**PeriodicSchedule**
+- Runs periodically while system is idle at a configurable interval
+- Used for summarization and preference extraction (default: `MAINTENANCE_INTERVAL_SECONDS`, 300s)
+- Tracks last run time and fires again after interval elapses
+- Resets when a message arrives
 
 **DelayedSchedule**
 - Runs after system becomes idle + random delay

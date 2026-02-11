@@ -441,7 +441,7 @@ penny/penny/
   scheduler/
     base.py             — Schedule ABC
     scheduler.py        — BackgroundScheduler
-    schedules.py        — ImmediateSchedule, DelayedSchedule
+    schedules.py        — PeriodicSchedule, DelayedSchedule
   tools/
     base.py             — Tool ABC, ToolRegistry, ToolExecutor
     models.py           — ToolCall, ToolResult

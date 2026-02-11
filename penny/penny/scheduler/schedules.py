@@ -16,35 +16,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ImmediateSchedule(Schedule):
-    """Runs immediately when system becomes idle, then waits for reset."""
-
-    def __init__(self, agent: Agent):
-        """
-        Initialize immediate schedule.
-
-        Args:
-            agent: The agent to execute when schedule fires
-        """
-        self.agent = agent
-        self._fired = False
-        logger.info("ImmediateSchedule created for %s", agent.name)
-
-    def should_run(self, is_idle: bool) -> bool:
-        """Check if system is idle and hasn't fired yet."""
-        if self._fired:
-            return False
-        return is_idle
-
-    def reset(self) -> None:
-        """Reset fired state when a message arrives."""
-        self._fired = False
-
-    def mark_complete(self) -> None:
-        """Mark as fired so it won't run again until reset."""
-        self._fired = True
-
-
 class DelayedScheduleState(StrEnum):
     """State machine for delayed schedule."""
 
@@ -113,3 +84,49 @@ class DelayedSchedule(Schedule):
     def mark_complete(self) -> None:
         """Reset after task execution."""
         self.reset()
+
+
+class PeriodicSchedule(Schedule):
+    """Runs periodically while system is idle."""
+
+    def __init__(
+        self,
+        agent: Agent,
+        interval: float,
+    ):
+        """
+        Initialize periodic schedule.
+
+        Args:
+            agent: The agent to execute on each interval
+            interval: Time in seconds between executions while idle
+        """
+        self.agent = agent
+        self._interval = interval
+        self._last_run: float | None = None
+        logger.info(
+            "PeriodicSchedule created for %s with interval=%.0fs",
+            agent.name,
+            interval,
+        )
+
+    def should_run(self, is_idle: bool) -> bool:
+        """Check if system is idle and interval has elapsed since last run."""
+        if not is_idle:
+            return False
+
+        now = time.monotonic()
+        if self._last_run is None:
+            # First run when idle
+            return True
+
+        elapsed = now - self._last_run
+        return elapsed >= self._interval
+
+    def reset(self) -> None:
+        """Reset last run time when a message arrives."""
+        self._last_run = None
+
+    def mark_complete(self) -> None:
+        """Record completion time for next interval calculation."""
+        self._last_run = time.monotonic()
