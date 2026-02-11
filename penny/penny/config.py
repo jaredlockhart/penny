@@ -58,6 +58,9 @@ class Config:
     # Tool execution timeout (seconds)
     tool_timeout: float = 60.0
 
+    # Scheduler tick interval (seconds) — how often the background scheduler checks
+    scheduler_tick_interval: float = 1.0
+
     # Global idle threshold for background tasks
     idle_seconds: float = 300.0
 

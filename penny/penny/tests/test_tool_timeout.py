@@ -33,11 +33,11 @@ class TestToolTimeout:
     async def test_tool_timeout_enforced(self):
         """Tool execution should timeout after configured duration."""
         registry = ToolRegistry()
-        slow_tool = SlowTool(sleep_duration=5.0)
+        slow_tool = SlowTool(sleep_duration=1.0)
         registry.register(slow_tool)
 
-        # Set timeout to 1 second
-        executor = ToolExecutor(registry, timeout=1.0)
+        # Set timeout to 0.1 seconds (tool takes 1s, well past the timeout)
+        executor = ToolExecutor(registry, timeout=0.1)
 
         tool_call = ToolCall(tool="slow_tool", arguments={})
         result = await executor.execute(tool_call)

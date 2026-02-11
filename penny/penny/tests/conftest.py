@@ -44,10 +44,36 @@ DEFAULT_TEST_CONFIG = {
     "followup_max_seconds": 99999.0,
     "discovery_min_seconds": 99999.0,
     "discovery_max_seconds": 99999.0,
+    # Fast scheduler ticks for tests
+    "scheduler_tick_interval": 0.05,
     # Fast retries for tests
     "ollama_max_retries": 1,
     "ollama_retry_delay": 0.1,
 }
+
+
+async def wait_until(
+    condition: Callable[[], bool],
+    timeout: float = 10.0,
+    interval: float = 0.05,
+) -> None:
+    """
+    Poll a condition until it becomes true, or raise TimeoutError.
+
+    Replaces arbitrary ``asyncio.sleep(N)`` calls in tests with deterministic,
+    condition-based waiting that returns as soon as the expected state is reached.
+
+    Args:
+        condition: Synchronous callable that returns True when ready.
+        timeout: Maximum seconds to wait before raising TimeoutError.
+        interval: Seconds between polls.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        if condition():
+            return
+        await asyncio.sleep(interval)
+    raise TimeoutError(f"Condition not met within {timeout}s")
 
 
 @pytest.fixture
@@ -129,7 +155,7 @@ def test_user_info(test_config):
 
 
 @pytest.fixture
-def running_penny() -> Callable[[Config], AbstractAsyncContextManager[Penny]]:
+def running_penny(signal_server) -> Callable[[Config], AbstractAsyncContextManager[Penny]]:
     """
     Async context manager fixture for running Penny with proper cleanup.
 
@@ -145,7 +171,7 @@ def running_penny() -> Callable[[Config], AbstractAsyncContextManager[Penny]]:
         penny_task = asyncio.create_task(penny.run())
         try:
             # Wait for WebSocket connection to establish
-            await asyncio.sleep(0.3)
+            await wait_until(lambda: len(signal_server._websockets) > 0)
             yield penny
         finally:
             penny_task.cancel()

@@ -147,6 +147,7 @@ class Penny:
         self.scheduler = BackgroundScheduler(
             schedules=schedules,
             idle_threshold=config.idle_seconds,
+            tick_interval=config.scheduler_tick_interval,
         )
 
         # Connect scheduler to channel for message notifications

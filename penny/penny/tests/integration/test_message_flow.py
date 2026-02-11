@@ -1,12 +1,13 @@
 """Integration tests for the basic message flow."""
 
-import asyncio
+import json
+import time
 
 import pytest
 from sqlmodel import select
 
 from penny.database.models import MessageLog, SearchLog
-from penny.tests.conftest import TEST_SENDER
+from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 @pytest.mark.asyncio
@@ -139,14 +140,18 @@ async def test_summarize_background_task(
             assert outgoing.parent_id is not None
             assert outgoing.parent_summary is None
 
-        # Wait for summarize task to trigger (idle time + scheduler tick)
-        await asyncio.sleep(2.0)
+        # Wait for summarize task to produce a summary in the DB
+        def summary_exists():
+            with penny.db.get_session() as session:
+                msg = session.get(MessageLog, message_id)
+                return msg is not None and msg.parent_summary is not None
 
-        # Verify summary was generated
+        await wait_until(summary_exists)
+
+        # Verify summary content
         with penny.db.get_session() as session:
             outgoing = session.get(MessageLog, message_id)
             assert outgoing is not None
-            assert outgoing.parent_summary is not None
             assert len(outgoing.parent_summary) > 0
             assert "weather" in outgoing.parent_summary.lower()
 
@@ -231,15 +236,8 @@ async def test_followup_background_task(
         # Record the message count after first response
         first_response_count = len(signal_server.outgoing_messages)
 
-        # Wait for followup task to trigger
-        await asyncio.sleep(5.0)
-
-        # Check if followup was sent
-        assert len(signal_server.outgoing_messages) > first_response_count, (
-            f"Followup message should have been sent. "
-            f"Messages: {len(signal_server.outgoing_messages)}, "
-            f"Expected > {first_response_count}"
-        )
+        # Wait for followup task to send a second message
+        await wait_until(lambda: len(signal_server.outgoing_messages) > first_response_count)
 
         followup = signal_server.outgoing_messages[-1]
         assert followup["recipients"] == [TEST_SENDER]
@@ -303,10 +301,22 @@ async def test_signal_reaction_message(
             target_timestamp=int(external_id),
         )
 
-        # Wait a bit for processing
-        await asyncio.sleep(0.5)
+        # Wait for reaction to be logged in the DB
+        def reaction_logged():
+            with penny.db.get_session() as session:
+                reactions = list(
+                    session.exec(
+                        select(MessageLog).where(
+                            MessageLog.is_reaction == True,  # noqa: E712
+                            MessageLog.sender == TEST_SENDER,
+                        )
+                    ).all()
+                )
+                return len(reactions) == 1
 
-        # Verify reaction was logged
+        await wait_until(reaction_logged)
+
+        # Verify reaction details
         with penny.db.get_session() as session:
             reactions = list(
                 session.exec(
@@ -367,9 +377,6 @@ async def test_signal_reaction_raw_format(
 
         # Send a reaction using the raw format that Signal actually sends
         # (not the mock format with {"value": emoji})
-        import json
-        import time
-
         ts = int(time.time() * 1000)
         raw_envelope = {
             "envelope": {
@@ -401,10 +408,22 @@ async def test_signal_reaction_raw_format(
             if not ws.closed:
                 await ws.send_str(json.dumps(raw_envelope))
 
-        # Wait a bit for processing
-        await asyncio.sleep(0.5)
+        # Wait for reaction to be logged in the DB
+        def reaction_logged():
+            with penny.db.get_session() as session:
+                reactions = list(
+                    session.exec(
+                        select(MessageLog).where(
+                            MessageLog.is_reaction == True,  # noqa: E712
+                            MessageLog.sender == TEST_SENDER,
+                        )
+                    ).all()
+                )
+                return len(reactions) == 1
 
-        # Verify reaction was logged
+        await wait_until(reaction_logged)
+
+        # Verify reaction details
         with penny.db.get_session() as session:
             reactions = list(
                 session.exec(
@@ -470,9 +489,10 @@ async def test_startup_announcement(
     )
 
     # Now start Penny again - it should send startup announcement
+    # Announcement is sent before WebSocket listener starts, so it's
+    # already captured by the time running_penny yields.
     async with running_penny(config) as penny:
-        # Wait a bit for startup announcement to be sent
-        await asyncio.sleep(0.5)
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 1)
 
         # Verify startup announcement was sent
         assert len(signal_server.outgoing_messages) == 1
@@ -829,7 +849,21 @@ async def test_profile_agent_processes_reaction_into_preference(
             emoji="❤️",
             target_timestamp=int(external_id),
         )
-        await asyncio.sleep(0.5)
+
+        # Wait for reaction to be logged in the DB
+        def reaction_logged():
+            with penny.db.get_session() as session:
+                reactions = list(
+                    session.exec(
+                        select(MessageLog).where(
+                            MessageLog.is_reaction == True,  # noqa: E712
+                            MessageLog.sender == TEST_SENDER,
+                        )
+                    ).all()
+                )
+                return len(reactions) == 1
+
+        await wait_until(reaction_logged)
 
         # Verify reaction was logged with parent_id set
         with penny.db.get_session() as session:

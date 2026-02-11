@@ -2,7 +2,7 @@
 
 import pytest
 
-from penny.tests.conftest import TEST_SENDER
+from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 @pytest.mark.asyncio
@@ -40,14 +40,8 @@ async def test_startup_announcement_with_commit(
     mock_ollama.set_default_flow(final_response="i added a cool new feature! check it out")
 
     async with running_penny(test_config):
-        # Wait for startup announcement with more generous timeout
-        import asyncio
-
-        # Poll for up to 10 seconds with longer sleep intervals
-        for _ in range(100):
-            if len(signal_server.outgoing_messages) > 0:
-                break
-            await asyncio.sleep(0.1)
+        # Announcement is sent before WebSocket listener starts
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
 
         # Should have received startup announcement
         assert len(signal_server.outgoing_messages) >= 1, (
@@ -102,13 +96,7 @@ async def test_startup_announcement_fallback_no_git(
 
     # Second run: verify fallback message
     async with running_penny(test_config):
-        # Wait for startup announcement with generous timeout
-        import asyncio
-
-        for _ in range(100):
-            if len(signal_server.outgoing_messages) > 0:
-                break
-            await asyncio.sleep(0.1)
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
 
         # Should use fallback message
         assert len(signal_server.outgoing_messages) >= 1, (
@@ -156,13 +144,7 @@ async def test_startup_announcement_fallback_llm_error(
     mock_ollama.set_response_handler(error_handler)
 
     async with running_penny(test_config):
-        # Wait for startup announcement with generous timeout
-        import asyncio
-
-        for _ in range(100):
-            if len(signal_server.outgoing_messages) > 0:
-                break
-            await asyncio.sleep(0.1)
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
 
         # Should use fallback message when LLM fails
         assert len(signal_server.outgoing_messages) >= 1, (
@@ -178,14 +160,11 @@ async def test_startup_announcement_no_recipients(
     signal_server, test_config, mock_ollama, running_penny
 ):
     """Test that Penny doesn't crash when there are no recipients."""
-    # Start Penny without any prior message history
+    # Start Penny without any prior message history.
+    # Announcement runs before WebSocket listener starts, so by the time
+    # running_penny yields (WebSocket connected), the code has already
+    # completed. No sleep needed — check immediately.
     async with running_penny(test_config):
-        # Wait a moment
-        import asyncio
-
-        await asyncio.sleep(0.5)
-
-        # No messages should have been sent
         assert len(signal_server.outgoing_messages) == 0
 
 
@@ -240,25 +219,15 @@ async def test_startup_announcement_multiple_recipients(
     mock_ollama.set_default_flow(final_response="i updated something cool")
 
     async with running_penny(test_config):
-        # Wait for startup announcements with generous timeout
-        import asyncio
-
-        # Wait up to 10 seconds for all messages to arrive
-        # Messages are sent serially in a loop, so we need to wait for both
         expected_recipients = {sender1, sender2}
-        all_recipients = set()
 
-        for _ in range(100):
-            # Collect all recipients seen so far
-            all_recipients.clear()
+        def all_recipients_notified():
+            all_recipients: set[str] = set()
             for msg in signal_server.outgoing_messages:
                 all_recipients.update(msg.get("recipients", []))
+            return expected_recipients.issubset(all_recipients)
 
-            # If we've seen both recipients, we're done
-            if expected_recipients.issubset(all_recipients):
-                break
-
-            await asyncio.sleep(0.1)
+        await wait_until(all_recipients_notified)
 
         # Should have sent to both recipients
         # Note: Signal API may send separate messages or batch them
@@ -266,7 +235,11 @@ async def test_startup_announcement_multiple_recipients(
             f"Expected at least 1 message, got {len(signal_server.outgoing_messages)}"
         )
 
-        # Both senders should have received the announcement
+        # Collect all recipients
+        all_recipients: set[str] = set()
+        for msg in signal_server.outgoing_messages:
+            all_recipients.update(msg.get("recipients", []))
+
         assert sender1 in all_recipients, f"Expected {sender1} in recipients, got {all_recipients}"
         assert sender2 in all_recipients, f"Expected {sender2} in recipients, got {all_recipients}"
 
