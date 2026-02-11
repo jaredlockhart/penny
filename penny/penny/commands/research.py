@@ -56,7 +56,7 @@ class ResearchCommand(Command):
 
             if existing:
                 return CommandResult(
-                    text=f"already researching '{existing.topic}' — please wait for that to finish"
+                    text=f"Already researching '{existing.topic}' — please wait for that to finish"
                 )
 
             # Create new research task
@@ -73,7 +73,7 @@ class ResearchCommand(Command):
 
         return CommandResult(
             text=(
-                f"ok, started research on '{topic}'. "
-                "i'll post results when done (this might take a few minutes)"
+                f"Ok, started research on '{topic}'. "
+                "I'll post results when done (this might take a few minutes)"
             )
         )
