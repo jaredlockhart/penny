@@ -22,8 +22,9 @@ class ResearchCommand(Command):
     help_text = (
         "Start an autonomous research task that performs multiple searches "
         "and produces a report.\n\n"
-        "**Usage**: `/research <topic>`\n\n"
+        "**Usage**: `/research [topic]`\n\n"
         "**Examples**:\n"
+        "- `/research` — list active research tasks\n"
         "- `/research quantum computing applications`\n"
         "- `/research best coffee grinders 2026`\n\n"
         "Penny will run multiple search iterations in the background and "
@@ -35,10 +36,30 @@ class ResearchCommand(Command):
         """Execute research command."""
         topic = args.strip()
 
+        # If no topic provided, list active and pending research tasks
         if not topic:
-            return CommandResult(
-                text="Please specify a topic to research. Example: `/research quantum computing`"
-            )
+            with Session(context.db.engine) as session:
+                # Get all in_progress tasks for this user/thread
+                tasks = session.exec(
+                    select(ResearchTask)
+                    .where(
+                        ResearchTask.thread_id == context.user,
+                        ResearchTask.status == "in_progress",
+                    )
+                    .order_by(ResearchTask.created_at.asc())  # type: ignore[unresolved-attribute]
+                ).all()
+
+                if not tasks:
+                    return CommandResult(text="no active research tasks")
+
+                # Format task list
+                lines = ["**Active Research Tasks:**\n"]
+                for task in tasks:
+                    lines.append(
+                        f"- {task.topic} (started {task.created_at.strftime('%Y-%m-%d %H:%M')})"
+                    )
+
+                return CommandResult(text="\n".join(lines))
 
         # Get research config from runtime config (falls back to .env default)
         max_iterations = context.config.research_max_iterations

@@ -35,24 +35,43 @@ async def test_research_command_creates_task(
 
 
 @pytest.mark.asyncio
-async def test_research_command_requires_topic(
+async def test_research_command_lists_when_no_topic(
     signal_server, test_config, mock_ollama, test_user_info, running_penny
 ):
-    """Test /research without a topic returns error message."""
+    """Test /research without a topic lists active research tasks."""
     async with running_penny(test_config) as penny:
-        # Send /research without topic
+        # Send /research without topic when no tasks exist
         await signal_server.push_message(sender=TEST_SENDER, content="/research")
 
         # Wait for response
         response = await signal_server.wait_for_message(timeout=5.0)
 
-        # Should ask for a topic
-        assert "specify a topic" in response["message"].lower()
+        # Should report no active tasks
+        assert "no active research" in response["message"].lower()
 
         # Should not create a task
         with penny.db.get_session() as session:
             tasks = list(session.exec(select(ResearchTask)).all())
             assert len(tasks) == 0
+
+
+@pytest.mark.asyncio
+async def test_research_command_lists_active_tasks(
+    signal_server, test_config, mock_ollama, test_user_info, running_penny
+):
+    """Test /research without topic lists active research tasks."""
+    async with running_penny(test_config):
+        # Start a research task
+        await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # List tasks with /research (no topic)
+        await signal_server.push_message(sender=TEST_SENDER, content="/research")
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        # Should list the active task
+        assert "active research" in response["message"].lower()
+        assert "ai trends" in response["message"].lower()
 
 
 @pytest.mark.asyncio
