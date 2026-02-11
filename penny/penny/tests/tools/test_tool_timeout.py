@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from penny.agent.base import Agent
+from penny.agents.base import Agent
 from penny.database import Database
 from penny.tools import ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.base import Tool

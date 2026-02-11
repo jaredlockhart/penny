@@ -8,7 +8,7 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from penny.agent import Agent
+    from penny.agents import Agent
 
 logger = logging.getLogger(__name__)
 

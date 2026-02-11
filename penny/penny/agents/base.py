@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from penny.agent.models import ChatMessage, ControllerResponse, MessageRole
+from penny.agents.models import ChatMessage, ControllerResponse, MessageRole
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry

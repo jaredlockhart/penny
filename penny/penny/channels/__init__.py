@@ -10,7 +10,7 @@ from penny.channels.signal import SignalChannel
 from penny.config import Config
 
 if TYPE_CHECKING:
-    from penny.agent import MessageAgent
+    from penny.agents import MessageAgent
     from penny.commands import CommandRegistry
     from penny.database import Database
 

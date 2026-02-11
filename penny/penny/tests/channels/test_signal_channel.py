@@ -9,7 +9,7 @@ from penny.database import Database
 @pytest.mark.asyncio
 async def test_validate_connectivity_success(signal_server, test_config, mock_ollama):
     """Test that validate_connectivity succeeds with a reachable Signal API."""
-    from penny.agent import MessageAgent
+    from penny.agents import MessageAgent
     from penny.constants import SYSTEM_PROMPT
 
     db = Database(test_config.db_path)
@@ -40,7 +40,7 @@ async def test_validate_connectivity_success(signal_server, test_config, mock_ol
 @pytest.mark.asyncio
 async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
     """Test that validate_connectivity raises ConnectionError on DNS failure."""
-    from penny.agent import MessageAgent
+    from penny.agents import MessageAgent
     from penny.config import Config
     from penny.constants import SYSTEM_PROMPT
 
@@ -91,7 +91,7 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
 @pytest.mark.asyncio
 async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
     """Test that validate_connectivity raises ConnectionError when server is unreachable."""
-    from penny.agent import MessageAgent
+    from penny.agents import MessageAgent
     from penny.config import Config
     from penny.constants import SYSTEM_PROMPT
 

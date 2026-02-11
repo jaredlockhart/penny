@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from penny.scheduler.base import Schedule
 
 if TYPE_CHECKING:
-    from penny.agent import Agent
+    from penny.agents import Agent
 
 logger = logging.getLogger(__name__)
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from penny.agent.base import Agent
-from penny.agent.models import MessageRole
+from penny.agents.base import Agent
+from penny.agents.models import MessageRole
 from penny.constants import MessageDirection
 
 if TYPE_CHECKING:

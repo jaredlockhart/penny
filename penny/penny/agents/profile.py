@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from penny.agent.base import Agent
+from penny.agents.base import Agent
 from penny.constants import DISLIKE_REACTIONS, LIKE_REACTIONS, PreferenceType
 
 if TYPE_CHECKING:

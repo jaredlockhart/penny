@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from typing import Any
 
-from penny.agent import (
+from penny.agents import (
     Agent,
     DiscoveryAgent,
     FollowupAgent,

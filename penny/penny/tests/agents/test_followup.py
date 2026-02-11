@@ -105,7 +105,7 @@ async def test_followup_excludes_dislikes(
         mock_ollama.requests.clear()
 
         # Manually trigger followup
-        from penny.agent.agents import FollowupAgent
+        from penny.agents import FollowupAgent
         from penny.constants import SYSTEM_PROMPT
 
         followup_agent = FollowupAgent(
@@ -156,7 +156,7 @@ async def test_followup_no_channel(
     config = make_config()
 
     async with running_penny(config) as penny:
-        from penny.agent.agents import FollowupAgent
+        from penny.agents import FollowupAgent
         from penny.constants import SYSTEM_PROMPT
 
         followup_agent = FollowupAgent(
@@ -185,7 +185,7 @@ async def test_followup_no_leaves(
     config = make_config()
 
     async with running_penny(config) as penny:
-        from penny.agent.agents import FollowupAgent
+        from penny.agents import FollowupAgent
         from penny.constants import SYSTEM_PROMPT
 
         followup_agent = FollowupAgent(

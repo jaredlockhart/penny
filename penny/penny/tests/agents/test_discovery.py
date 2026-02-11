@@ -47,7 +47,7 @@ async def test_discovery_excludes_dislikes(
         mock_ollama.requests.clear()
 
         # Manually trigger discovery
-        from penny.agent.agents import DiscoveryAgent
+        from penny.agents import DiscoveryAgent
         from penny.constants import SYSTEM_PROMPT
 
         discovery_agent = DiscoveryAgent(
@@ -96,7 +96,7 @@ async def test_discovery_no_channel(
     config = make_config()
 
     async with running_penny(config) as penny:
-        from penny.agent.agents import DiscoveryAgent
+        from penny.agents import DiscoveryAgent
         from penny.constants import SYSTEM_PROMPT
 
         discovery_agent = DiscoveryAgent(
@@ -125,7 +125,7 @@ async def test_discovery_no_users(
     config = make_config()
 
     async with running_penny(config) as penny:
-        from penny.agent.agents import DiscoveryAgent
+        from penny.agents import DiscoveryAgent
         from penny.constants import SYSTEM_PROMPT
 
         discovery_agent = DiscoveryAgent(
@@ -166,7 +166,7 @@ async def test_discovery_no_likes(
         # Clear Ollama requests
         mock_ollama.requests.clear()
 
-        from penny.agent.agents import DiscoveryAgent
+        from penny.agents import DiscoveryAgent
         from penny.constants import SYSTEM_PROMPT
 
         discovery_agent = DiscoveryAgent(

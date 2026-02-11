@@ -8,7 +8,7 @@ from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from penny.agent.models import MessageRole
+from penny.agents.models import MessageRole
 from penny.constants import MessageDirection
 from penny.database.models import (
     CommandLog,

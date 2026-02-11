@@ -210,7 +210,7 @@ async def test_profile_no_channel(
     config = make_config()
 
     async with running_penny(config) as penny:
-        from penny.agent.agents import ProfileAgent
+        from penny.agents import ProfileAgent
         from penny.constants import SYSTEM_PROMPT
 
         profile_agent = ProfileAgent(

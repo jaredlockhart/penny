@@ -11,7 +11,7 @@ from penny.commands.models import CommandContext, CommandResult
 from penny.constants import TEST_DB_PATH, TEST_MODE_PREFIX
 
 if TYPE_CHECKING:
-    from penny.agent.agents.message import MessageAgent
+    from penny.agents.message import MessageAgent
 
 logger = logging.getLogger(__name__)
 

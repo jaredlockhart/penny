@@ -76,7 +76,7 @@ async def test_summarize_skips_short_thread(
     """
     config = make_config()
 
-    from penny.agent.agents import SummarizeAgent
+    from penny.agents import SummarizeAgent
     from penny.constants import SYSTEM_PROMPT
     from penny.database import Database
     from penny.database.migrate import migrate
@@ -137,7 +137,7 @@ async def test_summarize_no_work(
     config = make_config()
 
     async with running_penny(config) as penny:
-        from penny.agent.agents import SummarizeAgent
+        from penny.agents import SummarizeAgent
         from penny.constants import SYSTEM_PROMPT
 
         summarize_agent = SummarizeAgent(
@@ -175,7 +175,7 @@ async def test_summarize_empty_response(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Manually invoke summarize agent
-        from penny.agent.agents import SummarizeAgent
+        from penny.agents import SummarizeAgent
         from penny.constants import SYSTEM_PROMPT
 
         summarize_agent = SummarizeAgent(

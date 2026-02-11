@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import re
 
-from penny.agent.base import Agent
-from penny.agent.models import ControllerResponse, MessageRole
+from penny.agents.base import Agent
+from penny.agents.models import ControllerResponse, MessageRole
 from penny.tools.builtin import SearchTool
 
 logger = logging.getLogger(__name__)

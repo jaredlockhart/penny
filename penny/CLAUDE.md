@@ -34,16 +34,14 @@ penny/
   config_params.py    — ConfigParam definitions for runtime-configurable settings
   constants.py        — System prompt, followup prompt, discovery prompt, summarize prompt
   startup.py          — Startup announcement message generation (git commit info)
-  agent/
+  agents/
     base.py           — Agent base class: agentic loop, tool execution, Ollama integration
     models.py         — ChatMessage, ControllerResponse, MessageRole
-    agents/
-      __init__.py     — Exports all agent subclasses
-      message.py      — MessageAgent: handles incoming user messages
-      summarize.py    — SummarizeAgent: background thread summarization
-      followup.py     — FollowupAgent: spontaneous conversation followups
-      profile.py      — ProfileAgent: background user profile generation
-      discovery.py    — DiscoveryAgent: proactive content sharing based on user interests
+    message.py        — MessageAgent: handles incoming user messages
+    summarize.py      — SummarizeAgent: background thread summarization
+    followup.py       — FollowupAgent: spontaneous conversation followups
+    profile.py        — ProfileAgent: background user profile generation
+    discovery.py      — DiscoveryAgent: proactive content sharing based on user interests
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
     schedules.py      — ImmediateSchedule, DelayedSchedule implementations
@@ -78,24 +76,27 @@ penny/
     models.py         — ChatResponse, ChatResponseMessage
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
-    test_migrations.py — Migration validation tests
     mocks/
       signal_server.py  — Mock Signal WebSocket + REST server (aiohttp)
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
-    integration/
-      test_message_flow.py        — End-to-end message flow tests
-      test_signal_channel.py      — Signal channel integration tests
-      test_startup_announcement.py — Startup announcement tests
-      test_test_mode.py           — /test command integration tests
-      test_commands.py            — Command system integration tests
+    agents/           — Per-agent integration tests
+      test_message.py, test_summarize.py, test_followup.py, test_profile.py, test_discovery.py
+    channels/         — Channel integration tests
+      test_signal_channel.py, test_signal_reactions.py, test_startup_announcement.py
+    commands/         — Per-command tests
+      test_commands.py, test_debug.py, test_config.py, test_preferences.py, test_system.py, test_test_mode.py
+    database/         — Migration validation tests
+      test_migrations.py
+    tools/            — Tool tests
+      test_search_redaction.py, test_tool_timeout.py
 Dockerfile            — Python 3.12-slim
 pyproject.toml        — Dependencies and project metadata
 ```
 
 ## Agent Architecture
 
-### Agent Base Class (`agent/base.py`)
+### Agent Base Class (`agents/base.py`)
 The base `Agent` class implements the core agentic loop:
 - Builds message context with system prompt and history
 - Calls Ollama with available tools
@@ -105,29 +106,29 @@ The base `Agent` class implements the core agentic loop:
 
 ### Specialized Agents
 
-**MessageAgent** (`agent/agents/message.py`)
+**MessageAgent** (`agents/message.py`)
 - Handles incoming user messages
 - Prepares thread context from quoted messages
 - Returns response with parent_id for thread linking
 
-**SummarizeAgent** (`agent/agents/summarize.py`)
+**SummarizeAgent** (`agents/summarize.py`)
 - Background task: summarizes conversation threads
 - Finds unsummarized messages, walks thread, generates summary
 - Stores summary in `MessageLog.parent_summary` for future context
 
-**FollowupAgent** (`agent/agents/followup.py`)
+**FollowupAgent** (`agents/followup.py`)
 - Background task: spontaneously follows up on conversations
 - Picks random dangling conversation leaf
 - Searches for something new about the topic
 - Sends response via channel
 
-**ProfileAgent** (`agent/agents/profile.py`)
+**ProfileAgent** (`agents/profile.py`)
 - Background task: builds user profiles from message history
 - Queries all messages from users needing profile updates
 - Generates flat list of mentioned topics via LLM
 - Stores in `UserProfile` table for use by DiscoveryAgent
 
-**DiscoveryAgent** (`agent/agents/discovery.py`)
+**DiscoveryAgent** (`agents/discovery.py`)
 - Background task: shares new content based on user interests
 - Picks random user with a profile, uses profile as search context
 - Sends unsolicited but relevant content via channel

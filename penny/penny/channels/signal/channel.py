@@ -24,7 +24,7 @@ from penny.channels.signal.models import (
 )
 
 if TYPE_CHECKING:
-    from penny.agent import MessageAgent
+    from penny.agents import MessageAgent
     from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.database.models import MessageLog

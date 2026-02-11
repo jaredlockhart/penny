@@ -7,8 +7,8 @@ import logging
 import random
 from typing import TYPE_CHECKING
 
-from penny.agent.base import Agent
-from penny.agent.models import MessageRole
+from penny.agents.base import Agent
+from penny.agents.models import MessageRole
 from penny.constants import FOLLOWUP_PROMPT, MessageDirection, PreferenceType
 
 if TYPE_CHECKING:
