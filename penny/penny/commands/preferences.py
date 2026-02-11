@@ -129,9 +129,11 @@ class UnlikeCommand(Command):
     help_text = (
         "Remove a topic from your likes.\n\n"
         "**Usage**:\n"
-        "- `/unlike <topic>` — Remove a topic from your likes\n\n"
-        "**Example**:\n"
-        "- `/unlike video games`"
+        "- `/unlike <topic>` — Remove a topic from your likes\n"
+        "- `/unlike <number>` — Remove a topic by its list position\n\n"
+        "**Examples**:\n"
+        "- `/unlike video games`\n"
+        "- `/unlike 2`"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
@@ -141,7 +143,20 @@ class UnlikeCommand(Command):
         if not args:
             return CommandResult(text="Please specify what to remove, like: /unlike video games")
 
-        topic = args
+        # Check if args is a number (list position)
+        if args.isdigit():
+            position = int(args)
+            likes = context.db.get_preferences(context.user, PreferenceType.LIKE)
+
+            if position < 1 or position > len(likes):
+                return CommandResult(text=f"{position} doesn't match any of your likes")
+
+            # Get the topic at this position (1-indexed)
+            topic = likes[position - 1].topic
+        else:
+            # Use the full topic string
+            topic = args
+
         removed = context.db.remove_preference(context.user, topic, PreferenceType.LIKE)
 
         if removed:
@@ -158,9 +173,11 @@ class UndislikeCommand(Command):
     help_text = (
         "Remove a topic from your dislikes.\n\n"
         "**Usage**:\n"
-        "- `/undislike <topic>` — Remove a topic from your dislikes\n\n"
-        "**Example**:\n"
-        "- `/undislike bananas`"
+        "- `/undislike <topic>` — Remove a topic from your dislikes\n"
+        "- `/undislike <number>` — Remove a topic by its list position\n\n"
+        "**Examples**:\n"
+        "- `/undislike bananas`\n"
+        "- `/undislike 1`"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
@@ -170,7 +187,20 @@ class UndislikeCommand(Command):
         if not args:
             return CommandResult(text="Please specify what to remove, like: /undislike bananas")
 
-        topic = args
+        # Check if args is a number (list position)
+        if args.isdigit():
+            position = int(args)
+            dislikes = context.db.get_preferences(context.user, PreferenceType.DISLIKE)
+
+            if position < 1 or position > len(dislikes):
+                return CommandResult(text=f"{position} doesn't match any of your dislikes")
+
+            # Get the topic at this position (1-indexed)
+            topic = dislikes[position - 1].topic
+        else:
+            # Use the full topic string
+            topic = args
+
         removed = context.db.remove_preference(context.user, topic, PreferenceType.DISLIKE)
 
         if removed:
