@@ -265,8 +265,12 @@ class MessageChannel(ABC):
 
             # Check if message is a command
             if message.content.strip().startswith("/"):
-                # Reject if trying to send a command as a thread reply
-                if message.quoted_text:
+                # Most commands don't support quote-replies, but some do (e.g., /bug)
+                # Extract command name to check if it supports quote-replies
+                command_name = message.content.strip()[1:].split(maxsplit=1)[0].lower()
+                commands_supporting_quotes = {"bug"}  # Commands that can use quote-reply metadata
+
+                if message.quoted_text and command_name not in commands_supporting_quotes:
                     await self.send_status_message(
                         message.sender, "Threading is not supported for commands."
                     )
@@ -403,9 +407,10 @@ class MessageChannel(ABC):
         # Execute command with typing indicator
         typing_task = asyncio.create_task(self._typing_loop(message.sender))
         try:
-            # Update context with current user
+            # Update context with current user and message
             context = self._command_context
             context.user = message.sender
+            context.message = message
 
             result = await command.execute(command_args, context)
             response = result.text

@@ -13,6 +13,7 @@ from penny.database import Database
 from penny.ollama import OllamaClient
 
 if TYPE_CHECKING:
+    from penny.channels.base import IncomingMessage
     from penny.scheduler import BackgroundScheduler
 
 
@@ -27,6 +28,7 @@ class CommandContext:
     channel_type: str  # "signal" or "discord"
     start_time: datetime  # Penny startup time for uptime calculation
     scheduler: BackgroundScheduler | None = None  # Background task scheduler
+    message: IncomingMessage | None = None  # The incoming message (for quote-reply metadata)
 
 
 class CommandResult(BaseModel):

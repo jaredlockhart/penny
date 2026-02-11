@@ -65,5 +65,19 @@ class BugCommand(Command):
     def _generate_body(self, description: str, context: CommandContext) -> str:
         """Generate issue body with description and metadata footer."""
         timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
-        footer = f"\n\n---\nFiled by {context.user} via {context.channel_type} at {timestamp}"
+
+        # Build footer with filing metadata
+        footer_parts = [
+            "\n\n---",
+            f"Filed by {context.user} via {context.channel_type} at {timestamp}",
+        ]
+
+        # If this is a quote-reply, include metadata about the quoted message
+        if context.message and context.message.quoted_text:
+            quoted_msg = context.db.find_outgoing_by_content(context.message.quoted_text)
+            if quoted_msg:
+                quoted_timestamp = quoted_msg.timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+                footer_parts.append(f"Refers to message sent at {quoted_timestamp}")
+
+        footer = "\n".join(footer_parts)
         return description + footer
