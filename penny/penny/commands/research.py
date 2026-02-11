@@ -50,7 +50,7 @@ class ResearchCommand(Command):
                 ).all()
 
                 if not tasks:
-                    return CommandResult(text="no active research tasks")
+                    return CommandResult(text="No active research tasks")
 
                 # Format task list with progress
                 lines = ["**Currently researching:**\n"]
