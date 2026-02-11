@@ -246,6 +246,12 @@ class ResearchAgent(Agent):
             # Look for bullet points in the findings
             for line in finding.split("\n"):
                 stripped = line.strip()
+                # Skip markdown headers (e.g., ## TL;DR)
+                if stripped.startswith("#"):
+                    continue
+                # Skip markdown table delimiters (e.g., |---|---|)
+                if stripped.startswith("|") and "-" in stripped:
+                    continue
                 if stripped.startswith("•") or stripped.startswith("-") or stripped.startswith("*"):
                     report_lines.append(stripped)
                 elif stripped and not stripped.startswith("http"):
@@ -261,11 +267,29 @@ class ResearchAgent(Agent):
 
     def _summarize_findings(self, findings: list[str]) -> str:
         """Generate 2-3 sentence summary from all findings."""
-        # Simple heuristic: take first sentence from first 3 findings
-        summary_sentences = []
+        # Filter out markdown headers and tables from findings before summarizing
+        cleaned_findings = []
         for finding in findings[:3]:
+            # Remove markdown headers and table lines
+            cleaned_lines = []
+            for line in finding.split("\n"):
+                stripped = line.strip()
+                # Skip markdown headers
+                if stripped.startswith("#"):
+                    continue
+                # Skip markdown table delimiters
+                if stripped.startswith("|") and "-" in stripped:
+                    continue
+                if stripped:
+                    cleaned_lines.append(stripped)
+            if cleaned_lines:
+                cleaned_findings.append(" ".join(cleaned_lines))
+
+        # Take first sentence from each cleaned finding
+        summary_sentences = []
+        for cleaned in cleaned_findings:
             # Get first sentence (split on period followed by space or newline)
-            first_sentence = finding.split(". ")[0]
+            first_sentence = cleaned.split(". ")[0]
             if first_sentence:
                 summary_sentences.append(first_sentence.strip())
 
