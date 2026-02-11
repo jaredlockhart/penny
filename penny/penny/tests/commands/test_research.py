@@ -69,9 +69,11 @@ async def test_research_command_lists_active_tasks(
         await signal_server.push_message(sender=TEST_SENDER, content="/research")
         response = await signal_server.wait_for_message(timeout=5.0)
 
-        # Should list the active task
-        assert "active research" in response["message"].lower()
+        # Should list the active task with progress
+        assert "currently researching" in response["message"].lower()
         assert "ai trends" in response["message"].lower()
+        # Should show progress indicator (*Not Started* since no iterations yet)
+        assert "*not started*" in response["message"].lower()
 
 
 @pytest.mark.asyncio

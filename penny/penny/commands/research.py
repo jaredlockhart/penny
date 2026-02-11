@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.database.models import ResearchTask
+from penny.database.models import ResearchIteration, ResearchTask
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +52,23 @@ class ResearchCommand(Command):
                 if not tasks:
                     return CommandResult(text="no active research tasks")
 
-                # Format task list
-                lines = ["**Active Research Tasks:**\n"]
+                # Format task list with progress
+                lines = ["**Currently researching:**\n"]
                 for task in tasks:
-                    lines.append(
-                        f"- {task.topic} (started {task.created_at.strftime('%Y-%m-%d %H:%M')})"
-                    )
+                    # Count completed iterations for this task
+                    iteration_count = session.exec(
+                        select(func.count(ResearchIteration.id)).where(
+                            ResearchIteration.research_task_id == task.id
+                        )
+                    ).one()
+
+                    # Format progress: "7/10" or "*Not Started*"
+                    if iteration_count == 0:
+                        progress = "*Not Started*"
+                    else:
+                        progress = f"{iteration_count}/{task.max_iterations}"
+
+                    lines.append(f"* {task.topic} {progress}")
 
                 return CommandResult(text="\n".join(lines))
 
