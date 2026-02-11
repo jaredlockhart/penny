@@ -212,7 +212,7 @@ class MessageChannel(ABC):
         parent_id: int | None,
         attachments: list[str] | None = None,
         quote_message: MessageLog | None = None,
-    ) -> bool:
+    ) -> int | None:
         """
         Log and send an outgoing message.
 
@@ -224,7 +224,7 @@ class MessageChannel(ABC):
             quote_message: Optional message to quote-reply to
 
         Returns:
-            True if send was successful, False otherwise
+            Database message ID if send was successful, None otherwise
         """
         # Prepare content for this channel (formatting, escaping, etc.)
         # We log the prepared content so quote matching works correctly
@@ -239,7 +239,7 @@ class MessageChannel(ABC):
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
             self._db.set_external_id(message_id, str(external_id))
-        return external_id is not None
+        return message_id if external_id is not None else None
 
     async def handle_message(self, envelope_data: dict) -> None:
         """

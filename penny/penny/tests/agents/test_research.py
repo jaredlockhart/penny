@@ -75,6 +75,8 @@ async def test_research_agent_executes_iterations(
             assert task.status == "completed"
             assert task.completed_at is not None
             assert task.message_id is not None
+            # Verify message_id is a valid integer string (not "True"/"False")
+            assert task.message_id.isdigit(), f"Expected integer string, got: {task.message_id}"
 
             # Verify 3 iterations were stored
             iterations = list(
@@ -353,3 +355,6 @@ async def test_research_generates_proper_report_format(
         findings_pos = report.lower().find("key findings")
         sources_pos = report.lower().find("sources")
         assert summary_pos < findings_pos < sources_pos
+
+        # Verify markdown headers are stripped (Signal doesn't support ## headers)
+        assert "##" not in report, "Markdown headers should be stripped by prepare_outgoing()"
