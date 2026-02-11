@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
-from penny.constants import DISLIKE_REACTIONS, LIKE_REACTIONS, PreferenceType
+from penny.constants import (
+    DISLIKE_REACTIONS,
+    LIKE_REACTIONS,
+    PREFERENCE_BATCH_LIMIT,
+    PreferenceType,
+)
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -63,8 +68,8 @@ class PreferenceAgent(Agent):
 
         work_done = False
         for sender in senders:
-            reactions = self.db.get_user_reactions(sender, limit=50)
-            messages = self.db.get_unprocessed_messages(sender, limit=50)
+            reactions = self.db.get_user_reactions(sender, limit=PREFERENCE_BATCH_LIMIT)
+            messages = self.db.get_unprocessed_messages(sender, limit=PREFERENCE_BATCH_LIMIT)
 
             if not reactions and not messages:
                 continue

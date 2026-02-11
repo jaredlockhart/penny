@@ -3,7 +3,7 @@
 import pytest
 from sqlmodel import select
 
-from penny.constants import PreferenceType
+from penny.constants import PREFERENCE_BATCH_LIMIT, PreferenceType
 from penny.database.models import MessageLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -73,7 +73,7 @@ async def test_preference_reaction_processing_idempotency(
         penny.db.mark_reaction_processed(processed_reaction_id)
 
         # Verify get_user_reactions returns empty (processed reaction is excluded)
-        reactions = penny.db.get_user_reactions(TEST_SENDER)
+        reactions = penny.db.get_user_reactions(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(reactions) == 0
 
         # Insert an unprocessed reaction
@@ -87,7 +87,7 @@ async def test_preference_reaction_processing_idempotency(
         assert unprocessed_reaction_id is not None
 
         # Verify get_user_reactions returns only the unprocessed reaction
-        reactions = penny.db.get_user_reactions(TEST_SENDER)
+        reactions = penny.db.get_user_reactions(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(reactions) == 1
         assert reactions[0].id == unprocessed_reaction_id
         assert reactions[0].content == "👍"
@@ -97,7 +97,7 @@ async def test_preference_reaction_processing_idempotency(
         penny.db.mark_reaction_processed(unprocessed_reaction_id)
 
         # Verify get_user_reactions now returns empty again
-        reactions = penny.db.get_user_reactions(TEST_SENDER)
+        reactions = penny.db.get_user_reactions(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(reactions) == 0
 
 
@@ -200,7 +200,7 @@ async def test_preference_agent_processes_reaction_into_preference(
         assert any(p.topic == "cats" for p in prefs)
 
         # Verify reaction was marked as processed
-        reactions = penny.db.get_user_reactions(TEST_SENDER)
+        reactions = penny.db.get_user_reactions(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(reactions) == 0, "Reaction should be marked as processed"
 
 
@@ -281,7 +281,13 @@ async def test_preference_unknown_emoji(
 
         # Mark user messages as processed so only the unknown reaction is left
         penny.db.mark_messages_processed(
-            [m.id for m in penny.db.get_unprocessed_messages(TEST_SENDER) if m.id is not None]
+            [
+                m.id
+                for m in penny.db.get_unprocessed_messages(
+                    TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT
+                )
+                if m.id is not None
+            ]
         )
 
         # Get the outgoing message
@@ -308,7 +314,7 @@ async def test_preference_unknown_emoji(
         assert result is False, "Should return False (no preference updated)"
 
         # Verify reaction was marked as processed
-        reactions = penny.db.get_user_reactions(TEST_SENDER)
+        reactions = penny.db.get_user_reactions(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(reactions) == 0, "Reaction should be marked as processed even for unknown emoji"
 
 
@@ -359,7 +365,7 @@ async def test_preference_agent_extracts_preferences_from_messages(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Verify unprocessed messages exist before running agent
-        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER)
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(unprocessed) == 1
 
         # Run PreferenceAgent directly
@@ -371,7 +377,7 @@ async def test_preference_agent_extracts_preferences_from_messages(
         assert any(p.topic == "guitar" for p in prefs), f"Expected 'guitar' in likes, got {prefs}"
 
         # Verify messages were marked processed
-        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER)
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(unprocessed) == 0, "Messages should be marked as processed"
 
 
@@ -398,7 +404,7 @@ async def test_preference_agent_skips_processed_messages(
         penny.db.mark_messages_processed([msg_id])
 
         # Verify it doesn't appear in unprocessed
-        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER)
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(unprocessed) == 0
 
         # Insert another message without marking it
@@ -410,6 +416,6 @@ async def test_preference_agent_skips_processed_messages(
         assert msg_id2 is not None
 
         # Only the new message should be unprocessed
-        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER)
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=PREFERENCE_BATCH_LIMIT)
         assert len(unprocessed) == 1
         assert unprocessed[0].id == msg_id2

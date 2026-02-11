@@ -415,7 +415,7 @@ class Database:
             messages.reverse()  # Return in chronological order (oldest first)
             return messages
 
-    def get_unprocessed_messages(self, sender: str, limit: int = 50) -> list[MessageLog]:
+    def get_unprocessed_messages(self, sender: str, limit: int) -> list[MessageLog]:
         """
         Get recent unprocessed non-reaction messages from a specific user.
 
@@ -441,7 +441,7 @@ class Database:
                 ).all()
             )
 
-    def get_user_reactions(self, sender: str, limit: int = 50) -> list[MessageLog]:
+    def get_user_reactions(self, sender: str, limit: int) -> list[MessageLog]:
         """
         Get recent unprocessed reactions from a specific user.
 
