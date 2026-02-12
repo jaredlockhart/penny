@@ -422,5 +422,8 @@ async def test_research_filters_markdown_from_llm_findings(
         # Verify table delimiters are NOT present
         assert "|---" not in report, "Table delimiters should be filtered from findings"
         assert "TL;DR" not in report, "Header text should not appear as bullets"
+        # Verify table rows are NOT present (lines starting with |)
+        assert "| Model |" not in report, "Table rows should be filtered from findings"
+        assert "| Z-Image |" not in report, "Table rows should be filtered from findings"
         # Verify actual findings ARE present
         assert "16GB GPU" in report or "16gb gpu" in report.lower()
