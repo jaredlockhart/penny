@@ -123,6 +123,7 @@ class Agent:
         prompt: str,
         history: list[tuple[str, str]] | None = None,
         use_tools: bool = True,
+        max_steps: int | None = None,
     ) -> ControllerResponse:
         """
         Run the agent with a prompt.
@@ -131,6 +132,7 @@ class Agent:
             prompt: The user message/prompt to respond to
             history: Optional conversation history as (role, content) tuples
             use_tools: Whether to enable tools for this run (default: True)
+            max_steps: Override max_steps for this run (default: use agent's max_steps)
 
         Returns:
             ControllerResponse with answer, thinking, and attachments
@@ -143,8 +145,9 @@ class Agent:
         source_urls: list[str] = []
         called_tools: set[str] = set()
 
-        for step in range(self.max_steps):
-            logger.info("Agent step %d/%d", step + 1, self.max_steps)
+        steps = max_steps if max_steps is not None else self.max_steps
+        for step in range(steps):
+            logger.info("Agent step %d/%d", step + 1, steps)
 
             try:
                 response = await self._ollama_client.chat(messages=messages, tools=tools)
