@@ -146,6 +146,9 @@ class ResearchAgent(Agent):
                     session.add(db_task)
                     session.commit()
                     logger.info("Research task %d completed and marked in DB", task.id)
+
+                    # Activate next pending task in this thread, if any
+                    self._activate_next_pending_task(session, task.thread_id)
         finally:
             typing_task.cancel()
             await self._channel.send_typing(recipient, False)
@@ -305,6 +308,23 @@ class ResearchAgent(Agent):
                 session.add(task)
                 session.commit()
                 logger.error("Research task %d marked as failed: %s", task_id, reason)
+
+                # Activate next pending task in this thread, if any
+                self._activate_next_pending_task(session, task.thread_id)
+
+    def _activate_next_pending_task(self, session: Session, thread_id: str) -> None:
+        """Activate the next pending research task in a thread."""
+        next_task = session.exec(
+            select(ResearchTask)
+            .where(ResearchTask.thread_id == thread_id, ResearchTask.status == "pending")
+            .order_by(ResearchTask.created_at.asc())  # type: ignore[unresolved-attribute]
+        ).first()
+
+        if next_task:
+            next_task.status = "in_progress"
+            session.add(next_task)
+            session.commit()
+            logger.info("Activated pending research task %d: %s", next_task.id, next_task.topic)
 
     def _find_recipient_for_thread(self, thread_id: str) -> str | None:
         """Find a recipient (user) who has sent messages in this thread."""
