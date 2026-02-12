@@ -78,10 +78,10 @@ async def test_research_command_lists_active_tasks(
 
 
 @pytest.mark.asyncio
-async def test_research_command_rejects_duplicate(
+async def test_research_command_queues_when_active(
     signal_server, test_config, mock_ollama, test_user_info, running_penny
 ):
-    """Test /research rejects duplicate in-progress research in same thread."""
+    """Test /research queues new research when one is already in-progress."""
     async with running_penny(test_config) as penny:
         # Send first research request
         await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
@@ -91,15 +91,21 @@ async def test_research_command_rejects_duplicate(
         await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
         response = await signal_server.wait_for_message(timeout=5.0)
 
-        # Should reject with message about existing research
-        assert "already researching" in response["message"].lower()
+        # Should confirm queueing
+        assert "queued" in response["message"].lower()
+        assert "quantum computing" in response["message"].lower()
         assert "ai trends" in response["message"].lower()
 
-        # Should only have one task in database
+        # Should have two tasks in database: one in_progress, one pending
         with penny.db.get_session() as session:
-            tasks = list(session.exec(select(ResearchTask)).all())
-            assert len(tasks) == 1
+            tasks = list(
+                session.exec(select(ResearchTask).order_by(ResearchTask.created_at.asc())).all()  # type: ignore[unresolved-attribute]
+            )
+            assert len(tasks) == 2
             assert tasks[0].topic == "AI trends"
+            assert tasks[0].status == "in_progress"
+            assert tasks[1].topic == "quantum computing"
+            assert tasks[1].status == "pending"
 
 
 @pytest.mark.asyncio
@@ -119,3 +125,39 @@ async def test_research_command_respects_config(
             tasks = list(session.exec(select(ResearchTask)).all())
             assert len(tasks) == 1
             assert tasks[0].max_iterations == 5
+
+
+@pytest.mark.asyncio
+async def test_research_command_lists_pending_tasks(
+    signal_server, test_config, mock_ollama, test_user_info, running_penny
+):
+    """Test /research without topic lists both active and pending tasks."""
+    async with running_penny(test_config) as penny:
+        # Start first research task
+        await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Queue second research task
+        await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # List all tasks
+        await signal_server.push_message(sender=TEST_SENDER, content="/research")
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        # Should list both tasks
+        assert "currently researching" in response["message"].lower()
+        assert "ai trends" in response["message"].lower()
+        assert "quantum computing" in response["message"].lower()
+        # First task should show progress or "Not Started"
+        # Second task should show "Queued"
+        assert "*queued*" in response["message"].lower()
+
+        # Verify both tasks exist with correct statuses
+        with penny.db.get_session() as session:
+            tasks = list(
+                session.exec(select(ResearchTask).order_by(ResearchTask.created_at.asc())).all()  # type: ignore[unresolved-attribute]
+            )
+            assert len(tasks) == 2
+            assert tasks[0].status == "in_progress"
+            assert tasks[1].status == "pending"

@@ -39,12 +39,12 @@ class ResearchCommand(Command):
         # If no topic provided, list active and pending research tasks
         if not topic:
             with Session(context.db.engine) as session:
-                # Get all in_progress tasks for this user/thread
+                # Get all in_progress and pending tasks for this user/thread
                 tasks = session.exec(
                     select(ResearchTask)
                     .where(
                         ResearchTask.thread_id == context.user,
-                        ResearchTask.status == "in_progress",
+                        ResearchTask.status.in_(["in_progress", "pending"]),  # type: ignore[unresolved-attribute]
                     )
                     .order_by(ResearchTask.created_at.asc())  # type: ignore[unresolved-attribute]
                 ).all()
@@ -62,8 +62,10 @@ class ResearchCommand(Command):
                         )
                     ).one()
 
-                    # Format progress: "7/10" or "*Not Started*"
-                    if iteration_count == 0:
+                    # Format progress: "7/10", "*Not Started*", or "*Queued*"
+                    if task.status == "pending":
+                        progress = "*Queued*"
+                    elif iteration_count == 0:
                         progress = "*Not Started*"
                     else:
                         progress = f"{iteration_count}/{task.max_iterations}"
@@ -86,9 +88,20 @@ class ResearchCommand(Command):
                 )
             ).first()
 
+            # If there's an active task, queue the new one as pending
             if existing:
+                task = ResearchTask(
+                    thread_id=thread_id,
+                    topic=topic,
+                    status="pending",
+                    max_iterations=max_iterations,
+                    created_at=datetime.now(UTC),
+                )
+                session.add(task)
+                session.commit()
+                logger.info("Queued research task %d: %s", task.id, topic)
                 return CommandResult(
-                    text=f"Already researching '{existing.topic}' — please wait for that to finish"
+                    text=f"Queued '{topic}' for research (currently researching '{existing.topic}')"
                 )
 
             # Create new research task
