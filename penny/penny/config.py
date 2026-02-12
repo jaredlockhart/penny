@@ -82,6 +82,7 @@ class Config:
 
     # Research agent configuration
     research_max_iterations: int = 10
+    research_output_max_length: int = 2000
 
     _db: Database | None = None
 

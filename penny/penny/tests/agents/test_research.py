@@ -75,6 +75,8 @@ async def test_research_agent_executes_iterations(
             assert task.status == "completed"
             assert task.completed_at is not None
             assert task.message_id is not None
+            # Verify message_id is a valid integer string (not "True"/"False")
+            assert task.message_id.isdigit(), f"Expected integer string, got: {task.message_id}"
 
             # Verify 3 iterations were stored
             iterations = list(
@@ -105,6 +107,7 @@ async def test_research_agent_no_channel(
         from penny.constants import SYSTEM_PROMPT
 
         research_agent = ResearchAgent(
+            config=config,
             system_prompt=SYSTEM_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
@@ -134,6 +137,7 @@ async def test_research_agent_no_tasks(
         from penny.constants import SYSTEM_PROMPT
 
         research_agent = ResearchAgent(
+            config=config,
             system_prompt=SYSTEM_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
@@ -156,15 +160,17 @@ async def test_research_agent_truncates_long_reports(
     test_user_info,
     running_penny,
 ):
-    """Test ResearchAgent truncates reports exceeding message length limits."""
+    """Test ResearchAgent truncates reports exceeding configured max length."""
+    # Set a very low max length to force truncation (300 chars)
     config = make_config(
         research_max_iterations=2,
+        research_output_max_length=300,
         idle_seconds=0.3,
         scheduler_tick_interval=0.05,
     )
 
-    # Generate very long responses to trigger truncation
-    long_finding = "A" * 1000  # 1000 chars of 'A'
+    # Generate long responses that will definitely exceed 300 chars when formatted
+    long_finding = "A" * 200  # 200 chars of 'A' per iteration
     responses = [f"Iteration 1: {long_finding}", f"Iteration 2: {long_finding}"]
     response_index = [0]
 
@@ -185,9 +191,11 @@ async def test_research_agent_truncates_long_reports(
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
 
         report = signal_server.outgoing_messages[-1]
-        # If report is long enough, should contain truncation notice
-        if len(report["message"]) > 1450:
-            assert "Report truncated" in report["message"]
+        # Report should be truncated to 300 chars max
+        assert len(report["message"]) <= 300, (
+            f"Report should be <= 300 chars, got {len(report['message'])}"
+        )
+        assert "Report truncated" in report["message"]
 
 
 @pytest.mark.asyncio
@@ -353,3 +361,69 @@ async def test_research_generates_proper_report_format(
         findings_pos = report.lower().find("key findings")
         sources_pos = report.lower().find("sources")
         assert summary_pos < findings_pos < sources_pos
+
+        # Verify markdown headers are stripped (Signal doesn't support ## headers)
+        assert "##" not in report, "Markdown headers should be stripped by prepare_outgoing()"
+
+
+@pytest.mark.asyncio
+async def test_research_filters_markdown_from_llm_findings(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test ResearchAgent filters out markdown headers and table delimiters from LLM findings.
+
+    Regression test for issue #195: LLM may include markdown headers and tables in findings,
+    which should not appear as bullet points in the final report.
+    """
+    config = make_config(
+        research_max_iterations=2,
+        idle_seconds=0.3,
+        scheduler_tick_interval=0.05,
+    )
+
+    # Simulate LLM returning findings with markdown headers and table delimiters
+    # (This is what caused issue #195)
+    responses = [
+        "## TL;DR – A solid starter kit\n"
+        "| Model | Size | VRAM |\n"
+        "|-------|------|------|\n"
+        "| Z-Image | 6B | 8GB |\n"
+        "Finding: Model runs on 16GB GPU",
+        "## Summary\nSecond iteration findings about performance",
+    ]
+    response_index = [0]
+
+    def markdown_handler(request: dict, count: int) -> dict:
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return mock_ollama._make_text_response(request, response)
+        return mock_ollama._make_text_response(request, "fallback")
+
+    mock_ollama.set_response_handler(markdown_handler)
+
+    async with running_penny(config):
+        await signal_server.push_message(sender=TEST_SENDER, content="/research GPU models")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Wait for report
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
+
+        report = signal_server.outgoing_messages[-1]["message"]
+
+        # Verify markdown headers are NOT present (neither standalone nor as bullets)
+        assert "##" not in report, "Markdown headers should be filtered from findings"
+        # Verify table delimiters are NOT present
+        assert "|---" not in report, "Table delimiters should be filtered from findings"
+        assert "TL;DR" not in report, "Header text should not appear as bullets"
+        # Verify table rows are NOT present (lines starting with |)
+        assert "| Model |" not in report, "Table rows should be filtered from findings"
+        assert "| Z-Image |" not in report, "Table rows should be filtered from findings"
+        # Verify actual findings ARE present
+        assert "16GB GPU" in report or "16gb gpu" in report.lower()

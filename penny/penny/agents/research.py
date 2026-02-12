@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.agents.models import MessageRole
+from penny.config import Config
 from penny.constants import RESEARCH_PROMPT
 from penny.database.models import ResearchIteration, ResearchTask
 
@@ -24,9 +25,10 @@ logger = logging.getLogger(__name__)
 class ResearchAgent(Agent):
     """Agent for conducting autonomous multi-iteration research."""
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, config: Config, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._channel: MessageChannel | None = None
+        self._config = config
 
     @property
     def name(self) -> str:
@@ -106,13 +108,14 @@ class ResearchAgent(Agent):
         # Generate report
         report = self._generate_report(task.topic, iterations)
 
-        # Truncate if exceeds channel limits (2000 chars for Discord, ~64KB for Signal)
-        # We'll use a conservative 1500 char limit to ensure we fit even after formatting
-        if len(report) > 1500:
-            report = (
-                report[:1450]
-                + "\n\n[Report truncated due to length limits — reply to request full details]"
-            )
+        # Truncate if exceeds configured max length
+        max_length = self._config.research_output_max_length
+        truncation_message = (
+            "\n\n[Report truncated due to length limits — reply to request full details]"
+        )
+        if len(report) > max_length:
+            truncate_at = max_length - len(truncation_message)
+            report = report[:truncate_at] + truncation_message
 
         # Find recipient from thread
         recipient = self._find_recipient_for_thread(task.thread_id)
@@ -243,6 +246,12 @@ class ResearchAgent(Agent):
             # Look for bullet points in the findings
             for line in finding.split("\n"):
                 stripped = line.strip()
+                # Skip markdown headers (e.g., ## TL;DR)
+                if stripped.startswith("#"):
+                    continue
+                # Skip ALL markdown table rows (any line starting with |)
+                if stripped.startswith("|"):
+                    continue
                 if stripped.startswith("•") or stripped.startswith("-") or stripped.startswith("*"):
                     report_lines.append(stripped)
                 elif stripped and not stripped.startswith("http"):
@@ -258,11 +267,29 @@ class ResearchAgent(Agent):
 
     def _summarize_findings(self, findings: list[str]) -> str:
         """Generate 2-3 sentence summary from all findings."""
-        # Simple heuristic: take first sentence from first 3 findings
-        summary_sentences = []
+        # Filter out markdown headers and tables from findings before summarizing
+        cleaned_findings = []
         for finding in findings[:3]:
+            # Remove markdown headers and table lines
+            cleaned_lines = []
+            for line in finding.split("\n"):
+                stripped = line.strip()
+                # Skip markdown headers
+                if stripped.startswith("#"):
+                    continue
+                # Skip ALL markdown table rows (any line starting with |)
+                if stripped.startswith("|"):
+                    continue
+                if stripped:
+                    cleaned_lines.append(stripped)
+            if cleaned_lines:
+                cleaned_findings.append(" ".join(cleaned_lines))
+
+        # Take first sentence from each cleaned finding
+        summary_sentences = []
+        for cleaned in cleaned_findings:
             # Get first sentence (split on period followed by space or newline)
-            first_sentence = finding.split(". ")[0]
+            first_sentence = cleaned.split(". ")[0]
             if first_sentence:
                 summary_sentences.append(first_sentence.strip())
 

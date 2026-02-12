@@ -142,6 +142,7 @@ class Penny:
         )
 
         self.research_agent = ResearchAgent(
+            config=config,
             system_prompt=RESEARCH_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,

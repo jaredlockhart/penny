@@ -99,4 +99,11 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {
         default_value=10,
         validator=_validate_positive_int,
     ),
+    "RESEARCH_OUTPUT_MAX_LENGTH": ConfigParam(
+        key="RESEARCH_OUTPUT_MAX_LENGTH",
+        description="Max length of research report output in characters",
+        type=int,
+        default_value=2000,
+        validator=_validate_positive_int,
+    ),
 }

@@ -194,3 +194,69 @@ async def test_undislike_no_args(signal_server, test_config, mock_ollama, runnin
 
         # Should show usage message
         assert "Please specify what to remove" in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_unlike_by_number(signal_server, test_config, mock_ollama, running_penny):
+    """Test /unlike <number> removes a like by list position."""
+    async with running_penny(test_config) as _penny:
+        # Add multiple likes
+        await signal_server.push_message(sender=TEST_SENDER, content="/like space")
+        await signal_server.wait_for_message(timeout=5.0)
+        await signal_server.push_message(sender=TEST_SENDER, content="/like video games")
+        await signal_server.wait_for_message(timeout=5.0)
+        await signal_server.push_message(sender=TEST_SENDER, content="/like cats")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Remove by number (2 = video games)
+        await signal_server.push_message(sender=TEST_SENDER, content="/unlike 2")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "I removed video games from your likes" in response["message"]
+
+        # Verify video games is gone but others remain
+        await signal_server.push_message(sender=TEST_SENDER, content="/like")
+        response2 = await signal_server.wait_for_message(timeout=5.0)
+        assert "1. space" in response2["message"]
+        assert "2. cats" in response2["message"]
+        assert "video games" not in response2["message"]
+
+
+@pytest.mark.asyncio
+async def test_unlike_by_number_out_of_range(
+    signal_server, test_config, mock_ollama, running_penny
+):
+    """Test /unlike with invalid number shows error."""
+    async with running_penny(test_config) as _penny:
+        # Add one like
+        await signal_server.push_message(sender=TEST_SENDER, content="/like space")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Try to unlike item 5 (out of range)
+        await signal_server.push_message(sender=TEST_SENDER, content="/unlike 5")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "doesn't match any of your likes" in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_undislike_by_number(signal_server, test_config, mock_ollama, running_penny):
+    """Test /undislike <number> removes a dislike by list position."""
+    async with running_penny(test_config) as _penny:
+        # Add multiple dislikes
+        await signal_server.push_message(sender=TEST_SENDER, content="/dislike sports")
+        await signal_server.wait_for_message(timeout=5.0)
+        await signal_server.push_message(sender=TEST_SENDER, content="/dislike bananas")
+        await signal_server.wait_for_message(timeout=5.0)
+        await signal_server.push_message(sender=TEST_SENDER, content="/dislike ai music")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Remove by number (1 = sports)
+        await signal_server.push_message(sender=TEST_SENDER, content="/undislike 1")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "I removed sports from your dislikes" in response["message"]
+
+        # Verify sports is gone but others remain
+        await signal_server.push_message(sender=TEST_SENDER, content="/dislike")
+        response2 = await signal_server.wait_for_message(timeout=5.0)
+        assert "1. bananas" in response2["message"]
+        assert "2. ai music" in response2["message"]
+        assert "sports" not in response2["message"]
