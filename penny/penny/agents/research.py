@@ -284,14 +284,15 @@ class ResearchAgent(Agent):
             ]
         )
 
-        # Extract and clean the summary
+        # Extract the summary
         summary = response.message.content.strip()
 
-        # Remove any markdown formatting that might have slipped through
-        summary = summary.replace("**", "").replace("##", "").replace("- ", "")
+        # Cap at configured max length
+        max_length = self._config.research_output_max_length
+        if len(summary) > max_length:
+            summary = summary[:max_length].rsplit(" ", 1)[0] + "..."
 
-        # Cap at 300 chars
-        return summary[:300]
+        return summary
 
     def _mark_failed(self, task_id: int, reason: str) -> None:
         """Mark a research task as failed."""
