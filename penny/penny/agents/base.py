@@ -89,13 +89,57 @@ class Agent:
         prompt: str,
         history: list[tuple[str, str]] | None = None,
         system_prompt: str | None = None,
+        sender: str | None = None,
     ) -> list[dict]:
-        """Build message list for Ollama chat API."""
+        """Build message list for Ollama chat API.
+
+        Args:
+            prompt: The user message/prompt to respond to
+            history: Optional conversation history as (role, content) tuples
+            system_prompt: Optional system prompt override
+            sender: Optional user identifier for personality injection
+
+        Returns:
+            List of message dicts for Ollama chat API
+        """
         messages = []
 
         effective_prompt = system_prompt or self.system_prompt
         now = datetime.now(UTC).strftime("%A, %B %d, %Y at %I:%M %p UTC")
-        system_content = f"Current date and time: {now}\n\n{effective_prompt}"
+
+        # Build system prompt with personality injection
+        system_parts = [f"Current date and time: {now}", ""]
+
+        # Check if user has custom personality prompt
+        personality_text = None
+        if sender:
+            personality = self.db.get_personality_prompt(sender)
+            if personality:
+                personality_text = personality.prompt_text
+
+        # Inject personality between base identity and agent-specific prompt
+        # The system_prompt already includes PENNY_IDENTITY, so we need to reconstruct it
+        from penny.constants import PENNY_IDENTITY
+
+        # Start with base Penny identity
+        system_parts.append(PENNY_IDENTITY)
+
+        # Add custom personality if it exists
+        if personality_text:
+            system_parts.append("")
+            system_parts.append(personality_text)
+
+        # Add agent-specific prompt (remove PENNY_IDENTITY if present)
+        agent_prompt = effective_prompt
+        if agent_prompt.startswith(PENNY_IDENTITY):
+            # Remove the base identity since we already added it
+            agent_prompt = agent_prompt[len(PENNY_IDENTITY) :].lstrip("\n")
+
+        if agent_prompt:
+            system_parts.append("")
+            system_parts.append(agent_prompt)
+
+        system_content = "\n".join(system_parts)
         messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content).to_dict())
 
         if history:
@@ -129,6 +173,7 @@ class Agent:
         use_tools: bool = True,
         max_steps: int | None = None,
         system_prompt: str | None = None,
+        sender: str | None = None,
     ) -> ControllerResponse:
         """
         Run the agent with a prompt.
@@ -139,11 +184,12 @@ class Agent:
             use_tools: Whether to enable tools for this run (default: True)
             max_steps: Override max_steps for this run (default: use agent's max_steps)
             system_prompt: Override system prompt for this run (default: use agent's prompt)
+            sender: Optional user identifier for personality injection
 
         Returns:
             ControllerResponse with answer, thinking, and attachments
         """
-        messages = self._build_messages(prompt, history, system_prompt)
+        messages = self._build_messages(prompt, history, system_prompt, sender)
         tools = self._tool_registry.get_ollama_tools() if use_tools else None
         logger.debug("Using %d tools", len(tools) if tools else 0)
 

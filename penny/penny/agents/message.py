@@ -91,6 +91,7 @@ class MessageAgent(Agent):
             use_tools=not has_images,
             max_steps=1 if has_images else None,
             system_prompt=VISION_RESPONSE_PROMPT if has_images else None,
+            sender=sender,
         )
 
         return parent_id, response

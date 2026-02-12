@@ -152,6 +152,68 @@ class MessageChannel(ABC):
         """
         return text
 
+    async def prepare_outgoing_with_personality(self, text: str, user: str) -> str:
+        """
+        Apply personality transformation to outgoing text.
+
+        If the user has a custom personality prompt set, this method sends the text
+        through an LLM to transform it according to that personality.
+
+        Args:
+            text: The original message text
+            user: User identifier (phone number or Discord user ID)
+
+        Returns:
+            Transformed text if custom personality exists, original text otherwise
+        """
+        # Check if user has a custom personality
+        personality = self._db.get_personality_prompt(user)
+        if not personality:
+            return text
+
+        # Import here to avoid circular dependency
+        from penny.ollama import OllamaClient
+
+        # Create a lightweight Ollama client for the transformation
+        if not self._config:
+            logger.warning("Config not set, skipping personality transform")
+            return text
+
+        ollama_client = OllamaClient(
+            api_url=self._config.ollama_api_url,
+            model=self._config.ollama_foreground_model,
+            db=self._db,
+            max_retries=self._config.ollama_max_retries,
+            retry_delay=self._config.ollama_retry_delay,
+        )
+
+        # Build personality transform prompt
+        system_prompt = (
+            f"You are applying a personality filter. "
+            f"Transform the following message to match this personality: "
+            f"{personality.prompt_text}\n\n"
+            f"IMPORTANT: Preserve the core meaning and information. "
+            f"Only adjust tone, style, and phrasing."
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": text,
+            },
+        ]
+
+        try:
+            response = await ollama_client.chat(messages=messages)
+            return response.content.strip()
+        except Exception as e:
+            logger.error("Failed to apply personality transform: %s", e)
+            # Fall back to original text if transformation fails
+            return text
+
     @abstractmethod
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """
@@ -215,7 +277,10 @@ class MessageChannel(ABC):
         Returns:
             True if send was successful, False otherwise
         """
-        prepared = self.prepare_outgoing(content)
+        # Apply personality transformation
+        transformed = await self.prepare_outgoing_with_personality(content, recipient)
+        # Apply channel-specific formatting
+        prepared = self.prepare_outgoing(transformed)
         external_id = await self.send_message(
             recipient, prepared, attachments=None, quote_message=None
         )
@@ -242,9 +307,11 @@ class MessageChannel(ABC):
         Returns:
             Database message ID if send was successful, None otherwise
         """
-        # Prepare content for this channel (formatting, escaping, etc.)
+        # Apply personality transformation
+        transformed = await self.prepare_outgoing_with_personality(content, recipient)
+        # Apply channel-specific formatting
         # We log the prepared content so quote matching works correctly
-        prepared = self.prepare_outgoing(content)
+        prepared = self.prepare_outgoing(transformed)
         message_id = self._db.log_message(
             MessageDirection.OUTGOING,
             self.sender_id,
