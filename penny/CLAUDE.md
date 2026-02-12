@@ -241,6 +241,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **Host networking**: Docker container uses --network host for simplicity (all services on localhost)
 - **Pydantic everywhere**: All external data validated with Pydantic models
 - **Table-to-bullets**: Markdown tables converted to bullet points in Python (saves model tokens vs. prompting "no tables")
+- **Normal casing**: All user-facing strings (status messages, error messages, acknowledgments) use standard sentence casing — not all lowercase
 
 ## Dependencies
 

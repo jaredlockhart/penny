@@ -136,5 +136,5 @@ class MessageAgent(Agent):
             logger.info("Created continuation research task %d", new_task.id)
 
         return ControllerResponse(
-            answer=f"ok, continuing research with focus: {content}. i'll post results when done"
+            answer=f"Ok, continuing research with focus: {content}. I'll post results when done."
         )

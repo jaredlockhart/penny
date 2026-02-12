@@ -124,7 +124,7 @@ GITHUB_REPO_NAME = "penny"
 # Vision constants
 VISION_AUTO_DESCRIBE_PROMPT = "Describe this image in detail."
 VISION_NOT_CONFIGURED_MESSAGE = (
-    "i can see you sent an image but i don't have vision configured right now"
+    "I can see you sent an image but I don't have vision configured right now."
 )
 VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
 VISION_IMAGE_CONTEXT = "user said '{user_text}' and included an image of: {caption}"
