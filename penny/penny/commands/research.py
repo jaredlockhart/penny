@@ -62,12 +62,11 @@ class ResearchCommand(Command):
                         )
                     ).one()
 
-                    # Format progress: "7/10", "*Not Started*", or "*Queued*"
+                    # Format progress: "7/10" or "*Queued*"
                     if task.status == "pending":
                         progress = "*Queued*"
-                    elif iteration_count == 0:
-                        progress = "*Not Started*"
                     else:
+                        # in_progress tasks always show N/M format (even if N=0)
                         progress = f"{iteration_count}/{task.max_iterations}"
 
                     lines.append(f"* {task.topic} {progress}")
