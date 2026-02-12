@@ -122,6 +122,7 @@ class Agent:
         self,
         prompt: str,
         history: list[tuple[str, str]] | None = None,
+        use_tools: bool = True,
     ) -> ControllerResponse:
         """
         Run the agent with a prompt.
@@ -129,12 +130,13 @@ class Agent:
         Args:
             prompt: The user message/prompt to respond to
             history: Optional conversation history as (role, content) tuples
+            use_tools: Whether to enable tools for this run (default: True)
 
         Returns:
             ControllerResponse with answer, thinking, and attachments
         """
         messages = self._build_messages(prompt, history)
-        tools = self._tool_registry.get_ollama_tools()
+        tools = self._tool_registry.get_ollama_tools() if use_tools else []
         logger.debug("Using %d tools", len(tools))
 
         attachments: list[str] = []

@@ -23,19 +23,14 @@ async def test_image_with_text_captions_then_forwards(
     test_user_info,
     running_penny,
 ):
-    """Image + text: vision model captions, then foreground model responds."""
+    """Image + text: vision model captions, then foreground model responds without search."""
     config = make_config(ollama_vision_model="test-vision-model")
 
     def handler(request, count):
         if count == 1:
             # Vision model captioning call
             return mock_ollama._make_text_response(request, "a cute orange cat")
-        if count == 2:
-            # Foreground model: tool call
-            return mock_ollama._make_tool_call_response(
-                request, "search", {"query": "cute orange cat"}
-            )
-        # Foreground model: final response
+        # Foreground model: direct response without tool call
         return mock_ollama._make_text_response(request, "that's a cute cat! 🐱")
 
     mock_ollama.set_response_handler(handler)
@@ -60,7 +55,7 @@ async def test_image_with_text_captions_then_forwards(
         assert any("images" in m for m in user_msgs)
         assert any(VISION_AUTO_DESCRIBE_PROMPT in m.get("content", "") for m in user_msgs)
 
-        # Second call: foreground model with combined text prompt (no images)
+        # Second call: foreground model with combined text prompt (no images, no tools)
         foreground_request = mock_ollama.requests[1]
         assert foreground_request["model"] == "test-model"
         user_msgs = [m for m in foreground_request["messages"] if m["role"] == "user"]
@@ -70,6 +65,8 @@ async def test_image_with_text_captions_then_forwards(
             user_text="what's in this photo?", caption="a cute orange cat"
         )
         assert any(expected in m.get("content", "") for m in user_msgs)
+        # Verify no tools were provided (empty tools list means no search)
+        assert "tools" not in foreground_request or len(foreground_request.get("tools", [])) == 0
 
 
 @pytest.mark.asyncio
@@ -81,17 +78,14 @@ async def test_image_without_text_captions_then_forwards(
     test_user_info,
     running_penny,
 ):
-    """Image with no text: vision model captions, forwarded as image-only context."""
+    """Image with no text: vision model captions, forwarded without search."""
     config = make_config(ollama_vision_model="test-vision-model")
 
     def handler(request, count):
         if count == 1:
             # Vision model captioning
             return mock_ollama._make_text_response(request, "a sunset over the ocean")
-        if count == 2:
-            return mock_ollama._make_tool_call_response(
-                request, "search", {"query": "sunset ocean"}
-            )
+        # Foreground model: direct response without tool call
         return mock_ollama._make_text_response(request, "beautiful sunset! 🌅")
 
     mock_ollama.set_response_handler(handler)
@@ -112,13 +106,15 @@ async def test_image_without_text_captions_then_forwards(
         caption_request = mock_ollama.requests[0]
         assert caption_request["model"] == "test-vision-model"
 
-        # Second call: foreground model with image-only context (no images)
+        # Second call: foreground model with image-only context (no images, no tools)
         foreground_request = mock_ollama.requests[1]
         assert foreground_request["model"] == "test-model"
         user_msgs = [m for m in foreground_request["messages"] if m["role"] == "user"]
         assert not any("images" in m for m in user_msgs)
         expected = VISION_IMAGE_ONLY_CONTEXT.format(caption="a sunset over the ocean")
         assert any(expected in m.get("content", "") for m in user_msgs)
+        # Verify no tools were provided
+        assert "tools" not in foreground_request or len(foreground_request.get("tools", [])) == 0
 
 
 @pytest.mark.asyncio
