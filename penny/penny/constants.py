@@ -93,6 +93,33 @@ PREFERENCE_PROMPT = (
     "Messages:\n"
 )
 
+# Email command constants
+JMAP_SESSION_URL = "https://api.fastmail.com/jmap/session"
+JMAP_REQUEST_TIMEOUT = 30.0
+EMAIL_BODY_MAX_LENGTH = 4000
+EMAIL_NO_QUERY_TEXT = "Please ask a question about your email. Usage: /email <question>"
+
+EMAIL_SYSTEM_PROMPT = (
+    f"{PENNY_IDENTITY}\n\n"
+    "You are searching the user's email to answer their question. "
+    "You have two tools: search_emails and read_emails.\n\n"
+    "Strategy:\n"
+    "1. Search for relevant emails using search_emails\n"
+    "2. Read promising emails with read_emails (pass all relevant IDs at once)\n"
+    "3. If needed, refine your search and read more emails\n"
+    "4. Synthesize a clear, concise answer\n\n"
+    "Be concise. Include specific dates, names, and details. "
+    "Keep it relaxed, like texting a friend."
+)
+
+EMAIL_SUMMARIZE_PROMPT = (
+    'The user asked: "{query}"\n\n'
+    "Extract the key information from these emails that is relevant to the user's question. "
+    "Be concise — include specific dates, names, amounts, and actionable details. "
+    "Omit irrelevant content like headers, footers, and marketing text.\n\n"
+    "Emails:\n{emails}"
+)
+
 # Schedule command response messages
 SCHEDULE_NO_TASKS = "You don't have any scheduled tasks yet 📅"
 SCHEDULE_NEED_TIMEZONE = (

@@ -106,6 +106,7 @@ class Penny:
             message_agent_factory=create_message_agent,
             github_api=github_api,
             ollama_image_model=config.ollama_image_model,
+            fastmail_api_token=config.fastmail_api_token,
         )
 
         self.followup_agent = FollowupAgent(
