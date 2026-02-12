@@ -364,3 +364,63 @@ async def test_research_generates_proper_report_format(
 
         # Verify markdown headers are stripped (Signal doesn't support ## headers)
         assert "##" not in report, "Markdown headers should be stripped by prepare_outgoing()"
+
+
+@pytest.mark.asyncio
+async def test_research_filters_markdown_from_llm_findings(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test ResearchAgent filters out markdown headers and table delimiters from LLM findings.
+
+    Regression test for issue #195: LLM may include markdown headers and tables in findings,
+    which should not appear as bullet points in the final report.
+    """
+    config = make_config(
+        research_max_iterations=2,
+        idle_seconds=0.3,
+        scheduler_tick_interval=0.05,
+    )
+
+    # Simulate LLM returning findings with markdown headers and table delimiters
+    # (This is what caused issue #195)
+    responses = [
+        "## TL;DR – A solid starter kit\n"
+        "| Model | Size | VRAM |\n"
+        "|-------|------|------|\n"
+        "| Z-Image | 6B | 8GB |\n"
+        "Finding: Model runs on 16GB GPU",
+        "## Summary\nSecond iteration findings about performance",
+    ]
+    response_index = [0]
+
+    def markdown_handler(request: dict, count: int) -> dict:
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return mock_ollama._make_text_response(request, response)
+        return mock_ollama._make_text_response(request, "fallback")
+
+    mock_ollama.set_response_handler(markdown_handler)
+
+    async with running_penny(config):
+        await signal_server.push_message(sender=TEST_SENDER, content="/research GPU models")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Wait for report
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
+
+        report = signal_server.outgoing_messages[-1]["message"]
+
+        # Verify markdown headers are NOT present (neither standalone nor as bullets)
+        assert "##" not in report, "Markdown headers should be filtered from findings"
+        # Verify table delimiters are NOT present
+        assert "|---" not in report, "Table delimiters should be filtered from findings"
+        assert "TL;DR" not in report, "Header text should not appear as bullets"
+        # Verify actual findings ARE present
+        assert "16GB GPU" in report or "16gb gpu" in report.lower()
