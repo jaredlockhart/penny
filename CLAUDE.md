@@ -116,6 +116,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 **API Keys**:
 - `PERPLEXITY_API_KEY`: API key for web search
 - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
+- `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email` command)
 
 **GitHub App** (required for agent containers):
 - `GITHUB_APP_ID`: GitHub App ID for authenticated API access
@@ -124,6 +125,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 
 **Behavior**:
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
+- `EMAIL_MAX_STEPS`: Max agent loop steps for `/email` command (default: 5)
 - `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 300)
 - `FOLLOWUP_MIN_SECONDS`: Minimum random delay after idle for followup (default: 3600)
 - `FOLLOWUP_MAX_SECONDS`: Maximum random delay after idle for followup (default: 7200)

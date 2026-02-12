@@ -86,6 +86,10 @@ class Config:
     research_max_iterations: int = 10
     research_output_max_length: int = 2000
 
+    # Fastmail JMAP configuration (optional, enables /email command)
+    fastmail_api_token: str | None = None
+    email_max_steps: int = 5
+
     _db: Database | None = None
 
     @classmethod
@@ -158,6 +162,9 @@ class Config:
         github_app_private_key_path = os.getenv("GITHUB_APP_PRIVATE_KEY_PATH")  # Optional
         github_app_installation_id = os.getenv("GITHUB_APP_INSTALLATION_ID")  # Optional
 
+        # Fastmail JMAP configuration (optional, needed for /email command)
+        fastmail_api_token = os.getenv("FASTMAIL_API_TOKEN")  # Optional
+
         # Global idle threshold for all background tasks
         idle_seconds = float(os.getenv("IDLE_SECONDS", "300"))
 
@@ -200,6 +207,7 @@ class Config:
             discovery_min_seconds=discovery_min_seconds,
             discovery_max_seconds=discovery_max_seconds,
             maintenance_interval_seconds=maintenance_interval_seconds,
+            fastmail_api_token=fastmail_api_token,
         )
 
         # Store database reference for runtime config lookups
