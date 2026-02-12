@@ -427,3 +427,98 @@ async def test_research_filters_markdown_from_llm_findings(
         assert "| Z-Image |" not in report, "Table rows should be filtered from findings"
         # Verify actual findings ARE present
         assert "16GB GPU" in report or "16gb gpu" in report.lower()
+
+
+@pytest.mark.asyncio
+async def test_research_agent_activates_pending_task(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test ResearchAgent activates next pending task when current one completes.
+
+    Regression test for issue #207: queued research tasks should auto-activate.
+    """
+    config = make_config(
+        research_max_iterations=2,
+        idle_seconds=0.3,
+        scheduler_tick_interval=0.05,
+    )
+
+    # Track which task we're on based on request count
+    response_index = [0]
+    first_task_responses = [
+        "Iteration 1: AI is transforming industries",
+        "Iteration 2: Machine learning powers AI",
+    ]
+    second_task_responses = [
+        "Iteration 1: Quantum computers use qubits",
+        "Iteration 2: Quantum entanglement enables speedup",
+    ]
+
+    def multi_task_handler(request: dict, count: int) -> dict:
+        # First 2 calls are for first task
+        if response_index[0] < len(first_task_responses):
+            response = first_task_responses[response_index[0]]
+            response_index[0] += 1
+            return mock_ollama._make_text_response(request, response)
+        # Next 2 calls are for second task
+        idx = response_index[0] - len(first_task_responses)
+        if idx < len(second_task_responses):
+            response = second_task_responses[idx]
+            response_index[0] += 1
+            return mock_ollama._make_text_response(request, response)
+        return mock_ollama._make_text_response(request, "fallback")
+
+    mock_ollama.set_response_handler(multi_task_handler)
+
+    async with running_penny(config) as penny:
+        # Start first research task
+        await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Queue second research task while first is in progress
+        await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "queued" in response["message"].lower()
+
+        # Verify both tasks exist in DB with correct statuses
+        with penny.db.get_session() as session:
+            tasks = list(
+                session.exec(select(ResearchTask).order_by(ResearchTask.created_at.asc())).all()  # type: ignore[unresolved-attribute]
+            )
+            assert len(tasks) == 2
+            assert tasks[0].topic == "AI trends"
+            assert tasks[0].status == "in_progress"
+            assert tasks[1].topic == "quantum computing"
+            assert tasks[1].status == "pending"
+
+        # Wait for first task to complete and second to auto-activate
+        # Need 2 confirmations + 2 reports = 4 messages
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 4, timeout=50.0)
+
+        # Verify both tasks completed
+        with penny.db.get_session() as session:
+            tasks = list(
+                session.exec(select(ResearchTask).order_by(ResearchTask.created_at.asc())).all()  # type: ignore[unresolved-attribute]
+            )
+            assert len(tasks) == 2
+            # First task should be completed
+            assert tasks[0].status == "completed"
+            assert tasks[0].completed_at is not None
+            # Second task should have been activated and completed
+            assert tasks[1].status == "completed"
+            assert tasks[1].completed_at is not None
+
+        # Verify both reports were posted
+        messages = signal_server.outgoing_messages
+        reports = [msg for msg in messages if "research complete" in msg["message"].lower()]
+        assert len(reports) == 2
+        # First report should be about AI trends
+        assert "ai trends" in reports[0]["message"].lower()
+        # Second report should be about quantum computing
+        assert "quantum computing" in reports[1]["message"].lower()
