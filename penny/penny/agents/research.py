@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from penny.agents.base import Agent
 from penny.agents.models import MessageRole
 from penny.config import Config
-from penny.constants import RESEARCH_PROMPT
+from penny.constants import RESEARCH_PROMPT, RESEARCH_SUMMARY_PROMPT
 from penny.database.models import ResearchIteration, ResearchTask
 
 if TYPE_CHECKING:
@@ -106,7 +106,7 @@ class ResearchAgent(Agent):
             return
 
         # Generate report
-        report = self._generate_report(task.topic, iterations)
+        report = await self._generate_report(task.topic, iterations)
 
         # Truncate if exceeds configured max length
         max_length = self._config.research_output_max_length
@@ -223,7 +223,7 @@ class ResearchAgent(Agent):
                 sources.append(line.strip())
         return sources
 
-    def _generate_report(self, topic: str, iterations: list[ResearchIteration]) -> str:
+    async def _generate_report(self, topic: str, iterations: list[ResearchIteration]) -> str:
         """Generate final markdown report from all iterations."""
         # Collect all findings and deduplicate sources
         all_findings: list[str] = []
@@ -234,12 +234,15 @@ class ResearchAgent(Agent):
             sources_list = json.loads(iteration.sources)
             all_sources.update(sources_list)
 
+        # Generate executive summary using LLM
+        summary = await self._generate_summary(all_findings)
+
         # Build report
         report_lines = [
             f"research complete: {topic}",
             "",
             "## summary",
-            self._summarize_findings(all_findings),
+            summary,
             "",
             "## key findings",
         ]
@@ -268,35 +271,28 @@ class ResearchAgent(Agent):
 
         return "\n".join(report_lines)
 
-    def _summarize_findings(self, findings: list[str]) -> str:
-        """Generate 2-3 sentence summary from all findings."""
-        # Filter out markdown headers and tables from findings before summarizing
-        cleaned_findings = []
-        for finding in findings[:3]:
-            # Remove markdown headers and table lines
-            cleaned_lines = []
-            for line in finding.split("\n"):
-                stripped = line.strip()
-                # Skip markdown headers
-                if stripped.startswith("#"):
-                    continue
-                # Skip ALL markdown table rows (any line starting with |)
-                if stripped.startswith("|"):
-                    continue
-                if stripped:
-                    cleaned_lines.append(stripped)
-            if cleaned_lines:
-                cleaned_findings.append(" ".join(cleaned_lines))
+    async def _generate_summary(self, findings: list[str]) -> str:
+        """Generate executive summary using LLM to synthesize all findings."""
+        # Combine all findings into a single text block for the LLM
+        combined_findings = "\n\n---\n\n".join(findings)
 
-        # Take first sentence from each cleaned finding
-        summary_sentences = []
-        for cleaned in cleaned_findings:
-            # Get first sentence (split on period followed by space or newline)
-            first_sentence = cleaned.split(". ")[0]
-            if first_sentence:
-                summary_sentences.append(first_sentence.strip())
+        # Call LLM to generate summary (no tools, no history)
+        response = await self._ollama_client.chat(
+            messages=[
+                {"role": "system", "content": RESEARCH_SUMMARY_PROMPT},
+                {"role": "user", "content": f"Research findings:\n\n{combined_findings}"},
+            ]
+        )
 
-        return " ".join(summary_sentences)[:300]  # Cap at 300 chars
+        # Extract the summary
+        summary = response.message.content.strip()
+
+        # Cap at configured max length
+        max_length = self._config.research_output_max_length
+        if len(summary) > max_length:
+            summary = summary[:max_length].rsplit(" ", 1)[0] + "..."
+
+        return summary
 
     def _mark_failed(self, task_id: int, reason: str) -> None:
         """Mark a research task as failed."""

@@ -522,3 +522,90 @@ async def test_research_agent_activates_pending_task(
         assert "ai trends" in reports[0]["message"].lower()
         # Second report should be about quantum computing
         assert "quantum computing" in reports[1]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_research_suspended_during_foreground_work(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test research agent is suspended while processing foreground messages.
+
+    Regression test for issue #216: research tasks should not run concurrently
+    with user messages to avoid resource contention.
+    """
+    config = make_config(
+        research_max_iterations=5,
+        idle_seconds=0.3,
+        scheduler_tick_interval=0.05,
+    )
+
+    # Track when research iterations vs user messages are processed
+    call_log = []
+    response_index = [0]
+    iteration_responses = [
+        "Iteration 1: finding one",
+        "Iteration 2: finding two",
+        "Iteration 3: finding three",
+        "Iteration 4: finding four",
+        "Iteration 5: finding five",
+    ]
+
+    def track_handler(request: dict, count: int) -> dict:
+        # Identify if this is a research iteration or user message
+        if any("research" in msg.get("content", "").lower() for msg in request.get("messages", [])):
+            call_log.append("research")
+            if response_index[0] < len(iteration_responses):
+                response = iteration_responses[response_index[0]]
+                response_index[0] += 1
+                return mock_ollama._make_text_response(request, response)
+            return mock_ollama._make_text_response(request, "extra iteration")
+        else:
+            call_log.append("message")
+            return mock_ollama._make_text_response(request, "hi there")
+
+    mock_ollama.set_response_handler(track_handler)
+
+    async with running_penny(config):
+        # Start research task
+        await signal_server.push_message(sender=TEST_SENDER, content="/research test topic")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Wait for at least one research iteration to start
+        await wait_until(lambda: "research" in call_log, timeout=10.0)
+
+        # Send a user message while research is ongoing
+        await signal_server.push_message(sender=TEST_SENDER, content="hello")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Send another message shortly after
+        await signal_server.push_message(sender=TEST_SENDER, content="how are you")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Wait for research to complete
+        # Need to see the research report (2 user responses + 1 confirmation + 1 report)
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 4, timeout=30.0)
+
+        # Analyze call log: look for patterns where message calls are interrupted by research
+        # The call log should show message processing happening in uninterrupted sequences
+        # Expected pattern: [research*, message+, research*, message+, research*]
+        # NOT allowed: [message, research, message] (research interrupting message processing)
+
+        for i in range(1, len(call_log) - 1):
+            # Check if this is a research call sandwiched between message calls
+            if (
+                call_log[i] == "research"
+                and call_log[i - 1] == "message"
+                and call_log[i + 1] == "message"
+            ):
+                pytest.fail(
+                    f"Research call at index {i} interrupted message processing. "
+                    f"Research should be suspended during foreground work. "
+                    f"Context: {call_log[max(0, i - 2) : min(len(call_log), i + 3)]}, "
+                    f"Full log: {call_log}"
+                )
