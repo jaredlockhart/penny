@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.database.models import ResearchTask
+from penny.database.models import ResearchIteration, ResearchTask
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,9 @@ class ResearchCommand(Command):
     help_text = (
         "Start an autonomous research task that performs multiple searches "
         "and produces a report.\n\n"
-        "**Usage**: `/research <topic>`\n\n"
+        "**Usage**: `/research [topic]`\n\n"
         "**Examples**:\n"
+        "- `/research` — list active research tasks\n"
         "- `/research quantum computing applications`\n"
         "- `/research best coffee grinders 2026`\n\n"
         "Penny will run multiple search iterations in the background and "
@@ -35,10 +36,41 @@ class ResearchCommand(Command):
         """Execute research command."""
         topic = args.strip()
 
+        # If no topic provided, list active and pending research tasks
         if not topic:
-            return CommandResult(
-                text="Please specify a topic to research. Example: `/research quantum computing`"
-            )
+            with Session(context.db.engine) as session:
+                # Get all in_progress tasks for this user/thread
+                tasks = session.exec(
+                    select(ResearchTask)
+                    .where(
+                        ResearchTask.thread_id == context.user,
+                        ResearchTask.status == "in_progress",
+                    )
+                    .order_by(ResearchTask.created_at.asc())  # type: ignore[unresolved-attribute]
+                ).all()
+
+                if not tasks:
+                    return CommandResult(text="No active research tasks")
+
+                # Format task list with progress
+                lines = ["**Currently researching:**\n"]
+                for task in tasks:
+                    # Count completed iterations for this task
+                    iteration_count = session.exec(
+                        select(func.count(ResearchIteration.id)).where(
+                            ResearchIteration.research_task_id == task.id
+                        )
+                    ).one()
+
+                    # Format progress: "7/10" or "*Not Started*"
+                    if iteration_count == 0:
+                        progress = "*Not Started*"
+                    else:
+                        progress = f"{iteration_count}/{task.max_iterations}"
+
+                    lines.append(f"* {task.topic} {progress}")
+
+                return CommandResult(text="\n".join(lines))
 
         # Get research config from runtime config (falls back to .env default)
         max_iterations = context.config.research_max_iterations
