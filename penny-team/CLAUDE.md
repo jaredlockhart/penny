@@ -16,8 +16,6 @@ penny-team/
     monitor/
       CLAUDE.md         — Monitor agent prompt (error analysis, dedup, issue creation)
     utils/
-      github_api.py     — GitHubAPI client: typed Pydantic models, GraphQL + REST calls
-      github_app.py     — GitHub App JWT token generation
       codeowners.py     — Parses .github/CODEOWNERS for trusted usernames
       issue_filter.py   — Pre-fetches and filters issue content by trusted authors
       pr_checks.py      — Detects failing CI checks on PRs, enriches issues for worker
@@ -103,9 +101,9 @@ Worker agent automatically detects and fixes failing CI and merge conflicts on i
 
 ## GitHub API Module
 
-All orchestrator GitHub interactions use `penny_team/utils/github_api.py` — direct HTTP calls via `urllib.request` with typed Pydantic return values. The `gh` CLI is **not** used by production orchestrator code (only by Claude CLI agents inside their sandboxed sessions).
+All orchestrator GitHub interactions use the shared `github_api/` package — direct HTTP calls via `urllib.request` with typed Pydantic return values. The `gh` CLI is **not** used by production orchestrator code (only by Claude CLI agents inside their sandboxed sessions).
 
-- `GitHubAPI(token_provider: Callable[[], str])` — takes a callable that returns a fresh token (decoupled from `GitHubApp`)
+- `GitHubAPI(token_provider: Callable[[], str])` — takes a callable that returns a fresh token (decoupled from `GitHubAuth`)
 - **GraphQL** for complex queries: issues (lightweight + detailed), PRs with checks/reviews/comments
 - **REST** for simple operations: posting comments, Actions API (workflow runs/logs), PR inline review comments
 - Pydantic models for all return types: `IssueListItem`, `IssueDetail`, `PullRequest`, `CheckStatus`, `ReviewComment`, `WorkflowRun`, etc.
