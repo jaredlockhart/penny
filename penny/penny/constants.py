@@ -72,9 +72,18 @@ DISCOVERY_PROMPT = (
 RESEARCH_PROMPT = (
     "You are conducting deep research on a topic. "
     "Search for comprehensive information and analyze the results. "
+    "Structure your findings starting with the highest-level insights first, "
+    "then break down into increasingly specific details. "
     "Based on what you find, determine what specific aspect or angle to investigate next. "
     "Be thorough and systematic - cover different perspectives, recent developments, "
     "and key details."
+)
+
+RESEARCH_SUMMARY_PROMPT = (
+    "Based on all research findings below, write a concise executive summary (2-3 sentences) "
+    "that captures the highest-level insights about the topic. Start with the most important "
+    "information first, then add supporting details. Do not include markdown formatting, "
+    "bullet points, or section headers - just plain text."
 )
 
 PREFERENCE_PROMPT = (
