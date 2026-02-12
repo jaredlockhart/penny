@@ -314,12 +314,22 @@ class Database:
             Tuple of (parent_id, history) where history is a list of (role, content) tuples,
             or (None, None) if the quoted message wasn't found.
         """
+        logger.info("Looking up quoted message: %s", quoted_text[:100])
         parent_msg = self.find_outgoing_by_content(quoted_text)
         if not parent_msg:
             logger.warning(
-                "Could not find quoted message in database, thread context will be empty"
+                "Could not find quoted message in database, thread context will be empty. "
+                "Quoted text: %s",
+                quoted_text[:200],
             )
             return None, None
+
+        logger.info(
+            "Found quoted message: id=%d, parent_id=%s, content=%s",
+            parent_msg.id,
+            parent_msg.parent_id,
+            parent_msg.content[:50],
+        )
 
         assert parent_msg.id is not None
         thread = self._walk_thread(parent_msg.id)
@@ -332,7 +342,12 @@ class Database:
             )
             for m in thread
         ]
-        logger.info("Built thread history with %d messages", len(history))
+        logger.info(
+            "Built thread context: parent_id=%d, history_length=%d, first_message=%s",
+            parent_msg.id,
+            len(history),
+            history[0][1][:50] if history else "N/A",
+        )
 
         return parent_msg.id, history
 
@@ -340,6 +355,9 @@ class Database:
         """
         Walk up the parent chain from a message.
         Returns messages in chronological order (oldest first).
+
+        Note: The returned MessageLog objects are detached from the session,
+        but all column values are loaded before the session closes.
         """
         history = []
         with self.get_session() as session:
@@ -347,11 +365,28 @@ class Database:
             while current_id is not None and len(history) < limit:
                 msg = session.get(MessageLog, current_id)
                 if msg is None:
+                    logger.warning("Message %d not found while walking thread", current_id)
                     break
+                # Force load all attributes before session closes
+                # This ensures the object is fully populated even after detachment
+                _ = (msg.id, msg.direction, msg.content, msg.sender, msg.parent_id)
+                logger.debug(
+                    "Thread walk: id=%d, direction=%s, parent_id=%s, content=%s",
+                    msg.id,
+                    msg.direction,
+                    msg.parent_id,
+                    msg.content[:50],
+                )
                 history.append(msg)
                 current_id = msg.parent_id
 
         history.reverse()
+        logger.info(
+            "Built thread history: start_id=%d, messages=%d, chain=%s",
+            message_id,
+            len(history),
+            " -> ".join(str(m.id) for m in history),
+        )
         return history
 
     def get_user_messages(self, sender: str, limit: int = 100) -> list[MessageLog]:
