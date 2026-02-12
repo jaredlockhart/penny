@@ -12,6 +12,7 @@ from penny.commands.preferences import DislikeCommand, LikeCommand, UndislikeCom
 from penny.commands.profile import ProfileCommand
 from penny.commands.research import ResearchCommand
 from penny.commands.schedule import ScheduleCommand
+from penny.commands.style import StyleCommand
 from penny.commands.test import TestCommand
 
 if TYPE_CHECKING:
@@ -31,6 +32,7 @@ def create_command_registry(
     message_agent_factory: Callable | None = None,
     github_api: "GitHubAPI | None" = None,
     ollama_image_model: str | None = None,
+    style_agent=None,
 ) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
@@ -40,6 +42,7 @@ def create_command_registry(
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
         ollama_image_model: Optional image generation model name (required for draw command)
+        style_agent: Optional AdaptiveStyleAgent instance (required for style command)
 
     Returns:
         CommandRegistry with all builtin commands registered
@@ -60,6 +63,10 @@ def create_command_registry(
     registry.register(DislikeCommand())
     registry.register(UnlikeCommand())
     registry.register(UndislikeCommand())
+
+    # Register style command if agent provided
+    if style_agent:
+        registry.register(StyleCommand(style_agent))
 
     # Register test command if factory provided
     if message_agent_factory:

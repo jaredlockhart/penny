@@ -145,3 +145,15 @@ class Schedule(SQLModel, table=True):
     prompt_text: str  # Prompt to execute when schedule fires
     timing_description: str  # Original human description for display (e.g., "daily 9am")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class UserStyleProfile(SQLModel, table=True):
+    """Adaptive speaking style profile per user."""
+
+    __tablename__ = "user_style_profile"
+
+    user_id: str = Field(primary_key=True)
+    style_prompt: str
+    message_count: int
+    enabled: bool = Field(default=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

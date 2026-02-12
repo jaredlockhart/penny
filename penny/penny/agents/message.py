@@ -73,6 +73,19 @@ class MessageAgent(Agent):
             # Silently skip if userinfo table doesn't exist (e.g., in test mode)
             pass
 
+        # Inject adaptive style profile if available
+        try:
+            style_profile = self.db.get_user_style_profile(sender)
+            if style_profile and style_profile.enabled:
+                style_context = f"User Communication Style:\n{style_profile.style_prompt}"
+                # Prepend style context to history
+                history = history or []
+                history = [(MessageRole.SYSTEM.value, style_context), *history]
+                logger.debug("Injected style profile for %s", sender)
+        except Exception:
+            # Silently skip if style table doesn't exist (e.g., in test mode)
+            pass
+
         # Caption images with vision model, then build combined text prompt
         if images:
             captions = [await self.caption_image(img) for img in images]

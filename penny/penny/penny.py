@@ -15,6 +15,7 @@ from penny.agents import (
     PreferenceAgent,
 )
 from penny.agents.research import ResearchAgent
+from penny.agents.style import AdaptiveStyleAgent
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
@@ -72,6 +73,19 @@ class Penny:
         # Create message agent for production use
         self.message_agent = create_message_agent(self.db)
 
+        # Create style agent (needed for command registry)
+        self.style_agent = AdaptiveStyleAgent(
+            system_prompt="",  # Style agent uses generate, not chat
+            model=config.ollama_background_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=[],
+            db=self.db,
+            max_steps=1,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
+        )
+
         # Initialize GitHub client if configured
         github_api = None
         if (
@@ -106,6 +120,7 @@ class Penny:
             message_agent_factory=create_message_agent,
             github_api=github_api,
             ollama_image_model=config.ollama_image_model,
+            style_agent=self.style_agent,
         )
 
         self.followup_agent = FollowupAgent(
@@ -184,9 +199,10 @@ class Penny:
         self.research_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Create schedules (priority order: schedule, research, preference, followup, discovery)
+        # Create schedules (priority: schedule, research, style, preference, followup, discovery)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
         # ResearchAgent runs always (whenever scheduler ticks) to process in-progress research
+        # AdaptiveStyleAgent runs daily to analyze user speaking styles
         schedules = [
             AlwaysRunSchedule(
                 agent=self.schedule_executor,
@@ -195,6 +211,10 @@ class Penny:
             AlwaysRunSchedule(
                 agent=self.research_agent,
                 interval=5.0,  # Check every 5 seconds for research work
+            ),
+            AlwaysRunSchedule(
+                agent=self.style_agent,
+                interval=86400.0,  # Check daily (24 hours)
             ),
             PeriodicSchedule(
                 agent=self.preference_agent,

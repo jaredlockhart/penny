@@ -17,6 +17,7 @@ from penny.database.models import (
     PromptLog,
     SearchLog,
     UserInfo,
+    UserStyleProfile,
 )
 
 logger = logging.getLogger(__name__)
@@ -782,3 +783,159 @@ class Database:
         except Exception as e:
             logger.error("Failed to move preference: %s", e)
             return False
+
+    def get_user_style_profile(self, user_id: str) -> UserStyleProfile | None:
+        """
+        Get the style profile for a specific user.
+
+        Args:
+            user_id: User identifier (phone number or Discord user ID)
+
+        Returns:
+            UserStyleProfile if found, None otherwise
+        """
+        with self.get_session() as session:
+            return session.exec(
+                select(UserStyleProfile).where(UserStyleProfile.user_id == user_id)
+            ).first()
+
+    def upsert_user_style_profile(
+        self, user_id: str, style_prompt: str, message_count: int
+    ) -> None:
+        """
+        Insert or update a user's style profile.
+
+        Args:
+            user_id: User identifier (phone number or Discord user ID)
+            style_prompt: Natural language description of the user's style
+            message_count: Number of messages analyzed
+        """
+        try:
+            with self.get_session() as session:
+                existing = session.exec(
+                    select(UserStyleProfile).where(UserStyleProfile.user_id == user_id)
+                ).first()
+
+                if existing:
+                    existing.style_prompt = style_prompt
+                    existing.message_count = message_count
+                    existing.updated_at = datetime.now(UTC)
+                    session.add(existing)
+                else:
+                    profile = UserStyleProfile(
+                        user_id=user_id,
+                        style_prompt=style_prompt,
+                        message_count=message_count,
+                        enabled=True,
+                        updated_at=datetime.now(UTC),
+                    )
+                    session.add(profile)
+
+                session.commit()
+                logger.debug("Upserted style profile for %s", user_id)
+        except Exception as e:
+            logger.error("Failed to upsert style profile: %s", e)
+
+    def update_style_profile_enabled(self, user_id: str, enabled: bool) -> bool:
+        """
+        Enable or disable adaptive style for a user.
+
+        Args:
+            user_id: User identifier (phone number or Discord user ID)
+            enabled: Whether to enable adaptive style
+
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        try:
+            with self.get_session() as session:
+                profile = session.exec(
+                    select(UserStyleProfile).where(UserStyleProfile.user_id == user_id)
+                ).first()
+
+                if not profile:
+                    return False
+
+                profile.enabled = enabled
+                session.add(profile)
+                session.commit()
+                logger.debug("Set style profile enabled=%s for %s", enabled, user_id)
+                return True
+        except Exception as e:
+            logger.error("Failed to update style profile enabled: %s", e)
+            return False
+
+    def delete_user_style_profile(self, user_id: str) -> bool:
+        """
+        Delete a user's style profile.
+
+        Args:
+            user_id: User identifier (phone number or Discord user ID)
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        try:
+            with self.get_session() as session:
+                profile = session.exec(
+                    select(UserStyleProfile).where(UserStyleProfile.user_id == user_id)
+                ).first()
+
+                if not profile:
+                    return False
+
+                session.delete(profile)
+                session.commit()
+                logger.debug("Deleted style profile for %s", user_id)
+                return True
+        except Exception as e:
+            logger.error("Failed to delete style profile: %s", e)
+            return False
+
+    def count_user_messages(self, sender: str) -> int:
+        """
+        Count total incoming messages from a specific user (excluding reactions).
+
+        Args:
+            sender: The user's identifier (phone number, discord ID, etc.)
+
+        Returns:
+            Total count of incoming non-reaction messages
+        """
+        with self.get_session() as session:
+            return (
+                session.exec(
+                    select(MessageLog).where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == MessageDirection.INCOMING,
+                        MessageLog.is_reaction == False,  # noqa: E712
+                    )
+                )
+                .all()
+                .__len__()
+            )
+
+    def get_user_messages_for_style(self, sender: str, limit: int) -> list[str]:
+        """
+        Get recent user message content for style analysis.
+
+        Args:
+            sender: The user's identifier (phone number, discord ID, etc.)
+            limit: Maximum number of messages to return
+
+        Returns:
+            List of message content strings (most recent first)
+        """
+        with self.get_session() as session:
+            messages = session.exec(
+                select(MessageLog)
+                .where(
+                    MessageLog.sender == sender,
+                    MessageLog.direction == MessageDirection.INCOMING,
+                    MessageLog.is_reaction == False,  # noqa: E712
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(limit)
+            ).all()
+
+            return [msg.content for msg in messages]
