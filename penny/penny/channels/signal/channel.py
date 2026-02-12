@@ -294,9 +294,14 @@ class SignalChannel(MessageChannel):
             quote_author = None
             quote_text = None
             if quote_message:
-                # Use the original Signal timestamp if available, otherwise fall back to datetime
+                # Get the Signal timestamp for the quoted message:
+                # - For incoming messages: use signal_timestamp field
+                # - For outgoing messages: use external_id (set after send_message completes)
+                # - Fallback: convert database timestamp to ms
                 if quote_message.signal_timestamp:
                     quote_timestamp = quote_message.signal_timestamp
+                elif quote_message.external_id:
+                    quote_timestamp = int(quote_message.external_id)
                 else:
                     quote_timestamp = int(quote_message.timestamp.timestamp() * 1000)
                 quote_author = quote_message.sender
