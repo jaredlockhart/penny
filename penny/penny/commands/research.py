@@ -53,7 +53,7 @@ class ResearchCommand(Command):
                     return CommandResult(text="No active research tasks")
 
                 # Format task list with progress
-                lines = ["**Currently researching:**\n"]
+                lines = ["**Currently researching:**"]
                 for task in tasks:
                     # Count completed iterations for this task
                     iteration_count = session.exec(

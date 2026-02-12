@@ -161,3 +161,27 @@ async def test_research_command_lists_pending_tasks(
             assert len(tasks) == 2
             assert tasks[0].status == "in_progress"
             assert tasks[1].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_research_list_uses_bullet_format(
+    signal_server, test_config, mock_ollama, test_user_info, running_penny
+):
+    """Test /research list output uses proper markdown bullet format."""
+    async with running_penny(test_config):
+        # Start two research tasks
+        await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
+        await signal_server.wait_for_message(timeout=5.0)
+        await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # List all tasks
+        await signal_server.push_message(sender=TEST_SENDER, content="/research")
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        # Verify markdown bullet format: header should be followed immediately by bullets
+        # No blank line between header and first bullet
+        msg = response["message"]
+        assert "**Currently researching:**\n*" in msg or "**Currently researching:**\r\n*" in msg
+        # Each task should be a bullet point
+        assert msg.count("* ") >= 2  # At least 2 bullet items
