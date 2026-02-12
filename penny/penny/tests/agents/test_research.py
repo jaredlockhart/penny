@@ -522,3 +522,65 @@ async def test_research_agent_activates_pending_task(
         assert "ai trends" in reports[0]["message"].lower()
         # Second report should be about quantum computing
         assert "quantum computing" in reports[1]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_research_prompt_instructs_bullet_format(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test RESEARCH_PROMPT explicitly instructs LLM to use bullet points.
+
+    Regression test for issue #212: Research findings should consistently use
+    bullet format, not paragraphs or numbered lists.
+    """
+    config = make_config(
+        research_max_iterations=2,
+        idle_seconds=0.3,
+        scheduler_tick_interval=0.05,
+    )
+
+    # Capture what prompt was sent to the LLM
+    captured_prompts = []
+
+    def capture_handler(request: dict, count: int) -> dict:
+        # Capture the system prompt
+        if "messages" in request:
+            for msg in request["messages"]:
+                if msg.get("role") == "system":
+                    captured_prompts.append(msg.get("content", ""))
+        # Return bullet-formatted responses
+        responses = [
+            "- Finding one: AI is advancing rapidly",
+            "- Finding two: Applications in healthcare",
+        ]
+        idx = len(captured_prompts) - 1
+        if idx < len(responses):
+            return mock_ollama._make_text_response(request, responses[idx])
+        return mock_ollama._make_text_response(request, "- Fallback finding")
+
+    mock_ollama.set_response_handler(capture_handler)
+
+    async with running_penny(config):
+        await signal_server.push_message(sender=TEST_SENDER, content="/research AI")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Wait for at least one iteration to complete
+        await wait_until(lambda: len(captured_prompts) >= 1, timeout=10.0)
+
+        # Verify RESEARCH_PROMPT instructs bullet format
+        from penny.constants import RESEARCH_PROMPT
+
+        # Verify the constant contains bullet format instructions
+        assert "bullet" in RESEARCH_PROMPT.lower(), (
+            "RESEARCH_PROMPT should explicitly mention bullet points"
+        )
+        # Verify it tells LLM what NOT to use
+        assert "paragraph" in RESEARCH_PROMPT.lower() or "table" in RESEARCH_PROMPT.lower(), (
+            "RESEARCH_PROMPT should specify formats to avoid"
+        )

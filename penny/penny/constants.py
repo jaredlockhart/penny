@@ -74,7 +74,9 @@ RESEARCH_PROMPT = (
     "Search for comprehensive information and analyze the results. "
     "Based on what you find, determine what specific aspect or angle to investigate next. "
     "Be thorough and systematic - cover different perspectives, recent developments, "
-    "and key details."
+    "and key details. "
+    "Format your findings as bullet points (using -, *, or •) - one finding per line. "
+    "Do not use paragraphs, numbered lists, or tables."
 )
 
 PREFERENCE_PROMPT = (
