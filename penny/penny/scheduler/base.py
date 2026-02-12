@@ -63,6 +63,7 @@ class BackgroundScheduler:
         self._running = True
         self._current_task: str | None = None
         self._last_run_times: dict[str, float] = {}
+        self._foreground_active = False
 
     def notify_message(self) -> None:
         """Called when a new message arrives. Resets all schedules."""
@@ -70,6 +71,16 @@ class BackgroundScheduler:
         for schedule in self._schedules:
             schedule.reset()
         logger.debug("Scheduler: all schedules reset by incoming message")
+
+    def notify_foreground_start(self) -> None:
+        """Called when foreground work (message/command processing) starts."""
+        self._foreground_active = True
+        logger.debug("Scheduler: foreground work started, background tasks suspended")
+
+    def notify_foreground_end(self) -> None:
+        """Called when foreground work (message/command processing) ends."""
+        self._foreground_active = False
+        logger.debug("Scheduler: foreground work ended, background tasks resumed")
 
     def stop(self) -> None:
         """Signal the scheduler to stop."""
@@ -105,28 +116,30 @@ class BackgroundScheduler:
             idle_seconds = time.monotonic() - self._last_message_time
             is_idle = idle_seconds >= self._idle_threshold
 
-            # Find first schedule that fires
-            for schedule in self._schedules:
-                if schedule.should_run(is_idle):
-                    agent = schedule.agent
-                    self._current_task = agent.name
-                    logger.debug("Running background task: %s", agent.name)
+            # Skip all background tasks if foreground work is active
+            if not self._foreground_active:
+                # Find first schedule that fires
+                for schedule in self._schedules:
+                    if schedule.should_run(is_idle):
+                        agent = schedule.agent
+                        self._current_task = agent.name
+                        logger.debug("Running background task: %s", agent.name)
 
-                    try:
-                        did_work = await agent.execute()
-                        schedule.mark_complete()
-                        self._last_run_times[agent.name] = time.monotonic()
+                        try:
+                            did_work = await agent.execute()
+                            schedule.mark_complete()
+                            self._last_run_times[agent.name] = time.monotonic()
 
-                        if did_work:
-                            logger.info("Background task completed: %s", agent.name)
+                            if did_work:
+                                logger.info("Background task completed: %s", agent.name)
 
-                    except Exception as e:
-                        logger.exception("Background task failed: %s - %s", agent.name, e)
-                    finally:
-                        self._current_task = None
+                        except Exception as e:
+                            logger.exception("Background task failed: %s - %s", agent.name, e)
+                        finally:
+                            self._current_task = None
 
-                    # Only run one task per tick
-                    break
+                        # Only run one task per tick
+                        break
 
             await asyncio.sleep(self._tick_interval)
 
