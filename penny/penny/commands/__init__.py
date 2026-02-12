@@ -31,6 +31,7 @@ def create_command_registry(
     message_agent_factory: Callable | None = None,
     github_api: "GitHubAPI | None" = None,
     ollama_image_model: str | None = None,
+    fastmail_api_token: str | None = None,
 ) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
@@ -76,5 +77,11 @@ def create_command_registry(
         from penny.commands.draw import DrawCommand
 
         registry.register(DrawCommand(ollama_image_model))
+
+    # Register email command if Fastmail API token is configured
+    if fastmail_api_token:
+        from penny.commands.email import EmailCommand
+
+        registry.register(EmailCommand(fastmail_api_token))
 
     return registry

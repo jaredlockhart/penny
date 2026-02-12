@@ -56,10 +56,15 @@ penny/
     index.py          — /commands: list available commands
     test.py           — /test: isolated test mode for development
     draw.py           — /draw: generate images via Ollama image model
+    email.py          — /email: search Fastmail email via JMAP
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult
     builtin.py        — SearchTool (Perplexity text + DuckDuckGo images, run in parallel)
+    email.py          — SearchEmailsTool, ReadEmailTool (Fastmail JMAP)
+  jmap/
+    client.py         — JmapClient: Fastmail JMAP API client (httpx)
+    models.py         — JmapSession, EmailAddress, EmailSummary, EmailDetail
   channels/
     __init__.py       — create_channel() factory, channel type constants
     base.py           — MessageChannel ABC, IncomingMessage, shared message handling
@@ -88,9 +93,11 @@ penny/
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py, test_startup_announcement.py
     commands/         — Per-command tests
-      test_commands.py, test_debug.py, test_config.py, test_draw.py, test_preferences.py, test_system.py, test_test_mode.py
+      test_commands.py, test_debug.py, test_config.py, test_draw.py, test_email.py, test_preferences.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
+    jmap/             — JMAP client tests
+      test_client.py
     tools/            — Tool tests
       test_search_redaction.py, test_tool_timeout.py
 Dockerfile            — Python 3.12-slim

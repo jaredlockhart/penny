@@ -1,0 +1,73 @@
+"""Email search command using Fastmail JMAP."""
+
+from __future__ import annotations
+
+import logging
+
+from penny.agents.base import Agent
+from penny.commands.base import Command
+from penny.commands.models import CommandContext, CommandResult
+from penny.constants import EMAIL_NO_QUERY_TEXT, EMAIL_SYSTEM_PROMPT
+from penny.jmap.client import JmapClient
+from penny.tools.email import ReadEmailsTool, SearchEmailsTool
+
+logger = logging.getLogger(__name__)
+
+
+class EmailCommand(Command):
+    """Search email and answer questions about it."""
+
+    name = "email"
+    description = "Search your email and answer questions"
+    help_text = (
+        "Usage: /email <question>\n\n"
+        "Ask a question about your email and Penny will search and read "
+        "relevant messages to find the answer.\n\n"
+        "Examples:\n"
+        "- /email what packages am I expecting\n"
+        "- /email when is my dentist appointment\n"
+        "- /email any emails from mom this week"
+    )
+
+    def __init__(self, fastmail_api_token: str) -> None:
+        self._fastmail_api_token = fastmail_api_token
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        """Execute the email command."""
+        prompt = args.strip()
+
+        if not prompt:
+            return CommandResult(text=EMAIL_NO_QUERY_TEXT)
+
+        jmap_client = JmapClient(self._fastmail_api_token)
+        agent: Agent | None = None
+        try:
+            tools = [
+                SearchEmailsTool(jmap_client),
+                ReadEmailsTool(jmap_client, context.ollama_client, prompt),
+            ]
+
+            agent = Agent(
+                system_prompt=EMAIL_SYSTEM_PROMPT,
+                model=context.config.ollama_foreground_model,
+                ollama_api_url=context.config.ollama_api_url,
+                tools=tools,
+                db=context.db,
+                max_steps=context.config.email_max_steps,
+                max_retries=context.config.ollama_max_retries,
+                retry_delay=context.config.ollama_retry_delay,
+                tool_timeout=context.config.tool_timeout,
+                allow_repeat_tools=True,
+            )
+
+            response = await agent.run(prompt)
+            return CommandResult(text=response.answer)
+
+        except Exception as e:
+            logger.exception("Email search failed")
+            return CommandResult(text=f"Failed to search email: {e!s}")
+
+        finally:
+            if agent:
+                await agent.close()
+            await jmap_client.close()
