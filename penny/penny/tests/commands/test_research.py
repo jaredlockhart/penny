@@ -72,9 +72,8 @@ async def test_research_command_lists_active_tasks(
         # Should list the active task with progress
         assert "currently researching" in response["message"].lower()
         assert "ai trends" in response["message"].lower()
-        # Should show progress indicator (*Not Started* or N/10 depending on scheduler timing)
-        msg_lower = response["message"].lower()
-        assert "*not started*" in msg_lower or "/10" in msg_lower
+        # Should show progress indicator (N/10 format)
+        assert "/10" in response["message"]
 
 
 @pytest.mark.asyncio
@@ -149,7 +148,7 @@ async def test_research_command_lists_pending_tasks(
         assert "currently researching" in response["message"].lower()
         assert "ai trends" in response["message"].lower()
         assert "quantum computing" in response["message"].lower()
-        # First task should show progress or "Not Started"
+        # First task should show progress (N/10 format)
         # Second task should show "Queued"
         assert "*queued*" in response["message"].lower()
 
@@ -161,3 +160,43 @@ async def test_research_command_lists_pending_tasks(
             assert len(tasks) == 2
             assert tasks[0].status == "in_progress"
             assert tasks[1].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_research_command_shows_progress_after_activation(
+    signal_server, test_config, mock_ollama, test_user_info, running_penny
+):
+    """Test /research shows correct status after pending task is activated.
+
+    Regression test for issue #206: activated tasks with 0 iterations
+    should show "0/N" progress, not "*Not Started*".
+    """
+    async with running_penny(test_config) as penny:
+        # Manually create a task with in_progress status but 0 iterations
+        # (simulates what happens when ResearchAgent activates a pending task)
+        from datetime import UTC, datetime
+
+        from sqlmodel import Session
+
+        with Session(penny.db.engine) as session:
+            task = ResearchTask(
+                thread_id=TEST_SENDER,
+                topic="test topic",
+                status="in_progress",
+                max_iterations=10,
+                created_at=datetime.now(UTC),
+            )
+            session.add(task)
+            session.commit()
+
+        # List tasks with /research (no topic)
+        await signal_server.push_message(sender=TEST_SENDER, content="/research")
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        # Should list the active task
+        assert "currently researching" in response["message"].lower()
+        assert "test topic" in response["message"].lower()
+        # Should show progress in N/10 format, NOT "*Not Started*"
+        # (N might be 0 or 1 depending on scheduler timing)
+        assert "/10" in response["message"]
+        assert "*not started*" not in response["message"].lower()
