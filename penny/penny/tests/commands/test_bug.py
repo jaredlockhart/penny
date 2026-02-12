@@ -1,7 +1,7 @@
 """Integration tests for /bug command."""
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
