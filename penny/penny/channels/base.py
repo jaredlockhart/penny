@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from penny.config import Config
 from penny.constants import (
+    PERSONALITY_TRANSFORM_PROMPT,
     TEST_MODE_PREFIX,
     VISION_NOT_CONFIGURED_MESSAGE,
     MessageDirection,
@@ -167,7 +168,13 @@ class MessageChannel(ABC):
             Transformed text if custom personality exists, original text otherwise
         """
         # Check if user has a custom personality
-        personality = self._db.get_personality_prompt(user)
+        try:
+            personality = self._db.get_personality_prompt(user)
+        except Exception as e:
+            # Table might not exist yet (e.g., during migration or in test snapshots)
+            logger.debug("Failed to query personality prompt: %s", e)
+            return text
+
         if not personality:
             return text
 
@@ -188,12 +195,8 @@ class MessageChannel(ABC):
         )
 
         # Build personality transform prompt
-        system_prompt = (
-            f"You are applying a personality filter. "
-            f"Transform the following message to match this personality: "
-            f"{personality.prompt_text}\n\n"
-            f"IMPORTANT: Preserve the core meaning and information. "
-            f"Only adjust tone, style, and phrasing."
+        system_prompt = PERSONALITY_TRANSFORM_PROMPT.format(
+            personality_prompt=personality.prompt_text
         )
         messages = [
             {

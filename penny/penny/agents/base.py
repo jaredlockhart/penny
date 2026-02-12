@@ -113,9 +113,14 @@ class Agent:
         # Check if user has custom personality prompt
         personality_text = None
         if sender:
-            personality = self.db.get_personality_prompt(sender)
-            if personality:
-                personality_text = personality.prompt_text
+            try:
+                personality = self.db.get_personality_prompt(sender)
+                if personality:
+                    personality_text = personality.prompt_text
+            except Exception as e:
+                # Table might not exist yet (e.g., during migration or in test snapshots)
+                logger.debug("Failed to query personality prompt: %s", e)
+                personality_text = None
 
         # Inject personality between base identity and agent-specific prompt
         # The system_prompt already includes PENNY_IDENTITY, so we need to reconstruct it

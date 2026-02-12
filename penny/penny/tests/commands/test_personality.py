@@ -25,6 +25,20 @@ async def test_personality_no_args_shows_default(
 @pytest.mark.asyncio
 async def test_personality_set_and_view(signal_server, test_config, mock_ollama, running_penny):
     """Test setting and viewing custom personality."""
+
+    # Mock the personality transform to return transformed versions of the responses
+    # Request 1: transform confirmation message
+    # Request 2: transform view response
+    def response_handler(request: dict, count: int) -> dict:
+        if count == 1:
+            return mock_ollama._make_text_response(request, "Ok, personality updated ✅")
+        else:
+            return mock_ollama._make_text_response(
+                request, "Current personality: you are a pirate who speaks in nautical metaphors"
+            )
+
+    mock_ollama.set_response_handler(response_handler)
+
     async with running_penny(test_config) as _penny:
         # Set personality
         await signal_server.push_message(
@@ -48,6 +62,18 @@ async def test_personality_set_and_view(signal_server, test_config, mock_ollama,
 @pytest.mark.asyncio
 async def test_personality_reset(signal_server, test_config, mock_ollama, running_penny):
     """Test resetting personality to default."""
+
+    # Mock the personality transform responses
+    # Request 1: set confirmation
+    # Request 2: reset confirmation
+    def response_handler(request: dict, count: int) -> dict:
+        if count == 1:
+            return mock_ollama._make_text_response(request, "Ok, personality updated ✅")
+        else:
+            return mock_ollama._make_text_response(request, "Ok, personality reset to default ✅")
+
+    mock_ollama.set_response_handler(response_handler)
+
     async with running_penny(test_config) as _penny:
         # Set personality
         await signal_server.push_message(
@@ -62,7 +88,7 @@ async def test_personality_reset(signal_server, test_config, mock_ollama, runnin
         response = await signal_server.wait_for_message(timeout=5.0)
         assert "personality reset to default" in response["message"]
 
-        # Verify it's reset
+        # Verify it's reset (no personality, so no transform happens)
         await signal_server.push_message(sender=TEST_SENDER, content="/personality")
         response = await signal_server.wait_for_message(timeout=5.0)
         assert "No custom personality set" in response["message"]

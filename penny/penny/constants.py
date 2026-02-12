@@ -171,3 +171,17 @@ VISION_RESPONSE_PROMPT = (
     "The user sent an image. Respond naturally to the image description provided. "
     "Keep it relaxed and low-key, like texting a friend. End with an emoji."
 )
+
+# Personality command response messages
+PERSONALITY_NO_CUSTOM = "No custom personality set. Using default Penny personality."
+PERSONALITY_RESET_SUCCESS = "Ok, personality reset to default ✅"
+PERSONALITY_RESET_NOT_SET = "No custom personality was set."
+PERSONALITY_UPDATE_SUCCESS = "Ok, personality updated ✅"
+
+# Personality transform prompt
+PERSONALITY_TRANSFORM_PROMPT = (
+    "You are applying a personality filter. "
+    "Transform the following message to match this personality: {personality_prompt}\n\n"
+    "IMPORTANT: Preserve the core meaning and information. "
+    "Only adjust tone, style, and phrasing."
+)

@@ -6,6 +6,12 @@ import logging
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
+from penny.constants import (
+    PERSONALITY_NO_CUSTOM,
+    PERSONALITY_RESET_NOT_SET,
+    PERSONALITY_RESET_SUCCESS,
+    PERSONALITY_UPDATE_SUCCESS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +42,7 @@ class PersonalityCommand(Command):
         if not args:
             personality = context.db.get_personality_prompt(context.user)
             if not personality:
-                return CommandResult(
-                    text="No custom personality set. Using default Penny personality."
-                )
+                return CommandResult(text=PERSONALITY_NO_CUSTOM)
 
             return CommandResult(text=f"Current personality: {personality.prompt_text}")
 
@@ -46,11 +50,11 @@ class PersonalityCommand(Command):
         if args.lower() == "reset":
             removed = context.db.remove_personality_prompt(context.user)
             if removed:
-                return CommandResult(text="Ok, personality reset to default ✅")
+                return CommandResult(text=PERSONALITY_RESET_SUCCESS)
             else:
-                return CommandResult(text="No custom personality was set.")
+                return CommandResult(text=PERSONALITY_RESET_NOT_SET)
 
         # Set new personality
         prompt_text = args
         context.db.set_personality_prompt(context.user, prompt_text)
-        return CommandResult(text="Ok, personality updated ✅")
+        return CommandResult(text=PERSONALITY_UPDATE_SUCCESS)
