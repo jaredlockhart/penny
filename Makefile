@@ -32,7 +32,7 @@ team-build:
 # Print a GitHub App installation token for use with gh CLI
 # Usage: GH_TOKEN=$(make token) gh pr create ...
 token:
-	@docker compose run --rm --no-deps --entrypoint "" pm uv run /repo/penny-team/penny_team/utils/github_app.py 2>/dev/null
+	@docker compose --profile team run --rm --no-deps --entrypoint "" pm uv run python /shared/github_api/auth.py 2>/dev/null
 
 # --- Code quality (auto-detects host vs container via LOCAL env var) ---
 
