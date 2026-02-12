@@ -4,6 +4,7 @@ import pytest
 
 from penny.channels.signal import SignalChannel
 from penny.database import Database
+from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
@@ -135,5 +136,75 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
     error_message = str(exc_info.value)
     assert "Cannot connect to Signal API" in error_message
     assert "http://localhost:19999" in error_message
+
+    await channel.close()
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_empty_without_attachments(
+    signal_server, test_config, mock_ollama
+):
+    """Test that send_message raises ValueError for empty text with no attachments."""
+    from penny.agents import MessageAgent
+    from penny.constants import SYSTEM_PROMPT
+
+    db = Database(test_config.db_path)
+    db.create_tables()
+
+    message_agent = MessageAgent(
+        system_prompt=SYSTEM_PROMPT,
+        model=test_config.ollama_foreground_model,
+        ollama_api_url=test_config.ollama_api_url,
+        tools=[],
+        db=db,
+        max_steps=1,
+    )
+
+    channel = SignalChannel(
+        api_url=test_config.signal_api_url,
+        phone_number=test_config.signal_number or "+15551234567",
+        message_agent=message_agent,
+        db=db,
+    )
+
+    with pytest.raises(ValueError, match="Cannot send empty"):
+        await channel.send_message(TEST_SENDER, "", attachments=None, quote_message=None)
+
+    await channel.close()
+
+
+@pytest.mark.asyncio
+async def test_send_message_allows_empty_text_with_attachments(
+    signal_server, test_config, mock_ollama
+):
+    """Test that send_message succeeds with empty text when attachments are provided."""
+    from penny.agents import MessageAgent
+    from penny.constants import SYSTEM_PROMPT
+
+    db = Database(test_config.db_path)
+    db.create_tables()
+
+    message_agent = MessageAgent(
+        system_prompt=SYSTEM_PROMPT,
+        model=test_config.ollama_foreground_model,
+        ollama_api_url=test_config.ollama_api_url,
+        tools=[],
+        db=db,
+        max_steps=1,
+    )
+
+    channel = SignalChannel(
+        api_url=test_config.signal_api_url,
+        phone_number=test_config.signal_number or "+15551234567",
+        message_agent=message_agent,
+        db=db,
+    )
+
+    # Should not raise — empty text is fine when attachments are present
+    fake_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+    result = await channel.send_message(
+        TEST_SENDER, "", attachments=[fake_image], quote_message=None
+    )
+    assert result is not None
 
     await channel.close()

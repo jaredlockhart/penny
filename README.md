@@ -101,6 +101,7 @@ Penny supports slash commands sent as messages:
 - **/commands**: List all available commands
 - **/debug**: Show agent status, git commit, background task state
 - **/config**: View and modify runtime settings (e.g., `/config idle_seconds 600`)
+- **/draw**: Generate an image from a text description (requires `OLLAMA_IMAGE_MODEL`)
 - **/test**: Enter isolated test mode with a separate DB for development
 
 ## Data Model
@@ -236,6 +237,8 @@ Penny auto-detects which channel to use based on configured credentials:
 - `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
 - `OLLAMA_FOREGROUND_MODEL`: Fast model for user-facing messages (default: gpt-oss:20b)
 - `OLLAMA_BACKGROUND_MODEL`: Smarter model for background tasks (default: same as foreground)
+- `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
+- `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/flux2-klein). Optional; enables the `/draw` command when set
 - `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
 - `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 

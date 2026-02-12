@@ -30,6 +30,7 @@ __all__ = [
 def create_command_registry(
     message_agent_factory: Callable | None = None,
     github_api: "GitHubAPI | None" = None,
+    ollama_image_model: str | None = None,
 ) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
@@ -38,6 +39,7 @@ def create_command_registry(
         message_agent_factory: Optional factory for creating MessageAgent instances
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
+        ollama_image_model: Optional image generation model name (required for draw command)
 
     Returns:
         CommandRegistry with all builtin commands registered
@@ -68,5 +70,11 @@ def create_command_registry(
         from penny.commands.bug import BugCommand
 
         registry.register(BugCommand(github_api))
+
+    # Register draw command if image model is configured
+    if ollama_image_model:
+        from penny.commands.draw import DrawCommand
+
+        registry.register(DrawCommand(ollama_image_model))
 
     return registry

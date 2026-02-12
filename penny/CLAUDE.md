@@ -22,6 +22,7 @@ flowchart TD
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
 - **Ollama**: Local LLM inference (default model: gpt-oss:20b)
 - **Vision**: Optional vision model (e.g., qwen3-vl) for processing image attachments from Signal
+- **Image Generation**: Optional image model (e.g., x/z-image-turbo) for generating images via `/draw` command
 - **Perplexity**: Web search — Penny always searches before answering, never uses model knowledge alone
 - **DuckDuckGo**: Image search — runs in parallel with Perplexity, attaches a relevant image to every response
 - **SQLite**: Logs all prompts, searches, and messages; stores thread history via parent-child links
@@ -54,6 +55,7 @@ penny/
     debug.py          — /debug: show agent status, git commit, system info
     index.py          — /commands: list available commands
     test.py           — /test: isolated test mode for development
+    draw.py           — /draw: generate images via Ollama image model
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult
@@ -86,7 +88,7 @@ penny/
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py, test_startup_announcement.py
     commands/         — Per-command tests
-      test_commands.py, test_debug.py, test_config.py, test_preferences.py, test_system.py, test_test_mode.py
+      test_commands.py, test_debug.py, test_config.py, test_draw.py, test_preferences.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
     tools/            — Tool tests

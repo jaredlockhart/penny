@@ -4,9 +4,10 @@ import asyncio
 import logging
 import time
 
+import httpx
 import ollama
 
-from penny.ollama.models import ChatResponse
+from penny.ollama.models import ChatResponse, GenerateResponse
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,63 @@ class OllamaClient:
         """
         messages = [{"role": "user", "content": prompt}]
         return await self.chat(messages, tools, format)
+
+    async def generate_image(self, prompt: str, model: str) -> str:
+        """
+        Generate an image from a text prompt using an image generation model.
+
+        Args:
+            prompt: Text description of the image to generate
+            model: Image generation model name (e.g., x/z-image-turbo)
+
+        Returns:
+            Base64-encoded PNG image data
+
+        Raises:
+            RuntimeError: If the model does not return image data
+        """
+        last_error: Exception | None = None
+
+        for attempt in range(self.max_retries):
+            try:
+                logger.debug(
+                    "Sending image generation request to Ollama (attempt %d/%d)",
+                    attempt + 1,
+                    self.max_retries,
+                )
+
+                # Use httpx directly — the ollama SDK's GenerateResponse
+                # Pydantic model drops the 'image' field from the response.
+                async with httpx.AsyncClient(timeout=120) as http_client:
+                    resp = await http_client.post(
+                        f"{self.api_url}/api/generate",
+                        json={"model": model, "prompt": prompt, "stream": False},
+                    )
+                    resp.raise_for_status()
+                    response = GenerateResponse(**resp.json())
+
+                image_data = response.image
+                if not image_data:
+                    raise RuntimeError("Model did not return image data")
+
+                logger.info("Image generated successfully with model %s", model)
+                return image_data
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Ollama image generation error (attempt %d/%d): %s",
+                    attempt + 1,
+                    self.max_retries,
+                    e,
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
+
+        logger.error(
+            "Ollama image generation failed after %d attempts: %s", self.max_retries, last_error
+        )
+        raise last_error  # type: ignore[misc]
 
     async def close(self) -> None:
         """Close the client (SDK handles cleanup automatically)."""

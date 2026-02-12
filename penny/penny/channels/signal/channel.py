@@ -281,8 +281,8 @@ class SignalChannel(MessageChannel):
         Returns:
             Signal timestamp (ms since epoch) on success, None on failure
         """
-        # Validate message is not empty
-        if not message or not message.strip():
+        # Validate message is not empty (unless attachments are provided)
+        if (not message or not message.strip()) and not attachments:
             logger.error("Attempted to send empty message to %s", recipient)
             raise ValueError("Cannot send empty or whitespace-only message")
 

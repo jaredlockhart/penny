@@ -442,8 +442,14 @@ class MessageChannel(ABC):
             result = await command.execute(command_args, context)
             response = result.text
 
-            # Send response
-            await self.send_status_message(message.sender, response)
+            # Send response (with attachments if present)
+            if result.attachments:
+                prepared = self.prepare_outgoing(response) if response else ""
+                await self.send_message(
+                    message.sender, prepared, attachments=result.attachments, quote_message=None
+                )
+            else:
+                await self.send_status_message(message.sender, response)
 
             # Log command execution
             self._db.log_command(

@@ -35,6 +35,7 @@ class CommandResult(BaseModel):
     """Result from executing a command."""
 
     text: str  # Response text to send to user
+    attachments: list[str] | None = None  # Optional base64-encoded image attachments
 
 
 class CommandError(BaseModel):

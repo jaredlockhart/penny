@@ -32,6 +32,7 @@ class GenerateResponse(BaseModel):
     done: bool
     tool_calls: list[dict[str, Any]] | None = None  # Ollama native tool calling
     context: list[int] | None = None
+    image: str | None = None  # Base64-encoded image data (image generation models)
     total_duration: int | None = Field(default=None, alias="total_duration")
     load_duration: int | None = Field(default=None, alias="load_duration")
     prompt_eval_count: int | None = Field(default=None, alias="prompt_eval_count")

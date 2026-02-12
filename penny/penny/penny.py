@@ -103,7 +103,9 @@ class Penny:
 
         # Create command registry with message agent factory for test command
         self.command_registry = create_command_registry(
-            message_agent_factory=create_message_agent, github_api=github_api
+            message_agent_factory=create_message_agent,
+            github_api=github_api,
+            ollama_image_model=config.ollama_image_model,
         )
 
         self.followup_agent = FollowupAgent(
@@ -242,6 +244,8 @@ class Penny:
             logger.info("Ollama model: %s (background)", self.config.ollama_background_model)
         if self.config.ollama_vision_model:
             logger.info("Ollama model: %s (vision)", self.config.ollama_vision_model)
+        if self.config.ollama_image_model:
+            logger.info("Ollama model: %s (image generation)", self.config.ollama_image_model)
 
         # Validate channel connectivity before starting (if implemented)
         validate_fn = getattr(self.channel, "validate_connectivity", None)

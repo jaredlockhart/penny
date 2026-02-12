@@ -109,6 +109,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `OLLAMA_FOREGROUND_MODEL`: Fast model for user-facing messages (default: gpt-oss:20b)
 - `OLLAMA_BACKGROUND_MODEL`: Smart model for background tasks (default: same as foreground)
 - `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
+- `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables the `/draw` command when set
 - `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
 - `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 
