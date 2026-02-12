@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
+from penny.constants import VISION_IMAGE_CONTEXT, VISION_IMAGE_ONLY_CONTEXT
 from penny.database.models import ResearchTask
 from penny.tools.builtin import SearchTool
 
@@ -24,6 +25,7 @@ class MessageAgent(Agent):
         content: str,
         sender: str,
         quoted_text: str | None = None,
+        images: list[str] | None = None,
     ) -> tuple[int | None, ControllerResponse]:
         """
         Handle an incoming message by preparing context and running the agent.
@@ -70,6 +72,16 @@ class MessageAgent(Agent):
         except Exception:
             # Silently skip if userinfo table doesn't exist (e.g., in test mode)
             pass
+
+        # Caption images with vision model, then build combined text prompt
+        if images:
+            captions = [await self.caption_image(img) for img in images]
+            caption = ", ".join(captions)
+            if content:
+                content = VISION_IMAGE_CONTEXT.format(user_text=content, caption=caption)
+            else:
+                content = VISION_IMAGE_ONLY_CONTEXT.format(caption=caption)
+            logger.info("Built vision prompt: %s", content[:200])
 
         # Run agent
         response = await self.run(prompt=content, history=history)

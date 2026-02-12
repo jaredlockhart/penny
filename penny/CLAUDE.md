@@ -21,6 +21,7 @@ flowchart TD
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
 - **Ollama**: Local LLM inference (default model: gpt-oss:20b)
+- **Vision**: Optional vision model (e.g., qwen3-vl) for processing image attachments from Signal
 - **Perplexity**: Web search — Penny always searches before answering, never uses model knowledge alone
 - **DuckDuckGo**: Image search — runs in parallel with Perplexity, attaches a relevant image to every response
 - **SQLite**: Logs all prompts, searches, and messages; stores thread history via parent-child links
@@ -83,7 +84,7 @@ penny/
     agents/           — Per-agent integration tests
       test_message.py, test_summarize.py, test_followup.py, test_preference.py, test_discovery.py
     channels/         — Channel integration tests
-      test_signal_channel.py, test_signal_reactions.py, test_startup_announcement.py
+      test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py, test_startup_announcement.py
     commands/         — Per-command tests
       test_commands.py, test_debug.py, test_config.py, test_preferences.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
@@ -234,6 +235,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **Priority scheduling**: Summarize → preference → followup → discovery (quick tasks first)
 - **Global idle threshold**: Single configurable idle time (default: 300s) controls when all background tasks become eligible
 - **Delayed scheduling**: Followup and discovery add random delays after idle threshold to prevent predictable bot behavior
+- **Vision captioning**: When images are present and `OLLAMA_VISION_MODEL` is configured, the vision model captions the image first, then a combined prompt ("user said X and included an image of Y") is forwarded to the foreground model for the full response. If not configured, the user gets a friendly acknowledgment
 - **Channel abstraction**: Signal and Discord share the same interface; easy to add more platforms
 - **Async throughout**: asyncio, httpx.AsyncClient, ollama.AsyncClient, discord.py
 - **Host networking**: Docker container uses --network host for simplicity (all services on localhost)

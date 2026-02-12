@@ -66,6 +66,7 @@ class Penny:
                 max_retries=config.ollama_max_retries,
                 retry_delay=config.ollama_retry_delay,
                 tool_timeout=config.tool_timeout,
+                vision_model=config.ollama_vision_model,
             )
 
         # Create message agent for production use
@@ -239,6 +240,8 @@ class Penny:
         logger.info("Ollama model: %s (messages)", self.config.ollama_foreground_model)
         if self.config.ollama_background_model != self.config.ollama_foreground_model:
             logger.info("Ollama model: %s (background)", self.config.ollama_background_model)
+        if self.config.ollama_vision_model:
+            logger.info("Ollama model: %s (vision)", self.config.ollama_vision_model)
 
         # Validate channel connectivity before starting (if implemented)
         validate_fn = getattr(self.channel, "validate_connectivity", None)

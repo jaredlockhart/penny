@@ -44,6 +44,18 @@ class Reaction(BaseModel):
         populate_by_name = True
 
 
+class SignalAttachment(BaseModel):
+    """Attachment metadata from Signal data message."""
+
+    contentType: str = Field(alias="contentType")
+    id: str
+    size: int | None = None
+    filename: str | None = None
+
+    class Config:
+        populate_by_name = True
+
+
 class DataMessage(BaseModel):
     """Data message from Signal."""
 
@@ -54,6 +66,7 @@ class DataMessage(BaseModel):
     viewOnce: bool = Field(default=False, alias="viewOnce")
     quote: Quote | None = None
     reaction: Reaction | None = None
+    attachments: list[SignalAttachment] | None = None
 
     class Config:
         populate_by_name = True

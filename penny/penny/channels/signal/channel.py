@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -22,6 +23,7 @@ from penny.channels.signal.models import (
     SignalEnvelope,
     TypingIndicatorRequest,
 )
+from penny.constants import VISION_SUPPORTED_CONTENT_TYPES
 
 if TYPE_CHECKING:
     from penny.agents import MessageAgent
@@ -411,18 +413,21 @@ class SignalChannel(MessageChannel):
                 reacted_to_external_id=str(reaction.targetSentTimestamp),
             )
 
-        # Regular text message
-        if envelope.envelope.dataMessage.message is None:
-            logger.debug("Ignoring message with no text content from %s", sender)
+        # Check for text and/or attachments
+        has_text = envelope.envelope.dataMessage.message is not None
+        has_attachments = bool(envelope.envelope.dataMessage.attachments)
+
+        if not has_text and not has_attachments:
+            logger.debug("Ignoring message with no text and no attachments from %s", sender)
             return None
 
-        content = envelope.envelope.dataMessage.message.strip()
+        content = (envelope.envelope.dataMessage.message or "").strip()
 
-        logger.info("Extracted - sender: %s, content: '%s'", sender, content)
-
-        if not content:
+        if not content and not has_attachments:
             logger.debug("Ignoring empty message from %s", sender)
             return None
+
+        logger.info("Extracted - sender: %s, content: '%s'", sender, content)
 
         # Extract quoted text if this is a reply
         quoted_text = None
@@ -439,6 +444,51 @@ class SignalChannel(MessageChannel):
             quoted_text=quoted_text,
             signal_timestamp=signal_timestamp,
         )
+
+    async def _fetch_attachments(self, message: IncomingMessage, raw_data: dict) -> IncomingMessage:
+        """Download image attachments from Signal API and add to message."""
+        envelope = self._parse_envelope(raw_data)
+        if not envelope or not envelope.envelope.dataMessage:
+            return message
+
+        attachments = envelope.envelope.dataMessage.attachments
+        if not attachments:
+            return message
+
+        images: list[str] = []
+        for attachment in attachments:
+            if attachment.contentType not in VISION_SUPPORTED_CONTENT_TYPES:
+                logger.debug("Skipping non-image attachment: %s", attachment.contentType)
+                continue
+
+            image_data = await self._download_attachment(attachment.id)
+            if image_data:
+                images.append(image_data)
+
+        if images:
+            logger.info("Downloaded %d image attachment(s)", len(images))
+            return message.model_copy(update={"images": images})
+        return message
+
+    async def _download_attachment(self, attachment_id: str) -> str | None:
+        """Download an attachment from Signal API and return as base64 string."""
+        try:
+            url = f"{self.api_url}/v1/attachments/{attachment_id}"
+            response = await self.http_client.get(url)
+            response.raise_for_status()
+
+            image_b64 = base64.b64encode(response.content).decode()
+
+            logger.info(
+                "Downloaded attachment %s (%d bytes)",
+                attachment_id,
+                len(response.content),
+            )
+            return image_b64
+
+        except httpx.HTTPError as e:
+            logger.error("Failed to download attachment %s: %s", attachment_id, e)
+            return None
 
     def _parse_envelope(self, envelope_data: dict) -> SignalEnvelope | None:
         """Parse a Signal WebSocket envelope."""

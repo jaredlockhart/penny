@@ -15,6 +15,7 @@ class MockSignalServer:
         self.outgoing_messages: list[dict] = []
         self.typing_events: list[tuple[str, str]] = []  # (action, recipient)
         self._websockets: list[web.WebSocketResponse] = []
+        self._attachments: dict[str, bytes] = {}  # attachment_id -> binary data
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
@@ -26,6 +27,9 @@ class MockSignalServer:
         self._app.router.add_post("/v2/send", self._handle_send)
         self._app.router.add_put("/v1/typing-indicator/{phone_number}", self._handle_typing_start)
         self._app.router.add_delete("/v1/typing-indicator/{phone_number}", self._handle_typing_stop)
+        self._app.router.add_get(
+            "/v1/attachments/{attachment_id}", self._handle_attachment_download
+        )
         self._app.router.add_get("/v1/receive/{phone_number}", self._handle_websocket)
 
         self._runner = web.AppRunner(self._app)
@@ -71,6 +75,52 @@ class MockSignalServer:
                     "isExpirationUpdate": False,
                     "viewOnce": False,
                     "quote": quote,
+                },
+            },
+            "account": "+15551234567",
+        }
+
+        for ws in self._websockets:
+            if not ws.closed:
+                await ws.send_json(envelope)
+
+    async def push_image_message(
+        self,
+        sender: str,
+        image_data: bytes,
+        content_type: str = "image/jpeg",
+        text: str | None = None,
+    ) -> None:
+        """Push a message with an image attachment to all connected WebSocket clients."""
+        ts = int(time.time() * 1000)
+        attachment_id = str(uuid.uuid4())
+
+        # Store the binary data for download
+        self._attachments[attachment_id] = image_data
+
+        envelope = {
+            "envelope": {
+                "source": sender,
+                "sourceNumber": sender,
+                "sourceUuid": str(uuid.uuid4()),
+                "sourceName": "Test User",
+                "sourceDevice": 1,
+                "timestamp": ts,
+                "serverReceivedTimestamp": ts,
+                "serverDeliveredTimestamp": ts,
+                "dataMessage": {
+                    "timestamp": ts,
+                    "message": text,
+                    "expiresInSeconds": 0,
+                    "isExpirationUpdate": False,
+                    "viewOnce": False,
+                    "attachments": [
+                        {
+                            "contentType": content_type,
+                            "id": attachment_id,
+                            "size": len(image_data),
+                        }
+                    ],
                 },
             },
             "account": "+15551234567",
@@ -134,6 +184,14 @@ class MockSignalServer:
         data = await request.json()
         self.outgoing_messages.append(data)
         return web.json_response({"timestamp": int(time.time() * 1000)})
+
+    async def _handle_attachment_download(self, request: web.Request) -> web.Response:
+        """Handle GET /v1/attachments/{attachment_id} - serve attachment data."""
+        attachment_id = request.match_info["attachment_id"]
+        data = self._attachments.get(attachment_id)
+        if data is None:
+            return web.Response(status=404)
+        return web.Response(body=data, content_type="image/jpeg")
 
     async def _handle_typing_start(self, request: web.Request) -> web.Response:
         """Handle PUT /v1/typing-indicator/{phone_number}."""

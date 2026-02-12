@@ -6,6 +6,7 @@ import logging
 from datetime import UTC, datetime
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole
+from penny.constants import VISION_AUTO_DESCRIBE_PROMPT
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -49,12 +50,14 @@ class Agent:
         max_retries: int = 3,
         retry_delay: float = 0.5,
         tool_timeout: float = 60.0,
+        vision_model: str | None = None,
     ):
         self.system_prompt = system_prompt
         self.model = model
         self.tools = tools
         self.db = db
         self.max_steps = max_steps
+        self.vision_model = vision_model
 
         self._ollama_client = OllamaClient(
             api_url=ollama_api_url,
@@ -95,9 +98,25 @@ class Agent:
             for role, content in history:
                 messages.append(ChatMessage(role=MessageRole(role), content=content).to_dict())
 
-        messages.append(ChatMessage(role=MessageRole.USER, content=prompt).to_dict())
+        user_msg = ChatMessage(role=MessageRole.USER, content=prompt)
+        messages.append(user_msg.to_dict())
 
         return messages
+
+    async def caption_image(self, image_b64: str) -> str:
+        """Caption an image using the vision model.
+
+        Args:
+            image_b64: Base64-encoded image data
+
+        Returns:
+            Text description of the image
+        """
+        messages = [
+            {"role": "user", "content": VISION_AUTO_DESCRIBE_PROMPT, "images": [image_b64]},
+        ]
+        response = await self._ollama_client.chat(messages=messages, model=self.vision_model)
+        return response.content.strip()
 
     async def run(
         self,

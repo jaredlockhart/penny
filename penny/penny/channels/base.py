@@ -8,10 +8,14 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from penny.config import Config
-from penny.constants import TEST_MODE_PREFIX, MessageDirection
+from penny.constants import (
+    TEST_MODE_PREFIX,
+    VISION_NOT_CONFIGURED_MESSAGE,
+    MessageDirection,
+)
 from penny.database.models import MessageLog
 
 if TYPE_CHECKING:
@@ -32,6 +36,7 @@ class IncomingMessage(BaseModel):
     signal_timestamp: int | None = None  # Original Signal timestamp (ms since epoch)
     is_reaction: bool = False  # True if this is a reaction message
     reacted_to_external_id: str | None = None  # External ID of message being reacted to
+    images: list[str] = Field(default_factory=list)  # Base64-encoded image data
 
 
 class MessageChannel(ABC):
@@ -55,6 +60,7 @@ class MessageChannel(ABC):
         self._db = db
         self._command_registry = command_registry
         self._scheduler: BackgroundScheduler | None = None
+        self._config: Config | None = None
 
     def set_scheduler(self, scheduler: BackgroundScheduler) -> None:
         """Set the scheduler for message notifications."""
@@ -69,6 +75,8 @@ class MessageChannel(ABC):
             channel_type: Channel type ("signal" or "discord")
             start_time: Penny startup time
         """
+        self._config = config
+
         from penny.commands import CommandContext
         from penny.ollama import OllamaClient
 
@@ -176,6 +184,14 @@ class MessageChannel(ABC):
         """Close the channel and cleanup resources."""
         pass
 
+    async def _fetch_attachments(self, message: IncomingMessage, raw_data: dict) -> IncomingMessage:
+        """
+        Fetch attachment data for the message. Override in subclasses.
+
+        Default implementation returns the message unchanged.
+        """
+        return message
+
     async def _typing_loop(self, recipient: str, interval: float = 4.0) -> None:
         """Send typing indicators on a loop until cancelled."""
         try:
@@ -257,6 +273,16 @@ class MessageChannel(ABC):
                 await self._handle_reaction(message)
                 return
 
+            # Fetch image attachments if the channel supports them
+            message = await self._fetch_attachments(message, envelope_data)
+
+            # Handle vision: check if images are present
+            if message.images:
+                vision_model = self._config.ollama_vision_model if self._config else None
+                if not vision_model:
+                    await self.send_status_message(message.sender, VISION_NOT_CONFIGURED_MESSAGE)
+                    return
+
             # Only reset idle timers for real messages, not receipts/sync messages
             if self._scheduler:
                 self._scheduler.notify_message()
@@ -299,6 +325,7 @@ class MessageChannel(ABC):
                     content=message.content,
                     sender=message.sender,
                     quoted_text=message.quoted_text,
+                    images=message.images or None,
                 )
 
                 # Log incoming message linked to parent

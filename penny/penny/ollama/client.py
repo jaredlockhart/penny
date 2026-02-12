@@ -38,9 +38,10 @@ class OllamaClient:
 
     async def chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict],
         tools: list[dict] | None = None,
         format: dict | str | None = None,
+        model: str | None = None,
     ) -> ChatResponse:
         """
         Generate a chat completion with optional tool calling.
@@ -49,10 +50,12 @@ class OllamaClient:
             messages: List of message dicts with 'role' and 'content'
             tools: Optional list of tool definitions in Ollama format
             format: Optional format specification (JSON schema dict, "json", or None)
+            model: Optional model override for this call (e.g., vision model)
 
         Returns:
             ChatResponse with message, thinking, tool calls, etc.
         """
+        effective_model = model or self.model
         last_error: Exception | None = None
 
         for attempt in range(self.max_retries):
@@ -70,7 +73,7 @@ class OllamaClient:
 
                 # Build kwargs for chat call
                 chat_kwargs: dict = {
-                    "model": self.model,
+                    "model": effective_model,
                     "messages": messages,
                 }
                 if tools is not None:
@@ -101,7 +104,7 @@ class OllamaClient:
                 # Log to database
                 if self.db:
                     self.db.log_prompt(
-                        model=self.model,
+                        model=effective_model,
                         messages=messages_snapshot,
                         response=raw_dict,
                         tools=tools,

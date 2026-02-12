@@ -47,6 +47,7 @@ class Config:
 
     # Optional fields with defaults
     log_file: str | None = None
+    ollama_vision_model: str | None = None  # Vision model for image understanding
 
     # GitHub App Configuration (optional, needed for /bug command)
     github_app_id: str | None = None
@@ -144,6 +145,7 @@ class Config:
         ollama_foreground_model = os.getenv("OLLAMA_FOREGROUND_MODEL", "gpt-oss:20b")
         # Background model defaults to foreground model if not specified
         ollama_background_model = os.getenv("OLLAMA_BACKGROUND_MODEL", ollama_foreground_model)
+        ollama_vision_model = os.getenv("OLLAMA_VISION_MODEL")  # Optional
         perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")  # Optional
         log_level = os.getenv("LOG_LEVEL", "INFO")
         db_path = os.getenv("DB_PATH", "/penny/data/penny.db")
@@ -180,6 +182,7 @@ class Config:
             ollama_api_url=ollama_api_url,
             ollama_foreground_model=ollama_foreground_model,
             ollama_background_model=ollama_background_model,
+            ollama_vision_model=ollama_vision_model,
             perplexity_api_key=perplexity_api_key,
             github_app_id=github_app_id,
             github_app_private_key_path=github_app_private_key_path,

@@ -120,3 +120,12 @@ TEST_MODE_PREFIX = "[TEST] "
 # GitHub constants
 GITHUB_REPO_OWNER = "jaredlockhart"
 GITHUB_REPO_NAME = "penny"
+
+# Vision constants
+VISION_AUTO_DESCRIBE_PROMPT = "Describe this image in detail."
+VISION_NOT_CONFIGURED_MESSAGE = (
+    "i can see you sent an image but i don't have vision configured right now"
+)
+VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
+VISION_IMAGE_CONTEXT = "user said '{user_text}' and included an image of: {caption}"
+VISION_IMAGE_ONLY_CONTEXT = "user sent an image of: {caption}"
