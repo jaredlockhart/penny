@@ -69,7 +69,7 @@ class BugCommand(Command):
         # Build footer with filing metadata
         footer_parts = [
             "\n\n---",
-            f"Filed by {context.user} via {context.channel_type} at {timestamp}",
+            f"Filed via {context.channel_type} at {timestamp}",
         ]
 
         # If this is a quote-reply, include metadata about the quoted message
