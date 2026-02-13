@@ -119,10 +119,17 @@ class ToolExecutor:
 
         if tool is None:
             logger.error("Tool not found: %s", tool_call.tool)
+            available_tools = [t.name for t in self.registry.get_all()]
+            available_list = ", ".join(available_tools) if available_tools else "none"
+            error_message = (
+                f"Tool '{tool_call.tool}' not found. "
+                f"Available tools: {available_list}. "
+                f"You must ONLY use the tools listed above."
+            )
             return ToolResult(
                 tool=tool_call.tool,
                 result=None,
-                error=f"Tool '{tool_call.tool}' not found",
+                error=error_message,
                 id=tool_call.id,
             )
 
