@@ -78,7 +78,7 @@ class FollowupAgent(Agent):
                 ),
             )
 
-        response = await self.run(prompt=FOLLOWUP_PROMPT, history=history)
+        response = await self.run(prompt=FOLLOWUP_PROMPT, history=history, sender=recipient)
 
         answer = response.answer.strip() if response.answer else None
         if not answer:

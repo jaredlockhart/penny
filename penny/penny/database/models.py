@@ -145,3 +145,14 @@ class Schedule(SQLModel, table=True):
     prompt_text: str  # Prompt to execute when schedule fires
     timing_description: str  # Original human description for display (e.g., "daily 9am")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PersonalityPrompt(SQLModel, table=True):
+    """User custom personality prompts that shape Penny's tone and behavior."""
+
+    __tablename__ = "personalityprompt"
+
+    user_id: str = Field(primary_key=True)  # Signal number or Discord user ID
+    prompt_text: str  # The custom personality prompt
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
