@@ -166,3 +166,8 @@ VISION_NOT_CONFIGURED_MESSAGE = (
 VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
 VISION_IMAGE_CONTEXT = "user said '{user_text}' and included an image of: {caption}"
 VISION_IMAGE_ONLY_CONTEXT = "user sent an image of: {caption}"
+VISION_RESPONSE_PROMPT = (
+    f"{PENNY_IDENTITY}\n\n"
+    "The user sent an image. Respond naturally to the image description provided. "
+    "Keep it relaxed and low-key, like texting a friend. End with an emoji."
+)

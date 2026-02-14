@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
-from penny.constants import VISION_IMAGE_CONTEXT, VISION_IMAGE_ONLY_CONTEXT
+from penny.constants import VISION_IMAGE_CONTEXT, VISION_IMAGE_ONLY_CONTEXT, VISION_RESPONSE_PROMPT
 from penny.database.models import ResearchTask
 from penny.tools.builtin import SearchTool
 
@@ -84,12 +84,13 @@ class MessageAgent(Agent):
                 content = VISION_IMAGE_ONLY_CONTEXT.format(caption=caption)
             logger.info("Built vision prompt: %s", content[:200])
 
-        # Run agent (for image messages: disable tools and use single pass)
+        # Run agent (for image messages: disable tools, single pass, vision prompt)
         response = await self.run(
             prompt=content,
             history=history,
             use_tools=not has_images,
             max_steps=1 if has_images else None,
+            system_prompt=VISION_RESPONSE_PROMPT if has_images else None,
         )
 
         return parent_id, response

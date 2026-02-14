@@ -88,12 +88,14 @@ class Agent:
         self,
         prompt: str,
         history: list[tuple[str, str]] | None = None,
+        system_prompt: str | None = None,
     ) -> list[dict]:
         """Build message list for Ollama chat API."""
         messages = []
 
+        effective_prompt = system_prompt or self.system_prompt
         now = datetime.now(UTC).strftime("%A, %B %d, %Y at %I:%M %p UTC")
-        system_content = f"Current date and time: {now}\n\n{self.system_prompt}"
+        system_content = f"Current date and time: {now}\n\n{effective_prompt}"
         messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content).to_dict())
 
         if history:
@@ -126,6 +128,7 @@ class Agent:
         history: list[tuple[str, str]] | None = None,
         use_tools: bool = True,
         max_steps: int | None = None,
+        system_prompt: str | None = None,
     ) -> ControllerResponse:
         """
         Run the agent with a prompt.
@@ -135,13 +138,14 @@ class Agent:
             history: Optional conversation history as (role, content) tuples
             use_tools: Whether to enable tools for this run (default: True)
             max_steps: Override max_steps for this run (default: use agent's max_steps)
+            system_prompt: Override system prompt for this run (default: use agent's prompt)
 
         Returns:
             ControllerResponse with answer, thinking, and attachments
         """
-        messages = self._build_messages(prompt, history)
-        tools = self._tool_registry.get_ollama_tools() if use_tools else []
-        logger.debug("Using %d tools", len(tools))
+        messages = self._build_messages(prompt, history, system_prompt)
+        tools = self._tool_registry.get_ollama_tools() if use_tools else None
+        logger.debug("Using %d tools", len(tools) if tools else 0)
 
         attachments: list[str] = []
         source_urls: list[str] = []

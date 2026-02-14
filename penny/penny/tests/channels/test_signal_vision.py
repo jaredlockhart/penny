@@ -7,6 +7,7 @@ from penny.constants import (
     VISION_IMAGE_CONTEXT,
     VISION_IMAGE_ONLY_CONTEXT,
     VISION_NOT_CONFIGURED_MESSAGE,
+    VISION_RESPONSE_PROMPT,
 )
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -65,8 +66,13 @@ async def test_image_with_text_captions_then_forwards(
             user_text="what's in this photo?", caption="a cute orange cat"
         )
         assert any(expected in m.get("content", "") for m in user_msgs)
-        # Verify no tools were provided (empty tools list means no search)
-        assert "tools" not in foreground_request or len(foreground_request.get("tools", [])) == 0
+        # Verify no tools were provided (None = tools disabled)
+        assert foreground_request.get("tools") is None
+        # Verify vision response prompt (not search prompt) was used
+        system_msgs = [m for m in foreground_request["messages"] if m["role"] == "system"]
+        system_text = system_msgs[0]["content"]
+        assert "sent an image" in system_text
+        assert VISION_RESPONSE_PROMPT in system_text
 
 
 @pytest.mark.asyncio
@@ -113,8 +119,13 @@ async def test_image_without_text_captions_then_forwards(
         assert not any("images" in m for m in user_msgs)
         expected = VISION_IMAGE_ONLY_CONTEXT.format(caption="a sunset over the ocean")
         assert any(expected in m.get("content", "") for m in user_msgs)
-        # Verify no tools were provided
-        assert "tools" not in foreground_request or len(foreground_request.get("tools", [])) == 0
+        # Verify no tools were provided (None = tools disabled)
+        assert foreground_request.get("tools") is None
+        # Verify vision response prompt (not search prompt) was used
+        system_msgs = [m for m in foreground_request["messages"] if m["role"] == "system"]
+        system_text = system_msgs[0]["content"]
+        assert "sent an image" in system_text
+        assert VISION_RESPONSE_PROMPT in system_text
 
 
 @pytest.mark.asyncio
