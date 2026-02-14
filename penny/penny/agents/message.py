@@ -74,6 +74,7 @@ class MessageAgent(Agent):
             pass
 
         # Caption images with vision model, then build combined text prompt
+        has_images = bool(images)
         if images:
             captions = [await self.caption_image(img) for img in images]
             caption = ", ".join(captions)
@@ -83,8 +84,13 @@ class MessageAgent(Agent):
                 content = VISION_IMAGE_ONLY_CONTEXT.format(caption=caption)
             logger.info("Built vision prompt: %s", content[:200])
 
-        # Run agent
-        response = await self.run(prompt=content, history=history)
+        # Run agent (for image messages: disable tools and use single pass)
+        response = await self.run(
+            prompt=content,
+            history=history,
+            use_tools=not has_images,
+            max_steps=1 if has_images else None,
+        )
 
         return parent_id, response
 
