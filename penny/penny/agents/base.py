@@ -51,6 +51,7 @@ class Agent:
         retry_delay: float = 0.5,
         tool_timeout: float = 60.0,
         vision_model: str | None = None,
+        allow_repeat_tools: bool = False,
     ):
         self.system_prompt = system_prompt
         self.model = model
@@ -58,6 +59,7 @@ class Agent:
         self.db = db
         self.max_steps = max_steps
         self.vision_model = vision_model
+        self.allow_repeat_tools = allow_repeat_tools
 
         self._ollama_client = OllamaClient(
             api_url=ollama_api_url,
@@ -168,7 +170,7 @@ class Agent:
                     tool_name = ollama_tool_call.function.name
                     arguments = ollama_tool_call.function.arguments
 
-                    if tool_name in called_tools:
+                    if not self.allow_repeat_tools and tool_name in called_tools:
                         logger.info("Skipping repeat call to tool: %s", tool_name)
                         result_str = (
                             "Tool already called. DO NOT search again. Write your response NOW."

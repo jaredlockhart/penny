@@ -200,3 +200,70 @@ async def test_followup_no_leaves(
         # No messages sent, so no conversation leaves
         result = await followup_agent.execute()
         assert result is False, "Should return False when no conversation leaves"
+
+
+@pytest.mark.asyncio
+async def test_followup_quotes_with_correct_timestamp(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that FollowupAgent uses correct Signal timestamp for quote replies.
+    When the conversation leaf is an outgoing message, the quote should use
+    the external_id (Signal timestamp) not the database timestamp.
+    """
+    config = make_config()
+    mock_ollama.set_default_flow(
+        search_query="coffee",
+        final_response="following up on our conversation!",
+    )
+
+    async with running_penny(config) as penny:
+        # Send initial message to create a conversation
+        await signal_server.push_message(sender=TEST_SENDER, content="tell me about coffee")
+        response = await signal_server.wait_for_message(timeout=10.0)
+        assert "following up" in response["message"].lower()
+
+        # Get the outgoing message from the database (this will be the leaf)
+        with penny.db.get_session() as session:
+            outgoing = list(
+                session.exec(select(MessageLog).where(MessageLog.direction == "outgoing")).all()
+            )
+        assert len(outgoing) >= 1, "Should have at least one outgoing message"
+
+        leaf_msg = outgoing[-1]
+        # Verify the leaf has an external_id (Signal timestamp)
+        assert leaf_msg.external_id is not None, "Outgoing message should have external_id"
+
+        # Manually trigger followup to verify it uses correct timestamp
+        from penny.agents import FollowupAgent
+        from penny.constants import SYSTEM_PROMPT
+
+        followup_agent = FollowupAgent(
+            system_prompt=SYSTEM_PROMPT,
+            model=penny.message_agent.model,
+            ollama_api_url=config.ollama_api_url,
+            tools=penny.message_agent.tools,
+            db=penny.db,
+        )
+        followup_agent.set_channel(penny.channel)
+
+        # Clear previous outgoing messages
+        signal_server.outgoing_messages.clear()
+
+        # Execute followup
+        await followup_agent.execute()
+
+        # Wait for followup message
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+
+        # Verify the quote timestamp matches the external_id
+        followup_sent = signal_server.outgoing_messages[-1]
+        assert "quote_timestamp" in followup_sent, "Should include quote_timestamp"
+        assert followup_sent["quote_timestamp"] == int(leaf_msg.external_id), (
+            "Quote timestamp should match external_id"
+        )

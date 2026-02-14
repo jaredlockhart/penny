@@ -72,9 +72,19 @@ DISCOVERY_PROMPT = (
 RESEARCH_PROMPT = (
     "You are conducting deep research on a topic. "
     "Search for comprehensive information and analyze the results. "
+    "Structure your findings starting with the highest-level insights first, "
+    "then break down into increasingly specific details. "
     "Based on what you find, determine what specific aspect or angle to investigate next. "
     "Be thorough and systematic - cover different perspectives, recent developments, "
     "and key details."
+)
+
+RESEARCH_SUMMARY_PROMPT = (
+    "Based on all research findings below, write a detailed executive summary "
+    "that captures the highest-level insights about the topic. Start with the most important "
+    "information first, then break down into increasingly specific details as you go. "
+    "Use markdown formatting and bullet points to organize the information clearly. "
+    "Do not include tables."
 )
 
 PREFERENCE_PROMPT = (
@@ -91,6 +101,33 @@ PREFERENCE_PROMPT = (
     "- quantum gravity\n"
     "- Toronto\n\n"
     "Messages:\n"
+)
+
+# Email command constants
+JMAP_SESSION_URL = "https://api.fastmail.com/jmap/session"
+JMAP_REQUEST_TIMEOUT = 30.0
+EMAIL_BODY_MAX_LENGTH = 4000
+EMAIL_NO_QUERY_TEXT = "Please ask a question about your email. Usage: /email <question>"
+
+EMAIL_SYSTEM_PROMPT = (
+    f"{PENNY_IDENTITY}\n\n"
+    "You are searching the user's email to answer their question. "
+    "You have two tools: search_emails and read_emails.\n\n"
+    "Strategy:\n"
+    "1. Search for relevant emails using search_emails\n"
+    "2. Read promising emails with read_emails (pass all relevant IDs at once)\n"
+    "3. If needed, refine your search and read more emails\n"
+    "4. Synthesize a clear, concise answer\n\n"
+    "Be concise. Include specific dates, names, and details. "
+    "Keep it relaxed, like texting a friend."
+)
+
+EMAIL_SUMMARIZE_PROMPT = (
+    'The user asked: "{query}"\n\n'
+    "Extract the key information from these emails that is relevant to the user's question. "
+    "Be concise — include specific dates, names, amounts, and actionable details. "
+    "Omit irrelevant content like headers, footers, and marketing text.\n\n"
+    "Emails:\n{emails}"
 )
 
 # Schedule command response messages

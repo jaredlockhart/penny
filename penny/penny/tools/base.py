@@ -89,16 +89,58 @@ class ToolExecutor:
         self.registry = registry
         self.timeout = timeout
 
+    def _validate_arguments(self, tool: Tool, arguments: dict[str, Any]) -> str | None:
+        """
+        Validate that all required parameters are present in arguments.
+
+        Args:
+            tool: The tool to validate against
+            arguments: The arguments provided in the tool call
+
+        Returns:
+            Error message if validation fails, None if valid
+        """
+        parameters = tool.parameters
+        required_params = parameters.get("required", [])
+
+        missing_params = [param for param in required_params if param not in arguments]
+
+        if missing_params:
+            return (
+                f"Missing required parameter(s): {', '.join(missing_params)}. "
+                f"Please call the tool again with all required parameters."
+            )
+
+        return None
+
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call."""
         tool = self.registry.get(tool_call.tool)
 
         if tool is None:
             logger.error("Tool not found: %s", tool_call.tool)
+            available_tools = [t.name for t in self.registry.get_all()]
+            available_list = ", ".join(available_tools) if available_tools else "none"
+            error_message = (
+                f"Tool '{tool_call.tool}' not found. "
+                f"Available tools: {available_list}. "
+                f"You must ONLY use the tools listed above."
+            )
             return ToolResult(
                 tool=tool_call.tool,
                 result=None,
-                error=f"Tool '{tool_call.tool}' not found",
+                error=error_message,
+                id=tool_call.id,
+            )
+
+        # Validate that all required parameters are present
+        validation_error = self._validate_arguments(tool, tool_call.arguments)
+        if validation_error:
+            logger.error("Tool call validation failed: %s - %s", tool_call.tool, validation_error)
+            return ToolResult(
+                tool=tool_call.tool,
+                result=None,
+                error=validation_error,
                 id=tool_call.id,
             )
 
