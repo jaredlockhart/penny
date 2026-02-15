@@ -39,6 +39,16 @@ async def test_research_agent_executes_iterations(
     response_index = [0]
 
     def research_handler(request: dict, count: int) -> dict:
+        # Extraction/summary calls (no tools) - pass through or summarize
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            # Summary calls get a clean response; extraction calls pass through
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
         # Each research iteration gets a simple text response
         if response_index[0] < len(iteration_responses):
             response = iteration_responses[response_index[0]]
@@ -175,6 +185,16 @@ async def test_research_agent_truncates_long_reports(
     response_index = [0]
 
     def long_response_handler(request: dict, count: int) -> dict:
+        # Extraction/summary calls (no tools) - pass through or summarize
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            # Summary calls get a clean response; extraction calls pass through
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
             response_index[0] += 1
@@ -221,6 +241,16 @@ async def test_research_agent_stores_iterations(
     response_index = [0]
 
     def coffee_handler(request: dict, count: int) -> dict:
+        # Extraction/summary calls (no tools) - pass through or summarize
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            # Summary calls get a clean response; extraction calls pass through
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
             response_index[0] += 1
@@ -283,6 +313,16 @@ async def test_research_report_logged_to_database(
     response_index = [0]
 
     def ai_handler(request: dict, count: int) -> dict:
+        # Extraction/summary calls (no tools) - pass through or summarize
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            # Summary calls get a clean response; extraction calls pass through
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
             response_index[0] += 1
@@ -333,6 +373,16 @@ async def test_research_generates_proper_report_format(
     response_index = [0]
 
     def format_handler(request: dict, count: int) -> dict:
+        # Extraction/summary calls (no tools) - pass through or summarize
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            # Summary calls get a clean response; extraction calls pass through
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
             response_index[0] += 1
@@ -400,6 +450,16 @@ async def test_research_filters_markdown_from_llm_findings(
     response_index = [0]
 
     def markdown_handler(request: dict, count: int) -> dict:
+        # Extraction/summary calls (no tools) - pass through or summarize
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            # Summary calls get a clean response; extraction calls pass through
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
             response_index[0] += 1
@@ -461,6 +521,16 @@ async def test_research_agent_activates_pending_task(
     ]
 
     def multi_task_handler(request: dict, count: int) -> dict:
+        # Extraction/summary calls (no tools) - pass through or summarize
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            # Summary calls get a clean response; extraction calls pass through
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
         # First 2 calls are for first task
         if response_index[0] < len(first_task_responses):
             response = first_task_responses[response_index[0]]
@@ -557,6 +627,16 @@ async def test_research_suspended_during_foreground_work(
     ]
 
     def track_handler(request: dict, count: int) -> dict:
+        # Extraction/summary calls (no tools) - pass through without logging
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            # Summary calls get a clean response; extraction calls pass through
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
         # Identify if this is a research iteration or user message
         if any("research" in msg.get("content", "").lower() for msg in request.get("messages", [])):
             call_log.append("research")

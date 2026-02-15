@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from penny.agents.base import Agent
 from penny.agents.models import MessageRole
 from penny.config import Config
-from penny.constants import RESEARCH_PROMPT, RESEARCH_SUMMARY_PROMPT
+from penny.constants import RESEARCH_EXTRACTION_PROMPT, RESEARCH_PROMPT, RESEARCH_SUMMARY_PROMPT
 from penny.database.models import ResearchIteration, ResearchTask
 
 if TYPE_CHECKING:
@@ -76,9 +76,9 @@ class ResearchAgent(Agent):
             self._mark_failed(task.id, "Empty response from LLM")
             return False
 
-        # Extract findings and sources from response
-        findings = response.answer
+        # Extract sources from raw response, then distill findings
         sources = self._extract_sources(response.answer)
+        findings = await self._extract_findings(task.topic, response.answer)
 
         # Store iteration
         self._store_iteration(
@@ -270,6 +270,19 @@ class ResearchAgent(Agent):
             report_lines.append(source)
 
         return "\n".join(report_lines)
+
+    async def _extract_findings(self, topic: str, raw_response: str) -> str:
+        """Extract relevant findings from raw search results using LLM."""
+        response = await self._ollama_client.chat(
+            messages=[
+                {"role": "system", "content": RESEARCH_EXTRACTION_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"Research topic: {topic}\n\nSearch results:\n\n{raw_response}",
+                },
+            ]
+        )
+        return response.message.content.strip()
 
     async def _generate_summary(self, findings: list[str]) -> str:
         """Generate executive summary using LLM to synthesize all findings."""

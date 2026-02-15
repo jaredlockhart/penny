@@ -79,6 +79,14 @@ RESEARCH_PROMPT = (
     "and key details."
 )
 
+RESEARCH_EXTRACTION_PROMPT = (
+    "Given the user's research topic and the following search results, "
+    "extract a concise bulleted list of the relevant information that satisfies "
+    "the research topic. Include only facts, findings, and details that are directly "
+    "relevant. Omit filler, redundant information, and irrelevant content. "
+    "Use short, information-dense bullet points."
+)
+
 RESEARCH_SUMMARY_PROMPT = (
     "Based on all research findings below, write a detailed executive summary "
     "that captures the highest-level insights about the topic. Start with the most important "
