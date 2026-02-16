@@ -81,7 +81,13 @@ async def test_research_agent_executes_iterations(
         confirmation = await signal_server.wait_for_message(timeout=5.0)
         assert "started research" in confirmation["message"].lower()
 
-        # Wait for research report to be posted
+        # Wait for task to complete in DB, then for report message
+        def _task_completed():
+            with penny.db.get_session() as session:
+                tasks = list(session.exec(select(ResearchTask)).all())
+                return len(tasks) == 1 and tasks[0].status == "completed"
+
+        await wait_until(_task_completed, timeout=10.0)
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=5.0)
 
         # Last message should be the research report
@@ -201,11 +207,17 @@ async def test_research_agent_truncates_long_reports(
         )
     )
 
-    async with running_penny(config):
+    async with running_penny(config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! test topic")
         await signal_server.wait_for_message(timeout=5.0)
 
-        # Wait for report
+        # Wait for task to complete in DB, then for report message
+        def _task_completed():
+            with penny.db.get_session() as session:
+                tasks = list(session.exec(select(ResearchTask)).all())
+                return len(tasks) == 1 and tasks[0].status == "completed"
+
+        await wait_until(_task_completed, timeout=10.0)
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=5.0)
 
         report = signal_server.outgoing_messages[-1]
@@ -246,8 +258,13 @@ async def test_research_agent_stores_iterations(
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! coffee beans")
         await signal_server.wait_for_message(timeout=5.0)
 
-        # Wait for completion
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=5.0)
+        # Wait for task to complete in DB
+        def _task_completed():
+            with penny.db.get_session() as session:
+                tasks = list(session.exec(select(ResearchTask)).all())
+                return len(tasks) == 1 and tasks[0].status == "completed"
+
+        await wait_until(_task_completed, timeout=10.0)
 
         # Check iterations in database
         with penny.db.get_session() as session:
@@ -303,7 +320,13 @@ async def test_research_report_logged_to_database(
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! AI")
         await signal_server.wait_for_message(timeout=5.0)
 
-        # Wait for report
+        # Wait for task to complete in DB, then for report message
+        def _task_completed():
+            with penny.db.get_session() as session:
+                tasks = list(session.exec(select(ResearchTask)).all())
+                return len(tasks) == 1 and tasks[0].status == "completed"
+
+        await wait_until(_task_completed, timeout=10.0)
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=5.0)
 
         # Verify report is in MessageLog
@@ -613,7 +636,13 @@ async def test_research_focus_reply_starts_research(
             assert tasks[0].status == "in_progress"
             assert tasks[0].focus == "comprehensive list with dates and locations"
 
-        # Step 3: Wait for research report
+        # Step 3: Wait for task to complete in DB, then for report message
+        def _task_completed():
+            with penny.db.get_session() as session:
+                tasks = list(session.exec(select(ResearchTask)).all())
+                return len(tasks) == 1 and tasks[0].status == "completed"
+
+        await wait_until(_task_completed, timeout=10.0)
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=5.0)
 
         report = signal_server.outgoing_messages[-1]
@@ -665,7 +694,13 @@ async def test_research_focus_reply_go_starts_without_focus(
             assert tasks[0].status == "in_progress"
             assert tasks[0].focus is None
 
-        # Wait for report
+        # Wait for task to complete in DB, then for report message
+        def _task_completed():
+            with penny.db.get_session() as session:
+                tasks = list(session.exec(select(ResearchTask)).all())
+                return len(tasks) == 1 and tasks[0].status == "completed"
+
+        await wait_until(_task_completed, timeout=10.0)
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=5.0)
         report = signal_server.outgoing_messages[-1]
         assert "research report complete" in report["message"].lower()
