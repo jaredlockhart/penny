@@ -58,6 +58,7 @@ async def test_research_agent_executes_iterations(
     config = make_config(
         research_max_iterations=3,
         research_schedule_interval=9999,
+        scheduler_tick_interval=9999,
     )
 
     mock_ollama.set_response_handler(
@@ -185,6 +186,7 @@ async def test_research_agent_truncates_long_reports(
         research_max_iterations=2,
         research_output_max_length=300,
         research_schedule_interval=9999,
+        scheduler_tick_interval=9999,
     )
 
     # Generate long responses that will definitely exceed 300 chars when formatted
@@ -227,6 +229,7 @@ async def test_research_agent_stores_iterations(
     config = make_config(
         research_max_iterations=2,
         research_schedule_interval=9999,
+        scheduler_tick_interval=9999,
     )
 
     mock_ollama.set_response_handler(
@@ -284,6 +287,7 @@ async def test_research_report_logged_to_database(
     config = make_config(
         research_max_iterations=2,
         research_schedule_interval=9999,
+        scheduler_tick_interval=9999,
     )
 
     mock_ollama.set_response_handler(
@@ -335,6 +339,7 @@ async def test_research_agent_activates_pending_task(
     config = make_config(
         research_max_iterations=2,
         research_schedule_interval=9999,
+        scheduler_tick_interval=9999,
     )
 
     # Track which task we're on based on request count
@@ -553,6 +558,7 @@ async def test_research_focus_reply_starts_research(
     config = make_config(
         research_max_iterations=2,
         research_schedule_interval=9999,
+        scheduler_tick_interval=9999,
     )
 
     responses = [
@@ -640,6 +646,7 @@ async def test_research_focus_reply_go_starts_without_focus(
     config = make_config(
         research_max_iterations=2,
         research_schedule_interval=9999,
+        scheduler_tick_interval=9999,
     )
 
     mock_ollama.set_response_handler(
@@ -692,6 +699,7 @@ async def test_research_focus_timeout_auto_starts(
     config = make_config(
         research_max_iterations=2,
         research_schedule_interval=9999,
+        scheduler_tick_interval=9999,
     )
 
     mock_ollama.set_response_handler(
