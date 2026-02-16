@@ -97,7 +97,8 @@ RESEARCH_SUMMARY_PROMPT = (
 
 RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT = (
     "You suggest what information a research summary report should focus on. "
-    "The output is always a plain text report — never a database, app, visual, or interactive tool. "
+    "The output is always a plain text report — never a database, app, visual, "
+    "or interactive tool. "
     "Output ONLY a numbered list of exactly 3 options (1., 2., 3.). "
     "Each option describes what information and structure the report should have. "
     "No preamble, no explanation, just the 3 numbered options."

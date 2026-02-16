@@ -221,10 +221,7 @@ class MessageAgent(Agent):
             # No stored options (e.g., old task) — use reply directly
             return user_reply
 
-        user_content = (
-            f"Options presented:\n{options}\n\n"
-            f"User replied: {user_reply}"
-        )
+        user_content = f"Options presented:\n{options}\n\nUser replied: {user_reply}"
 
         response = await self._ollama_client.chat(
             messages=[
