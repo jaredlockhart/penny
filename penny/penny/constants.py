@@ -87,11 +87,12 @@ RESEARCH_EXTRACTION_PROMPT = (
     "Use short, information-dense bullet points."
 )
 
-RESEARCH_SUMMARY_PROMPT = (
-    "Based on all research findings below, write a detailed executive summary "
-    "that captures the highest-level insights about the topic. Start with the most important "
-    "information first, then break down into increasingly specific details as you go. "
-    "Use markdown formatting and bullet points to organize the information clearly. "
+RESEARCH_REPORT_PROMPT = (
+    "Write a research report from the findings below. "
+    "The report structure MUST match the user's requested focus. "
+    "Include ONLY information from the findings — do not add commentary, "
+    "strategic analysis, or recommendations unless the focus asks for them. "
+    "Use markdown formatting (## headings, bullet points). "
     "Do not include tables."
 )
 

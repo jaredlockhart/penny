@@ -18,7 +18,7 @@ from penny.constants import (
     RESEARCH_FOCUS_TIMEOUT_SECONDS,
     RESEARCH_FOLLOWUP_PROMPT,
     RESEARCH_PROMPT,
-    RESEARCH_SUMMARY_PROMPT,
+    RESEARCH_REPORT_PROMPT,
 )
 from penny.database.models import ResearchIteration, ResearchTask
 
@@ -247,8 +247,7 @@ class ResearchAgent(Agent):
     async def _generate_report(
         self, topic: str, iterations: list[ResearchIteration], focus: str | None = None
     ) -> str:
-        """Generate final markdown report from all iterations."""
-        # Collect all findings and deduplicate sources
+        """Generate final report from all iterations using a single LLM call."""
         all_findings: list[str] = []
         all_sources: set[str] = set()
 
@@ -257,42 +256,28 @@ class ResearchAgent(Agent):
             sources_list = json.loads(iteration.sources)
             all_sources.update(sources_list)
 
-        # Generate executive summary using LLM
-        summary = await self._generate_summary(all_findings, focus=focus)
+        combined_findings = "\n\n---\n\n".join(all_findings)
 
-        # Build report
-        report_lines = [
-            f"research complete: {topic}",
-            "",
-            "## summary",
-            summary,
-            "",
-            "## key findings",
-        ]
+        user_content = f"Research topic: {topic}\n"
+        if focus:
+            user_content += f"Requested report format: {focus}\n"
+        user_content += f"\nResearch findings:\n\n{combined_findings}"
 
-        # Extract bullet points from findings
-        for finding in all_findings:
-            # Look for bullet points in the findings
-            for line in finding.split("\n"):
-                stripped = line.strip()
-                # Skip markdown headers (e.g., ## TL;DR)
-                if stripped.startswith("#"):
-                    continue
-                # Skip ALL markdown table rows (any line starting with |)
-                if stripped.startswith("|"):
-                    continue
-                if stripped.startswith("•") or stripped.startswith("-") or stripped.startswith("*"):
-                    report_lines.append(stripped)
-                elif stripped and not stripped.startswith("http"):
-                    # Add non-URL content as bullet if it's not already bulletted
-                    report_lines.append(f"• {stripped}")
+        response = await self._ollama_client.chat(
+            messages=[
+                {"role": "system", "content": RESEARCH_REPORT_PROMPT},
+                {"role": "user", "content": user_content},
+            ]
+        )
+        report = response.message.content.strip()
 
-        report_lines.append("")
-        report_lines.append("## sources")
-        for source in sorted(all_sources):
-            report_lines.append(source)
+        # Append sources
+        if all_sources:
+            report += "\n\n## sources\n"
+            for source in sorted(all_sources):
+                report += f"{source}\n"
 
-        return "\n".join(report_lines)
+        return report
 
     async def _extract_findings(
         self, topic: str, raw_response: str, focus: str | None = None
@@ -310,33 +295,6 @@ class ResearchAgent(Agent):
             ]
         )
         return response.message.content.strip()
-
-    async def _generate_summary(self, findings: list[str], focus: str | None = None) -> str:
-        """Generate executive summary using LLM to synthesize all findings."""
-        # Combine all findings into a single text block for the LLM
-        combined_findings = "\n\n---\n\n".join(findings)
-
-        user_content = "Research findings:\n\n" + combined_findings
-        if focus:
-            user_content = f"Research focus: {focus}\n\n{user_content}"
-
-        # Call LLM to generate summary (no tools, no history)
-        response = await self._ollama_client.chat(
-            messages=[
-                {"role": "system", "content": RESEARCH_SUMMARY_PROMPT},
-                {"role": "user", "content": user_content},
-            ]
-        )
-
-        # Extract the summary
-        summary = response.message.content.strip()
-
-        # Cap at configured max length
-        max_length = self._config.research_output_max_length
-        if len(summary) > max_length:
-            summary = summary[:max_length].rsplit(" ", 1)[0] + "..."
-
-        return summary
 
     def _mark_failed(self, task_id: int, reason: str) -> None:
         """Mark a research task as failed."""

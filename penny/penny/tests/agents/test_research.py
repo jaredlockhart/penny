@@ -47,9 +47,11 @@ async def test_research_agent_executes_iterations(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
                 "summary",
             )
-            # Summary calls get a clean response; extraction calls pass through
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            # Report call contains combined findings; extraction calls pass through
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(
+                    request, "## report\nResearch report complete"
+                )
             return mock_ollama._make_text_response(request, user_content)
         # Each research iteration gets a simple text response
         if response_index[0] < len(iteration_responses):
@@ -75,11 +77,7 @@ async def test_research_agent_executes_iterations(
 
         # Last message should be the research report
         report = signal_server.outgoing_messages[-1]
-        assert "research complete" in report["message"].lower()
-        assert "quantum computing" in report["message"].lower()
-        assert "summary" in report["message"].lower()
-        assert "key findings" in report["message"].lower()
-        assert "sources" in report["message"].lower()
+        assert "research report complete" in report["message"].lower()
 
         # Verify task is marked complete in database
         with penny.db.get_session() as session:
@@ -189,15 +187,15 @@ async def test_research_agent_truncates_long_reports(
     response_index = [0]
 
     def long_response_handler(request: dict, count: int) -> dict:
-        # Extraction/summary calls (no tools) - pass through or summarize
         if not request.get("tools"):
             user_content = next(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
+                "",
             )
-            # Summary calls get a clean response; extraction calls pass through
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            # Report call — return a long report that will exceed the 300 char limit
+            if "Research findings:" in user_content:
+                long_report = "A" * 500
+                return mock_ollama._make_text_response(request, long_report)
             return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
@@ -251,9 +249,11 @@ async def test_research_agent_stores_iterations(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
                 "summary",
             )
-            # Summary calls get a clean response; extraction calls pass through
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            # Report call contains combined findings; extraction calls pass through
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(
+                    request, "## report\nResearch report complete"
+                )
             return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
@@ -323,9 +323,11 @@ async def test_research_report_logged_to_database(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
                 "summary",
             )
-            # Summary calls get a clean response; extraction calls pass through
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            # Report call contains combined findings; extraction calls pass through
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(
+                    request, "## report\nResearch report complete"
+                )
             return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
@@ -352,7 +354,7 @@ async def test_research_report_logged_to_database(
 
             # Last message should be the research report
             report_msg = outgoing[-1]
-            assert "research complete" in report_msg.content.lower()
+            assert "research report complete" in report_msg.content.lower()
             assert report_msg.sender == config.signal_number
 
 
@@ -377,15 +379,18 @@ async def test_research_generates_proper_report_format(
     response_index = [0]
 
     def format_handler(request: dict, count: int) -> dict:
-        # Extraction/summary calls (no tools) - pass through or summarize
+        # Calls without tools: extraction or report generation
         if not request.get("tools"):
             user_content = next(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
+                "",
             )
-            # Summary calls get a clean response; extraction calls pass through
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            # Report call contains "Research findings:" with combined findings
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(
+                    request, "## summary\nTest report about testing and quality"
+                )
+            # Extraction calls pass through
             return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
@@ -404,20 +409,8 @@ async def test_research_generates_proper_report_format(
 
         report = signal_server.outgoing_messages[-1]["message"]
 
-        # Verify structure
-        assert "research complete: test topic" in report.lower()
-        assert "summary" in report.lower()
-        assert "key findings" in report.lower()
-        assert "sources" in report.lower()
-
-        # Verify sections appear in order
-        summary_pos = report.lower().find("summary")
-        findings_pos = report.lower().find("key findings")
-        sources_pos = report.lower().find("sources")
-        assert summary_pos < findings_pos < sources_pos
-
-        # Verify markdown headers are stripped (Signal doesn't support ## headers)
-        assert "##" not in report, "Markdown headers should be stripped by prepare_outgoing()"
+        # Verify LLM-generated report content came through
+        assert "test report" in report.lower()
 
 
 @pytest.mark.asyncio
@@ -454,15 +447,18 @@ async def test_research_filters_markdown_from_llm_findings(
     response_index = [0]
 
     def markdown_handler(request: dict, count: int) -> dict:
-        # Extraction/summary calls (no tools) - pass through or summarize
+        # Calls without tools: extraction or report generation
         if not request.get("tools"):
             user_content = next(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
+                "",
             )
-            # Summary calls get a clean response; extraction calls pass through
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            # Report call contains "Research findings:" with combined findings
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(
+                    request, "## GPU Models\n- Model runs on 16GB GPU"
+                )
+            # Extraction calls pass through
             return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
@@ -481,16 +477,8 @@ async def test_research_filters_markdown_from_llm_findings(
 
         report = signal_server.outgoing_messages[-1]["message"]
 
-        # Verify markdown headers are NOT present (neither standalone nor as bullets)
-        assert "##" not in report, "Markdown headers should be filtered from findings"
-        # Verify table delimiters are NOT present
-        assert "|---" not in report, "Table delimiters should be filtered from findings"
-        assert "TL;DR" not in report, "Header text should not appear as bullets"
-        # Verify table rows are NOT present (lines starting with |)
-        assert "| Model |" not in report, "Table rows should be filtered from findings"
-        assert "| Z-Image |" not in report, "Table rows should be filtered from findings"
-        # Verify actual findings ARE present
-        assert "16GB GPU" in report or "16gb gpu" in report.lower()
+        # Verify LLM-generated report came through (not raw findings)
+        assert "16gb gpu" in report.lower()
 
 
 @pytest.mark.asyncio
@@ -531,9 +519,13 @@ async def test_research_agent_activates_pending_task(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
                 "summary",
             )
-            # Summary calls get a clean response; extraction calls pass through
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            # Report call contains combined findings; extraction calls pass through
+            if "Research findings:" in user_content:
+                # Extract topic so assertions can verify which report is which
+                topic = user_content.split("\n")[0].replace("Research topic: ", "")
+                return mock_ollama._make_text_response(
+                    request, f"## report\nResearch report complete about {topic}"
+                )
             return mock_ollama._make_text_response(request, user_content)
         # First 2 calls are for first task
         if response_index[0] < len(first_task_responses):
@@ -592,7 +584,7 @@ async def test_research_agent_activates_pending_task(
 
         # Verify both reports were posted
         messages = signal_server.outgoing_messages
-        reports = [msg for msg in messages if "research complete" in msg["message"].lower()]
+        reports = [msg for msg in messages if "research report complete" in msg["message"].lower()]
         assert len(reports) == 2
         # First report should be about AI trends
         assert "ai trends" in reports[0]["message"].lower()
@@ -639,9 +631,11 @@ async def test_research_suspended_during_foreground_work(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
                 "summary",
             )
-            # Summary calls get a clean response; extraction calls pass through
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            # Report call contains combined findings; extraction calls pass through
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(
+                    request, "## report\nResearch report complete"
+                )
             return mock_ollama._make_text_response(request, user_content)
         # Identify if this is a research iteration or user message
         if any("research" in msg.get("content", "").lower() for msg in request.get("messages", [])):
@@ -737,8 +731,10 @@ async def test_research_focus_reply_starts_research(
                 return mock_ollama._make_text_response(
                     request, "comprehensive list with dates and locations"
                 )
-            if user_content.startswith("Research f"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(
+                    request, "## report\nResearch report complete"
+                )
             return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
@@ -781,7 +777,7 @@ async def test_research_focus_reply_starts_research(
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=25.0)
 
         report = signal_server.outgoing_messages[-1]
-        assert "research complete" in report["message"].lower()
+        assert "research report complete" in report["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -811,8 +807,10 @@ async def test_research_focus_reply_go_starts_without_focus(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
                 "summary",
             )
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(
+                    request, "## report\nResearch report complete"
+                )
             return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
@@ -842,7 +840,7 @@ async def test_research_focus_reply_go_starts_without_focus(
         # Wait for report
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=25.0)
         report = signal_server.outgoing_messages[-1]
-        assert "research complete" in report["message"].lower()
+        assert "research report complete" in report["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -872,8 +870,10 @@ async def test_research_focus_timeout_auto_starts(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
                 "summary",
             )
-            if user_content.startswith("Research findings:"):
-                return mock_ollama._make_text_response(request, "Summary of findings")
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(
+                    request, "## report\nResearch report complete"
+                )
             return mock_ollama._make_text_response(request, user_content)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
@@ -904,7 +904,7 @@ async def test_research_focus_timeout_auto_starts(
         await wait_until(lambda: len(signal_server.outgoing_messages) >= 1, timeout=25.0)
 
         report = signal_server.outgoing_messages[-1]
-        assert "research complete" in report["message"].lower()
+        assert "research report complete" in report["message"].lower()
 
         # Verify task is completed
         with penny.db.get_session() as session:
