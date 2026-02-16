@@ -85,6 +85,7 @@ class Config:
     # Research agent configuration
     research_max_iterations: int = 10
     research_output_max_length: int = 2000
+    research_schedule_interval: float = 5.0
 
     # Fastmail JMAP configuration (optional, enables /email command)
     fastmail_api_token: str | None = None

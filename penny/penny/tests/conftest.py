@@ -46,6 +46,8 @@ DEFAULT_TEST_CONFIG = {
     "discovery_max_seconds": 99999.0,
     # Fast scheduler ticks for tests
     "scheduler_tick_interval": 0.05,
+    # Fast research schedule interval for tests (prod: 5.0s)
+    "research_schedule_interval": 0.1,
     # Fast retries for tests
     "ollama_max_retries": 1,
     "ollama_retry_delay": 0.1,

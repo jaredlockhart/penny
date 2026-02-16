@@ -82,9 +82,7 @@ async def test_research_agent_executes_iterations(
         assert "started research" in confirmation["message"].lower()
 
         # Wait for research report to be posted
-        # Report comes after the confirmation, so we need >1 messages
-        # Research runs every 5 seconds, so need to wait for 4 iterations (3 research + 1 report)
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=5.0)
 
         # Last message should be the research report
         report = signal_server.outgoing_messages[-1]
@@ -207,8 +205,8 @@ async def test_research_agent_truncates_long_reports(
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! test topic")
         await signal_server.wait_for_message(timeout=5.0)
 
-        # Wait for report (research runs every 5s, so need ~20-25s for 3 iterations + report)
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
+        # Wait for report
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=5.0)
 
         report = signal_server.outgoing_messages[-1]
         # Report should be truncated to 300 chars max
@@ -248,8 +246,8 @@ async def test_research_agent_stores_iterations(
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! coffee beans")
         await signal_server.wait_for_message(timeout=5.0)
 
-        # Wait for completion (research runs every 5s, so need ~20-25s for 2 iterations + report)
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
+        # Wait for completion
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=5.0)
 
         # Check iterations in database
         with penny.db.get_session() as session:
@@ -305,8 +303,8 @@ async def test_research_report_logged_to_database(
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! AI")
         await signal_server.wait_for_message(timeout=5.0)
 
-        # Wait for report (research runs every 5s, so need ~20-25s for 3 iterations + report)
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
+        # Wait for report
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=5.0)
 
         # Verify report is in MessageLog
         with penny.db.get_session() as session:
@@ -408,7 +406,7 @@ async def test_research_agent_activates_pending_task(
 
         # Wait for first task to complete and second to auto-activate
         # Need 2 confirmations + 2 reports = 4 messages
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 4, timeout=50.0)
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 4, timeout=10.0)
 
         # Verify both tasks completed
         with penny.db.get_session() as session:
@@ -510,7 +508,7 @@ async def test_research_suspended_during_foreground_work(
 
         # Wait for research to complete
         # Need to see the research report (2 user responses + 1 confirmation + 1 report)
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 4, timeout=30.0)
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 4, timeout=10.0)
 
         # Analyze call log: look for patterns where message calls are interrupted by research
         # The call log should show message processing happening in uninterrupted sequences
@@ -615,7 +613,7 @@ async def test_research_focus_reply_starts_research(
             assert tasks[0].focus == "comprehensive list with dates and locations"
 
         # Step 3: Wait for research report
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=25.0)
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=5.0)
 
         report = signal_server.outgoing_messages[-1]
         assert "research report complete" in report["message"].lower()
@@ -667,7 +665,7 @@ async def test_research_focus_reply_go_starts_without_focus(
             assert tasks[0].focus is None
 
         # Wait for report
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=25.0)
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=5.0)
         report = signal_server.outgoing_messages[-1]
         assert "research report complete" in report["message"].lower()
 
@@ -718,7 +716,7 @@ async def test_research_focus_timeout_auto_starts(
             session.commit()
 
         # Wait for the research agent to auto-start the task and complete it
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 1, timeout=25.0)
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 1, timeout=5.0)
 
         report = signal_server.outgoing_messages[-1]
         assert "research report complete" in report["message"].lower()
