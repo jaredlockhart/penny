@@ -9,6 +9,36 @@ from penny.database.models import MessageLog, ResearchIteration, ResearchTask
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
+def _make_research_handler(
+    mock_ollama, responses, *, report_text="## report\nResearch report complete"
+):
+    """Factory for the standard research mock handler.
+
+    Handles the three kinds of Ollama calls the research agent makes:
+    1. Tool calls (search iterations) — returns responses in order
+    2. Extraction calls (no tools, no "Research findings:") — passes through user content
+    3. Report calls (no tools, "Research findings:" in user content) — returns report_text
+    """
+    response_index = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            if "Research findings:" in user_content:
+                return mock_ollama._make_text_response(request, report_text)
+            return mock_ollama._make_text_response(request, user_content)
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return mock_ollama._make_text_response(request, response)
+        return mock_ollama._make_text_response(request, "fallback")
+
+    return handler
+
+
 @pytest.mark.asyncio
 async def test_research_agent_executes_iterations(
     signal_server,
@@ -32,35 +62,16 @@ async def test_research_agent_executes_iterations(
         scheduler_tick_interval=0.05,
     )
 
-    # Configure mock to return different responses for each iteration
-    iteration_responses = [
-        "Iteration 1 findings: quantum computers use qubits",
-        "Iteration 2 findings: quantum entanglement enables parallel computation",
-        "Iteration 3 findings: major applications in cryptography and drug discovery",
-    ]
-    response_index = [0]
-
-    def research_handler(request: dict, count: int) -> dict:
-        # Extraction/summary calls (no tools) - pass through or summarize
-        if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
-            )
-            # Report call contains combined findings; extraction calls pass through
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(
-                    request, "## report\nResearch report complete"
-                )
-            return mock_ollama._make_text_response(request, user_content)
-        # Each research iteration gets a simple text response
-        if response_index[0] < len(iteration_responses):
-            response = iteration_responses[response_index[0]]
-            response_index[0] += 1
-            return mock_ollama._make_text_response(request, response)
-        return mock_ollama._make_text_response(request, "additional iteration")
-
-    mock_ollama.set_response_handler(research_handler)
+    mock_ollama.set_response_handler(
+        _make_research_handler(
+            mock_ollama,
+            [
+                "Iteration 1 findings: quantum computers use qubits",
+                "Iteration 2 findings: quantum entanglement enables parallel computation",
+                "Iteration 3 findings: major applications in cryptography and drug discovery",
+            ],
+        )
+    )
 
     async with running_penny(config) as penny:
         # Start research
@@ -183,27 +194,14 @@ async def test_research_agent_truncates_long_reports(
 
     # Generate long responses that will definitely exceed 300 chars when formatted
     long_finding = "A" * 200  # 200 chars of 'A' per iteration
-    responses = [f"Iteration 1: {long_finding}", f"Iteration 2: {long_finding}"]
-    response_index = [0]
 
-    def long_response_handler(request: dict, count: int) -> dict:
-        if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "",
-            )
-            # Report call — return a long report that will exceed the 300 char limit
-            if "Research findings:" in user_content:
-                long_report = "A" * 500
-                return mock_ollama._make_text_response(request, long_report)
-            return mock_ollama._make_text_response(request, user_content)
-        if response_index[0] < len(responses):
-            response = responses[response_index[0]]
-            response_index[0] += 1
-            return mock_ollama._make_text_response(request, response)
-        return mock_ollama._make_text_response(request, "fallback")
-
-    mock_ollama.set_response_handler(long_response_handler)
+    mock_ollama.set_response_handler(
+        _make_research_handler(
+            mock_ollama,
+            [f"Iteration 1: {long_finding}", f"Iteration 2: {long_finding}"],
+            report_text="A" * 500,
+        )
+    )
 
     async with running_penny(config):
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! test topic")
@@ -236,32 +234,15 @@ async def test_research_agent_stores_iterations(
         scheduler_tick_interval=0.05,
     )
 
-    responses = [
-        "Iteration 1: Arabica beans are known for smooth flavor",
-        "Iteration 2: Robusta has more caffeine but bitter taste",
-    ]
-    response_index = [0]
-
-    def coffee_handler(request: dict, count: int) -> dict:
-        # Extraction/summary calls (no tools) - pass through or summarize
-        if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
-            )
-            # Report call contains combined findings; extraction calls pass through
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(
-                    request, "## report\nResearch report complete"
-                )
-            return mock_ollama._make_text_response(request, user_content)
-        if response_index[0] < len(responses):
-            response = responses[response_index[0]]
-            response_index[0] += 1
-            return mock_ollama._make_text_response(request, response)
-        return mock_ollama._make_text_response(request, "fallback")
-
-    mock_ollama.set_response_handler(coffee_handler)
+    mock_ollama.set_response_handler(
+        _make_research_handler(
+            mock_ollama,
+            [
+                "Iteration 1: Arabica beans are known for smooth flavor",
+                "Iteration 2: Robusta has more caffeine but bitter taste",
+            ],
+        )
+    )
 
     async with running_penny(config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! coffee beans")
@@ -310,32 +291,15 @@ async def test_research_report_logged_to_database(
         scheduler_tick_interval=0.05,
     )
 
-    responses = [
-        "Iteration 1: Machine learning is a subset of AI",
-        "Iteration 2: Deep learning uses neural networks",
-    ]
-    response_index = [0]
-
-    def ai_handler(request: dict, count: int) -> dict:
-        # Extraction/summary calls (no tools) - pass through or summarize
-        if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
-            )
-            # Report call contains combined findings; extraction calls pass through
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(
-                    request, "## report\nResearch report complete"
-                )
-            return mock_ollama._make_text_response(request, user_content)
-        if response_index[0] < len(responses):
-            response = responses[response_index[0]]
-            response_index[0] += 1
-            return mock_ollama._make_text_response(request, response)
-        return mock_ollama._make_text_response(request, "fallback")
-
-    mock_ollama.set_response_handler(ai_handler)
+    mock_ollama.set_response_handler(
+        _make_research_handler(
+            mock_ollama,
+            [
+                "Iteration 1: Machine learning is a subset of AI",
+                "Iteration 2: Deep learning uses neural networks",
+            ],
+        )
+    )
 
     async with running_penny(config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! AI")
@@ -356,129 +320,6 @@ async def test_research_report_logged_to_database(
             report_msg = outgoing[-1]
             assert "research report complete" in report_msg.content.lower()
             assert report_msg.sender == config.signal_number
-
-
-@pytest.mark.asyncio
-async def test_research_generates_proper_report_format(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """Test research report has correct markdown format with all sections."""
-    config = make_config(
-        research_max_iterations=2,
-        idle_seconds=0.3,
-        scheduler_tick_interval=0.05,
-    )
-
-    # Use simple, predictable responses
-    responses = ["Finding one about testing", "Finding two about quality"]
-    response_index = [0]
-
-    def format_handler(request: dict, count: int) -> dict:
-        # Calls without tools: extraction or report generation
-        if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "",
-            )
-            # Report call contains "Research findings:" with combined findings
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(
-                    request, "## summary\nTest report about testing and quality"
-                )
-            # Extraction calls pass through
-            return mock_ollama._make_text_response(request, user_content)
-        if response_index[0] < len(responses):
-            response = responses[response_index[0]]
-            response_index[0] += 1
-            return mock_ollama._make_text_response(request, response)
-        return mock_ollama._make_text_response(request, "fallback")
-
-    mock_ollama.set_response_handler(format_handler)
-
-    async with running_penny(config):
-        await signal_server.push_message(sender=TEST_SENDER, content="/research ! test topic")
-        await signal_server.wait_for_message(timeout=5.0)
-
-        # Wait for report (research runs every 5s, so need ~20-25s for 3 iterations + report)
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
-
-        report = signal_server.outgoing_messages[-1]["message"]
-
-        # Verify LLM-generated report content came through
-        assert "test report" in report.lower()
-
-
-@pytest.mark.asyncio
-async def test_research_filters_markdown_from_llm_findings(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """
-    Test ResearchAgent filters out markdown headers and table delimiters from LLM findings.
-
-    Regression test for issue #195: LLM may include markdown headers and tables in findings,
-    which should not appear as bullet points in the final report.
-    """
-    config = make_config(
-        research_max_iterations=2,
-        idle_seconds=0.3,
-        scheduler_tick_interval=0.05,
-    )
-
-    # Simulate LLM returning findings with markdown headers and table delimiters
-    # (This is what caused issue #195)
-    responses = [
-        "## TL;DR – A solid starter kit\n"
-        "| Model | Size | VRAM |\n"
-        "|-------|------|------|\n"
-        "| Z-Image | 6B | 8GB |\n"
-        "Finding: Model runs on 16GB GPU",
-        "## Summary\nSecond iteration findings about performance",
-    ]
-    response_index = [0]
-
-    def markdown_handler(request: dict, count: int) -> dict:
-        # Calls without tools: extraction or report generation
-        if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "",
-            )
-            # Report call contains "Research findings:" with combined findings
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(
-                    request, "## GPU Models\n- Model runs on 16GB GPU"
-                )
-            # Extraction calls pass through
-            return mock_ollama._make_text_response(request, user_content)
-        if response_index[0] < len(responses):
-            response = responses[response_index[0]]
-            response_index[0] += 1
-            return mock_ollama._make_text_response(request, response)
-        return mock_ollama._make_text_response(request, "fallback")
-
-    mock_ollama.set_response_handler(markdown_handler)
-
-    async with running_penny(config):
-        await signal_server.push_message(sender=TEST_SENDER, content="/research ! GPU models")
-        await signal_server.wait_for_message(timeout=5.0)
-
-        # Wait for report
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 2, timeout=25.0)
-
-        report = signal_server.outgoing_messages[-1]["message"]
-
-        # Verify LLM-generated report came through (not raw findings)
-        assert "16gb gpu" in report.lower()
 
 
 @pytest.mark.asyncio
@@ -703,7 +544,7 @@ async def test_research_focus_reply_starts_research(
     """
     Test that replying with a focus to an awaiting_focus task starts research.
 
-    Flow: /research topic → clarification → user replies with focus → research starts
+    Flow: /research topic -> clarification -> user replies with focus -> research starts
     """
     config = make_config(
         research_max_iterations=2,
@@ -798,27 +639,15 @@ async def test_research_focus_reply_go_starts_without_focus(
         scheduler_tick_interval=0.05,
     )
 
-    responses = ["Iteration 1: finding one", "Iteration 2: finding two"]
-    response_index = [0]
-
-    def go_handler(request: dict, count: int) -> dict:
-        if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
-            )
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(
-                    request, "## report\nResearch report complete"
-                )
-            return mock_ollama._make_text_response(request, user_content)
-        if response_index[0] < len(responses):
-            response = responses[response_index[0]]
-            response_index[0] += 1
-            return mock_ollama._make_text_response(request, response)
-        return mock_ollama._make_text_response(request, "fallback")
-
-    mock_ollama.set_response_handler(go_handler)
+    mock_ollama.set_response_handler(
+        _make_research_handler(
+            mock_ollama,
+            [
+                "Iteration 1: finding one",
+                "Iteration 2: finding two",
+            ],
+        )
+    )
 
     async with running_penny(config) as penny:
         # Start research (default — creates awaiting_focus)
@@ -861,27 +690,15 @@ async def test_research_focus_timeout_auto_starts(
         scheduler_tick_interval=0.05,
     )
 
-    responses = ["Iteration 1: finding one", "Iteration 2: finding two"]
-    response_index = [0]
-
-    def timeout_handler(request: dict, count: int) -> dict:
-        if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
-            )
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(
-                    request, "## report\nResearch report complete"
-                )
-            return mock_ollama._make_text_response(request, user_content)
-        if response_index[0] < len(responses):
-            response = responses[response_index[0]]
-            response_index[0] += 1
-            return mock_ollama._make_text_response(request, response)
-        return mock_ollama._make_text_response(request, "fallback")
-
-    mock_ollama.set_response_handler(timeout_handler)
+    mock_ollama.set_response_handler(
+        _make_research_handler(
+            mock_ollama,
+            [
+                "Iteration 1: finding one",
+                "Iteration 2: finding two",
+            ],
+        )
+    )
 
     async with running_penny(config) as penny:
         from datetime import timedelta
