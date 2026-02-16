@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from penny.agents.models import ChatMessage, ControllerResponse, MessageRole
+from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.constants import VISION_AUTO_DESCRIBE_PROMPT
 from penny.database import Database
 from penny.ollama import OllamaClient
@@ -201,6 +201,7 @@ class Agent:
         attachments: list[str] = []
         source_urls: list[str] = []
         called_tools: set[str] = set()
+        tool_call_records: list[ToolCallRecord] = []
 
         steps = max_steps if max_steps is not None else self.max_steps
         for step in range(steps):
@@ -237,6 +238,7 @@ class Agent:
 
                     logger.info("Executing tool: %s", tool_name)
                     called_tools.add(tool_name)
+                    tool_call_records.append(ToolCallRecord(tool=tool_name, arguments=arguments))
 
                     tool_call = ToolCall(tool=tool_name, arguments=arguments)
                     tool_result = await self._tool_executor.execute(tool_call)
@@ -279,11 +281,17 @@ class Agent:
                 content += "\n\n" + source_urls[0]
 
             logger.info("Got final answer (length: %d)", len(content))
-            return ControllerResponse(answer=content, thinking=thinking, attachments=attachments)
+            return ControllerResponse(
+                answer=content,
+                thinking=thinking,
+                attachments=attachments,
+                tool_calls=tool_call_records,
+            )
 
         logger.warning("Max steps reached without final answer")
         return ControllerResponse(
-            answer="Sorry, I couldn't complete that request within the allowed steps."
+            answer="Sorry, I couldn't complete that request within the allowed steps.",
+            tool_calls=tool_call_records,
         )
 
     async def close(self) -> None:

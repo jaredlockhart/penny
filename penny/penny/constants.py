@@ -95,6 +95,43 @@ RESEARCH_SUMMARY_PROMPT = (
     "Do not include tables."
 )
 
+RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT = (
+    "You suggest what information a research summary report should focus on. "
+    "The output is always a plain text report — never a database, app, visual, or interactive tool. "
+    "Output ONLY a numbered list of exactly 3 options (1., 2., 3.). "
+    "Each option describes what information and structure the report should have. "
+    "No preamble, no explanation, just the 3 numbered options."
+)
+
+RESEARCH_OUTPUT_OPTIONS_PROMPT = (
+    "Someone wants to research: {topic}\n\n"
+    "Suggest 3 ways to structure the summary report. Examples:\n"
+    "- A ranked list of top picks with pros, cons, and key details for each\n"
+    "- A comprehensive catalog covering every item found with dates and details\n"
+    "- A brief executive summary with the top 5 highlights and actionable takeaways\n"
+    "- A side-by-side comparison organized by key criteria\n"
+    "- A chronological breakdown with dates, locations, and highlights"
+)
+
+RESEARCH_FOLLOWUP_PROMPT = (
+    "You are conducting deep research. Review your previous findings above "
+    "and search for NEW information you haven't covered yet. "
+    "Try a different search angle — different keywords, a different aspect of the topic, "
+    "or drill deeper into a specific area. Do NOT repeat searches you've already done. "
+    "Structure your findings starting with the most important new insights."
+)
+
+RESEARCH_FOCUS_EXTRACTION_PROMPT = (
+    "You are interpreting what the user wants in a research report. "
+    "They were shown some suggested options and replied. "
+    "Based on the options and their reply, output a short phrase describing "
+    "what information and structure the report should have. "
+    "The user may pick an option, modify one, or describe something entirely different. "
+    "Output ONLY the focus description — no preamble, no explanation."
+)
+
+RESEARCH_FOCUS_TIMEOUT_SECONDS = 300
+
 PREFERENCE_PROMPT = (
     f"{PENNY_IDENTITY}\n\n"
     "Your task: Based on these messages from the user, create a flat list of topics "
@@ -188,8 +225,13 @@ PERSONALITY_UPDATE_SUCCESS = "Ok, personality updated ✅"
 
 # Personality transform prompt
 PERSONALITY_TRANSFORM_PROMPT = (
-    "You are applying a personality filter. "
-    "Transform the following message to match this personality: {personality_prompt}\n\n"
-    "IMPORTANT: Preserve the core meaning and information. "
-    "Only adjust tone, style, and phrasing."
+    "You are a text rewriter. Rewrite the user's message in this style: {personality_prompt}\n\n"
+    "RULES:\n"
+    "- Output ONLY the rewritten version of the entire message\n"
+    "- Keep ALL information, lists, options, and instructions intact\n"
+    "- Preserve ALL markdown formatting exactly: headings (##, ###), "
+    "bold (**), italic (*), lists (-, 1.), links, and code blocks\n"
+    "- Do NOT answer any questions in the message — just rephrase them\n"
+    "- Do NOT add or remove content\n"
+    "- Only adjust tone, style, and word choice"
 )

@@ -8,13 +8,15 @@ from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
-async def test_research_command_creates_task(
+async def test_research_command_creates_task_with_skip(
     signal_server, test_config, mock_ollama, test_user_info, running_penny
 ):
-    """Test /research creates a research task in the database."""
+    """Test /research ! topic creates a research task directly as in_progress."""
     async with running_penny(test_config) as penny:
-        # Send /research command
-        await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
+        # Send /research with ! to skip clarification
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="/research ! quantum computing"
+        )
 
         # Wait for response
         response = await signal_server.wait_for_message(timeout=5.0)
@@ -32,6 +34,31 @@ async def test_research_command_creates_task(
             assert task.status == "in_progress"
             assert task.thread_id == TEST_SENDER
             assert task.max_iterations == test_config.research_max_iterations
+
+
+@pytest.mark.asyncio
+async def test_research_command_asks_clarification_by_default(
+    signal_server, test_config, mock_ollama, test_user_info, running_penny
+):
+    """Test /research topic asks for output format and creates awaiting_focus task."""
+    async with running_penny(test_config) as penny:
+        await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
+
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        # Should ask about output format, not confirm research started
+        assert "what should the report" in response["message"].lower()
+        assert "quantum computing" in response["message"]
+        assert "go" in response["message"].lower()
+
+        # Verify task was created as awaiting_focus
+        with penny.db.get_session() as session:
+            tasks = list(session.exec(select(ResearchTask)).all())
+            assert len(tasks) == 1
+            task = tasks[0]
+            assert task.topic == "quantum computing"
+            assert task.status == "awaiting_focus"
+            assert task.focus is None
 
 
 @pytest.mark.asyncio
@@ -61,8 +88,8 @@ async def test_research_command_lists_active_tasks(
 ):
     """Test /research without topic lists active research tasks."""
     async with running_penny(test_config):
-        # Start a research task
-        await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
+        # Start a research task (skip clarification)
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! AI trends")
         await signal_server.wait_for_message(timeout=5.0)
 
         # List tasks with /research (no topic)
@@ -77,17 +104,38 @@ async def test_research_command_lists_active_tasks(
 
 
 @pytest.mark.asyncio
+async def test_research_command_lists_awaiting_focus_tasks(
+    signal_server, test_config, mock_ollama, test_user_info, running_penny
+):
+    """Test /research listing includes awaiting_focus tasks."""
+    async with running_penny(test_config):
+        # Create awaiting_focus task (default flow)
+        await signal_server.push_message(sender=TEST_SENDER, content="/research AI conferences")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # List tasks — the awaiting_focus task should show up
+        await signal_server.push_message(sender=TEST_SENDER, content="/research")
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        assert "currently researching" in response["message"].lower()
+        assert "ai conferences" in response["message"].lower()
+        assert "*awaiting focus*" in response["message"].lower()
+
+
+@pytest.mark.asyncio
 async def test_research_command_queues_when_active(
     signal_server, test_config, mock_ollama, test_user_info, running_penny
 ):
     """Test /research queues new research when one is already in-progress."""
     async with running_penny(test_config) as penny:
-        # Send first research request
-        await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
+        # Send first research request (skip clarification)
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! AI trends")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Send second research request while first is in-progress
-        await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="/research ! quantum computing"
+        )
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should confirm queueing
@@ -108,6 +156,35 @@ async def test_research_command_queues_when_active(
 
 
 @pytest.mark.asyncio
+async def test_research_command_queues_when_awaiting_focus(
+    signal_server, test_config, mock_ollama, test_user_info, running_penny
+):
+    """Test /research queues new research when one is awaiting_focus."""
+    async with running_penny(test_config) as penny:
+        # Send first research request (default — creates awaiting_focus)
+        await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Send second research request — should queue because first is awaiting_focus
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="/research ! quantum computing"
+        )
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        # Should confirm queueing
+        assert "queued" in response["message"].lower()
+
+        # Should have two tasks: one awaiting_focus, one pending
+        with penny.db.get_session() as session:
+            tasks = list(
+                session.exec(select(ResearchTask).order_by(ResearchTask.created_at.asc())).all()  # type: ignore[unresolved-attribute]
+            )
+            assert len(tasks) == 2
+            assert tasks[0].status == "awaiting_focus"
+            assert tasks[1].status == "pending"
+
+
+@pytest.mark.asyncio
 async def test_research_command_respects_config(
     signal_server, make_config, mock_ollama, test_user_info, running_penny
 ):
@@ -116,7 +193,7 @@ async def test_research_command_respects_config(
     config = make_config(research_max_iterations=5)
 
     async with running_penny(config) as penny:
-        await signal_server.push_message(sender=TEST_SENDER, content="/research coffee")
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! coffee")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Verify task has custom max_iterations
@@ -132,12 +209,14 @@ async def test_research_command_lists_pending_tasks(
 ):
     """Test /research without topic lists both active and pending tasks."""
     async with running_penny(test_config) as penny:
-        # Start first research task
-        await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
+        # Start first research task (skip clarification)
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! AI trends")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Queue second research task
-        await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="/research ! quantum computing"
+        )
         await signal_server.wait_for_message(timeout=5.0)
 
         # List all tasks
@@ -160,6 +239,61 @@ async def test_research_command_lists_pending_tasks(
             assert len(tasks) == 2
             assert tasks[0].status == "in_progress"
             assert tasks[1].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_research_command_cancel(
+    signal_server, test_config, mock_ollama, test_user_info, running_penny
+):
+    """Test /research cancel <number> cancels a research task."""
+    async with running_penny(test_config) as penny:
+        # Start a research task
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! AI trends")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Queue a second task
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="/research ! quantum computing"
+        )
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Cancel the first task
+        await signal_server.push_message(sender=TEST_SENDER, content="/research cancel 1")
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        assert "cancelled" in response["message"].lower()
+        assert "ai trends" in response["message"].lower()
+
+        # Verify task status in database
+        with penny.db.get_session() as session:
+            tasks = list(
+                session.exec(select(ResearchTask).order_by(ResearchTask.created_at.asc())).all()  # type: ignore[unresolved-attribute]
+            )
+            assert len(tasks) == 2
+            assert tasks[0].status == "cancelled"
+            assert tasks[1].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_research_command_cancel_invalid_number(
+    signal_server, test_config, mock_ollama, test_user_info, running_penny
+):
+    """Test /research cancel with invalid number gives helpful error."""
+    async with running_penny(test_config):
+        # Cancel with no tasks
+        await signal_server.push_message(sender=TEST_SENDER, content="/research cancel 1")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "no active research" in response["message"].lower()
+
+        # Cancel with non-numeric input
+        await signal_server.push_message(sender=TEST_SENDER, content="/research cancel abc")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "not a valid number" in response["message"].lower()
+
+        # Cancel with no number
+        await signal_server.push_message(sender=TEST_SENDER, content="/research cancel")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "provide a task number" in response["message"].lower()
 
 
 @pytest.mark.asyncio

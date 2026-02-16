@@ -25,6 +25,13 @@ class ChatMessage(BaseModel):
         return {"role": self.role.value, "content": self.content}
 
 
+class ToolCallRecord(BaseModel):
+    """Record of a tool call made during an agent run."""
+
+    tool: str = Field(description="Tool name")
+    arguments: dict = Field(description="Arguments passed to the tool")
+
+
 class ControllerResponse(BaseModel):
     """Response from the agentic controller."""
 
@@ -34,4 +41,7 @@ class ControllerResponse(BaseModel):
     )
     attachments: list[str] = Field(
         default_factory=list, description="Base64-encoded image attachments"
+    )
+    tool_calls: list[ToolCallRecord] = Field(
+        default_factory=list, description="Tool calls made during this run"
     )

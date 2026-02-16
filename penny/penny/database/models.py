@@ -115,7 +115,9 @@ class ResearchTask(SQLModel, table=True):
         default=None, foreign_key="research_tasks.id"
     )  # For continuations
     topic: str  # User's research request
-    status: str = Field(index=True)  # "in_progress", "completed", "failed"
+    status: str = Field(index=True)  # "awaiting_focus", "in_progress", "completed", "failed"
+    focus: str | None = None  # User's focus/direction for research (set after clarification)
+    options: str | None = None  # Raw numbered options shown to user (for resolving number replies)
     max_iterations: int  # Snapshot of config at creation time
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None

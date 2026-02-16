@@ -11,9 +11,15 @@ from typing import TYPE_CHECKING
 from sqlmodel import Session, select
 
 from penny.agents.base import Agent
-from penny.agents.models import MessageRole
+from penny.agents.models import MessageRole, ToolCallRecord
 from penny.config import Config
-from penny.constants import RESEARCH_EXTRACTION_PROMPT, RESEARCH_PROMPT, RESEARCH_SUMMARY_PROMPT
+from penny.constants import (
+    RESEARCH_EXTRACTION_PROMPT,
+    RESEARCH_FOCUS_TIMEOUT_SECONDS,
+    RESEARCH_FOLLOWUP_PROMPT,
+    RESEARCH_PROMPT,
+    RESEARCH_SUMMARY_PROMPT,
+)
 from penny.database.models import ResearchIteration, ResearchTask
 
 if TYPE_CHECKING:
@@ -50,6 +56,9 @@ class ResearchAgent(Agent):
             logger.error("ResearchAgent: no channel set")
             return False
 
+        # Check for timed-out awaiting_focus tasks and auto-start them
+        self._check_focus_timeout()
+
         # Find in-progress research task
         task = self._get_next_research_task()
         if not task:
@@ -67,24 +76,28 @@ class ResearchAgent(Agent):
             await self._complete_research(task, iterations)
             return True
 
-        # Run next search iteration
+        # Run next search iteration (use followup prompt after first iteration)
         history = self._build_history(task, iterations)
-        response = await self.run(prompt=RESEARCH_PROMPT, history=history)
+        prompt = RESEARCH_PROMPT if current_iteration == 0 else RESEARCH_FOLLOWUP_PROMPT
+        response = await self.run(prompt=prompt, history=history)
 
         if not response.answer:
             logger.warning("Research iteration returned empty response")
             self._mark_failed(task.id, "Empty response from LLM")
             return False
 
+        # Extract the actual search query from tool calls (if any)
+        search_query = self._extract_search_query(response.tool_calls)
+
         # Extract sources from raw response, then distill findings
         sources = self._extract_sources(response.answer)
-        findings = await self._extract_findings(task.topic, response.answer)
+        findings = await self._extract_findings(task.topic, response.answer, focus=task.focus)
 
-        # Store iteration
+        # Store iteration with the actual search query used
         self._store_iteration(
             task_id=task.id,
             iteration_num=current_iteration + 1,
-            query=f"Iteration {current_iteration + 1}",  # Query inferred by model
+            query=search_query or f"Iteration {current_iteration + 1}",
             findings=findings,
             sources=sources,
         )
@@ -106,7 +119,7 @@ class ResearchAgent(Agent):
             return
 
         # Generate report
-        report = await self._generate_report(task.topic, iterations)
+        report = await self._generate_report(task.topic, iterations, focus=task.focus)
 
         # Truncate if exceeds configured max length
         max_length = self._config.research_output_max_length
@@ -186,16 +199,17 @@ class ResearchAgent(Agent):
         if task.parent_task_id:
             context += "\nThis is a continuation of previous research on this topic."
 
+        # Include user's focus to guide search direction
+        if task.focus:
+            context += f"\nUser's research focus: {task.focus}"
+
         history.append((MessageRole.SYSTEM.value, context))
 
-        # Add previous iterations as assistant responses
+        # Add previous iterations as assistant responses (include search query if available)
         for iteration in iterations:
-            history.append(
-                (
-                    MessageRole.ASSISTANT.value,
-                    f"Search findings (iteration {iteration.iteration_num}):\n{iteration.findings}",
-                )
-            )
+            entry = f"Search query: {iteration.query}\n" if iteration.query else ""
+            entry += f"Search findings (iteration {iteration.iteration_num}):\n{iteration.findings}"
+            history.append((MessageRole.ASSISTANT.value, entry))
 
         return history
 
@@ -215,6 +229,13 @@ class ResearchAgent(Agent):
             session.add(iteration)
             session.commit()
 
+    def _extract_search_query(self, tool_calls: list[ToolCallRecord]) -> str | None:
+        """Extract the search query from tool call records."""
+        for tc in tool_calls:
+            if tc.tool == "search" and "query" in tc.arguments:
+                return tc.arguments["query"]
+        return None
+
     def _extract_sources(self, content: str) -> list[str]:
         """Extract URLs from response content."""
         sources = []
@@ -223,7 +244,9 @@ class ResearchAgent(Agent):
                 sources.append(line.strip())
         return sources
 
-    async def _generate_report(self, topic: str, iterations: list[ResearchIteration]) -> str:
+    async def _generate_report(
+        self, topic: str, iterations: list[ResearchIteration], focus: str | None = None
+    ) -> str:
         """Generate final markdown report from all iterations."""
         # Collect all findings and deduplicate sources
         all_findings: list[str] = []
@@ -235,7 +258,7 @@ class ResearchAgent(Agent):
             all_sources.update(sources_list)
 
         # Generate executive summary using LLM
-        summary = await self._generate_summary(all_findings)
+        summary = await self._generate_summary(all_findings, focus=focus)
 
         # Build report
         report_lines = [
@@ -271,29 +294,37 @@ class ResearchAgent(Agent):
 
         return "\n".join(report_lines)
 
-    async def _extract_findings(self, topic: str, raw_response: str) -> str:
+    async def _extract_findings(
+        self, topic: str, raw_response: str, focus: str | None = None
+    ) -> str:
         """Extract relevant findings from raw search results using LLM."""
+        user_content = f"Research topic: {topic}"
+        if focus:
+            user_content += f"\nResearch focus: {focus}"
+        user_content += f"\n\nSearch results:\n\n{raw_response}"
+
         response = await self._ollama_client.chat(
             messages=[
                 {"role": "system", "content": RESEARCH_EXTRACTION_PROMPT},
-                {
-                    "role": "user",
-                    "content": f"Research topic: {topic}\n\nSearch results:\n\n{raw_response}",
-                },
+                {"role": "user", "content": user_content},
             ]
         )
         return response.message.content.strip()
 
-    async def _generate_summary(self, findings: list[str]) -> str:
+    async def _generate_summary(self, findings: list[str], focus: str | None = None) -> str:
         """Generate executive summary using LLM to synthesize all findings."""
         # Combine all findings into a single text block for the LLM
         combined_findings = "\n\n---\n\n".join(findings)
+
+        user_content = "Research findings:\n\n" + combined_findings
+        if focus:
+            user_content = f"Research focus: {focus}\n\n{user_content}"
 
         # Call LLM to generate summary (no tools, no history)
         response = await self._ollama_client.chat(
             messages=[
                 {"role": "system", "content": RESEARCH_SUMMARY_PROMPT},
-                {"role": "user", "content": f"Research findings:\n\n{combined_findings}"},
+                {"role": "user", "content": user_content},
             ]
         )
 
@@ -334,6 +365,32 @@ class ResearchAgent(Agent):
             session.add(next_task)
             session.commit()
             logger.info("Activated pending research task %d: %s", next_task.id, next_task.topic)
+
+    def _check_focus_timeout(self) -> None:
+        """Auto-start awaiting_focus tasks that have exceeded the timeout."""
+        with Session(self.db.engine) as session:
+            tasks = session.exec(
+                select(ResearchTask).where(ResearchTask.status == "awaiting_focus")
+            ).all()
+
+            now = datetime.now(UTC)
+            for task in tasks:
+                # SQLite round-trip may strip tzinfo; normalize to UTC-aware
+                created = (
+                    task.created_at.replace(tzinfo=UTC)
+                    if task.created_at.tzinfo is None
+                    else task.created_at
+                )
+                elapsed = (now - created).total_seconds()
+                if elapsed >= RESEARCH_FOCUS_TIMEOUT_SECONDS:
+                    task.status = "in_progress"
+                    session.add(task)
+                    logger.info(
+                        "Research task %d auto-started after focus timeout (%ds)",
+                        task.id,
+                        int(elapsed),
+                    )
+            session.commit()
 
     def _find_recipient_for_thread(self, thread_id: str) -> str | None:
         """Find a recipient (user) who has sent messages in this thread."""

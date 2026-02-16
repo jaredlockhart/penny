@@ -1,5 +1,7 @@
 """Integration tests for ResearchAgent."""
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlmodel import select
 
@@ -60,7 +62,9 @@ async def test_research_agent_executes_iterations(
 
     async with running_penny(config) as penny:
         # Start research
-        await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="/research ! quantum computing"
+        )
         confirmation = await signal_server.wait_for_message(timeout=5.0)
         assert "started research" in confirmation["message"].lower()
 
@@ -204,7 +208,7 @@ async def test_research_agent_truncates_long_reports(
     mock_ollama.set_response_handler(long_response_handler)
 
     async with running_penny(config):
-        await signal_server.push_message(sender=TEST_SENDER, content="/research test topic")
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! test topic")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Wait for report (research runs every 5s, so need ~20-25s for 3 iterations + report)
@@ -260,7 +264,7 @@ async def test_research_agent_stores_iterations(
     mock_ollama.set_response_handler(coffee_handler)
 
     async with running_penny(config) as penny:
-        await signal_server.push_message(sender=TEST_SENDER, content="/research coffee beans")
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! coffee beans")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Wait for completion (research runs every 5s, so need ~20-25s for 2 iterations + report)
@@ -332,7 +336,7 @@ async def test_research_report_logged_to_database(
     mock_ollama.set_response_handler(ai_handler)
 
     async with running_penny(config) as penny:
-        await signal_server.push_message(sender=TEST_SENDER, content="/research AI")
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! AI")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Wait for report (research runs every 5s, so need ~20-25s for 3 iterations + report)
@@ -392,7 +396,7 @@ async def test_research_generates_proper_report_format(
     mock_ollama.set_response_handler(format_handler)
 
     async with running_penny(config):
-        await signal_server.push_message(sender=TEST_SENDER, content="/research test topic")
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! test topic")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Wait for report (research runs every 5s, so need ~20-25s for 3 iterations + report)
@@ -469,7 +473,7 @@ async def test_research_filters_markdown_from_llm_findings(
     mock_ollama.set_response_handler(markdown_handler)
 
     async with running_penny(config):
-        await signal_server.push_message(sender=TEST_SENDER, content="/research GPU models")
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! GPU models")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Wait for report
@@ -548,11 +552,13 @@ async def test_research_agent_activates_pending_task(
 
     async with running_penny(config) as penny:
         # Start first research task
-        await signal_server.push_message(sender=TEST_SENDER, content="/research AI trends")
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! AI trends")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Queue second research task while first is in progress
-        await signal_server.push_message(sender=TEST_SENDER, content="/research quantum computing")
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="/research ! quantum computing"
+        )
         response = await signal_server.wait_for_message(timeout=5.0)
         assert "queued" in response["message"].lower()
 
@@ -653,7 +659,7 @@ async def test_research_suspended_during_foreground_work(
 
     async with running_penny(config):
         # Start research task
-        await signal_server.push_message(sender=TEST_SENDER, content="/research test topic")
+        await signal_server.push_message(sender=TEST_SENDER, content="/research ! test topic")
         await signal_server.wait_for_message(timeout=5.0)
 
         # Wait for at least one research iteration to start
@@ -689,3 +695,219 @@ async def test_research_suspended_during_foreground_work(
                     f"Context: {call_log[max(0, i - 2) : min(len(call_log), i + 3)]}, "
                     f"Full log: {call_log}"
                 )
+
+
+@pytest.mark.asyncio
+async def test_research_focus_reply_starts_research(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that replying with a focus to an awaiting_focus task starts research.
+
+    Flow: /research topic → clarification → user replies with focus → research starts
+    """
+    config = make_config(
+        research_max_iterations=2,
+        idle_seconds=0.3,
+        scheduler_tick_interval=0.05,
+    )
+
+    responses = [
+        "Iteration 1: Found conferences in Berlin and Amsterdam",
+        "Iteration 2: Found conferences in Paris and London",
+    ]
+    response_index = [0]
+
+    def focus_handler(request: dict, count: int) -> dict:
+        if not request.get("tools"):
+            system_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "system"),
+                "",
+            )
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            if "interpreting" in system_content:
+                return mock_ollama._make_text_response(
+                    request, "comprehensive list with dates and locations"
+                )
+            if user_content.startswith("Research f"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return mock_ollama._make_text_response(request, response)
+        return mock_ollama._make_text_response(request, "fallback")
+
+    mock_ollama.set_response_handler(focus_handler)
+
+    async with running_penny(config) as penny:
+        # Step 1: Start research (default — creates awaiting_focus)
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="/research AI conferences in Europe"
+        )
+        clarification = await signal_server.wait_for_message(timeout=5.0)
+        assert "what should the report" in clarification["message"].lower()
+
+        # Verify task is awaiting_focus
+        with penny.db.get_session() as session:
+            tasks = list(session.exec(select(ResearchTask)).all())
+            assert len(tasks) == 1
+            assert tasks[0].status == "awaiting_focus"
+
+        # Step 2: Reply with focus
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="comprehensive list with dates and locations"
+        )
+        focus_response = await signal_server.wait_for_message(timeout=5.0)
+        assert "researching" in focus_response["message"].lower()
+        assert "focus" in focus_response["message"].lower()
+
+        # Verify task is now in_progress with focus stored
+        with penny.db.get_session() as session:
+            tasks = list(session.exec(select(ResearchTask)).all())
+            assert len(tasks) == 1
+            assert tasks[0].status == "in_progress"
+            assert tasks[0].focus == "comprehensive list with dates and locations"
+
+        # Step 3: Wait for research report
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=25.0)
+
+        report = signal_server.outgoing_messages[-1]
+        assert "research complete" in report["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_research_focus_reply_go_starts_without_focus(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that replying 'go' to an awaiting_focus task starts research without focus.
+    """
+    config = make_config(
+        research_max_iterations=2,
+        idle_seconds=0.3,
+        scheduler_tick_interval=0.05,
+    )
+
+    responses = ["Iteration 1: finding one", "Iteration 2: finding two"]
+    response_index = [0]
+
+    def go_handler(request: dict, count: int) -> dict:
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return mock_ollama._make_text_response(request, response)
+        return mock_ollama._make_text_response(request, "fallback")
+
+    mock_ollama.set_response_handler(go_handler)
+
+    async with running_penny(config) as penny:
+        # Start research (default — creates awaiting_focus)
+        await signal_server.push_message(sender=TEST_SENDER, content="/research test topic")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Reply with "go" to skip focus
+        await signal_server.push_message(sender=TEST_SENDER, content="go")
+        go_response = await signal_server.wait_for_message(timeout=5.0)
+        assert "started research" in go_response["message"].lower()
+
+        # Verify task is in_progress with no focus
+        with penny.db.get_session() as session:
+            tasks = list(session.exec(select(ResearchTask)).all())
+            assert len(tasks) == 1
+            assert tasks[0].status == "in_progress"
+            assert tasks[0].focus is None
+
+        # Wait for report
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 3, timeout=25.0)
+        report = signal_server.outgoing_messages[-1]
+        assert "research complete" in report["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_research_focus_timeout_auto_starts(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that awaiting_focus tasks auto-start after focus timeout expires.
+    """
+    config = make_config(
+        research_max_iterations=2,
+        idle_seconds=0.3,
+        scheduler_tick_interval=0.05,
+    )
+
+    responses = ["Iteration 1: finding one", "Iteration 2: finding two"]
+    response_index = [0]
+
+    def timeout_handler(request: dict, count: int) -> dict:
+        if not request.get("tools"):
+            user_content = next(
+                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
+                "summary",
+            )
+            if user_content.startswith("Research findings:"):
+                return mock_ollama._make_text_response(request, "Summary of findings")
+            return mock_ollama._make_text_response(request, user_content)
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return mock_ollama._make_text_response(request, response)
+        return mock_ollama._make_text_response(request, "fallback")
+
+    mock_ollama.set_response_handler(timeout_handler)
+
+    async with running_penny(config) as penny:
+        from datetime import timedelta
+
+        from sqlmodel import Session
+
+        # Manually create an awaiting_focus task with old created_at (past timeout)
+        with Session(penny.db.engine) as session:
+            task = ResearchTask(
+                thread_id=TEST_SENDER,
+                topic="stale topic",
+                status="awaiting_focus",
+                max_iterations=2,
+                created_at=datetime.now(UTC) - timedelta(seconds=400),
+            )
+            session.add(task)
+            session.commit()
+
+        # Wait for the research agent to auto-start the task and complete it
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 1, timeout=25.0)
+
+        report = signal_server.outgoing_messages[-1]
+        assert "research complete" in report["message"].lower()
+
+        # Verify task is completed
+        with penny.db.get_session() as session:
+            tasks = list(session.exec(select(ResearchTask)).all())
+            assert len(tasks) == 1
+            assert tasks[0].status == "completed"

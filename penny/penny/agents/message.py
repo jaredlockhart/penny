@@ -10,11 +10,18 @@ from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
-from penny.constants import VISION_IMAGE_CONTEXT, VISION_IMAGE_ONLY_CONTEXT, VISION_RESPONSE_PROMPT
+from penny.constants import (
+    RESEARCH_FOCUS_EXTRACTION_PROMPT,
+    VISION_IMAGE_CONTEXT,
+    VISION_IMAGE_ONLY_CONTEXT,
+    VISION_RESPONSE_PROMPT,
+)
 from penny.database.models import ResearchTask
 from penny.tools.builtin import SearchTool
 
 logger = logging.getLogger(__name__)
+
+GO_KEYWORDS = ("go", "go!", "start", "just go", "go ahead")
 
 
 class MessageAgent(Agent):
@@ -43,6 +50,11 @@ class MessageAgent(Agent):
             research_continuation = self._handle_research_continuation(sender, content, quoted_text)
             if research_continuation:
                 return None, research_continuation
+
+        # Check if user is replying to a research clarification prompt
+        focus_reply = await self._handle_research_focus_reply(sender, content)
+        if focus_reply:
+            return None, focus_reply
 
         # Get thread context if quoted
         parent_id = None
@@ -146,3 +158,80 @@ class MessageAgent(Agent):
         return ControllerResponse(
             answer=f"Ok, continuing research with focus: {content}. I'll post results when done."
         )
+
+    async def _handle_research_focus_reply(
+        self, sender: str, content: str
+    ) -> ControllerResponse | None:
+        """
+        Check if sender has an awaiting_focus research task and handle focus reply.
+
+        If the user says "go" (or similar), start research with no focus.
+        Otherwise, use LLM to interpret the user's reply against the presented
+        options and extract a clear focus description for the research report.
+
+        Returns:
+            ControllerResponse if this is a focus reply, None otherwise
+        """
+        try:
+            with Session(self.db.engine) as session:
+                task = session.exec(
+                    select(ResearchTask).where(
+                        ResearchTask.thread_id == sender,
+                        ResearchTask.status == "awaiting_focus",
+                    )
+                ).first()
+
+                if not task:
+                    return None
+
+                # "go" or similar → start with no focus
+                if content.strip().lower() in GO_KEYWORDS:
+                    task.status = "in_progress"
+                    session.add(task)
+                    session.commit()
+                    logger.info("Research task %d started without focus (user said 'go')", task.id)
+                    return ControllerResponse(
+                        answer=(
+                            f"Ok, started research on '{task.topic}'. "
+                            "I'll post results when done (this might take a few minutes)"
+                        )
+                    )
+
+                # Use LLM to interpret user's reply against the options
+                focus = await self._extract_focus(task.options, content.strip())
+
+                task.focus = focus
+                task.status = "in_progress"
+                session.add(task)
+                session.commit()
+                logger.info("Research task %d started with focus: %s", task.id, task.focus)
+                return ControllerResponse(
+                    answer=(
+                        f"Got it — researching '{task.topic}' with focus: {task.focus}. "
+                        "I'll post results when done."
+                    )
+                )
+        except Exception:
+            # Table may not exist (e.g., in test mode databases)
+            return None
+
+    async def _extract_focus(self, options: str | None, user_reply: str) -> str:
+        """Use LLM to interpret the user's reply and extract a report focus."""
+        if not options:
+            # No stored options (e.g., old task) — use reply directly
+            return user_reply
+
+        user_content = (
+            f"Options presented:\n{options}\n\n"
+            f"User replied: {user_reply}"
+        )
+
+        response = await self._ollama_client.chat(
+            messages=[
+                {"role": "system", "content": RESEARCH_FOCUS_EXTRACTION_PROMPT},
+                {"role": "user", "content": user_content},
+            ]
+        )
+        extracted = response.content.strip()
+        # Fall back to raw reply if LLM returns empty
+        return extracted or user_reply
