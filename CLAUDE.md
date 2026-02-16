@@ -48,6 +48,9 @@ penny-team/                     — Autonomous dev team (Claude CLI agents)
   Dockerfile
   pyproject.toml
   CLAUDE.md                     — Penny-team-specific context
+github_api/                     — Shared GitHub API client (GraphQL + REST)
+  api.py                        — GitHubAPI class (typed Pydantic return values)
+  auth.py                       — GitHubAuth (App JWT token generation)
 Makefile                        — Dev commands (make up, make check, make prod)
 docker-compose.yml              — signal-api + penny + team services
 docker-compose.override.yml     — Dev source volume overrides
@@ -118,7 +121,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
 - `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email` command)
 
-**GitHub App** (required for agent containers):
+**GitHub App** (required for agent containers and `/bug` command):
 - `GITHUB_APP_ID`: GitHub App ID for authenticated API access
 - `GITHUB_APP_PRIVATE_KEY_PATH`: Path to GitHub App private key file
 - `GITHUB_APP_INSTALLATION_ID`: GitHub App installation ID for the repository
@@ -131,6 +134,9 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `FOLLOWUP_MAX_SECONDS`: Maximum random delay after idle for followup (default: 7200)
 - `DISCOVERY_MIN_SECONDS`: Minimum random delay after idle for discovery (default: 7200)
 - `DISCOVERY_MAX_SECONDS`: Maximum random delay after idle for discovery (default: 14400)
+- `RESEARCH_MAX_ITERATIONS`: Max search iterations per research task (default: 10, runtime-configurable)
+- `RESEARCH_OUTPUT_MAX_LENGTH`: Max research report length in characters (default: 2000, runtime-configurable)
+- `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
 
 **Logging**:
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)

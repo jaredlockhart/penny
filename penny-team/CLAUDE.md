@@ -73,7 +73,10 @@ bug → in-review → closed                                                    
 - `--once` flag: Run a single tick (all due agents) then exit
 - `--list` flag: List registered agents and their configurations
 - `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `GitHubAPI.list_issues()`, compares to saved state in `data/penny-team/<name>.state.json` — skips Claude CLI if no issues changed since last run
-- State saved after successful runs; re-fetched to capture agent's own changes
+- For labels with external state (e.g., `in-review`), performs full actionability check even when timestamps unchanged (CI failures, merge conflicts, review feedback can happen without issue updates)
+- Per-agent processed tracking (`AgentState.processed`): allows agents sharing the same bot identity to independently track which issues they've processed
+- CI fix attempt capping: Worker pauses after `MAX_CI_FIX_ATTEMPTS` (3) failed CI fix attempts without human feedback, posts comment asking for help
+- State saved when all issues exhausted (`has_work()` returns False) — not after every run — to allow burning down work queues
 - Fail-open design: If API calls fail, agent runs anyway
 - SIGTERM forwarding for graceful shutdown of Claude CLI subprocesses
 
@@ -101,9 +104,10 @@ Worker agent automatically detects and fixes failing CI and merge conflicts on i
 
 ## GitHub API Module
 
-All orchestrator GitHub interactions use the shared `github_api/` package — direct HTTP calls via `urllib.request` with typed Pydantic return values. The `gh` CLI is **not** used by production orchestrator code (only by Claude CLI agents inside their sandboxed sessions).
+All orchestrator GitHub interactions use the shared `github_api/` package (at repo root) — direct HTTP calls via `urllib.request` with typed Pydantic return values. The `gh` CLI is **not** used by production orchestrator code (only by Claude CLI agents inside their sandboxed sessions). The same package is also used by penny's `/bug` command.
 
-- `GitHubAPI(token_provider: Callable[[], str])` — takes a callable that returns a fresh token (decoupled from `GitHubAuth`)
+- `GitHubAPI(token_provider, owner, repo)` — takes a callable that returns a fresh token (decoupled from `GitHubAuth`)
+- `GitHubAuth(app_id, private_key_path, installation_id)` — generates GitHub App JWT installation tokens
 - **GraphQL** for complex queries: issues (lightweight + detailed), PRs with checks/reviews/comments
 - **REST** for simple operations: posting comments, Actions API (workflow runs/logs), PR inline review comments
 - Pydantic models for all return types: `IssueListItem`, `IssueDetail`, `PullRequest`, `CheckStatus`, `ReviewComment`, `WorkflowRun`, etc.

@@ -43,7 +43,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nSummarize · Followup · Profile · Discovery"]
+    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Preference · Discovery"]
 ```
 
 ### Agent Architecture
@@ -51,10 +51,11 @@ flowchart TD
 Penny uses specialized agent subclasses for different tasks:
 
 - **MessageAgent**: Handles incoming user messages, prepares context, runs agentic loop
-- **SummarizeAgent**: Background task that summarizes conversation threads when idle
+- **ResearchAgent**: Autonomous multi-iteration deep research on user-requested topics
 - **FollowupAgent**: Background task that spontaneously follows up on conversations
 - **PreferenceAgent**: Background task that extracts user preferences from messages and reactions
 - **DiscoveryAgent**: Background task that shares new content based on user interests
+- **ScheduleExecutor**: Runs user-created cron-based scheduled tasks
 
 Each agent owns its own OllamaClient instance and can have its own tools and prompts.
 
@@ -62,15 +63,17 @@ Each agent owns its own OllamaClient instance and can have its own tools and pro
 
 Background tasks are managed by a priority-based scheduler with a global idle threshold. The scheduler runs tasks in priority order:
 
-1. **Summarize** (PeriodicSchedule) — runs periodically, summarizes conversation threads
-2. **Preference** (PeriodicSchedule) — extracts user preferences from messages
-3. **Followup** (DelayedSchedule) — spontaneous conversation followups
-4. **Discovery** (DelayedSchedule) — proactive content sharing
+1. **Schedule** (AlwaysRunSchedule) — runs user-created cron-based tasks every 60s
+2. **Research** (AlwaysRunSchedule) — processes in-progress research tasks
+3. **Preference** (PeriodicSchedule) — extracts user preferences from messages
+4. **Followup** (DelayedSchedule) — spontaneous conversation followups
+5. **Discovery** (DelayedSchedule) — proactive content sharing
 
-**Global idle threshold** (default: 300s): All background tasks wait for the system to become idle before they can run.
+**Global idle threshold** (default: 300s): Idle-dependent background tasks wait for the system to become idle before they can run. Background tasks are suspended during foreground message processing.
 
 Schedule types:
-- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for summarization and preference extraction, default: 300s)
+- **AlwaysRunSchedule**: Runs regardless of idle state at a configurable interval (used for research and user-created schedules)
+- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for preference extraction, default: 300s)
 - **DelayedSchedule**: Runs after system becomes idle + random delay (used for followups and discovery)
 
 The scheduler resets all timers when a new message arrives.
@@ -78,13 +81,15 @@ The scheduler resets all timers when a new message arrives.
 ### Message Flow
 
 1. User sends message (Signal or Discord)
-2. Channel extracts message → notifies scheduler (resets timers)
-3. MessageAgent handles the message:
+2. Channel extracts message → checks for slash commands or research replies
+3. Channel notifies scheduler (resets timers, suspends background tasks)
+4. MessageAgent handles the message:
    - If quote-reply: look up quoted message, walk parent chain for history
+   - If image: caption via vision model, then forward combined prompt
    - Run agentic loop with tools (Perplexity search + DuckDuckGo images)
-4. Log messages to database (linked via parent_id)
-5. Send response back via channel with image attachment (if available)
-6. Background: when idle, summarize threads, generate user profiles, follow up on conversations, and share new discoveries
+5. Log messages to database (linked via parent_id)
+6. Send response back via channel with image attachment (if available)
+7. Background: research tasks run continuously; when idle, extract preferences, follow up on conversations, and share new discoveries
 
 ### Design Decisions
 
@@ -93,6 +98,9 @@ The scheduler resets all timers when a new message arrives.
 - **Networking**: `--network host` for simplicity
 - **Persistence**: SQLite on host filesystem via volume mount
 - **Channel Abstraction**: Signal and Discord share the same interface
+- **Per-user Personality**: Custom personality prompts stored in DB, applied via LLM response transformation
+- **Always-search**: System prompt forces web search on every message — no hallucinated answers
+- **Background Suspension**: Foreground messages pause background tasks to prevent interference
 
 ### Commands
 
@@ -101,12 +109,19 @@ Penny supports slash commands sent as messages:
 - **/commands**: List all available commands
 - **/debug**: Show agent status, git commit, background task state
 - **/config**: View and modify runtime settings (e.g., `/config idle_seconds 600`)
+- **/profile**: Set up user profile (name, location, DOB) — required before chatting
+- **/like**, **/dislike**: Explicitly manage topic preferences for discovery
+- **/personality**: Customize Penny's tone and behavior (e.g., `/personality be a pirate`)
+- **/research**: Start autonomous deep research on a topic with multi-iteration search
+- **/schedule**: Create recurring background tasks (e.g., `/schedule daily 9am weather forecast`)
 - **/draw**: Generate an image from a text description (requires `OLLAMA_IMAGE_MODEL`)
+- **/bug**: File a bug report on GitHub (requires GitHub App config)
+- **/email**: Search Fastmail email via JMAP (requires `FASTMAIL_API_TOKEN`)
 - **/test**: Enter isolated test mode with a separate DB for development
 
 ## Data Model
 
-Penny stores four types of data in SQLite:
+Penny stores data in SQLite across several tables:
 
 **PromptLog**: Every call to Ollama
 - Model name, full message list (JSON), tool definitions (JSON), response (JSON)
@@ -119,14 +134,33 @@ Penny stores four types of data in SQLite:
 **MessageLog**: Every user message and agent response
 - Direction (incoming/outgoing), sender, content
 - Parent ID (foreign key to self) for threading
-- Parent summary (cached thread summary for context reconstruction)
-- External ID (platform-specific message ID for reaction lookup)
+- External ID (platform-specific message ID for quote-reply lookup)
 - Is-reaction flag (true if message is a reaction)
+- Processed flag (tracks whether PreferenceAgent has analyzed this message)
 
-**UserProfile**: Cached user interest profiles
-- Sender (unique), profile text (flat list of mentioned topics), last update timestamp
-- Tracks `last_message_timestamp` so profiles are only regenerated when new messages exist
-- Used exclusively by DiscoveryAgent for personalized content discovery
+**UserInfo**: User profile information
+- Name, location, timezone (IANA), date of birth
+- Collected via `/profile` command, required before chatting
+
+**Preference**: User topic preferences for discovery
+- User, topic, type (like/dislike)
+- Set explicitly via `/like`/`/dislike` or extracted by PreferenceAgent from messages
+
+**ResearchTask**: Autonomous research requests
+- Topic, status (awaiting_focus/in_progress/completed/failed), focus, max_iterations
+- Thread ID for sending results back to the right conversation
+
+**ResearchIteration**: Individual search iterations within a research task
+- Query, findings (JSON), sources (JSON), iteration number
+
+**Schedule**: User-created recurring background tasks
+- Cron expression, prompt text, user timezone, timing description
+
+**PersonalityPrompt**: Per-user personality customization
+- Prompt text that transforms Penny's response style
+
+**RuntimeConfig**: User-configurable settings (via `/config`)
+**CommandLog**: Log of every command invocation
 
 ## Setup & Running
 
@@ -211,6 +245,14 @@ FOLLOWUP_MIN_SECONDS=3600           # Random delay after idle (followup)
 FOLLOWUP_MAX_SECONDS=7200
 DISCOVERY_MIN_SECONDS=7200          # Random delay after idle (discovery)
 DISCOVERY_MAX_SECONDS=14400
+
+# Fastmail JMAP (optional, enables /email command)
+# FASTMAIL_API_TOKEN="your-api-token"
+
+# GitHub App (optional, enables /bug command and agent containers)
+# GITHUB_APP_ID="12345"
+# GITHUB_APP_PRIVATE_KEY_PATH="path/to/key.pem"
+# GITHUB_APP_INSTALLATION_ID="67890"
 ```
 
 ### Channel Selection
@@ -244,6 +286,12 @@ Penny auto-detects which channel to use based on configured credentials:
 
 **API Keys:**
 - `PERPLEXITY_API_KEY`: API key for web search (without this, the agent has no tools)
+- `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email` command)
+
+**GitHub App** (optional, enables `/bug` command; required for agent containers):
+- `GITHUB_APP_ID`: GitHub App ID for authenticated API access
+- `GITHUB_APP_PRIVATE_KEY_PATH`: Path to GitHub App private key file
+- `GITHUB_APP_INSTALLATION_ID`: GitHub App installation ID for the repository
 
 **Behavior:**
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
@@ -252,6 +300,9 @@ Penny auto-detects which channel to use based on configured credentials:
 - `FOLLOWUP_MAX_SECONDS`: Maximum random delay after idle for followup (default: 7200)
 - `DISCOVERY_MIN_SECONDS`: Minimum random delay after idle for discovery (default: 7200)
 - `DISCOVERY_MAX_SECONDS`: Maximum random delay after idle for discovery (default: 14400)
+- `RESEARCH_MAX_ITERATIONS`: Max search iterations per research task (default: 10)
+- `RESEARCH_OUTPUT_MAX_LENGTH`: Max research report length in characters (default: 2000)
+- `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
 
 **Logging:**
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)
@@ -294,9 +345,10 @@ CI runs `make check` in Docker on every push to `main` and on pull requests via 
 
 **Test Coverage:**
 - Message flow: tool calls, direct responses, typing indicators, DB logging
-- Background tasks: summarization, user profile generation, spontaneous followups
-- Commands: /debug, /config, /test, /commands
-- Startup announcements, Signal channel integration
+- Background tasks: research, preferences, spontaneous followups, discovery
+- Commands: /debug, /config, /test, /commands, /personality, /research, /schedule, /bug, /draw, /email, /like, /dislike
+- Startup announcements, Signal channel integration, vision processing
+- Tool validation: timeouts, missing params, non-existent tools, search redaction
 
 Tests use mock servers and SDK patches:
 - `MockSignalServer`: Simulates Signal WebSocket + REST API
