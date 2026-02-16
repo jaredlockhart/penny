@@ -218,10 +218,10 @@ async def test_preference_no_channel(
 
     async with running_penny(config) as penny:
         from penny.agents import PreferenceAgent
-        from penny.prompts import SYSTEM_PROMPT
+        from penny.prompts import SEARCH_PROMPT
 
         preference_agent = PreferenceAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],

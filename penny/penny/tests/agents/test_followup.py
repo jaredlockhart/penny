@@ -106,10 +106,10 @@ async def test_followup_excludes_dislikes(
 
         # Manually trigger followup
         from penny.agents import FollowupAgent
-        from penny.prompts import SYSTEM_PROMPT
+        from penny.prompts import SEARCH_PROMPT
 
         followup_agent = FollowupAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=penny.message_agent.model,
             ollama_api_url=config.ollama_api_url,
             tools=penny.message_agent.tools,
@@ -157,10 +157,10 @@ async def test_followup_no_channel(
 
     async with running_penny(config) as penny:
         from penny.agents import FollowupAgent
-        from penny.prompts import SYSTEM_PROMPT
+        from penny.prompts import SEARCH_PROMPT
 
         followup_agent = FollowupAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
@@ -186,10 +186,10 @@ async def test_followup_no_leaves(
 
     async with running_penny(config) as penny:
         from penny.agents import FollowupAgent
-        from penny.prompts import SYSTEM_PROMPT
+        from penny.prompts import SEARCH_PROMPT
 
         followup_agent = FollowupAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
@@ -241,10 +241,10 @@ async def test_followup_quotes_with_correct_timestamp(
 
         # Manually trigger followup to verify it uses correct timestamp
         from penny.agents import FollowupAgent
-        from penny.prompts import SYSTEM_PROMPT
+        from penny.prompts import SEARCH_PROMPT
 
         followup_agent = FollowupAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=penny.message_agent.model,
             ollama_api_url=config.ollama_api_url,
             tools=penny.message_agent.tools,

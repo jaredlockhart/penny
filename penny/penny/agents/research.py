@@ -18,7 +18,6 @@ from penny.database.models import ResearchIteration, ResearchTask
 from penny.prompts import (
     RESEARCH_EXTRACTION_PROMPT,
     RESEARCH_FOLLOWUP_PROMPT,
-    RESEARCH_PROMPT,
     RESEARCH_REPORT_PROMPT,
 )
 
@@ -78,7 +77,9 @@ class ResearchAgent(Agent):
 
         # Run next search iteration (use followup prompt after first iteration)
         history = self._build_history(task, iterations)
-        prompt = RESEARCH_PROMPT if current_iteration == 0 else RESEARCH_FOLLOWUP_PROMPT
+        prompt = (
+            "Begin researching this topic." if current_iteration == 0 else RESEARCH_FOLLOWUP_PROMPT
+        )
         response = await self.run(prompt=prompt, history=history)
 
         if not response.answer:

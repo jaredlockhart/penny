@@ -21,7 +21,7 @@ from penny.config import Config, setup_logging
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
-from penny.prompts import RESEARCH_PROMPT, SYSTEM_PROMPT
+from penny.prompts import RESEARCH_PROMPT, SEARCH_PROMPT
 from penny.scheduler import (
     AlwaysRunSchedule,
     BackgroundScheduler,
@@ -57,7 +57,7 @@ class Penny:
         def create_message_agent(db):
             """Factory for creating MessageAgent with a given database."""
             return MessageAgent(
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=SEARCH_PROMPT,
                 model=config.ollama_foreground_model,
                 ollama_api_url=config.ollama_api_url,
                 tools=search_tools(db),
@@ -110,7 +110,7 @@ class Penny:
         )
 
         self.followup_agent = FollowupAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=search_tools(self.db),
@@ -122,7 +122,7 @@ class Penny:
         )
 
         self.preference_agent = PreferenceAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt="",  # PreferenceAgent uses ollama_client.generate() directly
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
@@ -134,7 +134,7 @@ class Penny:
         )
 
         self.discovery_agent = DiscoveryAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=search_tools(self.db),
@@ -159,7 +159,7 @@ class Penny:
         )
 
         self.schedule_executor = ScheduleExecutor(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt="",  # ScheduleExecutor delegates to message_agent.run()
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],  # Schedule executor doesn't need tools itself
