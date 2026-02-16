@@ -195,7 +195,7 @@ class Penny:
             ),
             AlwaysRunSchedule(
                 agent=self.research_agent,
-                interval=5.0,  # Check every 5 seconds for research work
+                interval=config.research_schedule_interval,
             ),
             PeriodicSchedule(
                 agent=self.preference_agent,

@@ -1,6 +1,5 @@
 """Unit tests for PeriodicSchedule."""
 
-import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -32,8 +31,7 @@ def test_periodic_schedule_not_run_when_not_idle(mock_agent):
     assert not schedule.should_run(is_idle=False)
 
 
-@pytest.mark.asyncio
-async def test_periodic_schedule_respects_interval(mock_agent):
+def test_periodic_schedule_respects_interval(mock_agent):
     """Test that PeriodicSchedule respects the interval between runs."""
     schedule = PeriodicSchedule(agent=mock_agent, interval=0.1)
 
@@ -44,8 +42,9 @@ async def test_periodic_schedule_respects_interval(mock_agent):
     # Immediately after, should not fire
     assert not schedule.should_run(is_idle=True)
 
-    # Wait for interval to elapse
-    await asyncio.sleep(0.15)
+    # Advance past the interval by backdating _last_run
+    assert schedule._last_run is not None
+    schedule._last_run = schedule._last_run - 0.2
 
     # Should fire again after interval
     assert schedule.should_run(is_idle=True)
