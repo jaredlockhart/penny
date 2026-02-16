@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
+from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.constants import (
     RESEARCH_FOCUS_EXTRACTION_PROMPT,
     VISION_IMAGE_CONTEXT,
@@ -18,6 +19,10 @@ from penny.constants import (
 )
 from penny.database.models import ResearchTask
 from penny.tools.builtin import SearchTool
+
+RESEARCH_MAX_ITERATIONS_DEFAULT = int(
+    RUNTIME_CONFIG_PARAMS["RESEARCH_MAX_ITERATIONS"].default_value
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,9 +143,8 @@ class MessageAgent(Agent):
 
             logger.info("Detected research continuation for task %d: %s", research_task.id, content)
 
-            # Get max_iterations from config (not from database, use default)
-            # We can't easily access config here, so we'll use the default value
-            max_iterations = 10  # Default from config_params.py
+            # Get max_iterations from config_params default
+            max_iterations = RESEARCH_MAX_ITERATIONS_DEFAULT
 
             # Create new research task as continuation
             new_task = ResearchTask(
