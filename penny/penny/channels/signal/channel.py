@@ -251,6 +251,22 @@ class SignalChannel(MessageChannel):
         """
         # Convert markdown tables to bullet points
         text = self._table_to_bullets(text)
+        # Protect fenced code blocks from all formatting processing
+        code_blocks: list[str] = []
+
+        def _protect_code(m: re.Match[str]) -> str:
+            code_blocks.append(m.group(0))
+            return f"\x00CODE{len(code_blocks) - 1}\x00"
+
+        text = re.sub(r"```[\s\S]*?```", _protect_code, text)
+        # Protect URLs from tilde/asterisk mangling
+        urls: list[str] = []
+
+        def _protect_url(m: re.Match[str]) -> str:
+            urls.append(m.group(0))
+            return f"\x00URL{len(urls) - 1}\x00"
+
+        text = re.sub(r"https?://[^\s<>)]+", _protect_url, text)
         # Use placeholder for intentional strikethrough to protect during escaping
         placeholder = "\x00STRIKE\x00"
         # Convert ~~strikethrough~~ to placeholder (markdown uses double tilde)
@@ -275,8 +291,18 @@ class SignalChannel(MessageChannel):
         text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
         # Remove horizontal rules (--- or more dashes on a line by themselves)
         text = re.sub(r"^-{3,}\s*$", "", text, flags=re.MULTILINE)
+        # Strip blockquote markers (Signal doesn't render > as blockquotes)
+        text = re.sub(r"^>\s?", "", text, flags=re.MULTILINE)
+        # Convert HTML <br> tags to newlines
+        text = re.sub(r"<br\s*/?>", "\n", text)
         # Convert markdown links [text](url) to just text (url)
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
+        # Restore protected URLs
+        for i, url in enumerate(urls):
+            text = text.replace(f"\x00URL{i}\x00", url)
+        # Restore protected code blocks
+        for i, block in enumerate(code_blocks):
+            text = text.replace(f"\x00CODE{i}\x00", block)
         # Collapse multiple blank lines
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
