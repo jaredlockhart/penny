@@ -52,8 +52,9 @@ RESEARCH_REPORT_PROMPT = (
     "The report structure MUST match the user's requested focus. "
     "Include ONLY information from the findings — do not add commentary, "
     "strategic analysis, or recommendations unless the focus asks for them. "
-    "Use markdown formatting (## headings, bullet points). "
-    "Do not include tables."
+    "Preserve all specific data points, ratings, and scores from the findings — "
+    "do not generalize or merge them into a single overall rating. "
+    "Use markdown formatting (## headings, bullet points, tables)."
 )
 
 RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT = (
