@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from penny.constants import EMAIL_SUMMARIZE_PROMPT
 from penny.jmap.client import JmapClient
 from penny.ollama.client import OllamaClient
+from penny.prompts import EMAIL_SUMMARIZE_PROMPT
 from penny.tools.base import Tool
 
 logger = logging.getLogger(__name__)

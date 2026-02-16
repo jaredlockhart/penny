@@ -6,9 +6,9 @@ import logging
 from datetime import UTC, datetime
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
-from penny.constants import VISION_AUTO_DESCRIBE_PROMPT
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.prompts import PENNY_IDENTITY, VISION_AUTO_DESCRIBE_PROMPT
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.models import SearchResult
 
@@ -122,27 +122,16 @@ class Agent:
                 logger.debug("Failed to query personality prompt: %s", e)
                 personality_text = None
 
-        # Inject personality between base identity and agent-specific prompt
-        # The system_prompt already includes PENNY_IDENTITY, so we need to reconstruct it
-        from penny.constants import PENNY_IDENTITY
-
-        # Start with base Penny identity
+        # Build system prompt: identity → personality (optional) → agent-specific prompt
         system_parts.append(PENNY_IDENTITY)
 
-        # Add custom personality if it exists
         if personality_text:
             system_parts.append("")
             system_parts.append(personality_text)
 
-        # Add agent-specific prompt (remove PENNY_IDENTITY if present)
-        agent_prompt = effective_prompt
-        if agent_prompt.startswith(PENNY_IDENTITY):
-            # Remove the base identity since we already added it
-            agent_prompt = agent_prompt[len(PENNY_IDENTITY) :].lstrip("\n")
-
-        if agent_prompt:
+        if effective_prompt:
             system_parts.append("")
-            system_parts.append(agent_prompt)
+            system_parts.append(effective_prompt)
 
         system_content = "\n".join(system_parts)
         messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content).to_dict())

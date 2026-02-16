@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 
 from penny.agents.base import Agent
 from penny.agents.models import MessageRole
-from penny.constants import DISCOVERY_PROMPT, PreferenceType
+from penny.constants import PreferenceType
+from penny.prompts import DISCOVERY_PROMPT
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel

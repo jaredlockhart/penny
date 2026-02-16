@@ -18,10 +18,10 @@ from penny.agents.research import ResearchAgent
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
-from penny.constants import PREFERENCE_PROMPT, RESEARCH_PROMPT, SYSTEM_PROMPT
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
+from penny.prompts import RESEARCH_PROMPT, SYSTEM_PROMPT
 from penny.scheduler import (
     AlwaysRunSchedule,
     BackgroundScheduler,
@@ -122,7 +122,7 @@ class Penny:
         )
 
         self.preference_agent = PreferenceAgent(
-            system_prompt=PREFERENCE_PROMPT,
+            system_prompt=SYSTEM_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],

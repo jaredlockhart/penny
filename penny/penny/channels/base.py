@@ -12,12 +12,12 @@ from pydantic import BaseModel, Field
 
 from penny.config import Config
 from penny.constants import (
-    PERSONALITY_TRANSFORM_PROMPT,
     TEST_MODE_PREFIX,
     VISION_NOT_CONFIGURED_MESSAGE,
     MessageDirection,
 )
 from penny.database.models import MessageLog
+from penny.prompts import PERSONALITY_TRANSFORM_PROMPT
 
 if TYPE_CHECKING:
     from penny.agents import MessageAgent

@@ -9,8 +9,8 @@ from sqlmodel import Session, func, select
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.constants import RESEARCH_OUTPUT_OPTIONS_PROMPT, RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT
 from penny.database.models import ResearchIteration, ResearchTask
+from penny.prompts import RESEARCH_OUTPUT_OPTIONS_PROMPT, RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 

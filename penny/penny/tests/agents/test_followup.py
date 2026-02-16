@@ -106,7 +106,7 @@ async def test_followup_excludes_dislikes(
 
         # Manually trigger followup
         from penny.agents import FollowupAgent
-        from penny.constants import SYSTEM_PROMPT
+        from penny.prompts import SYSTEM_PROMPT
 
         followup_agent = FollowupAgent(
             system_prompt=SYSTEM_PROMPT,
@@ -157,7 +157,7 @@ async def test_followup_no_channel(
 
     async with running_penny(config) as penny:
         from penny.agents import FollowupAgent
-        from penny.constants import SYSTEM_PROMPT
+        from penny.prompts import SYSTEM_PROMPT
 
         followup_agent = FollowupAgent(
             system_prompt=SYSTEM_PROMPT,
@@ -186,7 +186,7 @@ async def test_followup_no_leaves(
 
     async with running_penny(config) as penny:
         from penny.agents import FollowupAgent
-        from penny.constants import SYSTEM_PROMPT
+        from penny.prompts import SYSTEM_PROMPT
 
         followup_agent = FollowupAgent(
             system_prompt=SYSTEM_PROMPT,
@@ -241,7 +241,7 @@ async def test_followup_quotes_with_correct_timestamp(
 
         # Manually trigger followup to verify it uses correct timestamp
         from penny.agents import FollowupAgent
-        from penny.constants import SYSTEM_PROMPT
+        from penny.prompts import SYSTEM_PROMPT
 
         followup_agent = FollowupAgent(
             system_prompt=SYSTEM_PROMPT,

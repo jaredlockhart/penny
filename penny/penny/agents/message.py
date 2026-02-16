@@ -12,12 +12,14 @@ from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.constants import (
-    RESEARCH_FOCUS_EXTRACTION_PROMPT,
     VISION_IMAGE_CONTEXT,
     VISION_IMAGE_ONLY_CONTEXT,
-    VISION_RESPONSE_PROMPT,
 )
 from penny.database.models import ResearchTask
+from penny.prompts import (
+    RESEARCH_FOCUS_EXTRACTION_PROMPT,
+    VISION_RESPONSE_PROMPT,
+)
 from penny.tools.builtin import SearchTool
 
 RESEARCH_MAX_ITERATIONS_DEFAULT = int(

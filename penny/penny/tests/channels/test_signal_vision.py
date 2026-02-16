@@ -3,12 +3,11 @@
 import pytest
 
 from penny.constants import (
-    VISION_AUTO_DESCRIBE_PROMPT,
     VISION_IMAGE_CONTEXT,
     VISION_IMAGE_ONLY_CONTEXT,
     VISION_NOT_CONFIGURED_MESSAGE,
-    VISION_RESPONSE_PROMPT,
 )
+from penny.prompts import VISION_AUTO_DESCRIBE_PROMPT, VISION_RESPONSE_PROMPT
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 # Minimal valid JPEG header bytes for testing

@@ -13,14 +13,14 @@ from sqlmodel import Session, select
 from penny.agents.base import Agent
 from penny.agents.models import MessageRole, ToolCallRecord
 from penny.config import Config
-from penny.constants import (
+from penny.constants import RESEARCH_FOCUS_TIMEOUT_SECONDS
+from penny.database.models import ResearchIteration, ResearchTask
+from penny.prompts import (
     RESEARCH_EXTRACTION_PROMPT,
-    RESEARCH_FOCUS_TIMEOUT_SECONDS,
     RESEARCH_FOLLOWUP_PROMPT,
     RESEARCH_PROMPT,
     RESEARCH_REPORT_PROMPT,
 )
-from penny.database.models import ResearchIteration, ResearchTask
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel

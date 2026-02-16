@@ -7,8 +7,9 @@ import logging
 from penny.agents.base import Agent
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.constants import EMAIL_NO_QUERY_TEXT, EMAIL_SYSTEM_PROMPT
+from penny.constants import EMAIL_NO_QUERY_TEXT
 from penny.jmap.client import JmapClient
+from penny.prompts import EMAIL_SYSTEM_PROMPT
 from penny.tools.email import ReadEmailsTool, SearchEmailsTool
 
 logger = logging.getLogger(__name__)

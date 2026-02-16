@@ -11,7 +11,7 @@ from penny.tests.conftest import TEST_SENDER
 async def test_validate_connectivity_success(signal_server, test_config, mock_ollama):
     """Test that validate_connectivity succeeds with a reachable Signal API."""
     from penny.agents import MessageAgent
-    from penny.constants import SYSTEM_PROMPT
+    from penny.prompts import SYSTEM_PROMPT
 
     db = Database(test_config.db_path)
     db.create_tables()
@@ -43,7 +43,7 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
     """Test that validate_connectivity raises ConnectionError on DNS failure."""
     from penny.agents import MessageAgent
     from penny.config import Config
-    from penny.constants import SYSTEM_PROMPT
+    from penny.prompts import SYSTEM_PROMPT
 
     config = Config(
         channel_type="signal",
@@ -94,7 +94,7 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
     """Test that validate_connectivity raises ConnectionError when server is unreachable."""
     from penny.agents import MessageAgent
     from penny.config import Config
-    from penny.constants import SYSTEM_PROMPT
+    from penny.prompts import SYSTEM_PROMPT
 
     # Use localhost on a port that's not listening
     config = Config(
@@ -146,7 +146,7 @@ async def test_send_message_rejects_empty_without_attachments(
 ):
     """Test that send_message raises ValueError for empty text with no attachments."""
     from penny.agents import MessageAgent
-    from penny.constants import SYSTEM_PROMPT
+    from penny.prompts import SYSTEM_PROMPT
 
     db = Database(test_config.db_path)
     db.create_tables()
@@ -179,7 +179,7 @@ async def test_send_message_allows_empty_text_with_attachments(
 ):
     """Test that send_message succeeds with empty text when attachments are provided."""
     from penny.agents import MessageAgent
-    from penny.constants import SYSTEM_PROMPT
+    from penny.prompts import SYSTEM_PROMPT
 
     db = Database(test_config.db_path)
     db.create_tables()

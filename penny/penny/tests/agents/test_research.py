@@ -125,7 +125,7 @@ async def test_research_agent_no_channel(
 
     async with running_penny(config) as penny:
         from penny.agents import ResearchAgent
-        from penny.constants import SYSTEM_PROMPT
+        from penny.prompts import SYSTEM_PROMPT
 
         research_agent = ResearchAgent(
             config=config,
@@ -155,7 +155,7 @@ async def test_research_agent_no_tasks(
 
     async with running_penny(config) as penny:
         from penny.agents import ResearchAgent
-        from penny.constants import SYSTEM_PROMPT
+        from penny.prompts import SYSTEM_PROMPT
 
         research_agent = ResearchAgent(
             config=config,
