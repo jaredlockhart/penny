@@ -16,9 +16,8 @@ from penny.config import Config
 from penny.constants import RESEARCH_FOCUS_TIMEOUT_SECONDS
 from penny.database.models import ResearchIteration, ResearchTask
 from penny.prompts import (
-    RESEARCH_EXTRACTION_PROMPT,
     RESEARCH_FOLLOWUP_PROMPT,
-    RESEARCH_REPORT_PROMPT,
+    RESEARCH_REPORT_BUILD_PROMPT,
 )
 
 if TYPE_CHECKING:
@@ -90,16 +89,20 @@ class ResearchAgent(Agent):
         # Extract the actual search query from tool calls (if any)
         search_query = self._extract_search_query(response.tool_calls)
 
-        # Extract sources from raw response, then distill findings
+        # Extract sources from raw response, then build/augment report
         sources = self._extract_sources(response.answer)
-        findings = await self._extract_findings(task.topic, response.answer, focus=task.focus)
+        current_report = iterations[-1].findings if iterations else None
+        report_draft = await self._build_report(
+            task.topic, response.answer, focus=task.focus, current_report=current_report
+        )
 
-        # Store iteration with the actual search query used
+        # Store iteration with the report draft
+        # Sources stored separately per-iteration, merged at completion
         self._store_iteration(
             task_id=task.id,
             iteration_num=current_iteration + 1,
             query=search_query or f"Iteration {current_iteration + 1}",
-            findings=findings,
+            findings=report_draft,
             sources=sources,
         )
 
@@ -115,12 +118,19 @@ class ResearchAgent(Agent):
     async def _complete_research(
         self, task: ResearchTask, iterations: list[ResearchIteration]
     ) -> None:
-        """Generate final report and post to channel."""
+        """Post the incrementally-built report to channel."""
         if not self._channel:
             return
 
-        # Generate report
-        report = await self._generate_report(task.topic, iterations, focus=task.focus)
+        # The latest iteration's findings IS the report — append all unique sources
+        report = iterations[-1].findings if iterations else ""
+        all_sources: set[str] = set()
+        for iteration in iterations:
+            all_sources.update(json.loads(iteration.sources))
+        if all_sources:
+            report += "\n\n## sources\n"
+            for source in sorted(all_sources):
+                report += f"{source}\n"
 
         # Truncate if exceeds configured max length
         max_length = self._config.research_output_max_length
@@ -204,13 +214,19 @@ class ResearchAgent(Agent):
         if task.focus:
             context += f"\nUser's research focus: {task.focus}"
 
+        # Include previous search queries so agent doesn't repeat them
+        if iterations:
+            queries = [it.query for it in iterations if it.query]
+            if queries:
+                context += "\nPrevious searches: " + ", ".join(f'"{q}"' for q in queries)
+
         history.append((MessageRole.SYSTEM.value, context))
 
-        # Add previous iterations as assistant responses (include search query if available)
-        for iteration in iterations:
-            entry = f"Search query: {iteration.query}\n" if iteration.query else ""
-            entry += f"Search findings (iteration {iteration.iteration_num}):\n{iteration.findings}"
-            history.append((MessageRole.ASSISTANT.value, entry))
+        # Include the current report draft so agent knows what's been covered
+        if iterations:
+            history.append(
+                (MessageRole.ASSISTANT.value, f"Current report draft:\n{iterations[-1].findings}")
+            )
 
         return history
 
@@ -245,53 +261,24 @@ class ResearchAgent(Agent):
                 sources.append(line.strip())
         return sources
 
-    async def _generate_report(
-        self, topic: str, iterations: list[ResearchIteration], focus: str | None = None
+    async def _build_report(
+        self,
+        topic: str,
+        raw_response: str,
+        focus: str | None = None,
+        current_report: str | None = None,
     ) -> str:
-        """Generate final report from all iterations using a single LLM call."""
-        all_findings: list[str] = []
-        all_sources: set[str] = set()
-
-        for iteration in iterations:
-            all_findings.append(iteration.findings)
-            sources_list = json.loads(iteration.sources)
-            all_sources.update(sources_list)
-
-        combined_findings = "\n\n---\n\n".join(all_findings)
-
-        user_content = f"Research topic: {topic}\n"
-        if focus:
-            user_content += f"Requested report format: {focus}\n"
-        user_content += f"\nResearch findings:\n\n{combined_findings}"
-
-        response = await self._ollama_client.chat(
-            messages=[
-                {"role": "system", "content": RESEARCH_REPORT_PROMPT},
-                {"role": "user", "content": user_content},
-            ]
-        )
-        report = response.message.content.strip()
-
-        # Append sources
-        if all_sources:
-            report += "\n\n## sources\n"
-            for source in sorted(all_sources):
-                report += f"{source}\n"
-
-        return report
-
-    async def _extract_findings(
-        self, topic: str, raw_response: str, focus: str | None = None
-    ) -> str:
-        """Extract relevant findings from raw search results using LLM."""
+        """Build or augment the research report from new search results."""
         user_content = f"Research topic: {topic}"
         if focus:
-            user_content += f"\nResearch focus: {focus}"
-        user_content += f"\n\nSearch results:\n\n{raw_response}"
+            user_content += f"\nRequested report format: {focus}"
+        if current_report:
+            user_content += f"\n\nExisting report draft:\n\n{current_report}"
+        user_content += f"\n\nNew search results:\n\n{raw_response}"
 
         response = await self._ollama_client.chat(
             messages=[
-                {"role": "system", "content": RESEARCH_EXTRACTION_PROMPT},
+                {"role": "system", "content": RESEARCH_REPORT_BUILD_PROMPT},
                 {"role": "user", "content": user_content},
             ]
         )

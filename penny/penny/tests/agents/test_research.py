@@ -14,22 +14,15 @@ def _make_research_handler(
 ):
     """Factory for the standard research mock handler.
 
-    Handles the three kinds of Ollama calls the research agent makes:
+    Handles the two kinds of Ollama calls the research agent makes:
     1. Tool calls (search iterations) — returns responses in order
-    2. Extraction calls (no tools, no "Research findings:") — passes through user content
-    3. Report calls (no tools, "Research findings:" in user content) — returns report_text
+    2. Report-building calls (no tools) — returns report_text
     """
     response_index = [0]
 
     def handler(request: dict, count: int) -> dict:
         if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
-            )
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(request, report_text)
-            return mock_ollama._make_text_response(request, user_content)
+            return mock_ollama._make_text_response(request, report_text)
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
             response_index[0] += 1
@@ -232,15 +225,22 @@ async def test_research_agent_stores_iterations(
         scheduler_tick_interval=9999,
     )
 
-    mock_ollama.set_response_handler(
-        _make_research_handler(
-            mock_ollama,
-            [
-                "Iteration 1: Arabica beans are known for smooth flavor",
-                "Iteration 2: Robusta has more caffeine but bitter taste",
-            ],
-        )
+    report_iter1 = "## Coffee Report\nArabica beans are known for smooth flavor"
+    report_iter2 = (
+        "## Coffee Report\nArabica beans are known for smooth flavor. "
+        "Robusta has more caffeine but bitter taste"
     )
+    report_index = [0]
+    report_texts = [report_iter1, report_iter2]
+
+    def handler(request: dict, count: int) -> dict:
+        if not request.get("tools"):
+            text = report_texts[min(report_index[0], len(report_texts) - 1)]
+            report_index[0] += 1
+            return mock_ollama._make_text_response(request, text)
+        return mock_ollama._make_text_response(request, "search results about coffee")
+
+    mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/research ! coffee beans")
@@ -264,12 +264,12 @@ async def test_research_agent_stores_iterations(
             )
             assert len(iterations) == 2
 
-            # First iteration
+            # First iteration — initial report draft
             assert iterations[0].iteration_num == 1
             assert "arabica" in iterations[0].findings.lower()
             assert iterations[0].timestamp is not None
 
-            # Second iteration
+            # Second iteration — augmented report draft
             assert iterations[1].iteration_num == 2
             assert "robusta" in iterations[1].findings.lower()
 
@@ -354,26 +354,22 @@ async def test_research_agent_activates_pending_task(
     ]
 
     def multi_task_handler(request: dict, count: int) -> dict:
-        # Extraction/summary calls (no tools) - pass through or summarize
+        # Report-building calls (no tools) — extract topic from user content
         if not request.get("tools"):
             user_content = next(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
+                "",
             )
-            # Report call contains combined findings; extraction calls pass through
-            if "Research findings:" in user_content:
-                # Extract topic so assertions can verify which report is which
-                topic = user_content.split("\n")[0].replace("Research topic: ", "")
-                return mock_ollama._make_text_response(
-                    request, f"## report\nResearch report complete about {topic}"
-                )
-            return mock_ollama._make_text_response(request, user_content)
-        # First 2 calls are for first task
+            topic = user_content.split("\n")[0].replace("Research topic: ", "")
+            return mock_ollama._make_text_response(
+                request, f"## report\nResearch report complete about {topic}"
+            )
+        # First 2 tool calls are for first task
         if response_index[0] < len(first_task_responses):
             response = first_task_responses[response_index[0]]
             response_index[0] += 1
             return mock_ollama._make_text_response(request, response)
-        # Next 2 calls are for second task
+        # Next 2 tool calls are for second task
         idx = response_index[0] - len(first_task_responses)
         if idx < len(second_task_responses):
             response = second_task_responses[idx]
@@ -475,18 +471,9 @@ async def test_research_suspended_during_foreground_work(
     ]
 
     def track_handler(request: dict, count: int) -> dict:
-        # Extraction/summary calls (no tools) - pass through without logging
+        # Report-building calls (no tools) - return report text without logging
         if not request.get("tools"):
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
-            )
-            # Report call contains combined findings; extraction calls pass through
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(
-                    request, "## report\nResearch report complete"
-                )
-            return mock_ollama._make_text_response(request, user_content)
+            return mock_ollama._make_text_response(request, "## report\nResearch report complete")
         # Identify if this is a research iteration or user message
         if any("research" in msg.get("content", "").lower() for msg in request.get("messages", [])):
             call_log.append("research")
@@ -573,19 +560,11 @@ async def test_research_focus_reply_starts_research(
                 (m["content"] for m in request.get("messages", []) if m["role"] == "system"),
                 "",
             )
-            user_content = next(
-                (m["content"] for m in request.get("messages", []) if m["role"] == "user"),
-                "summary",
-            )
             if "interpreting" in system_content:
                 return mock_ollama._make_text_response(
                     request, "comprehensive list with dates and locations"
                 )
-            if "Research findings:" in user_content:
-                return mock_ollama._make_text_response(
-                    request, "## report\nResearch report complete"
-                )
-            return mock_ollama._make_text_response(request, user_content)
+            return mock_ollama._make_text_response(request, "## report\nResearch report complete")
         if response_index[0] < len(responses):
             response = responses[response_index[0]]
             response_index[0] += 1

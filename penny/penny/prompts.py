@@ -39,21 +39,17 @@ RESEARCH_PROMPT = (
     "and key details."
 )
 
-RESEARCH_EXTRACTION_PROMPT = (
-    "Given the user's research topic and the following search results, "
-    "extract a concise bulleted list of the relevant information that satisfies "
-    "the research topic. Include only facts, findings, and details that are directly "
-    "relevant. Omit filler, redundant information, and irrelevant content. "
-    "Use short, information-dense bullet points."
-)
-
-RESEARCH_REPORT_PROMPT = (
-    "Write a research report from the findings below. "
+RESEARCH_REPORT_BUILD_PROMPT = (
+    "You are building a research report incrementally. "
+    "If an existing report draft is provided, integrate the new search results into it — "
+    "add new information, fill gaps, and refine existing sections. "
+    "If no existing report is provided, create an initial report from the search results. "
     "The report structure MUST match the user's requested focus. "
-    "Include ONLY information from the findings — do not add commentary, "
-    "strategic analysis, or recommendations unless the focus asks for them. "
-    "Preserve all specific data points, ratings, and scores from the findings — "
+    "Include ONLY information from the search results and existing report — "
+    "do not add commentary, strategic analysis, or recommendations unless the focus asks for them. "
+    "Preserve all specific data points, ratings, and scores — "
     "do not generalize or merge them into a single overall rating. "
+    "Do NOT include source URLs in the report body. "
     "Use markdown formatting (## headings, bullet points, tables)."
 )
 
