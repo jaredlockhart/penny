@@ -48,10 +48,10 @@ async def test_discovery_excludes_dislikes(
 
         # Manually trigger discovery
         from penny.agents import DiscoveryAgent
-        from penny.prompts import SYSTEM_PROMPT
+        from penny.prompts import SEARCH_PROMPT
 
         discovery_agent = DiscoveryAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=penny.message_agent.model,
             ollama_api_url=config.ollama_api_url,
             tools=penny.message_agent.tools,
@@ -97,10 +97,10 @@ async def test_discovery_no_channel(
 
     async with running_penny(config) as penny:
         from penny.agents import DiscoveryAgent
-        from penny.prompts import SYSTEM_PROMPT
+        from penny.prompts import SEARCH_PROMPT
 
         discovery_agent = DiscoveryAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
@@ -126,10 +126,10 @@ async def test_discovery_no_users(
 
     async with running_penny(config) as penny:
         from penny.agents import DiscoveryAgent
-        from penny.prompts import SYSTEM_PROMPT
+        from penny.prompts import SEARCH_PROMPT
 
         discovery_agent = DiscoveryAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
@@ -167,10 +167,10 @@ async def test_discovery_no_likes(
         mock_ollama.requests.clear()
 
         from penny.agents import DiscoveryAgent
-        from penny.prompts import SYSTEM_PROMPT
+        from penny.prompts import SEARCH_PROMPT
 
         discovery_agent = DiscoveryAgent(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SEARCH_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
