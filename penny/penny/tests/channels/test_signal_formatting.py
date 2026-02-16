@@ -198,8 +198,8 @@ class TestPrepareOutgoing:
         )
 
     def test_heading_stripped_bare_urls_preserved(self, channel):
-        text = "## sources\nhttps://example.com\nhttps://other.com"
-        assert channel.prepare_outgoing(text) == "sources\nhttps://example.com\nhttps://other.com"
+        text = "## Sources\nhttps://example.com\nhttps://other.com"
+        assert channel.prepare_outgoing(text) == "Sources\nhttps://example.com\nhttps://other.com"
 
     # --- Code blocks preserved ---
 

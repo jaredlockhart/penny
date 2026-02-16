@@ -128,7 +128,7 @@ class ResearchAgent(Agent):
         for iteration in iterations:
             all_sources.update(json.loads(iteration.sources))
         if all_sources:
-            report += "\n\n## sources\n"
+            report += "\n\n## Sources\n"
             for source in sorted(all_sources):
                 report += f"{source}\n"
 

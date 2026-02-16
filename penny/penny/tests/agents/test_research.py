@@ -721,3 +721,66 @@ async def test_research_focus_timeout_auto_starts(
             tasks = list(session.exec(select(ResearchTask)).all())
             assert len(tasks) == 1
             assert tasks[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_research_sources_heading_is_capitalized(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that the sources heading in research reports uses proper sentence casing.
+
+    Verifies that the heading is "## Sources" not "## sources".
+    """
+    config = make_config(
+        research_max_iterations=2,
+        research_schedule_interval=9999,
+        scheduler_tick_interval=9999,
+    )
+
+    # Mock handler that returns responses with URLs so sources will be included
+    mock_ollama.set_response_handler(
+        _make_research_handler(
+            mock_ollama,
+            [
+                "Iteration 1: findings\nhttps://example.com/one",
+                "Iteration 2: more findings\nhttps://example.com/two",
+            ],
+        )
+    )
+
+    async with running_penny(config) as penny:
+        # Start research
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="/research ! test topic with sources"
+        )
+        confirmation = await signal_server.wait_for_message(timeout=5.0)
+        assert "started research" in confirmation["message"].lower()
+
+        # Drive iterations directly — 2 iterations + 1 completion call
+        for _ in range(3):
+            await penny.research_agent.execute()
+
+        # Check the message content in the database
+        # Note: Signal's prepare_outgoing strips ## headings,
+        # so we check for "Sources" not "## Sources"
+        with penny.db.get_session() as session:
+            messages = list(
+                session.exec(
+                    select(MessageLog)
+                    .where(MessageLog.direction == "outgoing")
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+            assert len(messages) > 0, "Should have sent at least one message"
+            latest_message = messages[0].content
+            # After prepare_outgoing strips ##, we should see "Sources" (capitalized) not "sources"
+            assert "\nSources\n" in latest_message, (
+                "Sources heading should use proper sentence casing"
+            )
+            assert "\nsources\n" not in latest_message, "Sources heading should not be lowercase"
