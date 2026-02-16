@@ -716,8 +716,16 @@ async def test_research_focus_timeout_auto_starts(
             session.add(task)
             session.commit()
 
-        # Wait for the research agent to auto-start the task and complete it
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 1, timeout=5.0)
+        # Step 1: Wait for scheduler to auto-start the stale task
+        def _task_started():
+            with penny.db.get_session() as session:
+                tasks = list(session.exec(select(ResearchTask)).all())
+                return len(tasks) == 1 and tasks[0].status == "in_progress"
+
+        await wait_until(_task_started, timeout=5.0)
+
+        # Step 2: Wait for research report to be posted
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 1, timeout=10.0)
 
         report = signal_server.outgoing_messages[-1]
         assert "research report complete" in report["message"].lower()
