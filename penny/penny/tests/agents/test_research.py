@@ -404,21 +404,22 @@ async def test_research_agent_activates_pending_task(
             assert tasks[1].topic == "quantum computing"
             assert tasks[1].status == "pending"
 
-        # Wait for first task to complete and second to auto-activate
-        # Need 2 confirmations + 2 reports = 4 messages
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 4, timeout=10.0)
+        # Wait for both tasks to reach completed status in the DB
+        def _both_tasks_completed():
+            with penny.db.get_session() as session:
+                tasks = list(
+                    session.exec(select(ResearchTask).order_by(ResearchTask.created_at.asc())).all()  # type: ignore[unresolved-attribute]
+                )
+                return len(tasks) == 2 and all(t.status == "completed" for t in tasks)
 
-        # Verify both tasks completed
+        await wait_until(_both_tasks_completed, timeout=10.0)
+
+        # Verify both tasks completed with timestamps
         with penny.db.get_session() as session:
             tasks = list(
                 session.exec(select(ResearchTask).order_by(ResearchTask.created_at.asc())).all()  # type: ignore[unresolved-attribute]
             )
-            assert len(tasks) == 2
-            # First task should be completed
-            assert tasks[0].status == "completed"
             assert tasks[0].completed_at is not None
-            # Second task should have been activated and completed
-            assert tasks[1].status == "completed"
             assert tasks[1].completed_at is not None
 
         # Verify both reports were posted
