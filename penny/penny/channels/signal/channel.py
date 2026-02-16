@@ -261,8 +261,20 @@ class SignalChannel(MessageChannel):
         text = text.replace("~", "\u223c")
         # Restore intentional strikethrough as single tilde (Signal format)
         text = text.replace(placeholder, "~")
+        # Remove stray asterisks that aren't part of bold/italic pairs.
+        # A lone * (e.g., footnote "$950*") cascades through Signal's parser,
+        # breaking **bold** markers and creating random italic spans.
+        bold_ph = "\x00BOLD\x00"
+        italic_ph = "\x00ITALIC\x00"
+        text = re.sub(r"\*\*(.+?)\*\*", rf"{bold_ph}\1{bold_ph}", text)
+        text = re.sub(r"\*(.+?)\*", rf"{italic_ph}\1{italic_ph}", text)
+        text = text.replace("*", "")
+        text = text.replace(bold_ph, "**")
+        text = text.replace(italic_ph, "*")
         # Remove markdown headings (keep the text)
         text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+        # Remove horizontal rules (--- or more dashes on a line by themselves)
+        text = re.sub(r"^-{3,}\s*$", "", text, flags=re.MULTILINE)
         # Convert markdown links [text](url) to just text (url)
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
         # Collapse multiple blank lines
