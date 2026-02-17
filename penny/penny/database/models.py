@@ -158,3 +158,15 @@ class PersonalityPrompt(SQLModel, table=True):
     prompt_text: str  # The custom personality prompt
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class Entity(SQLModel, table=True):
+    """A named entity (product, person, place, concept) with accumulated facts."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)  # Signal number or Discord user ID
+    name: str  # Lowercased canonical name (e.g., "kef ls50 meta")
+    entity_type: str = Field(index=True)  # EntityType enum value
+    facts: str = ""  # Bulleted text lines, e.g. "- costs $1599\n- uses MAT driver"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

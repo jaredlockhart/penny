@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -12,10 +12,13 @@ from penny.agents.models import MessageRole
 from penny.constants import PennyConstants
 from penny.database.models import (
     CommandLog,
+    Entity,
     MessageLog,
     PersonalityPrompt,
     Preference,
     PromptLog,
+    ResearchIteration,
+    ResearchTask,
     SearchLog,
     UserInfo,
 )
@@ -851,3 +854,242 @@ class Database:
         except Exception as e:
             logger.error("Failed to remove personality prompt: %s", e)
             return False
+
+    # --- Entity knowledge base methods ---
+
+    def get_or_create_entity(self, user: str, name: str, entity_type: str) -> Entity | None:
+        """
+        Get an existing entity or create a new one.
+
+        Args:
+            user: User identifier
+            name: Entity name (will be lowercased)
+            entity_type: Entity type string (EntityType enum value)
+
+        Returns:
+            The Entity (existing or newly created), or None on failure
+        """
+        name = name.lower().strip()
+        try:
+            with self.get_session() as session:
+                existing = session.exec(
+                    select(Entity).where(
+                        Entity.user == user,
+                        Entity.name == name,
+                        Entity.entity_type == entity_type,
+                    )
+                ).first()
+
+                if existing:
+                    existing.updated_at = datetime.now(UTC)
+                    session.add(existing)
+                    session.commit()
+                    session.refresh(existing)
+                    return existing
+
+                entity = Entity(
+                    user=user,
+                    name=name,
+                    entity_type=entity_type,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
+                session.add(entity)
+                session.commit()
+                session.refresh(entity)
+                logger.debug("Created entity '%s' (%s) for user %s", name, entity_type, user)
+                return entity
+        except Exception as e:
+            logger.error("Failed to get_or_create entity: %s", e)
+            return None
+
+    def update_entity_facts(self, entity_id: int, facts: str) -> None:
+        """
+        Replace the facts text for an entity.
+
+        Args:
+            entity_id: Entity primary key
+            facts: New facts text (bulleted lines)
+        """
+        try:
+            with self.get_session() as session:
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.facts = facts
+                    entity.updated_at = datetime.now(UTC)
+                    session.add(entity)
+                    session.commit()
+                    logger.debug("Updated facts for entity %d", entity_id)
+        except Exception as e:
+            logger.error("Failed to update entity facts: %s", e)
+
+    def get_user_entities(self, user: str) -> list[Entity]:
+        """
+        Get all entities for a user.
+
+        Args:
+            user: User identifier
+
+        Returns:
+            List of entities ordered by updated_at descending (most recent first)
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Entity).where(Entity.user == user).order_by(Entity.updated_at.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
+    def find_relevant_entities(self, user: str, text: str) -> list[Entity]:
+        """
+        Find entities relevant to the given text using keyword matching.
+
+        Matches if the entity name appears as a substring in the text,
+        or if any significant word (3+ chars) from the entity name
+        appears in the text words.
+
+        Args:
+            user: User identifier
+            text: Text to match against (e.g., user message content)
+
+        Returns:
+            List of matching entities, capped at ENTITY_CONTEXT_MAX_ENTITIES
+        """
+        all_entities = self.get_user_entities(user)
+        if not all_entities:
+            return []
+
+        text_lower = text.lower()
+        text_words = set(text_lower.split())
+        matches: list[Entity] = []
+
+        for entity in all_entities:
+            # Check full name as substring
+            if entity.name in text_lower:
+                matches.append(entity)
+                continue
+            # Check individual significant words
+            entity_words = {w for w in entity.name.split() if len(w) >= 3}
+            if entity_words & text_words:
+                matches.append(entity)
+
+        return matches[: PennyConstants.ENTITY_CONTEXT_MAX_ENTITIES]
+
+    def get_extraction_cursor(self, source_type: str) -> int:
+        """
+        Get the high-water mark for entity extraction.
+
+        Args:
+            source_type: Source type ("search" or "research")
+
+        Returns:
+            Last processed ID, or 0 if not set
+        """
+        try:
+            with self.get_session() as session:
+                from sqlalchemy import text
+
+                sql = text(
+                    "SELECT last_processed_id FROM entity_extraction_cursor WHERE source_type = :st"
+                )
+                result = session.execute(sql, {"st": source_type})
+                row = result.first()
+                return row[0] if row else 0
+        except Exception:
+            return 0
+
+    def update_extraction_cursor(self, source_type: str, last_id: int) -> None:
+        """
+        Update the high-water mark for entity extraction.
+
+        Args:
+            source_type: Source type ("search" or "research")
+            last_id: Last processed ID
+        """
+        try:
+            with self.get_session() as session:
+                from sqlalchemy import text
+
+                session.execute(
+                    text(
+                        "INSERT INTO entity_extraction_cursor (source_type, last_processed_id)"
+                        " VALUES (:st, :lid)"
+                        " ON CONFLICT(source_type) DO UPDATE SET last_processed_id = :lid"
+                    ),
+                    {"st": source_type, "lid": last_id},
+                )
+                session.commit()
+        except Exception as e:
+            logger.error("Failed to update extraction cursor: %s", e)
+
+    def get_unprocessed_search_logs(self, limit: int) -> list[SearchLog]:
+        """
+        Get SearchLog entries that haven't been processed for entity extraction.
+
+        Args:
+            limit: Maximum number of entries to return
+
+        Returns:
+            List of SearchLog entries with id > cursor, ordered by id ascending
+        """
+        cursor = self.get_extraction_cursor("search")
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(SearchLog)
+                    .where(SearchLog.id > cursor)  # type: ignore[operator]
+                    .order_by(SearchLog.id.asc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+
+    def get_unprocessed_research_iterations(
+        self, limit: int
+    ) -> list[tuple[ResearchIteration, str]]:
+        """
+        Get ResearchIteration entries not yet processed for entity extraction,
+        joined with ResearchTask to get the user's sender ID.
+
+        Args:
+            limit: Maximum number of entries to return
+
+        Returns:
+            List of (ResearchIteration, user_sender_id) tuples
+        """
+        cursor = self.get_extraction_cursor("research")
+        with self.get_session() as session:
+            results = session.exec(
+                select(ResearchIteration, ResearchTask.thread_id)
+                .join(ResearchTask, ResearchIteration.research_task_id == ResearchTask.id)  # type: ignore[arg-type]
+                .where(ResearchIteration.id > cursor)  # type: ignore[operator]
+                .order_by(ResearchIteration.id.asc())  # type: ignore[unresolved-attribute]
+                .limit(limit)
+            ).all()
+            return [(iteration, thread_id) for iteration, thread_id in results]
+
+    def find_sender_for_timestamp(self, timestamp: datetime) -> str | None:
+        """
+        Find the sender of the most recent incoming message near a timestamp.
+        Used to associate SearchLog entries with a user.
+
+        The incoming message may be logged slightly after the search
+        (same request flow), so we allow a small buffer after the timestamp.
+
+        Args:
+            timestamp: The timestamp to search around
+
+        Returns:
+            Sender ID, or None if no messages found
+        """
+        buffer = timedelta(minutes=5)
+        with self.get_session() as session:
+            msg = session.exec(
+                select(MessageLog.sender)
+                .where(
+                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                    MessageLog.timestamp <= timestamp + buffer,
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+            return msg

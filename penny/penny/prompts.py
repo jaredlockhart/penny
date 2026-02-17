@@ -151,6 +151,17 @@ Examples:
         "Keep it relaxed and low-key, like texting a friend. End with an emoji."
     )
 
+    # Entity extraction prompt
+    ENTITY_EXTRACTION_PROMPT = (
+        "Extract named entities and key facts from the following search results.\n"
+        "Only extract entities that are specific and identifiable "
+        "(products, people, places, organizations, events, or well-defined concepts).\n"
+        "For each entity, extract specific, verifiable facts.\n"
+        "Do NOT extract vague concepts like 'music' or 'technology'.\n"
+        "Do NOT extract the user or the search query as entities.\n"
+        "Keep facts concise (one sentence each)."
+    )
+
     # Personality transform prompt
     PERSONALITY_TRANSFORM_PROMPT = (
         "You are a text rewriter. Rewrite the user's message "

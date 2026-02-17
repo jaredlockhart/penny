@@ -10,6 +10,7 @@ from typing import Any
 from penny.agents import (
     Agent,
     DiscoveryAgent,
+    EntityExtractor,
     FollowupAgent,
     MessageAgent,
     PreferenceAgent,
@@ -137,6 +138,18 @@ class Penny:
             tool_timeout=config.tool_timeout,
         )
 
+        self.entity_extractor = EntityExtractor(
+            system_prompt="",  # EntityExtractor uses ollama_client.generate() directly
+            model=config.ollama_background_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=[],
+            db=self.db,
+            max_steps=1,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
+        )
+
         self.discovery_agent = DiscoveryAgent(
             system_prompt=Prompt.SEARCH_PROMPT,
             model=config.ollama_background_model,
@@ -203,6 +216,10 @@ class Penny:
             ),
             PeriodicSchedule(
                 agent=self.preference_agent,
+                interval=config.maintenance_interval_seconds,
+            ),
+            PeriodicSchedule(
+                agent=self.entity_extractor,
                 interval=config.maintenance_interval_seconds,
             ),
             DelayedSchedule(
