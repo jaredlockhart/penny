@@ -55,7 +55,7 @@ Penny uses specialized agent subclasses for different tasks:
 - **FollowupAgent**: Background task that spontaneously follows up on conversations
 - **PreferenceAgent**: Background task that extracts user preferences from messages and reactions
 - **DiscoveryAgent**: Background task that shares new content based on user interests
-- **EntityExtractor**: Background task that extracts named entities and facts from search results and research iterations
+- **EntityExtractor**: Background task that extracts named entities and facts from search results
 - **ScheduleExecutor**: Runs user-created cron-based scheduled tasks
 
 Each agent owns its own OllamaClient instance and can have its own tools and prompts.
@@ -164,7 +164,7 @@ Penny stores data in SQLite across several tables:
 **Entity**: Named entity knowledge base
 - User, name (lowercased), entity type (product, person, place, concept, organization, event)
 - Facts stored as bulleted text lines (e.g., "- costs $1599\n- uses MAT driver")
-- Extracted from SearchLog and ResearchIteration entries by EntityExtractor agent
+- Extracted from SearchLog entries by EntityExtractor agent
 - Progress tracked via `entity_extraction_cursor` table (high-water mark per source type)
 
 **RuntimeConfig**: User-configurable settings (via `/config`)

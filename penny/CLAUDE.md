@@ -155,12 +155,13 @@ The base `Agent` class implements the core agentic loop:
 - Not threaded (sends as new conversation, not a reply)
 
 **EntityExtractor** (`agents/entity_extractor.py`)
-- Background task: extracts named entities and facts from SearchLog and ResearchIteration entries
-- Two-pass extraction: pass 1 identifies entity names/types (lightweight), pass 2 extracts facts per entity (focused)
-- Each pass uses Ollama structured output with Pydantic schemas (`ExtractedEntityNames`, `ExtractedFacts`)
+- Background task: extracts named entities and facts from SearchLog entries
+- Two-pass extraction: pass 1 identifies known+new entities, pass 2 extracts facts per entity (one LLM call each)
+- Each pass uses Ollama structured output with Pydantic schemas (`IdentifiedEntities`, `ExtractedFacts`)
 - Cursor-based progress tracking via `entity_extraction_cursor` table (high-water mark, avoids reprocessing)
 - Fact dedup handled in Python-space: only appends genuinely new facts to existing entity records
 - Associates SearchLog entries with users via `find_sender_for_timestamp()`
+- ResearchIteration entries are NOT processed (their findings are LLM-synthesized reports of the same search results already in SearchLog)
 
 **ResearchAgent** (`agents/research.py`)
 - Background task: autonomous multi-iteration deep research on user-requested topics

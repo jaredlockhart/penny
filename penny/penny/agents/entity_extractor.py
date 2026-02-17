@@ -59,23 +59,20 @@ class EntityExtractor(Agent):
 
     async def execute(self) -> bool:
         """
-        Process unprocessed SearchLog and ResearchIteration entries
-        to extract entities and facts in two passes.
+        Process unprocessed SearchLog entries to extract entities and facts.
 
+        Two-pass extraction per entry:
         Pass 1 (identification): Given the list of known entity names, identify
         which known entities appear in the text and any new entities.
         Pass 2 (facts): For each identified entity, given its existing facts,
         extract only new facts from the text.
 
+        Note: ResearchIteration entries are NOT processed because their findings
+        are LLM-synthesized reports of the same search results already in SearchLog.
+
         Returns:
             True if any work was done.
         """
-        search_work = await self._process_search_logs()
-        research_work = await self._process_research_iterations()
-        return search_work or research_work
-
-    async def _process_search_logs(self) -> bool:
-        """Process unprocessed SearchLog entries."""
         search_logs = self.db.get_unprocessed_search_logs(
             limit=PennyConstants.ENTITY_EXTRACTION_BATCH_LIMIT
         )
@@ -100,30 +97,6 @@ class EntityExtractor(Agent):
                 work_done = True
 
             self.db.update_extraction_cursor("search", search_log.id)
-
-        return work_done
-
-    async def _process_research_iterations(self) -> bool:
-        """Process unprocessed ResearchIteration entries."""
-        iterations = self.db.get_unprocessed_research_iterations(
-            limit=PennyConstants.ENTITY_EXTRACTION_BATCH_LIMIT
-        )
-        if not iterations:
-            return False
-
-        work_done = False
-        for iteration, user in iterations:
-            assert iteration.id is not None
-
-            result = await self._extract_and_store(
-                user=user,
-                query=f"Research iteration {iteration.iteration_num}",
-                content=iteration.findings,
-            )
-            if result:
-                work_done = True
-
-            self.db.update_extraction_cursor("research", iteration.id)
 
         return work_done
 

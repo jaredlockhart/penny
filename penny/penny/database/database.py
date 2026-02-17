@@ -17,8 +17,6 @@ from penny.database.models import (
     PersonalityPrompt,
     Preference,
     PromptLog,
-    ResearchIteration,
-    ResearchTask,
     SearchLog,
     UserInfo,
 )
@@ -1042,30 +1040,6 @@ class Database:
                     .limit(limit)
                 ).all()
             )
-
-    def get_unprocessed_research_iterations(
-        self, limit: int
-    ) -> list[tuple[ResearchIteration, str]]:
-        """
-        Get ResearchIteration entries not yet processed for entity extraction,
-        joined with ResearchTask to get the user's sender ID.
-
-        Args:
-            limit: Maximum number of entries to return
-
-        Returns:
-            List of (ResearchIteration, user_sender_id) tuples
-        """
-        cursor = self.get_extraction_cursor("research")
-        with self.get_session() as session:
-            results = session.exec(
-                select(ResearchIteration, ResearchTask.thread_id)
-                .join(ResearchTask, ResearchIteration.research_task_id == ResearchTask.id)  # type: ignore[arg-type]
-                .where(ResearchIteration.id > cursor)  # type: ignore[operator]
-                .order_by(ResearchIteration.id.asc())  # type: ignore[unresolved-attribute]
-                .limit(limit)
-            ).all()
-            return [(iteration, thread_id) for iteration, thread_id in results]
 
     def find_sender_for_timestamp(self, timestamp: datetime) -> str | None:
         """
