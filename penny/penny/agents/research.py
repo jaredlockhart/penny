@@ -13,12 +13,9 @@ from sqlmodel import Session, select
 from penny.agents.base import Agent
 from penny.agents.models import MessageRole, ToolCallRecord
 from penny.config import Config
-from penny.constants import RESEARCH_FOCUS_TIMEOUT_SECONDS
+from penny.constants import PennyConstants
 from penny.database.models import ResearchIteration, ResearchTask
-from penny.prompts import (
-    RESEARCH_FOLLOWUP_PROMPT,
-    RESEARCH_REPORT_BUILD_PROMPT,
-)
+from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.builtin import SearchTool
 
@@ -86,7 +83,9 @@ class ResearchAgent(Agent):
 
         history = self._build_history(task, iterations)
         prompt = (
-            "Begin researching this topic." if current_iteration == 0 else RESEARCH_FOLLOWUP_PROMPT
+            "Begin researching this topic."
+            if current_iteration == 0
+            else Prompt.RESEARCH_FOLLOWUP_PROMPT
         )
         response = await self.run(prompt=prompt, history=history)
 
@@ -290,7 +289,7 @@ class ResearchAgent(Agent):
 
         response = await self._ollama_client.chat(
             messages=[
-                {"role": "system", "content": RESEARCH_REPORT_BUILD_PROMPT},
+                {"role": "system", "content": Prompt.RESEARCH_REPORT_BUILD_PROMPT},
                 {"role": "user", "content": user_content},
             ]
         )
@@ -340,7 +339,7 @@ class ResearchAgent(Agent):
                     else task.created_at
                 )
                 elapsed = (now - created).total_seconds()
-                if elapsed >= RESEARCH_FOCUS_TIMEOUT_SECONDS:
+                if elapsed >= PennyConstants.RESEARCH_FOCUS_TIMEOUT_SECONDS:
                     task.status = "in_progress"
                     session.add(task)
                     logger.info(

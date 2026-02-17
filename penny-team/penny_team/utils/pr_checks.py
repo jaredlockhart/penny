@@ -20,16 +20,7 @@ from github_api.api import (
     PullRequest,
 )
 
-from penny_team.constants import (
-    CI_STATUS_FAILING,
-    CI_STATUS_PASSING,
-    MAX_LOG_CHARS,
-    MERGE_STATUS_CONFLICTING,
-    PASSING_CONCLUSIONS,
-    PENDING_STATES,
-    REVIEW_STATE_CHANGES_REQUESTED,
-    Label,
-)
+from penny_team.constants import TeamConstants
 from penny_team.utils.issue_filter import FilteredIssue
 
 logger = logging.getLogger(__name__)
@@ -58,7 +49,7 @@ def enrich_issues_with_pr_status(
     already-handled comments).
     Fail-open: if the API fails, issues are left unchanged.
     """
-    in_review = [i for i in issues if Label.IN_REVIEW in i.labels]
+    in_review = [i for i in issues if TeamConstants.Label.IN_REVIEW in i.labels]
     if not in_review:
         return
 
@@ -80,7 +71,7 @@ def enrich_issues_with_pr_status(
         since = (processed_at or {}).get(str(issue.number))
 
         # Merge conflict detection
-        if pr.mergeable == MERGE_STATUS_CONFLICTING:
+        if pr.mergeable == TeamConstants.MERGE_STATUS_CONFLICTING:
             issue.merge_conflict = True
             issue.merge_conflict_branch = pr.head_ref_name
 
@@ -114,10 +105,10 @@ def enrich_issues_with_pr_status(
         failed = _extract_failed_checks(pr.status_check_rollup)
 
         if not failed:
-            issue.ci_status = CI_STATUS_PASSING
+            issue.ci_status = TeamConstants.CI_STATUS_PASSING
             continue
 
-        issue.ci_status = CI_STATUS_FAILING
+        issue.ci_status = TeamConstants.CI_STATUS_FAILING
 
         branch = pr.head_ref_name
         log_output = _fetch_failure_log(branch, api)
@@ -172,7 +163,7 @@ def _collect_review_feedback(reviews: list[PRReview], since: str | None = None) 
     parts: list[str] = []
     for review in latest_by_reviewer.values():
         if (
-            review.state == REVIEW_STATE_CHANGES_REQUESTED
+            review.state == TeamConstants.REVIEW_STATE_CHANGES_REQUESTED
             and (since is None or not review.submitted_at or review.submitted_at > since)
             and review.body
         ):
@@ -193,7 +184,7 @@ def _has_changes_requested(reviews: list[PRReview], since: str | None = None) ->
         if review.author.login and review.state:
             latest_by_reviewer[review.author.login] = review
     for review in latest_by_reviewer.values():
-        if review.state == REVIEW_STATE_CHANGES_REQUESTED and (
+        if review.state == TeamConstants.REVIEW_STATE_CHANGES_REQUESTED and (
             since is None or not review.submitted_at or review.submitted_at > since
         ):
             return True
@@ -255,9 +246,9 @@ def _extract_failed_checks(status_rollup: list[CheckStatus]) -> list[FailedCheck
     """Extract failing checks from statusCheckRollup data."""
     failed: list[FailedCheck] = []
     for check in status_rollup:
-        if check.state in PENDING_STATES:
+        if check.state in TeamConstants.PENDING_STATES:
             continue
-        if check.conclusion not in PASSING_CONCLUSIONS:
+        if check.conclusion not in TeamConstants.PASSING_CONCLUSIONS:
             failed.append(
                 FailedCheck(
                     name=check.name,
@@ -283,8 +274,8 @@ def _fetch_failure_log(
         if not log:
             return ""
 
-        if len(log) > MAX_LOG_CHARS:
-            log = log[-MAX_LOG_CHARS:]
+        if len(log) > TeamConstants.MAX_LOG_CHARS:
+            log = log[-TeamConstants.MAX_LOG_CHARS :]
             log = f"... (truncated)\n{log}"
         return log
 

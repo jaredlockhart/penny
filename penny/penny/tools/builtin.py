@@ -14,12 +14,7 @@ from duckduckgo_search import DDGS
 from perplexity import Perplexity
 from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputItem
 
-from penny.constants import (
-    IMAGE_DOWNLOAD_TIMEOUT,
-    IMAGE_MAX_RESULTS,
-    PERPLEXITY_PRESET,
-    URL_BLOCKLIST_DOMAINS,
-)
+from penny.constants import PennyConstants
 from penny.responses import PennyResponse
 from penny.tools.base import Tool
 from penny.tools.models import SearchResult
@@ -122,7 +117,7 @@ class SearchTool(Tool):
             None,
             partial(
                 self.perplexity.responses.create,
-                preset=PERPLEXITY_PRESET,
+                preset=PennyConstants.PERPLEXITY_PRESET,
                 input=dated_query,
             ),
         )
@@ -149,7 +144,7 @@ class SearchTool(Tool):
             filtered = {
                 u: c
                 for u, c in url_counts.items()
-                if not any(domain in u for domain in URL_BLOCKLIST_DOMAINS)
+                if not any(domain in u for domain in PennyConstants.URL_BLOCKLIST_DOMAINS)
             }
             urls = sorted(filtered, key=filtered.get, reverse=True)[:5]  # type: ignore[arg-type]
 
@@ -163,14 +158,14 @@ class SearchTool(Tool):
         try:
             loop = asyncio.get_running_loop()
             results = await loop.run_in_executor(
-                None, partial(DDGS().images, query, max_results=IMAGE_MAX_RESULTS)
+                None, partial(DDGS().images, query, max_results=PennyConstants.IMAGE_MAX_RESULTS)
             )
 
             if not results:
                 return None
 
             async with httpx.AsyncClient(
-                timeout=IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True
+                timeout=PennyConstants.IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True
             ) as client:
                 for result in results:
                     image_url = result.get("image", "")

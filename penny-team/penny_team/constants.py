@@ -5,66 +5,60 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 
-# =============================================================================
-# Labels
-# =============================================================================
 
+class TeamConstants:
+    """All constants for the penny-team orchestrator."""
 
-class Label(StrEnum):
-    """GitHub issue labels — each maps to exactly one agent."""
+    class Label(StrEnum):
+        """GitHub issue labels — each maps to exactly one agent."""
 
-    REQUIREMENTS = "requirements"
-    SPECIFICATION = "specification"
-    IN_PROGRESS = "in-progress"
-    IN_REVIEW = "in-review"
-    BUG = "bug"
+        REQUIREMENTS = "requirements"
+        SPECIFICATION = "specification"
+        IN_PROGRESS = "in-progress"
+        IN_REVIEW = "in-review"
+        BUG = "bug"
 
+    # Labels where external state (CI checks, merge conflicts, reviews) can change
+    # without updating issue timestamps
+    LABELS_WITH_EXTERNAL_STATE = {Label.IN_REVIEW}
 
-# Labels where external state (CI checks, merge conflicts, reviews) can change
-# without updating issue timestamps
-LABELS_WITH_EXTERNAL_STATE = {Label.IN_REVIEW}
+    # =========================================================================
+    # CLI tools
+    # =========================================================================
 
+    CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
+    GH_CLI = os.getenv("GH_CLI", "gh")
 
-# =============================================================================
-# CLI tools
-# =============================================================================
+    # =========================================================================
+    # Agent names
+    # =========================================================================
 
-CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
-GH_CLI = os.getenv("GH_CLI", "gh")
+    AGENT_PM = "product-manager"
+    AGENT_ARCHITECT = "architect"
+    AGENT_WORKER = "worker"
+    AGENT_MONITOR = "monitor"
+    AGENT_QUALITY = "quality"
 
+    # =========================================================================
+    # Agent timing (seconds)
+    # =========================================================================
 
-# =============================================================================
-# Agent names
-# =============================================================================
+    PM_INTERVAL = 300
+    PM_TIMEOUT = 600
+    ARCHITECT_INTERVAL = 300
+    ARCHITECT_TIMEOUT = 600
+    WORKER_INTERVAL = 300
+    WORKER_TIMEOUT = 1800
+    MONITOR_INTERVAL = 300
+    MONITOR_TIMEOUT = 600
+    QUALITY_INTERVAL = 3600
+    QUALITY_TIMEOUT = 600
 
-AGENT_PM = "product-manager"
-AGENT_ARCHITECT = "architect"
-AGENT_WORKER = "worker"
-AGENT_MONITOR = "monitor"
-AGENT_QUALITY = "quality"
+    # =========================================================================
+    # GitHub API — GraphQL queries
+    # =========================================================================
 
-
-# =============================================================================
-# Agent timing (seconds)
-# =============================================================================
-
-PM_INTERVAL = 300
-PM_TIMEOUT = 600
-ARCHITECT_INTERVAL = 300
-ARCHITECT_TIMEOUT = 600
-WORKER_INTERVAL = 300
-WORKER_TIMEOUT = 1800
-MONITOR_INTERVAL = 300
-MONITOR_TIMEOUT = 600
-QUALITY_INTERVAL = 3600
-QUALITY_TIMEOUT = 600
-
-
-# =============================================================================
-# GitHub API — GraphQL queries
-# =============================================================================
-
-GQL_ISSUES_LIGHTWEIGHT = """
+    GQL_ISSUES_LIGHTWEIGHT = """
 query($owner: String!, $repo: String!, $label: String!, $limit: Int!) {
   repository(owner: $owner, name: $repo) {
     issues(labels: [$label], states: OPEN, first: $limit,
@@ -75,7 +69,7 @@ query($owner: String!, $repo: String!, $label: String!, $limit: Int!) {
 }
 """
 
-GQL_ISSUES_DETAILED = """
+    GQL_ISSUES_DETAILED = """
 query($owner: String!, $repo: String!, $label: String!, $limit: Int!) {
   repository(owner: $owner, name: $repo) {
     issues(labels: [$label], states: OPEN, first: $limit,
@@ -93,7 +87,7 @@ query($owner: String!, $repo: String!, $label: String!, $limit: Int!) {
 }
 """
 
-GQL_OPEN_PRS = """
+    GQL_OPEN_PRS = """
 query($owner: String!, $repo: String!, $limit: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequests(states: OPEN, first: $limit) {
@@ -126,144 +120,138 @@ query($owner: String!, $repo: String!, $limit: Int!) {
 }
 """
 
+    # =========================================================================
+    # CI / PR status
+    # =========================================================================
 
-# =============================================================================
-# CI / PR status
-# =============================================================================
+    CI_STATUS_PASSING = "passing"
+    CI_STATUS_FAILING = "failing"
 
-CI_STATUS_PASSING = "passing"
-CI_STATUS_FAILING = "failing"
+    # GitHub check conclusions that count as passing
+    PASSING_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED", ""}
 
-# GitHub check conclusions that count as passing
-PASSING_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED", ""}
+    # statusCheckRollup states that mean "still running"
+    PENDING_STATES = {"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED"}
 
-# statusCheckRollup states that mean "still running"
-PENDING_STATES = {"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED"}
+    # GitHub review states that indicate feedback needing attention
+    REVIEW_STATE_CHANGES_REQUESTED = "CHANGES_REQUESTED"
 
-# GitHub review states that indicate feedback needing attention
-REVIEW_STATE_CHANGES_REQUESTED = "CHANGES_REQUESTED"
+    # GitHub merge status
+    MERGE_STATUS_CONFLICTING = "CONFLICTING"
 
-# GitHub merge status
-MERGE_STATUS_CONFLICTING = "CONFLICTING"
+    # Max characters of failure log to include in prompt
+    MAX_LOG_CHARS = 3000
 
-# Max characters of failure log to include in prompt
-MAX_LOG_CHARS = 3000
+    # Max times the worker will attempt to fix CI before pausing for human help
+    MAX_CI_FIX_ATTEMPTS = 3
 
-# Max times the worker will attempt to fix CI before pausing for human help
-MAX_CI_FIX_ATTEMPTS = 3
+    # =========================================================================
+    # Stream-JSON event types (Claude CLI --output-format stream-json)
+    # =========================================================================
 
+    EVENT_ASSISTANT = "assistant"
+    EVENT_RESULT = "result"
 
-# =============================================================================
-# Stream-JSON event types (Claude CLI --output-format stream-json)
-# =============================================================================
+    # Stream-JSON content block types
+    BLOCK_TEXT = "text"
+    BLOCK_TOOL_USE = "tool_use"
 
-EVENT_ASSISTANT = "assistant"
-EVENT_RESULT = "result"
+    # =========================================================================
+    # File names
+    # =========================================================================
 
-# Stream-JSON content block types
-BLOCK_TEXT = "text"
-BLOCK_TOOL_USE = "tool_use"
+    PROMPT_FILENAME = "CLAUDE.md"
+    ENV_FILENAME = ".env"
+    ORCHESTRATOR_LOG = "orchestrator.log"
 
+    # Standard CODEOWNERS file locations
+    CODEOWNERS_PATHS = [
+        ".github/CODEOWNERS",
+        "CODEOWNERS",
+        "docs/CODEOWNERS",
+    ]
 
-# =============================================================================
-# File names
-# =============================================================================
+    # =========================================================================
+    # GitHub App
+    # =========================================================================
 
-PROMPT_FILENAME = "CLAUDE.md"
-ENV_FILENAME = ".env"
-ORCHESTRATOR_LOG = "orchestrator.log"
+    GITHUB_API = "https://api.github.com"
+    GITHUB_REPO_OWNER = "jaredlockhart"
+    GITHUB_REPO_NAME = "penny"
+    JWT_ALGORITHM = "RS256"
+    BOT_SUFFIX = "[bot]"
+    APP_PREFIX = "app/"
+    NOREPLY_DOMAIN = "users.noreply.github.com"
 
-# Standard CODEOWNERS file locations
-CODEOWNERS_PATHS = [
-    ".github/CODEOWNERS",
-    "CODEOWNERS",
-    "docs/CODEOWNERS",
-]
+    # API paths — GitHub App auth
+    API_APP = "/app"
+    API_ACCESS_TOKENS = "/app/installations/{install_id}/access_tokens"
 
+    # API paths — repo-scoped REST endpoints
+    API_ISSUE_COMMENTS = "/repos/{owner}/{repo}/issues/{number}/comments"
+    API_PR_REVIEW_COMMENTS = "/repos/{owner}/{repo}/pulls/{pr_number}/comments"
+    API_WORKFLOW_RUNS = "/repos/{owner}/{repo}/actions/runs"
+    API_RUN_JOBS = "/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+    API_JOB_LOGS = "/repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
 
-# =============================================================================
-# GitHub App
-# =============================================================================
+    # Environment variable keys for bot identity
+    ENV_GH_TOKEN = "GH_TOKEN"
+    ENV_GIT_AUTHOR_NAME = "GIT_AUTHOR_NAME"
+    ENV_GIT_AUTHOR_EMAIL = "GIT_AUTHOR_EMAIL"
+    ENV_GIT_COMMITTER_NAME = "GIT_COMMITTER_NAME"
+    ENV_GIT_COMMITTER_EMAIL = "GIT_COMMITTER_EMAIL"
 
-GITHUB_API = "https://api.github.com"
-GITHUB_REPO_OWNER = "jaredlockhart"
-GITHUB_REPO_NAME = "penny"
-JWT_ALGORITHM = "RS256"
-BOT_SUFFIX = "[bot]"
-APP_PREFIX = "app/"
-NOREPLY_DOMAIN = "users.noreply.github.com"
+    # Environment variable keys for GitHub App config
+    ENV_APP_ID = "GITHUB_APP_ID"
+    ENV_KEY_PATH = "GITHUB_APP_PRIVATE_KEY_PATH"
+    ENV_INSTALL_ID = "GITHUB_APP_INSTALLATION_ID"
 
-# API paths — GitHub App auth
-API_APP = "/app"
-API_ACCESS_TOKENS = "/app/installations/{install_id}/access_tokens"
+    # =========================================================================
+    # Monitor agent — log parsing
+    # =========================================================================
 
-# API paths — repo-scoped REST endpoints
-API_ISSUE_COMMENTS = "/repos/{owner}/{repo}/issues/{number}/comments"
-API_PR_REVIEW_COMMENTS = "/repos/{owner}/{repo}/pulls/{pr_number}/comments"
-API_WORKFLOW_RUNS = "/repos/{owner}/{repo}/actions/runs"
-API_RUN_JOBS = "/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
-API_JOB_LOGS = "/repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
+    # Log levels that indicate errors worth filing issues for
+    LOG_LEVELS_ERROR = {"ERROR", "CRITICAL"}
 
-# Environment variable keys for bot identity
-ENV_GH_TOKEN = "GH_TOKEN"
-ENV_GIT_AUTHOR_NAME = "GIT_AUTHOR_NAME"
-ENV_GIT_AUTHOR_EMAIL = "GIT_AUTHOR_EMAIL"
-ENV_GIT_COMMITTER_NAME = "GIT_COMMITTER_NAME"
-ENV_GIT_COMMITTER_EMAIL = "GIT_COMMITTER_EMAIL"
+    # Maximum bytes to read on first run (tail of log)
+    MONITOR_FIRST_RUN_MAX_BYTES = 100 * 1024  # 100KB
 
-# Environment variable keys for GitHub App config
-ENV_APP_ID = "GITHUB_APP_ID"
-ENV_KEY_PATH = "GITHUB_APP_PRIVATE_KEY_PATH"
-ENV_INSTALL_ID = "GITHUB_APP_INSTALLATION_ID"
+    # Maximum bytes of error context to pass to Claude per cycle
+    MONITOR_MAX_ERROR_CONTEXT = 50 * 1024  # 50KB
 
+    # State key for byte offset
+    MONITOR_STATE_OFFSET = "byte_offset"
 
-# =============================================================================
-# Monitor agent — log parsing
-# =============================================================================
+    # =========================================================================
+    # Quality agent — response evaluation
+    # =========================================================================
 
-# Log levels that indicate errors worth filing issues for
-LOG_LEVELS_ERROR = {"ERROR", "CRITICAL"}
+    # Labels applied to quality-filed issues
+    QUALITY_LABELS = ["bug", "quality"]
 
-# Maximum bytes to read on first run (tail of log)
-MONITOR_FIRST_RUN_MAX_BYTES = 100 * 1024  # 100KB
+    # Maximum issues to file per cycle (safety cap)
+    QUALITY_MAX_ISSUES_PER_CYCLE = 3
 
-# Maximum bytes of error context to pass to Claude per cycle
-MONITOR_MAX_ERROR_CONTEXT = 50 * 1024  # 50KB
+    # State key for last processed timestamp
+    QUALITY_STATE_TIMESTAMP = "last_processed_at"
 
-# State key for byte offset
-MONITOR_STATE_OFFSET = "byte_offset"
+    # Maximum lookback on first run (no saved state) — avoids re-evaluating
+    # the entire message history, which may contain already-fixed issues
+    QUALITY_MAX_LOOKBACK_HOURS = 48
 
+    # Minimum message length for privacy substring checks (shorter messages
+    # like "yes" or "thanks" would cause false positives)
+    QUALITY_PRIVACY_MIN_LENGTH = 20
 
-# =============================================================================
-# Quality agent — response evaluation
-# =============================================================================
+    # Default Ollama API URL
+    OLLAMA_DEFAULT_URL = "http://host.docker.internal:11434"
 
-# Labels applied to quality-filed issues
-QUALITY_LABELS = ["bug", "quality"]
+    # Ollama API endpoint for chat completions
+    OLLAMA_CHAT_ENDPOINT = "/api/chat"
 
-# Maximum issues to file per cycle (safety cap)
-QUALITY_MAX_ISSUES_PER_CYCLE = 3
+    # Environment variable keys for Ollama config
+    ENV_OLLAMA_URL = "OLLAMA_API_URL"
+    ENV_OLLAMA_MODEL = "OLLAMA_BACKGROUND_MODEL"
 
-# State key for last processed timestamp
-QUALITY_STATE_TIMESTAMP = "last_processed_at"
-
-# Maximum lookback on first run (no saved state) — avoids re-evaluating
-# the entire message history, which may contain already-fixed issues
-QUALITY_MAX_LOOKBACK_HOURS = 48
-
-# Minimum message length for privacy substring checks (shorter messages
-# like "yes" or "thanks" would cause false positives)
-QUALITY_PRIVACY_MIN_LENGTH = 20
-
-# Default Ollama API URL
-OLLAMA_DEFAULT_URL = "http://host.docker.internal:11434"
-
-# Ollama API endpoint for chat completions
-OLLAMA_CHAT_ENDPOINT = "/api/chat"
-
-# Environment variable keys for Ollama config
-ENV_OLLAMA_URL = "OLLAMA_API_URL"
-ENV_OLLAMA_MODEL = "OLLAMA_BACKGROUND_MODEL"
-
-# Penny database path (relative to project root)
-PENNY_DB_RELATIVE_PATH = "data/penny.db"
+    # Penny database path (relative to project root)
+    PENNY_DB_RELATIVE_PATH = "data/penny.db"

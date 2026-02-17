@@ -18,16 +18,7 @@ from pathlib import Path
 from github_api.api import GitHubAPI
 
 from penny_team.base import Agent, AgentRun
-from penny_team.constants import (
-    OLLAMA_CHAT_ENDPOINT,
-    OLLAMA_DEFAULT_URL,
-    PENNY_DB_RELATIVE_PATH,
-    QUALITY_LABELS,
-    QUALITY_MAX_ISSUES_PER_CYCLE,
-    QUALITY_MAX_LOOKBACK_HOURS,
-    QUALITY_PRIVACY_MIN_LENGTH,
-    QUALITY_STATE_TIMESTAMP,
-)
+from penny_team.constants import TeamConstants
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +111,7 @@ def validate_privacy(original_messages: list[str], issue_body: str) -> bool:
     """
     body_lower = issue_body.lower()
     for msg in original_messages:
-        if len(msg) < QUALITY_PRIVACY_MIN_LENGTH:
+        if len(msg) < TeamConstants.QUALITY_PRIVACY_MIN_LENGTH:
             continue
         if msg.lower() in body_lower:
             return False
@@ -142,7 +133,7 @@ class QualityAgent(Agent):
 
     def __init__(
         self,
-        ollama_url: str = OLLAMA_DEFAULT_URL,
+        ollama_url: str = TeamConstants.OLLAMA_DEFAULT_URL,
         ollama_model: str = "",
         db_path: str | Path | None = None,
         name: str = "quality",
@@ -169,7 +160,7 @@ class QualityAgent(Agent):
         if db_path is not None:
             self.db_path = Path(db_path)
         else:
-            self.db_path = PROJECT_ROOT / PENNY_DB_RELATIVE_PATH
+            self.db_path = PROJECT_ROOT / TeamConstants.PENNY_DB_RELATIVE_PATH
 
     # --- State management ---
 
@@ -180,15 +171,15 @@ class QualityAgent(Agent):
         ago to avoid re-evaluating the entire message history.
         """
         state = self._load_state()
-        saved = state.get(QUALITY_STATE_TIMESTAMP, "")
+        saved = state.get(TeamConstants.QUALITY_STATE_TIMESTAMP, "")
         if saved:
             return saved
-        cutoff = datetime.now(UTC) - timedelta(hours=QUALITY_MAX_LOOKBACK_HOURS)
+        cutoff = datetime.now(UTC) - timedelta(hours=TeamConstants.QUALITY_MAX_LOOKBACK_HOURS)
         return cutoff.isoformat()
 
     def _save_last_timestamp(self, timestamp: str) -> None:
         """Persist the last processed message timestamp."""
-        self._save_state({QUALITY_STATE_TIMESTAMP: timestamp})
+        self._save_state({TeamConstants.QUALITY_STATE_TIMESTAMP: timestamp})
 
     # --- has_work() override ---
 
@@ -278,7 +269,7 @@ class QualityAgent(Agent):
 
         Returns None on failure (network error, parse error, etc.).
         """
-        url = f"{self.ollama_url}{OLLAMA_CHAT_ENDPOINT}"
+        url = f"{self.ollama_url}{TeamConstants.OLLAMA_CHAT_ENDPOINT}"
         payload = {
             "model": self.ollama_model,
             "messages": [
@@ -401,7 +392,7 @@ class QualityAgent(Agent):
         filed = 0
         total = len(pairs)
         for idx, pair in enumerate(pairs, 1):
-            if filed >= QUALITY_MAX_ISSUES_PER_CYCLE:
+            if filed >= TeamConstants.QUALITY_MAX_ISSUES_PER_CYCLE:
                 break
 
             logger.info(
@@ -438,7 +429,7 @@ class QualityAgent(Agent):
                 continue
 
             try:
-                url = self.github_api.create_issue(title, body, QUALITY_LABELS)
+                url = self.github_api.create_issue(title, body, TeamConstants.QUALITY_LABELS)
                 logger.info(f"[{self.name}] Filed issue: {url}")
                 filed += 1
             except (OSError, RuntimeError, ValueError) as e:

@@ -21,7 +21,7 @@ from penny.config import Config, setup_logging
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
-from penny.prompts import RESEARCH_PROMPT, SEARCH_PROMPT
+from penny.prompts import Prompt
 from penny.scheduler import (
     AlwaysRunSchedule,
     BackgroundScheduler,
@@ -57,7 +57,7 @@ class Penny:
         def create_message_agent(db):
             """Factory for creating MessageAgent with a given database."""
             return MessageAgent(
-                system_prompt=SEARCH_PROMPT,
+                system_prompt=Prompt.SEARCH_PROMPT,
                 model=config.ollama_foreground_model,
                 ollama_api_url=config.ollama_api_url,
                 tools=search_tools(db),
@@ -85,7 +85,7 @@ class Penny:
                 from github_api.api import GitHubAPI
                 from github_api.auth import GitHubAuth
 
-                from penny.constants import GITHUB_REPO_NAME, GITHUB_REPO_OWNER
+                from penny.constants import PennyConstants
 
                 key_path = Path(config.github_app_private_key_path)
                 if not key_path.is_absolute():
@@ -96,7 +96,11 @@ class Penny:
                     private_key_path=key_path,
                     installation_id=int(config.github_app_installation_id),
                 )
-                github_api = GitHubAPI(github_auth.get_token, GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
+                github_api = GitHubAPI(
+                    github_auth.get_token,
+                    PennyConstants.GITHUB_REPO_OWNER,
+                    PennyConstants.GITHUB_REPO_NAME,
+                )
                 logger.info("GitHub API client initialized")
             except Exception:
                 logger.exception("Failed to initialize GitHub client")
@@ -110,7 +114,7 @@ class Penny:
         )
 
         self.followup_agent = FollowupAgent(
-            system_prompt=SEARCH_PROMPT,
+            system_prompt=Prompt.SEARCH_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=search_tools(self.db),
@@ -134,7 +138,7 @@ class Penny:
         )
 
         self.discovery_agent = DiscoveryAgent(
-            system_prompt=SEARCH_PROMPT,
+            system_prompt=Prompt.SEARCH_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=search_tools(self.db),
@@ -147,7 +151,7 @@ class Penny:
 
         self.research_agent = ResearchAgent(
             config=config,
-            system_prompt=RESEARCH_PROMPT,
+            system_prompt=Prompt.RESEARCH_PROMPT,
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=search_tools(self.db),

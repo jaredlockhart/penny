@@ -2,7 +2,7 @@
 
 import pytest
 
-from penny.prompts import VISION_AUTO_DESCRIBE_PROMPT, VISION_RESPONSE_PROMPT
+from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -49,7 +49,7 @@ async def test_image_with_text_captions_then_forwards(
         assert caption_request["model"] == "test-vision-model"
         user_msgs = [m for m in caption_request["messages"] if m["role"] == "user"]
         assert any("images" in m for m in user_msgs)
-        assert any(VISION_AUTO_DESCRIBE_PROMPT in m.get("content", "") for m in user_msgs)
+        assert any(Prompt.VISION_AUTO_DESCRIBE_PROMPT in m.get("content", "") for m in user_msgs)
 
         # Second call: foreground model with combined text prompt (no images, no tools)
         foreground_request = mock_ollama.requests[1]
@@ -67,7 +67,7 @@ async def test_image_with_text_captions_then_forwards(
         system_msgs = [m for m in foreground_request["messages"] if m["role"] == "system"]
         system_text = system_msgs[0]["content"]
         assert "sent an image" in system_text
-        assert VISION_RESPONSE_PROMPT in system_text
+        assert Prompt.VISION_RESPONSE_PROMPT in system_text
 
 
 @pytest.mark.asyncio
@@ -120,7 +120,7 @@ async def test_image_without_text_captions_then_forwards(
         system_msgs = [m for m in foreground_request["messages"] if m["role"] == "system"]
         system_text = system_msgs[0]["content"]
         assert "sent an image" in system_text
-        assert VISION_RESPONSE_PROMPT in system_text
+        assert Prompt.VISION_RESPONSE_PROMPT in system_text
 
 
 @pytest.mark.asyncio

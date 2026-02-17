@@ -8,7 +8,7 @@ from penny.agents.base import Agent
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.jmap.client import JmapClient
-from penny.prompts import EMAIL_SYSTEM_PROMPT
+from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.email import ReadEmailsTool, SearchEmailsTool
 
@@ -49,7 +49,7 @@ class EmailCommand(Command):
             ]
 
             agent = Agent(
-                system_prompt=EMAIL_SYSTEM_PROMPT,
+                system_prompt=Prompt.EMAIL_SYSTEM_PROMPT,
                 model=context.config.ollama_foreground_model,
                 ollama_api_url=context.config.ollama_api_url,
                 tools=tools,

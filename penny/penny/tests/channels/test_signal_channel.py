@@ -11,13 +11,13 @@ from penny.tests.conftest import TEST_SENDER
 async def test_validate_connectivity_success(signal_server, test_config, mock_ollama):
     """Test that validate_connectivity succeeds with a reachable Signal API."""
     from penny.agents import MessageAgent
-    from penny.prompts import SEARCH_PROMPT
+    from penny.prompts import Prompt
 
     db = Database(test_config.db_path)
     db.create_tables()
 
     message_agent = MessageAgent(
-        system_prompt=SEARCH_PROMPT,
+        system_prompt=Prompt.SEARCH_PROMPT,
         model=test_config.ollama_foreground_model,
         ollama_api_url=test_config.ollama_api_url,
         tools=[],
@@ -43,7 +43,7 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
     """Test that validate_connectivity raises ConnectionError on DNS failure."""
     from penny.agents import MessageAgent
     from penny.config import Config
-    from penny.prompts import SEARCH_PROMPT
+    from penny.prompts import Prompt
 
     config = Config(
         channel_type="signal",
@@ -63,7 +63,7 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
     db.create_tables()
 
     message_agent = MessageAgent(
-        system_prompt=SEARCH_PROMPT,
+        system_prompt=Prompt.SEARCH_PROMPT,
         model=config.ollama_foreground_model,
         ollama_api_url=config.ollama_api_url,
         tools=[],
@@ -94,7 +94,7 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
     """Test that validate_connectivity raises ConnectionError when server is unreachable."""
     from penny.agents import MessageAgent
     from penny.config import Config
-    from penny.prompts import SEARCH_PROMPT
+    from penny.prompts import Prompt
 
     # Use localhost on a port that's not listening
     config = Config(
@@ -115,7 +115,7 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
     db.create_tables()
 
     message_agent = MessageAgent(
-        system_prompt=SEARCH_PROMPT,
+        system_prompt=Prompt.SEARCH_PROMPT,
         model=config.ollama_foreground_model,
         ollama_api_url=config.ollama_api_url,
         tools=[],
@@ -146,13 +146,13 @@ async def test_send_message_rejects_empty_without_attachments(
 ):
     """Test that send_message raises ValueError for empty text with no attachments."""
     from penny.agents import MessageAgent
-    from penny.prompts import SEARCH_PROMPT
+    from penny.prompts import Prompt
 
     db = Database(test_config.db_path)
     db.create_tables()
 
     message_agent = MessageAgent(
-        system_prompt=SEARCH_PROMPT,
+        system_prompt=Prompt.SEARCH_PROMPT,
         model=test_config.ollama_foreground_model,
         ollama_api_url=test_config.ollama_api_url,
         tools=[],
@@ -179,13 +179,13 @@ async def test_send_message_allows_empty_text_with_attachments(
 ):
     """Test that send_message succeeds with empty text when attachments are provided."""
     from penny.agents import MessageAgent
-    from penny.prompts import SEARCH_PROMPT
+    from penny.prompts import Prompt
 
     db = Database(test_config.db_path)
     db.create_tables()
 
     message_agent = MessageAgent(
-        system_prompt=SEARCH_PROMPT,
+        system_prompt=Prompt.SEARCH_PROMPT,
         model=test_config.ollama_foreground_model,
         ollama_api_url=test_config.ollama_api_url,
         tools=[],

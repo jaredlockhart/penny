@@ -12,10 +12,7 @@ from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database.models import ResearchTask
-from penny.prompts import (
-    RESEARCH_FOCUS_EXTRACTION_PROMPT,
-    VISION_RESPONSE_PROMPT,
-)
+from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.builtin import SearchTool
 
@@ -108,7 +105,7 @@ class MessageAgent(Agent):
             history=history,
             use_tools=not has_images,
             max_steps=1 if has_images else None,
-            system_prompt=VISION_RESPONSE_PROMPT if has_images else None,
+            system_prompt=Prompt.VISION_RESPONSE_PROMPT if has_images else None,
             sender=sender,
         )
 
@@ -226,7 +223,7 @@ class MessageAgent(Agent):
 
         response = await self._ollama_client.chat(
             messages=[
-                {"role": "system", "content": RESEARCH_FOCUS_EXTRACTION_PROMPT},
+                {"role": "system", "content": Prompt.RESEARCH_FOCUS_EXTRACTION_PROMPT},
                 {"role": "user", "content": user_content},
             ]
         )
