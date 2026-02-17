@@ -58,6 +58,15 @@ class PennyResponse:
     UNDISLIKE_REMOVED = "I removed {topic} from your dislikes"
     UNDISLIKE_NOT_FOUND = "{topic} wasn't in your dislikes"
 
+    # ── Memory ───────────────────────────────────────────────────────────────
+
+    MEMORY_EMPTY = "You don't have any stored memories yet."
+    MEMORY_LIST_HEADER = "Here's what I remember:"
+    MEMORY_ENTITY_NOT_FOUND = "#{number} doesn't match any memory. Use /memory to see the list."
+    MEMORY_NO_FACTS = "I know about {name}, but I don't have any specific facts stored yet."
+    MEMORY_DELETED = "Deleted '{name}' and {count} fact(s)."
+    MEMORY_DELETE_USAGE = "Use `/memory {number} delete` to delete a memory."
+
     # ── Config ───────────────────────────────────────────────────────────────
 
     CONFIG_HEADER = "**Runtime Configuration**"

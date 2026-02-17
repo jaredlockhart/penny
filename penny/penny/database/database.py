@@ -936,6 +936,37 @@ class Database:
                 ).all()
             )
 
+    def delete_entity(self, entity_id: int) -> bool:
+        """
+        Delete an entity and its search log links.
+
+        Args:
+            entity_id: Entity primary key
+
+        Returns:
+            True if entity existed and was deleted, False otherwise
+        """
+        try:
+            with self.get_session() as session:
+                entity = session.get(Entity, entity_id)
+                if not entity:
+                    return False
+
+                # Delete associated search log links first
+                links = session.exec(
+                    select(EntitySearchLog).where(EntitySearchLog.entity_id == entity_id)
+                ).all()
+                for link in links:
+                    session.delete(link)
+
+                session.delete(entity)
+                session.commit()
+                logger.debug("Deleted entity %d", entity_id)
+                return True
+        except Exception as e:
+            logger.error("Failed to delete entity: %s", e)
+            return False
+
     def get_unprocessed_search_logs(self, limit: int) -> list[SearchLog]:
         """
         Get SearchLog entries that haven't been processed for entity extraction.
