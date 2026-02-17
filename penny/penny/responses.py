@@ -194,6 +194,12 @@ class PennyResponse:
     BUG_FILED = "Bug filed! {issue_url}"
     BUG_ERROR = "Failed to create issue: {error}"
 
+    # ── Feature ──────────────────────────────────────────────────────────────
+
+    FEATURE_USAGE = "Please provide a feature description. Usage: /feature <description>"
+    FEATURE_FILED = "Feature request filed! {issue_url}"
+    FEATURE_ERROR = "Failed to create issue: {error}"
+
     # ── Debug ────────────────────────────────────────────────────────────────
 
     DEBUG_TEMPLATE = """**Debug Information**
