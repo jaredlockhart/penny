@@ -4,7 +4,7 @@ import logging
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.responses import DRAW_ERROR, DRAW_USAGE
+from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class DrawCommand(Command):
         prompt = args.strip()
 
         if not prompt:
-            return CommandResult(text=DRAW_USAGE)
+            return CommandResult(text=PennyResponse.DRAW_USAGE)
 
         try:
             image_b64 = await context.ollama_client.generate_image(
@@ -38,4 +38,4 @@ class DrawCommand(Command):
 
         except Exception as e:
             logger.exception("Failed to generate image")
-            return CommandResult(text=DRAW_ERROR.format(error=e))
+            return CommandResult(text=PennyResponse.DRAW_ERROR.format(error=e))

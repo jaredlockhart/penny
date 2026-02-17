@@ -20,7 +20,7 @@ from penny.constants import (
     PERPLEXITY_PRESET,
     URL_BLOCKLIST_DOMAINS,
 )
-from penny.responses import NO_RESULTS_TEXT, SEARCH_ERROR
+from penny.responses import PennyResponse
 from penny.tools.base import Tool
 from penny.tools.models import SearchResult
 
@@ -77,7 +77,7 @@ class SearchTool(Tool):
         if self.skip_images:
             text_result = await self._search_text(redacted_query)
             if isinstance(text_result, Exception):
-                return SearchResult(text=SEARCH_ERROR.format(error=text_result))
+                return SearchResult(text=PennyResponse.SEARCH_ERROR.format(error=text_result))
             text, urls = text_result
             return SearchResult(text=text, urls=urls)
 
@@ -90,7 +90,7 @@ class SearchTool(Tool):
         # Handle text result
         urls: list[str] = []
         if isinstance(text_result, Exception):
-            text = SEARCH_ERROR.format(error=text_result)
+            text = PennyResponse.SEARCH_ERROR.format(error=text_result)
         else:
             text, urls = text_result
 
@@ -128,7 +128,7 @@ class SearchTool(Tool):
         )
 
         duration_ms = int((time.time() - start) * 1000)
-        raw_text = response.output_text if response.output_text else NO_RESULTS_TEXT
+        raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)
 
         # Extract the most-cited URL from response annotations

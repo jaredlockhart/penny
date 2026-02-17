@@ -18,15 +18,7 @@ except ImportError:
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.responses import (
-    DEBUG_NO_SCHEDULER,
-    DEBUG_TASK_HOURS,
-    DEBUG_TASK_MINUTES,
-    DEBUG_TASK_NEVER,
-    DEBUG_TASK_SECONDS,
-    DEBUG_TEMPLATE,
-    DEBUG_UPTIME,
-)
+from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +56,7 @@ class DebugCommand(Command):
         days = uptime.days
         hours, remainder = divmod(uptime.seconds, 3600)
         minutes, _ = divmod(remainder, 60)
-        uptime_str = DEBUG_UPTIME.format(days=days, hours=hours, minutes=minutes)
+        uptime_str = PennyResponse.DEBUG_UPTIME.format(days=days, hours=hours, minutes=minutes)
 
         # Database stats
         total_messages = context.db.count_messages()
@@ -89,7 +81,7 @@ class DebugCommand(Command):
         fg_model = context.config.ollama_foreground_model
         bg_model = context.config.ollama_background_model
 
-        response = DEBUG_TEMPLATE.format(
+        response = PennyResponse.DEBUG_TEMPLATE.format(
             commit=commit,
             uptime=uptime_str,
             channel=context.channel_type.title(),
@@ -105,25 +97,31 @@ class DebugCommand(Command):
     def _get_task_status(self, context: CommandContext) -> str:
         """Get background task run status from scheduler."""
         if context.scheduler is None:
-            return DEBUG_NO_SCHEDULER
+            return PennyResponse.DEBUG_NO_SCHEDULER
 
         agent_status = context.scheduler.get_agent_status()
         status_parts = []
 
         for agent_name, seconds_ago in agent_status.items():
             if seconds_ago is None:
-                status_parts.append(DEBUG_TASK_NEVER.format(name=agent_name))
+                status_parts.append(PennyResponse.DEBUG_TASK_NEVER.format(name=agent_name))
             elif seconds_ago < 60:
                 status_parts.append(
-                    DEBUG_TASK_SECONDS.format(name=agent_name, seconds=int(seconds_ago))
+                    PennyResponse.DEBUG_TASK_SECONDS.format(
+                        name=agent_name, seconds=int(seconds_ago)
+                    )
                 )
             elif seconds_ago < 3600:
                 status_parts.append(
-                    DEBUG_TASK_MINUTES.format(name=agent_name, minutes=int(seconds_ago / 60))
+                    PennyResponse.DEBUG_TASK_MINUTES.format(
+                        name=agent_name, minutes=int(seconds_ago / 60)
+                    )
                 )
             else:
                 status_parts.append(
-                    DEBUG_TASK_HOURS.format(name=agent_name, hours=int(seconds_ago / 3600))
+                    PennyResponse.DEBUG_TASK_HOURS.format(
+                        name=agent_name, hours=int(seconds_ago / 3600)
+                    )
                 )
 
         return ", ".join(status_parts)

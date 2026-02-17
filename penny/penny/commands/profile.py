@@ -12,23 +12,7 @@ from pydantic import BaseModel, Field
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.datetime_utils import get_timezone
-from penny.responses import (
-    PROFILE_CREATE_PARSE_ERROR,
-    PROFILE_CREATED,
-    PROFILE_DATE_PARSE_ERROR,
-    PROFILE_DOB,
-    PROFILE_HEADER,
-    PROFILE_LOCATION,
-    PROFILE_NAME,
-    PROFILE_NO_PROFILE,
-    PROFILE_TIMEZONE,
-    PROFILE_TIMEZONE_ERROR,
-    PROFILE_UNCHANGED,
-    PROFILE_UPDATE_LOCATION,
-    PROFILE_UPDATE_NAME,
-    PROFILE_UPDATE_PARSE_ERROR,
-    PROFILE_UPDATED,
-)
+from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +136,7 @@ class ProfileCommand(Command):
         if not args:
             user_info = context.db.get_user_info(context.user)
             if not user_info:
-                return CommandResult(text=PROFILE_NO_PROFILE)
+                return CommandResult(text=PennyResponse.PROFILE_NO_PROFILE)
 
             # Format date of birth for display
             dob_formatted = datetime.strptime(user_info.date_of_birth, "%Y-%m-%d").strftime(
@@ -160,12 +144,12 @@ class ProfileCommand(Command):
             )
 
             lines = [
-                PROFILE_HEADER,
+                PennyResponse.PROFILE_HEADER,
                 "",
-                PROFILE_NAME.format(name=user_info.name),
-                PROFILE_LOCATION.format(location=user_info.location),
-                PROFILE_TIMEZONE.format(timezone=user_info.timezone),
-                PROFILE_DOB.format(dob=dob_formatted),
+                PennyResponse.PROFILE_NAME.format(name=user_info.name),
+                PennyResponse.PROFILE_LOCATION.format(location=user_info.location),
+                PennyResponse.PROFILE_TIMEZONE.format(timezone=user_info.timezone),
+                PennyResponse.PROFILE_DOB.format(dob=dob_formatted),
             ]
             return CommandResult(text="\n".join(lines))
 
@@ -176,7 +160,7 @@ class ProfileCommand(Command):
             # Use LLM to parse profile creation arguments
             parsed = await self._parse_profile_create(args, context.ollama_client)
             if not parsed:
-                return CommandResult(text=PROFILE_CREATE_PARSE_ERROR)
+                return CommandResult(text=PennyResponse.PROFILE_CREATE_PARSE_ERROR)
 
             # Parse date of birth
             dob_date = dateparser.parse(
@@ -184,7 +168,7 @@ class ProfileCommand(Command):
             )
             if not dob_date:
                 return CommandResult(
-                    text=PROFILE_DATE_PARSE_ERROR.format(date=parsed.date_of_birth)
+                    text=PennyResponse.PROFILE_DATE_PARSE_ERROR.format(date=parsed.date_of_birth)
                 )
 
             dob_formatted = dob_date.strftime("%Y-%m-%d")
@@ -192,7 +176,9 @@ class ProfileCommand(Command):
             # Derive timezone from location
             timezone = await get_timezone(parsed.location)
             if not timezone:
-                return CommandResult(text=PROFILE_TIMEZONE_ERROR.format(location=parsed.location))
+                return CommandResult(
+                    text=PennyResponse.PROFILE_TIMEZONE_ERROR.format(location=parsed.location)
+                )
 
             # Save new profile
             context.db.save_user_info(
@@ -203,14 +189,14 @@ class ProfileCommand(Command):
                 date_of_birth=dob_formatted,
             )
 
-            return CommandResult(text=PROFILE_CREATED.format(name=parsed.name))
+            return CommandResult(text=PennyResponse.PROFILE_CREATED.format(name=parsed.name))
 
         # PROFILE UPDATE (existing profile)
 
         # Use LLM to parse profile update arguments
         parsed = await self._parse_profile_update(args, context.ollama_client)
         if not parsed:
-            return CommandResult(text=PROFILE_UPDATE_PARSE_ERROR)
+            return CommandResult(text=PennyResponse.PROFILE_UPDATE_PARSE_ERROR)
 
         # Use parsed values or keep existing
         new_name = parsed.name if parsed.name else user_info.name
@@ -220,7 +206,9 @@ class ProfileCommand(Command):
         if new_location != user_info.location:
             timezone = await get_timezone(new_location)
             if not timezone:
-                return CommandResult(text=PROFILE_TIMEZONE_ERROR.format(location=new_location))
+                return CommandResult(
+                    text=PennyResponse.PROFILE_TIMEZONE_ERROR.format(location=new_location)
+                )
         else:
             timezone = user_info.timezone
 
@@ -236,12 +224,16 @@ class ProfileCommand(Command):
         # Build confirmation message
         changes = []
         if new_name != user_info.name:
-            changes.append(PROFILE_UPDATE_NAME.format(name=new_name))
+            changes.append(PennyResponse.PROFILE_UPDATE_NAME.format(name=new_name))
         if new_location != user_info.location:
-            changes.append(PROFILE_UPDATE_LOCATION.format(location=new_location, timezone=timezone))
+            changes.append(
+                PennyResponse.PROFILE_UPDATE_LOCATION.format(
+                    location=new_location, timezone=timezone
+                )
+            )
 
         if changes:
             change_text = " and ".join(changes)
-            return CommandResult(text=PROFILE_UPDATED.format(changes=change_text))
+            return CommandResult(text=PennyResponse.PROFILE_UPDATED.format(changes=change_text))
         else:
-            return CommandResult(text=PROFILE_UNCHANGED)
+            return CommandResult(text=PennyResponse.PROFILE_UNCHANGED)

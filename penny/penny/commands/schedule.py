@@ -12,18 +12,7 @@ from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.database.models import Schedule, UserInfo
 from penny.prompts import SCHEDULE_PARSE_PROMPT
-from penny.responses import (
-    SCHEDULE_ADDED,
-    SCHEDULE_DELETED_NO_REMAINING,
-    SCHEDULE_DELETED_PREFIX,
-    SCHEDULE_INVALID_CRON,
-    SCHEDULE_INVALID_NUMBER,
-    SCHEDULE_NEED_TIMEZONE,
-    SCHEDULE_NO_SCHEDULE_WITH_NUMBER,
-    SCHEDULE_NO_TASKS,
-    SCHEDULE_PARSE_ERROR,
-    SCHEDULE_STILL_SCHEDULED,
-)
+from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +65,7 @@ class ScheduleCommand(Command):
             )
 
             if not schedules:
-                return CommandResult(text=SCHEDULE_NO_TASKS)
+                return CommandResult(text=PennyResponse.SCHEDULE_NO_TASKS)
 
             lines = []
             for idx, sched in enumerate(schedules, start=1):
@@ -89,7 +78,9 @@ class ScheduleCommand(Command):
         try:
             index = int(index_str)
         except ValueError:
-            return CommandResult(text=SCHEDULE_INVALID_NUMBER.format(number=index_str))
+            return CommandResult(
+                text=PennyResponse.SCHEDULE_INVALID_NUMBER.format(number=index_str)
+            )
 
         with Session(context.db.engine) as session:
             schedules = list(
@@ -99,7 +90,9 @@ class ScheduleCommand(Command):
             )
 
             if index < 1 or index > len(schedules):
-                return CommandResult(text=SCHEDULE_NO_SCHEDULE_WITH_NUMBER.format(number=index))
+                return CommandResult(
+                    text=PennyResponse.SCHEDULE_NO_SCHEDULE_WITH_NUMBER.format(number=index)
+                )
 
             to_delete = schedules[index - 1]
             session.delete(to_delete)
@@ -108,17 +101,19 @@ class ScheduleCommand(Command):
             # Show remaining schedules
             remaining = [s for s in schedules if s.id != to_delete.id]
             if not remaining:
-                deleted_msg = SCHEDULE_DELETED_PREFIX.format(
+                deleted_msg = PennyResponse.SCHEDULE_DELETED_PREFIX.format(
                     timing=to_delete.timing_description, prompt=to_delete.prompt_text
                 )
-                return CommandResult(text=f"{deleted_msg}\n\n{SCHEDULE_DELETED_NO_REMAINING}")
+                return CommandResult(
+                    text=f"{deleted_msg}\n\n{PennyResponse.SCHEDULE_DELETED_NO_REMAINING}"
+                )
 
-            deleted_msg = SCHEDULE_DELETED_PREFIX.format(
+            deleted_msg = PennyResponse.SCHEDULE_DELETED_PREFIX.format(
                 timing=to_delete.timing_description, prompt=to_delete.prompt_text
             )
             lines = [
                 f"{deleted_msg}\n",
-                SCHEDULE_STILL_SCHEDULED,
+                PennyResponse.SCHEDULE_STILL_SCHEDULED,
             ]
             for idx, sched in enumerate(remaining, start=1):
                 lines.append(f"{idx}. {sched.timing_description} '{sched.prompt_text}'")
@@ -134,7 +129,7 @@ class ScheduleCommand(Command):
             ).first()
 
             if not user_info or not user_info.timezone:
-                return CommandResult(text=SCHEDULE_NEED_TIMEZONE)
+                return CommandResult(text=PennyResponse.SCHEDULE_NEED_TIMEZONE)
 
             user_timezone = user_info.timezone
 
@@ -152,13 +147,13 @@ class ScheduleCommand(Command):
 
         except Exception as e:
             logger.warning("Failed to parse schedule command: %s", e)
-            return CommandResult(text=SCHEDULE_PARSE_ERROR)
+            return CommandResult(text=PennyResponse.SCHEDULE_PARSE_ERROR)
 
         # Validate cron expression format (5 fields)
         cron_parts = result.cron_expression.split()
         if len(cron_parts) != 5:
             logger.warning("Invalid cron expression: %s", result.cron_expression)
-            return CommandResult(text=SCHEDULE_INVALID_CRON)
+            return CommandResult(text=PennyResponse.SCHEDULE_INVALID_CRON)
 
         # Create schedule in database
         with Session(context.db.engine) as session:
@@ -174,5 +169,7 @@ class ScheduleCommand(Command):
             session.commit()
 
         return CommandResult(
-            text=SCHEDULE_ADDED.format(timing=result.timing_description, prompt=result.prompt_text)
+            text=PennyResponse.SCHEDULE_ADDED.format(
+                timing=result.timing_description, prompt=result.prompt_text
+            )
         )

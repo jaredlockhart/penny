@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.responses import COMMANDS_HEADER, COMMANDS_HELP_HEADER, COMMANDS_UNKNOWN
+from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
     from penny.commands.base import CommandRegistry
@@ -36,7 +36,7 @@ class IndexCommand(Command):
         # If no args, list all commands
         if not args:
             commands = self._registry.list_all()
-            lines = [COMMANDS_HEADER, ""]
+            lines = [PennyResponse.COMMANDS_HEADER, ""]
             for cmd in sorted(commands, key=lambda c: c.name):
                 lines.append(f"- **/{cmd.name}** — {cmd.description}")
             return CommandResult(text="\n".join(lines))
@@ -44,10 +44,10 @@ class IndexCommand(Command):
         # Otherwise, show help for specific command
         cmd = self._registry.get(args)
         if not cmd:
-            return CommandResult(text=COMMANDS_UNKNOWN.format(name=args))
+            return CommandResult(text=PennyResponse.COMMANDS_UNKNOWN.format(name=args))
 
         lines = [
-            COMMANDS_HELP_HEADER.format(name=cmd.name),
+            PennyResponse.COMMANDS_HELP_HEADER.format(name=cmd.name),
             "",
             cmd.help_text,
         ]

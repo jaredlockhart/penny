@@ -7,7 +7,7 @@ from github_api.api import GitHubAPI
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.responses import BUG_ERROR, BUG_FILED, BUG_USAGE
+from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class BugCommand(Command):
         description = args.strip()
 
         if not description:
-            return CommandResult(text=BUG_USAGE)
+            return CommandResult(text=PennyResponse.BUG_USAGE)
 
         # Generate title: first 60 chars at word boundary
         title = self._generate_title(description)
@@ -45,11 +45,11 @@ class BugCommand(Command):
                 body=body,
                 labels=["bug"],
             )
-            return CommandResult(text=BUG_FILED.format(issue_url=issue_url))
+            return CommandResult(text=PennyResponse.BUG_FILED.format(issue_url=issue_url))
 
         except Exception as e:
             logger.exception("Failed to create GitHub issue")
-            return CommandResult(text=BUG_ERROR.format(error=e))
+            return CommandResult(text=PennyResponse.BUG_ERROR.format(error=e))
 
     def _generate_title(self, description: str) -> str:
         """Extract title from description (first 60 chars at word boundary)."""

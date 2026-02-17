@@ -11,7 +11,7 @@ from penny.commands.email import EmailCommand
 from penny.commands.models import CommandContext
 from penny.config import Config
 from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary
-from penny.responses import EMAIL_NO_QUERY_TEXT
+from penny.responses import PennyResponse
 from penny.tests.conftest import TEST_SENDER
 from penny.tools.email import NO_EMAILS_TO_READ, ReadEmailsTool
 
@@ -84,7 +84,7 @@ async def test_email_empty_prompt(email_context):
     cmd = EmailCommand(FAKE_TOKEN)
     result = await cmd.execute("", email_context)
 
-    assert result.text == EMAIL_NO_QUERY_TEXT
+    assert result.text == PennyResponse.EMAIL_NO_QUERY_TEXT
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ async def test_email_whitespace_only_prompt(email_context):
     cmd = EmailCommand(FAKE_TOKEN)
     result = await cmd.execute("   ", email_context)
 
-    assert result.text == EMAIL_NO_QUERY_TEXT
+    assert result.text == PennyResponse.EMAIL_NO_QUERY_TEXT
 
 
 @pytest.mark.asyncio
