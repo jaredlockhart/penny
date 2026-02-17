@@ -158,7 +158,8 @@ The base `Agent` class implements the core agentic loop:
 - Manages `ResearchTask` and `ResearchIteration` database records
 - Supports user-guided focus refinement with clarification step (output format options)
 - Auto-completes after reaching `max_iterations`, generates final report with sources
-- Extracts findings from raw search results using LLM between iterations
+- Builds report incrementally — each iteration augments the previous draft
+- Skips image search on all iterations except the last (attaches image to report)
 - Task queueing: pending tasks activate when current task completes
 - Focus timeout: auto-starts `awaiting_focus` tasks after 5 minutes
 - Shows N/M progress indicators during research
@@ -278,7 +279,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 - **Always search**: System prompt forces search on every message — no hallucinated answers
 - **One search per message**: System prompt tells model it only gets one search, so it combines everything into a single comprehensive query
-- **Parallel search + images**: Single `SearchTool` runs Perplexity (text) and DuckDuckGo (images) concurrently via `asyncio.gather`, image failures degrade gracefully to text-only
+- **Parallel search + images**: Single `SearchTool` runs Perplexity (text) and DuckDuckGo (images) concurrently via `asyncio.gather`, image failures degrade gracefully to text-only. `skip_images` flag disables image search (used by research agent to only fetch an image on the last iteration)
 - **URL extraction**: URLs extracted from Perplexity results, appended as Sources list so the model can pick the most relevant one
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
@@ -333,7 +334,7 @@ Notable migrations:
 
 ## Test Infrastructure
 
-Strongly prefer end-to-end integration tests over unit tests. Test through public entry points with mocks for external services:
+Strongly prefer end-to-end integration tests over unit tests. Test through public entry points with mocks for external services. Prefer folding new assertions into existing tests over adding new test functions — only add a new test when no existing test covers the relevant code path.
 
 **Mocks** (in `tests/mocks/`):
 - `MockSignalServer`: WebSocket + REST server using aiohttp, captures outgoing messages and typing events
