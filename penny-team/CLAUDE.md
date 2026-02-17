@@ -2,7 +2,7 @@
 
 ## Overview
 
-Python-based orchestrator that manages autonomous Claude CLI agents. Agents process work from GitHub Issues on a schedule, using labels as a state machine. A Monitor Agent watches production logs for errors and files bug issues automatically.
+Python-based orchestrator that manages autonomous Claude CLI agents. Agents process work from GitHub Issues on a schedule, using labels as a state machine. A Monitor Agent watches production logs for errors and files bug issues automatically. A Quality Agent evaluates Penny's response quality and files bug issues for low-quality output.
 
 ## Directory Structure
 
@@ -13,6 +13,7 @@ penny-team/
     base.py             — Agent base class: wraps Claude CLI, has_work() pre-check
     constants.py        — Shared constants: Label enum, external state config
     monitor.py          — MonitorAgent: log file reader, error extraction, bug issue filing
+    quality.py          — QualityAgent: DB reader, Ollama evaluator, privacy-safe bug filing
     monitor/
       CLAUDE.md         — Monitor agent prompt (error analysis, dedup, issue creation)
     utils/
@@ -34,6 +35,7 @@ penny-team/
     test_architect.py        — Architect agent flow tests (integration)
     test_worker.py           — Worker agent flow + PR status + bug fix tests (integration + unit)
     test_monitor.py          — Monitor agent flow + error extraction tests (integration + unit)
+    test_quality.py          — Quality agent flow + privacy validation tests (integration + unit)
 
   Tests strongly prefer integration style — test through agent.run() / has_work()
   entry points with MockGitHubAPI (for GitHub data) and MockPopen (for Claude CLI).
@@ -51,6 +53,7 @@ penny-team/
 - **Architect**: 300s interval, 600s timeout, label: `specification`
 - **Worker**: 300s interval, 1800s timeout, labels: `in-progress`, `in-review`, `bug`
 - **Monitor**: 300s interval, 600s timeout, no labels (reads log files)
+- **Quality**: 3600s interval, 600s timeout, no labels (reads penny.db, uses Ollama)
 
 ## GitHub Labels Workflow
 
@@ -125,9 +128,21 @@ Monitor agent automatically detects errors in penny's production logs and files 
 - Log rotation detected by file size < saved offset (resets to 0)
 - Filed issues get the `bug` label, which the Worker agent picks up via its bug fix workflow
 
+## Quality Review
+
+Quality agent evaluates Penny's response quality and files bug issues for low-quality output:
+- `penny_team/quality.py`: `QualityAgent` subclass that reads `data/penny.db` instead of GitHub issues
+- Tracks last processed message timestamp in `data/penny-team/quality.state.json`
+- Python code reads message pairs (incoming user message + outgoing response) via SQLite
+- Calls Ollama `OLLAMA_BACKGROUND_MODEL` directly (not Claude CLI) for quality evaluation
+- Two-step LLM flow per pair: (1) single-pair quality evaluation, (2) privacy-safe bug description if bad
+- **Privacy enforcement**: Python validates that original user messages and Penny responses are NOT substrings in the filed issue body — hard block, skips filing on failure
+- Filed issues get `bug` + `quality` labels; max 3 issues per cycle (safety cap)
+- Optional: only registered when `OLLAMA_BACKGROUND_MODEL` env var is set
+
 ## Docker Setup
 
-- Agents run in Docker containers (pm, architect, worker, and monitor services in `docker-compose.yml`) with `profiles: [team]` — only started with `make up`
+- Agents run in Docker containers (pm, architect, worker, monitor, and quality services in `docker-compose.yml`) with `profiles: [team]` — only started with `make up`
 - Repo is snapshotted into the Docker image at build time (not volume-mounted) — agent edits don't bleed into the host working tree
 - Only `data/` is volume-mounted for shared state files and logs (`data/logs/`)
 - `PYTHONDONTWRITEBYTECODE=1` prevents `__pycache__` generation in containers
