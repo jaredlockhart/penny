@@ -938,41 +938,6 @@ class Database:
                 ).all()
             )
 
-    def find_relevant_entities(self, user: str, text: str) -> list[Entity]:
-        """
-        Find entities relevant to the given text using keyword matching.
-
-        Matches if the entity name appears as a substring in the text,
-        or if any significant word (3+ chars) from the entity name
-        appears in the text words.
-
-        Args:
-            user: User identifier
-            text: Text to match against (e.g., user message content)
-
-        Returns:
-            List of matching entities, capped at ENTITY_CONTEXT_MAX_ENTITIES
-        """
-        all_entities = self.get_user_entities(user)
-        if not all_entities:
-            return []
-
-        text_lower = text.lower()
-        text_words = set(text_lower.split())
-        matches: list[Entity] = []
-
-        for entity in all_entities:
-            # Check full name as substring
-            if entity.name in text_lower:
-                matches.append(entity)
-                continue
-            # Check individual significant words
-            entity_words = {w for w in entity.name.split() if len(w) >= 3}
-            if entity_words & text_words:
-                matches.append(entity)
-
-        return matches[: PennyConstants.ENTITY_CONTEXT_MAX_ENTITIES]
-
     def get_extraction_cursor(self, source_type: str) -> int:
         """
         Get the high-water mark for entity extraction.

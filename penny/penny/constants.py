@@ -65,5 +65,3 @@ class PennyConstants:
         EVENT = "event"
 
     ENTITY_EXTRACTION_BATCH_LIMIT = 10
-    ENTITY_CONTEXT_MAX_ENTITIES = 10
-    ENTITY_CONTEXT_MAX_FACTS = 5  # per entity in context injection
