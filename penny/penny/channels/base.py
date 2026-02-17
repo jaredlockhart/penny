@@ -11,13 +11,10 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from penny.config import Config
-from penny.constants import (
-    TEST_MODE_PREFIX,
-    VISION_NOT_CONFIGURED_MESSAGE,
-    MessageDirection,
-)
+from penny.constants import MessageDirection
 from penny.database.models import MessageLog
 from penny.prompts import PERSONALITY_TRANSFORM_PROMPT
+from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
     from penny.agents import MessageAgent
@@ -350,7 +347,9 @@ class MessageChannel(ABC):
             if message.images:
                 vision_model = self._config.ollama_vision_model if self._config else None
                 if not vision_model:
-                    await self.send_status_message(message.sender, VISION_NOT_CONFIGURED_MESSAGE)
+                    await self.send_status_message(
+                        message.sender, PennyResponse.VISION_NOT_CONFIGURED_MESSAGE
+                    )
                     return
 
             # Only reset idle timers for real messages, not receipts/sync messages
@@ -368,7 +367,7 @@ class MessageChannel(ABC):
 
                 if message.quoted_text and command_name not in commands_supporting_quotes:
                     await self.send_status_message(
-                        message.sender, "Threading is not supported for commands."
+                        message.sender, PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS
                     )
                     return
                 await self._handle_command(message)
@@ -377,14 +376,16 @@ class MessageChannel(ABC):
             # Check if thread-replying to a command (quoted text is a command)
             if message.quoted_text and message.quoted_text.strip().startswith("/"):
                 await self.send_status_message(
-                    message.sender, "Threading is not supported for commands."
+                    message.sender, PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS
                 )
                 return
 
             # Check if thread-replying to a test mode response
-            if message.quoted_text and message.quoted_text.strip().startswith(TEST_MODE_PREFIX):
+            if message.quoted_text and message.quoted_text.strip().startswith(
+                PennyResponse.TEST_MODE_PREFIX
+            ):
                 await self.send_status_message(
-                    message.sender, "Threading is not supported for test mode responses."
+                    message.sender, PennyResponse.THREADING_NOT_SUPPORTED_TEST
                 )
                 return
 
@@ -412,9 +413,7 @@ class MessageChannel(ABC):
                 )
 
                 answer = (
-                    response.answer.strip()
-                    if response.answer
-                    else "Sorry, I couldn't generate a response."
+                    response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
                 )
                 # Quote-reply to the user's incoming message
                 incoming_log = MessageLog(
@@ -496,7 +495,7 @@ class MessageChannel(ABC):
         # Look up command
         command = self._command_registry.get(command_name)
         if not command:
-            response = f"Unknown command: /{command_name}. Use /commands to see available commands."
+            response = PennyResponse.UNKNOWN_COMMAND.format(command_name=command_name)
             await self.send_status_message(message.sender, response)
             self._db.log_command(
                 user=message.sender,
@@ -545,7 +544,7 @@ class MessageChannel(ABC):
 
         except Exception as e:
             logger.exception("Error executing command /%s: %s", command_name, e)
-            error_response = f"Error executing command: {e!s}"
+            error_response = PennyResponse.COMMAND_ERROR.format(error=e)
             await self.send_status_message(message.sender, error_response)
             self._db.log_command(
                 user=message.sender,

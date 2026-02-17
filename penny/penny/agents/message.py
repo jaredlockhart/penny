@@ -11,15 +11,12 @@ from sqlmodel import Session, select
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
 from penny.config_params import RUNTIME_CONFIG_PARAMS
-from penny.constants import (
-    VISION_IMAGE_CONTEXT,
-    VISION_IMAGE_ONLY_CONTEXT,
-)
 from penny.database.models import ResearchTask
 from penny.prompts import (
     RESEARCH_FOCUS_EXTRACTION_PROMPT,
     VISION_RESPONSE_PROMPT,
 )
+from penny.responses import PennyResponse
 from penny.tools.builtin import SearchTool
 
 RESEARCH_MAX_ITERATIONS_DEFAULT = int(
@@ -98,9 +95,11 @@ class MessageAgent(Agent):
             captions = [await self.caption_image(img) for img in images]
             caption = ", ".join(captions)
             if content:
-                content = VISION_IMAGE_CONTEXT.format(user_text=content, caption=caption)
+                content = PennyResponse.VISION_IMAGE_CONTEXT.format(
+                    user_text=content, caption=caption
+                )
             else:
-                content = VISION_IMAGE_ONLY_CONTEXT.format(caption=caption)
+                content = PennyResponse.VISION_IMAGE_ONLY_CONTEXT.format(caption=caption)
             logger.info("Built vision prompt: %s", content[:200])
 
         # Run agent (for image messages: disable tools, single pass, vision prompt)
@@ -162,7 +161,7 @@ class MessageAgent(Agent):
             logger.info("Created continuation research task %d", new_task.id)
 
         return ControllerResponse(
-            answer=f"Ok, continuing research with focus: {content}. I'll post results when done."
+            answer=PennyResponse.RESEARCH_CONTINUATION.format(content=content)
         )
 
     async def _handle_research_focus_reply(
@@ -197,10 +196,7 @@ class MessageAgent(Agent):
                     session.commit()
                     logger.info("Research task %d started without focus (user said 'go')", task.id)
                     return ControllerResponse(
-                        answer=(
-                            f"Ok, started research on '{task.topic}'. "
-                            "I'll post results when done (this might take a few minutes)"
-                        )
+                        answer=PennyResponse.RESEARCH_STARTED.format(topic=task.topic)
                     )
 
                 # Use LLM to interpret user's reply against the options
@@ -212,9 +208,8 @@ class MessageAgent(Agent):
                 session.commit()
                 logger.info("Research task %d started with focus: %s", task.id, task.focus)
                 return ControllerResponse(
-                    answer=(
-                        f"Got it — researching '{task.topic}' with focus: {task.focus}. "
-                        "I'll post results when done."
+                    answer=PennyResponse.RESEARCH_STARTED_WITH_FOCUS.format(
+                        topic=task.topic, focus=task.focus
                     )
                 )
         except Exception:

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.datetime_utils import get_timezone
+from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +50,9 @@ class ProfileCommand(Command):
         "- `/profile <name> <location> <date of birth>` — Create profile (if new)\n"
         "- `/profile <name> <location>` — Update name/location (if profile exists)\n\n"
         "**Examples**:\n"
-        "- `/profile alex seattle january 10 1995` (initial setup)\n"
-        "- `/profile jared toronto` (update existing)\n"
-        "- `/profile seattle` (update location only)\n\n"
+        "- `/profile sam denver march 5 1990` (initial setup)\n"
+        "- `/profile sam denver` (update existing)\n"
+        "- `/profile denver` (update location only)\n\n"
         "**Note**: Timezone is automatically derived from your location."
     )
 
@@ -135,13 +136,7 @@ class ProfileCommand(Command):
         if not args:
             user_info = context.db.get_user_info(context.user)
             if not user_info:
-                return CommandResult(
-                    text=(
-                        "You don't have a profile yet! Set it up with:\n"
-                        "`/profile <name> <location> <date of birth>`\n\n"
-                        "For example: `/profile alex seattle january 10 1995` 📝"
-                    )
-                )
+                return CommandResult(text=PennyResponse.PROFILE_NO_PROFILE)
 
             # Format date of birth for display
             dob_formatted = datetime.strptime(user_info.date_of_birth, "%Y-%m-%d").strftime(
@@ -149,12 +144,12 @@ class ProfileCommand(Command):
             )
 
             lines = [
-                "**Your Profile**",
+                PennyResponse.PROFILE_HEADER,
                 "",
-                f"**Name**: {user_info.name}",
-                f"**Location**: {user_info.location}",
-                f"**Timezone**: {user_info.timezone}",
-                f"**Date of Birth**: {dob_formatted}",
+                PennyResponse.PROFILE_NAME.format(name=user_info.name),
+                PennyResponse.PROFILE_LOCATION.format(location=user_info.location),
+                PennyResponse.PROFILE_TIMEZONE.format(timezone=user_info.timezone),
+                PennyResponse.PROFILE_DOB.format(dob=dob_formatted),
             ]
             return CommandResult(text="\n".join(lines))
 
@@ -165,13 +160,7 @@ class ProfileCommand(Command):
             # Use LLM to parse profile creation arguments
             parsed = await self._parse_profile_create(args, context.ollama_client)
             if not parsed:
-                return CommandResult(
-                    text=(
-                        "I couldn't understand that. Please provide your name, location, "
-                        "and date of birth.\n\n"
-                        "Example: `/profile alex seattle january 10 1995`"
-                    )
-                )
+                return CommandResult(text=PennyResponse.PROFILE_CREATE_PARSE_ERROR)
 
             # Parse date of birth
             dob_date = dateparser.parse(
@@ -179,10 +168,7 @@ class ProfileCommand(Command):
             )
             if not dob_date:
                 return CommandResult(
-                    text=(
-                        f"I couldn't parse '{parsed.date_of_birth}' as a date. "
-                        "Try something like 'january 10 1995' 📅"
-                    )
+                    text=PennyResponse.PROFILE_DATE_PARSE_ERROR.format(date=parsed.date_of_birth)
                 )
 
             dob_formatted = dob_date.strftime("%Y-%m-%d")
@@ -191,10 +177,7 @@ class ProfileCommand(Command):
             timezone = await get_timezone(parsed.location)
             if not timezone:
                 return CommandResult(
-                    text=(
-                        f"I couldn't find a timezone for '{parsed.location}'. "
-                        "Can you be more specific? 🗺️"
-                    )
+                    text=PennyResponse.PROFILE_TIMEZONE_ERROR.format(location=parsed.location)
                 )
 
             # Save new profile
@@ -206,19 +189,14 @@ class ProfileCommand(Command):
                 date_of_birth=dob_formatted,
             )
 
-            return CommandResult(text=f"Got it! Your profile is set up. Welcome, {parsed.name}! 🎉")
+            return CommandResult(text=PennyResponse.PROFILE_CREATED.format(name=parsed.name))
 
         # PROFILE UPDATE (existing profile)
 
         # Use LLM to parse profile update arguments
         parsed = await self._parse_profile_update(args, context.ollama_client)
         if not parsed:
-            return CommandResult(
-                text=(
-                    "I couldn't understand that. Please provide name and/or location.\n\n"
-                    "Example: `/profile jared toronto`"
-                )
-            )
+            return CommandResult(text=PennyResponse.PROFILE_UPDATE_PARSE_ERROR)
 
         # Use parsed values or keep existing
         new_name = parsed.name if parsed.name else user_info.name
@@ -229,10 +207,7 @@ class ProfileCommand(Command):
             timezone = await get_timezone(new_location)
             if not timezone:
                 return CommandResult(
-                    text=(
-                        f"I couldn't find a timezone for '{new_location}'. "
-                        "Can you be more specific? 🗺️"
-                    )
+                    text=PennyResponse.PROFILE_TIMEZONE_ERROR.format(location=new_location)
                 )
         else:
             timezone = user_info.timezone
@@ -249,12 +224,16 @@ class ProfileCommand(Command):
         # Build confirmation message
         changes = []
         if new_name != user_info.name:
-            changes.append(f"name to **{new_name}**")
+            changes.append(PennyResponse.PROFILE_UPDATE_NAME.format(name=new_name))
         if new_location != user_info.location:
-            changes.append(f"location to **{new_location}** ({timezone})")
+            changes.append(
+                PennyResponse.PROFILE_UPDATE_LOCATION.format(
+                    location=new_location, timezone=timezone
+                )
+            )
 
         if changes:
             change_text = " and ".join(changes)
-            return CommandResult(text=f"Okay, I updated your {change_text}! ✅")
+            return CommandResult(text=PennyResponse.PROFILE_UPDATED.format(changes=change_text))
         else:
-            return CommandResult(text="Your profile is unchanged 🤷")
+            return CommandResult(text=PennyResponse.PROFILE_UNCHANGED)

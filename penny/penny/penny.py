@@ -309,7 +309,7 @@ class Penny:
                 "Hey! I need to collect some basic info about you before we can chat. "
                 "Please run `/profile <name> <location> <date of birth>` "
                 "to set up your profile.\n\n"
-                "For example: `/profile alex seattle january 10 1995` 📝"
+                "For example: `/profile sam denver march 5 1990` 📝"
             )
 
             for sender in senders:

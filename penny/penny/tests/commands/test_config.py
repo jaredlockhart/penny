@@ -53,7 +53,7 @@ async def test_config_set_valid(signal_server, test_config, mock_ollama, running
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should confirm update
-        assert "ok, updated IDLE_SECONDS to 600" in response["message"]
+        assert "Ok, updated IDLE_SECONDS to 600" in response["message"]
 
         # Verify config was updated
         assert penny.config.idle_seconds == 600.0
@@ -82,7 +82,7 @@ async def test_config_set_invalid_key(signal_server, test_config, mock_ollama, r
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should show error
-        assert "unknown config parameter: FAKE_KEY" in response["message"]
+        assert "Unknown config parameter: FAKE_KEY" in response["message"]
         assert "Use /config to see all available parameters" in response["message"]
 
 
@@ -97,7 +97,7 @@ async def test_config_set_invalid_value(signal_server, test_config, mock_ollama,
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should show error
-        assert "invalid value for IDLE_SECONDS" in response["message"]
+        assert "Invalid value for IDLE_SECONDS" in response["message"]
         assert "must be a positive number" in response["message"]
 
 
@@ -114,7 +114,7 @@ async def test_config_set_non_numeric(signal_server, test_config, mock_ollama, r
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should show error
-        assert "invalid value for MESSAGE_MAX_STEPS" in response["message"]
+        assert "Invalid value for MESSAGE_MAX_STEPS" in response["message"]
         assert "must be a positive integer" in response["message"]
 
 
@@ -129,7 +129,7 @@ async def test_config_case_insensitive(signal_server, test_config, mock_ollama, 
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should work (key gets uppercased internally)
-        assert "ok, updated IDLE_SECONDS to 450" in response["message"]
+        assert "Ok, updated IDLE_SECONDS to 450" in response["message"]
         assert penny.config.idle_seconds == 450.0
 
 
@@ -140,7 +140,7 @@ async def test_config_persistence(signal_server, test_config, mock_ollama, runni
     async with running_penny(test_config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/config IDLE_SECONDS 800")
         response = await signal_server.wait_for_message(timeout=5.0)
-        assert "ok, updated IDLE_SECONDS to 800" in response["message"]
+        assert "Ok, updated IDLE_SECONDS to 800" in response["message"]
 
     # Second run: verify the value persists
     async with running_penny(test_config) as penny:

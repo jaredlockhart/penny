@@ -2,12 +2,8 @@
 
 import pytest
 
-from penny.constants import (
-    VISION_IMAGE_CONTEXT,
-    VISION_IMAGE_ONLY_CONTEXT,
-    VISION_NOT_CONFIGURED_MESSAGE,
-)
 from penny.prompts import VISION_AUTO_DESCRIBE_PROMPT, VISION_RESPONSE_PROMPT
+from penny.responses import PennyResponse
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 # Minimal valid JPEG header bytes for testing
@@ -61,7 +57,7 @@ async def test_image_with_text_captions_then_forwards(
         user_msgs = [m for m in foreground_request["messages"] if m["role"] == "user"]
         assert not any("images" in m for m in user_msgs)
         # Combined prompt should contain user text and caption
-        expected = VISION_IMAGE_CONTEXT.format(
+        expected = PennyResponse.VISION_IMAGE_CONTEXT.format(
             user_text="what's in this photo?", caption="a cute orange cat"
         )
         assert any(expected in m.get("content", "") for m in user_msgs)
@@ -116,7 +112,7 @@ async def test_image_without_text_captions_then_forwards(
         assert foreground_request["model"] == "test-model"
         user_msgs = [m for m in foreground_request["messages"] if m["role"] == "user"]
         assert not any("images" in m for m in user_msgs)
-        expected = VISION_IMAGE_ONLY_CONTEXT.format(caption="a sunset over the ocean")
+        expected = PennyResponse.VISION_IMAGE_ONLY_CONTEXT.format(caption="a sunset over the ocean")
         assert any(expected in m.get("content", "") for m in user_msgs)
         # Verify no tools were provided (None = tools disabled)
         assert foreground_request.get("tools") is None
@@ -146,7 +142,7 @@ async def test_image_without_vision_model_sends_acknowledgment(
         )
 
         response = await signal_server.wait_for_message(timeout=10.0)
-        assert VISION_NOT_CONFIGURED_MESSAGE in response["message"]
+        assert PennyResponse.VISION_NOT_CONFIGURED_MESSAGE in response["message"]
 
         # Verify Ollama was NOT called
         assert len(mock_ollama.requests) == 0

@@ -117,7 +117,7 @@ class SignalChannel(MessageChannel):
                         f"Signal API returned error status {e.response.status_code}: {e}"
                     ) from e
 
-        except (ValueError, ConnectionError):
+        except ValueError, ConnectionError:
             # Re-raise these specific errors
             raise
         except Exception as e:

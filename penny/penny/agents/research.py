@@ -19,6 +19,7 @@ from penny.prompts import (
     RESEARCH_FOLLOWUP_PROMPT,
     RESEARCH_REPORT_BUILD_PROMPT,
 )
+from penny.responses import PennyResponse
 from penny.tools.builtin import SearchTool
 
 if TYPE_CHECKING:
@@ -146,12 +147,9 @@ class ResearchAgent(Agent):
 
         # Truncate if exceeds configured max length
         max_length = self._config.research_output_max_length
-        truncation_message = (
-            "\n\n[Report truncated due to length limits — reply to request full details]"
-        )
         if len(report) > max_length:
-            truncate_at = max_length - len(truncation_message)
-            report = report[:truncate_at] + truncation_message
+            truncate_at = max_length - len(PennyResponse.RESEARCH_TRUNCATED)
+            report = report[:truncate_at] + PennyResponse.RESEARCH_TRUNCATED
 
         # Find recipient from thread
         recipient = self._find_recipient_for_thread(task.thread_id)

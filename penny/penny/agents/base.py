@@ -9,6 +9,7 @@ from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, To
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.prompts import PENNY_IDENTITY, VISION_AUTO_DESCRIBE_PROMPT
+from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.models import SearchResult
 
@@ -200,9 +201,7 @@ class Agent:
                 response = await self._ollama_client.chat(messages=messages, tools=tools)
             except Exception as e:
                 logger.error("Error calling Ollama: %s", e)
-                return ControllerResponse(
-                    answer="Sorry, I encountered an error communicating with the model."
-                )
+                return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
 
             if response.has_tool_calls:
                 logger.info(
@@ -259,7 +258,7 @@ class Agent:
 
             if not content:
                 logger.error("Model returned empty content!")
-                return ControllerResponse(answer="Sorry, the model generated an empty response.")
+                return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
 
             thinking = response.thinking or response.message.thinking
 
@@ -279,7 +278,7 @@ class Agent:
 
         logger.warning("Max steps reached without final answer")
         return ControllerResponse(
-            answer="Sorry, I couldn't complete that request within the allowed steps.",
+            answer=PennyResponse.AGENT_MAX_STEPS,
             tool_calls=tool_call_records,
         )
 

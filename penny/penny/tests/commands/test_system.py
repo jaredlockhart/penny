@@ -38,7 +38,7 @@ async def test_command_threading_blocked(signal_server, test_config, mock_ollama
 
         # Should get threading not supported message
         response2 = await signal_server.wait_for_message(timeout=5.0)
-        assert "Threading is not supported for commands" in response2["message"]
+        assert "Commands can't be used in threads" in response2["message"]
 
 
 @pytest.mark.asyncio

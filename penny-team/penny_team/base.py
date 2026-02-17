@@ -137,7 +137,7 @@ class Agent:
         """
         try:
             data = json.loads(self._state_path.read_text())
-        except (FileNotFoundError, json.JSONDecodeError):
+        except FileNotFoundError, json.JSONDecodeError:
             return AgentState()
         if "timestamps" not in data:
             # Old format: flat dict of {number: updatedAt}
@@ -216,7 +216,7 @@ class Agent:
 
         try:
             current = self._fetch_issue_timestamps()
-        except (OSError, RuntimeError):
+        except OSError, RuntimeError:
             return True
 
         if not current:

@@ -4,6 +4,7 @@ import logging
 import os
 
 from penny.ollama.client import OllamaClient
+from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +18,14 @@ async def get_restart_message(ollama_client: OllamaClient) -> str:
 
     Returns:
         A casual, first-person restart message (e.g., "I added a new command! /debug")
-        or fallback "I just restarted!" if commit message unavailable
+        or fallback PennyResponse.RESTART_FALLBACK if commit message unavailable
     """
     # Get commit message from environment variable (set at build time)
     commit_message = os.environ.get("GIT_COMMIT_MESSAGE", "").strip()
 
     if not commit_message or commit_message == "unknown":
         logger.info("No git commit message available, using fallback")
-        return "I just restarted!"
+        return PennyResponse.RESTART_FALLBACK
 
     logger.info("Latest commit message: %s", commit_message)
 
@@ -48,11 +49,11 @@ async def get_restart_message(ollama_client: OllamaClient) -> str:
 
         if not announcement or len(announcement) > 150:
             logger.warning("LLM response invalid, using fallback")
-            return "I just restarted!"
+            return PennyResponse.RESTART_FALLBACK
 
         logger.info("Generated restart announcement: %s", announcement)
         return announcement
 
     except Exception as e:
         logger.warning("LLM transformation failed: %s, using fallback", e)
-        return "I just restarted!"
+        return PennyResponse.RESTART_FALLBACK

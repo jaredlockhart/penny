@@ -7,9 +7,9 @@ import logging
 from penny.agents.base import Agent
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.constants import EMAIL_NO_QUERY_TEXT
 from penny.jmap.client import JmapClient
 from penny.prompts import EMAIL_SYSTEM_PROMPT
+from penny.responses import PennyResponse
 from penny.tools.email import ReadEmailsTool, SearchEmailsTool
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class EmailCommand(Command):
         prompt = args.strip()
 
         if not prompt:
-            return CommandResult(text=EMAIL_NO_QUERY_TEXT)
+            return CommandResult(text=PennyResponse.EMAIL_NO_QUERY_TEXT)
 
         jmap_client = JmapClient(self._fastmail_api_token)
         agent: Agent | None = None
@@ -66,7 +66,7 @@ class EmailCommand(Command):
 
         except Exception as e:
             logger.exception("Email search failed")
-            return CommandResult(text=f"Failed to search email: {e!s}")
+            return CommandResult(text=PennyResponse.EMAIL_ERROR.format(error=e))
 
         finally:
             if agent:

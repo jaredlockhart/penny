@@ -11,6 +11,7 @@ from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.database.models import ResearchIteration, ResearchTask
 from penny.prompts import RESEARCH_OUTPUT_OPTIONS_PROMPT, RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT
+from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class ResearchCommand(Command):
         if skip_clarification:
             topic = topic[2:].strip()
             if not topic:
-                return CommandResult(text="Please provide a topic after `!`")
+                return CommandResult(text=PennyResponse.RESEARCH_TOPIC_REQUIRED)
 
         # Get research config from runtime config (falls back to .env default)
         max_iterations = context.config.research_max_iterations
@@ -82,7 +83,9 @@ class ResearchCommand(Command):
                 session.commit()
                 logger.info("Queued research task %d: %s", task.id, topic)
                 return CommandResult(
-                    text=f"Queued '{topic}' for research (currently researching '{existing.topic}')"
+                    text=PennyResponse.RESEARCH_QUEUED.format(
+                        topic=topic, existing_topic=existing.topic
+                    )
                 )
 
             if skip_clarification:
@@ -98,12 +101,7 @@ class ResearchCommand(Command):
                 session.commit()
                 logger.info("Created research task %d (skip clarification): %s", task.id, topic)
 
-                return CommandResult(
-                    text=(
-                        f"Ok, started research on '{topic}'. "
-                        "I'll post results when done (this might take a few minutes)"
-                    )
-                )
+                return CommandResult(text=PennyResponse.RESEARCH_STARTED.format(topic=topic))
 
             # Default: generate output format options and create task as awaiting_focus
             options = await self._generate_output_options(topic, context)
@@ -121,11 +119,7 @@ class ResearchCommand(Command):
             logger.info("Created research task %d (awaiting focus): %s", task.id, topic)
 
         return CommandResult(
-            text=(
-                f"What should the report focus on for '{topic}'?\n\n"
-                f"{options}\n\n"
-                "Reply with a number, describe what you want, or say 'go' to start right away."
-            )
+            text=PennyResponse.RESEARCH_FOCUS_PROMPT.format(topic=topic, options=options)
         )
 
     def _list_tasks(self, context: CommandContext) -> CommandResult:
@@ -141,9 +135,9 @@ class ResearchCommand(Command):
             ).all()
 
             if not tasks:
-                return CommandResult(text="No active research tasks")
+                return CommandResult(text=PennyResponse.RESEARCH_NO_ACTIVE)
 
-            lines = ["**Currently researching:**\n"]
+            lines = [PennyResponse.RESEARCH_LIST_HEADER]
             for i, task in enumerate(tasks, 1):
                 iteration_count = session.exec(
                     select(func.count(ResearchIteration.id)).where(
@@ -152,30 +146,32 @@ class ResearchCommand(Command):
                 ).one()
 
                 if task.status == "pending":
-                    progress = "*Queued*"
+                    progress = PennyResponse.RESEARCH_STATUS_QUEUED
                 elif task.status == "awaiting_focus":
-                    progress = "*Awaiting focus*"
+                    progress = PennyResponse.RESEARCH_STATUS_AWAITING
                 else:
                     progress = f"{iteration_count}/{task.max_iterations}"
 
                 lines.append(f"{i}. {task.topic} — {progress}")
 
-            lines.append("\nCancel with `/research cancel <number>`")
+            lines.append(PennyResponse.RESEARCH_CANCEL_FOOTER)
 
             return CommandResult(text="\n".join(lines))
 
     def _cancel_task(self, number_str: str, context: CommandContext) -> CommandResult:
         """Cancel a research task by its list position."""
         if not number_str:
-            return CommandResult(text="Please provide a task number: `/research cancel 1`")
+            return CommandResult(text=PennyResponse.RESEARCH_CANCEL_USAGE)
 
         try:
             position = int(number_str)
         except ValueError:
-            return CommandResult(text=f"'{number_str}' is not a valid number")
+            return CommandResult(
+                text=PennyResponse.RESEARCH_CANCEL_INVALID.format(number=number_str)
+            )
 
         if position < 1:
-            return CommandResult(text="Task number must be 1 or higher")
+            return CommandResult(text=PennyResponse.RESEARCH_CANCEL_MIN)
 
         with Session(context.db.engine) as session:
             tasks = list(
@@ -190,11 +186,11 @@ class ResearchCommand(Command):
             )
 
             if not tasks:
-                return CommandResult(text="No active research tasks to cancel")
+                return CommandResult(text=PennyResponse.RESEARCH_CANCEL_NONE)
 
             if position > len(tasks):
                 return CommandResult(
-                    text=f"Only {len(tasks)} active task(s) — pick a number from 1 to {len(tasks)}"
+                    text=PennyResponse.RESEARCH_CANCEL_RANGE.format(count=len(tasks))
                 )
 
             task = tasks[position - 1]
@@ -204,7 +200,7 @@ class ResearchCommand(Command):
             session.commit()
             logger.info("Cancelled research task %d: %s", task.id, topic)
 
-            return CommandResult(text=f"Cancelled research on '{topic}'")
+            return CommandResult(text=PennyResponse.RESEARCH_CANCELLED.format(topic=topic))
 
     async def _generate_output_options(self, topic: str, context: CommandContext) -> str:
         """Generate output format options for a research topic using LLM."""

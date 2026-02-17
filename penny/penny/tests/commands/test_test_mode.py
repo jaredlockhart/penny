@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from penny.constants import TEST_DB_PATH, TEST_MODE_PREFIX
+from penny.constants import TEST_DB_PATH
+from penny.responses import PennyResponse
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -32,7 +33,7 @@ async def test_test_mode_basic_flow(
 
         # Verify the response has [TEST] prefix
         assert response["recipients"] == [TEST_SENDER]
-        assert response["message"].startswith(TEST_MODE_PREFIX)
+        assert response["message"].startswith(PennyResponse.TEST_MODE_PREFIX)
         assert "here's what i found" in response["message"].lower()
 
         # Verify test database was used (message should be in test db)
@@ -89,7 +90,7 @@ async def test_test_mode_rejects_threading(
 
         # Verify error message from channel layer
         assert response["recipients"] == [TEST_SENDER]
-        assert "threading is not supported for commands" in response["message"].lower()
+        assert "commands can't be used in threads" in response["message"].lower()
 
         # Verify Ollama was NOT called
         assert len(mock_ollama.requests) == 0, "Ollama should not be called for threaded commands"
@@ -116,7 +117,7 @@ async def test_test_mode_uses_real_external_services(
         response = await signal_server.wait_for_message(timeout=10.0)
 
         # Verify response has [TEST] prefix
-        assert response["message"].startswith(TEST_MODE_PREFIX)
+        assert response["message"].startswith(PennyResponse.TEST_MODE_PREFIX)
 
         # Verify Ollama was called (real service usage)
         assert len(mock_ollama.requests) >= 1, "Ollama should be called in test mode"
@@ -153,7 +154,7 @@ async def test_test_mode_blocks_threading_to_test_responses(
 
         # Wait for test response
         test_response = await signal_server.wait_for_message(timeout=10.0)
-        assert test_response["message"].startswith(TEST_MODE_PREFIX)
+        assert test_response["message"].startswith(PennyResponse.TEST_MODE_PREFIX)
 
         # Try to thread-reply to the test response
         await signal_server.push_message(
@@ -167,7 +168,7 @@ async def test_test_mode_blocks_threading_to_test_responses(
 
         # Verify error message
         assert error_response["recipients"] == [TEST_SENDER]
-        assert "threading is not supported for test mode" in error_response["message"].lower()
+        assert "test mode can't be used in threads" in error_response["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -239,7 +240,7 @@ async def test_test_mode_shows_typing_indicator(
 
         # Verify the response
         assert response["recipients"] == [TEST_SENDER]
-        assert response["message"].startswith(TEST_MODE_PREFIX)
+        assert response["message"].startswith(PennyResponse.TEST_MODE_PREFIX)
 
         # Verify typing indicators were sent (at least one start and one stop)
         assert len(signal_server.typing_events) >= 2, "Should have typing events"

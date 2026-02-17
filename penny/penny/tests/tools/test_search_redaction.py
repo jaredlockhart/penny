@@ -17,10 +17,10 @@ class TestRedactQuery:
         assert tool._redact_query("weather in Toronto") == "weather in Toronto"
 
     def test_redacts_name_case_insensitive(self):
-        tool = self._make_tool(["Jared"])
-        assert tool._redact_query("Jared Toronto weather") == "Toronto weather"
-        assert tool._redact_query("jared Toronto weather") == "Toronto weather"
-        assert tool._redact_query("JARED Toronto weather") == "Toronto weather"
+        tool = self._make_tool(["Alex"])
+        assert tool._redact_query("Alex Toronto weather") == "Toronto weather"
+        assert tool._redact_query("alex Toronto weather") == "Toronto weather"
+        assert tool._redact_query("ALEX Toronto weather") == "Toronto weather"
 
     def test_whole_word_only(self):
         tool = self._make_tool(["Ed"])
@@ -29,21 +29,21 @@ class TestRedactQuery:
         assert tool._redact_query("education news") == "education news"
 
     def test_collapses_whitespace(self):
-        tool = self._make_tool(["Jared"])
-        result = tool._redact_query("news for Jared in Toronto")
+        tool = self._make_tool(["Alex"])
+        result = tool._redact_query("news for Alex in Toronto")
         assert "  " not in result
         assert result == "news for in Toronto"
 
     def test_multiple_occurrences(self):
-        tool = self._make_tool(["Jared"])
-        result = tool._redact_query("Jared likes what Jared likes")
-        assert "Jared" not in result
-        assert "jared" not in result.lower()
+        tool = self._make_tool(["Alex"])
+        result = tool._redact_query("Alex likes what Alex likes")
+        assert "Alex" not in result
+        assert "alex" not in result.lower()
 
     def test_empty_terms_ignored(self):
-        tool = self._make_tool(["", "Jared"])
-        assert tool._redact_query("Jared news") == "news"
+        tool = self._make_tool(["", "Alex"])
+        assert tool._redact_query("Alex news") == "news"
 
     def test_preserves_query_when_no_match(self):
-        tool = self._make_tool(["Jared"])
+        tool = self._make_tool(["Alex"])
         assert tool._redact_query("Toronto weather forecast") == "Toronto weather forecast"
