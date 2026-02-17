@@ -76,6 +76,7 @@ class EntityExtractor(Agent):
         if not search_logs:
             return False
 
+        logger.info("Processing %d unprocessed search logs", len(search_logs))
         work_done = False
         for search_log in search_logs:
             assert search_log.id is not None
@@ -85,6 +86,7 @@ class EntityExtractor(Agent):
                 self.db.update_extraction_cursor("search", search_log.id)
                 continue
 
+            logger.info("Extracting entities from search: %s", search_log.query)
             result = await self._extract_and_store(
                 user=user,
                 query=search_log.query,
@@ -128,6 +130,7 @@ class EntityExtractor(Agent):
             if entity and entity.id is not None:
                 entities_to_process.append(entity)
                 work_done = True
+                logger.info("New entity discovered: '%s'", name)
 
         # Look up known entities that were identified
         existing_by_name = {e.name: e for e in existing_entities}
@@ -135,6 +138,7 @@ class EntityExtractor(Agent):
             normalized = known_name.lower().strip()
             if normalized in existing_by_name:
                 entities_to_process.append(existing_by_name[normalized])
+                logger.info("Known entity referenced: '%s'", normalized)
 
         # Pass 2: extract facts for each identified entity
         for entity in entities_to_process:
@@ -156,12 +160,8 @@ class EntityExtractor(Agent):
             if genuinely_new:
                 all_facts = list(existing_facts) + genuinely_new
                 self.db.update_entity_facts(entity.id, "\n".join(all_facts))
-                logger.info(
-                    "Added %d facts to entity '%s' for user %s",
-                    len(genuinely_new),
-                    entity.name,
-                    user,
-                )
+                for fact in genuinely_new:
+                    logger.info("  '%s' +fact: %s", entity.name, fact)
                 work_done = True
 
         return work_done
