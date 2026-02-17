@@ -52,3 +52,6 @@ class PennyConstants:
 
     # Vision constants
     VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
+
+    # Entity knowledge base constants
+    ENTITY_EXTRACTION_BATCH_LIMIT = 10

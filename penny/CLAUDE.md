@@ -16,7 +16,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nSummarize · Followup · Preference · Discovery"]
+    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Preference · Discovery · EntityExtractor"]
 ```
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
@@ -45,6 +45,7 @@ penny/
     preference.py     — PreferenceAgent: extracts user preferences from messages and reactions
     discovery.py      — DiscoveryAgent: proactive content sharing based on user interests
     research.py       — ResearchAgent: autonomous multi-iteration deep research
+    entity_extractor.py — EntityExtractor: background entity/fact extraction from search results
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
     schedules.py      — PeriodicSchedule, DelayedSchedule, AlwaysRunSchedule implementations
@@ -83,10 +84,10 @@ penny/
       channel.py      — DiscordChannel: discord.py bot integration
       models.py       — DiscordMessage, DiscordUser Pydantic models
   database/
-    database.py       — Database: SQLite via SQLModel, thread walking, preference/personality storage
+    database.py       — Database: SQLite via SQLModel, thread walking, preference/personality/entity storage
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0011)
+    migrations/       — Numbered migration files (0001–0012)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client
     models.py         — ChatResponse, ChatResponseMessage
@@ -97,7 +98,7 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_followup.py, test_preference.py, test_discovery.py, test_research.py
+      test_message.py, test_followup.py, test_preference.py, test_discovery.py, test_research.py, test_entity_extractor.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py, test_startup_announcement.py
     commands/         — Per-command tests
@@ -153,6 +154,15 @@ The base `Agent` class implements the core agentic loop:
 - Sends unsolicited but relevant content via channel
 - Not threaded (sends as new conversation, not a reply)
 
+**EntityExtractor** (`agents/entity_extractor.py`)
+- Background task: extracts named entities and facts from SearchLog entries
+- Two-pass extraction: pass 1 identifies known+new entities, pass 2 extracts facts per entity (one LLM call each)
+- Each pass uses Ollama structured output with Pydantic schemas (`IdentifiedEntities`, `ExtractedFacts`)
+- Cursor-based progress tracking via `entity_extraction_cursor` table (high-water mark, avoids reprocessing)
+- Fact dedup handled in Python-space: only appends genuinely new facts to existing entity records
+- Associates SearchLog entries with users via `find_sender_for_timestamp()`
+- ResearchIteration entries are NOT processed (their findings are LLM-synthesized reports of the same search results already in SearchLog)
+
 **ResearchAgent** (`agents/research.py`)
 - Background task: autonomous multi-iteration deep research on user-requested topics
 - Manages `ResearchTask` and `ResearchIteration` database records
@@ -175,7 +185,7 @@ The base `Agent` class implements the core agentic loop:
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule → research → preference → followup → discovery)
+- Runs tasks in priority order (schedule → research → preference → entity_extractor → followup → discovery)
 - Tracks global idle threshold (default: 300s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
@@ -285,7 +295,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Specialized agents**: Each task type (message, research, followup, preference, discovery) has its own agent subclass
-- **Priority scheduling**: Schedule → research → preference → followup → discovery
+- **Priority scheduling**: Schedule → research → preference → entity_extractor → followup → discovery
 - **Always-run schedules**: Research and user-created schedules run regardless of idle state; preference/followup/discovery wait for idle
 - **Global idle threshold**: Single configurable idle time (default: 300s) controls when idle-dependent tasks become eligible
 - **Background suspension**: Foreground message processing suspends background tasks to prevent interference
@@ -307,7 +317,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0011):
+File-based migration system in `database/migrations/` (currently 0001–0012):
 - Each migration is a numbered Python file (e.g., `0001_add_reaction_fields.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -322,6 +332,7 @@ Notable migrations:
 - 0008: Drop `parent_summary` (removed SummarizeAgent)
 - 0009: `PersonalityPrompt` table for per-user personality customization
 - 0010–0011: `ResearchTask` and `ResearchIteration` tables with focus/options columns
+- 0012: `Entity` and `entity_extraction_cursor` tables for entity knowledge base
 
 ## Extending
 

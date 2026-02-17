@@ -43,7 +43,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Preference · Discovery"]
+    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Preference · Discovery · EntityExtractor"]
 ```
 
 ### Agent Architecture
@@ -55,6 +55,7 @@ Penny uses specialized agent subclasses for different tasks:
 - **FollowupAgent**: Background task that spontaneously follows up on conversations
 - **PreferenceAgent**: Background task that extracts user preferences from messages and reactions
 - **DiscoveryAgent**: Background task that shares new content based on user interests
+- **EntityExtractor**: Background task that extracts named entities and facts from search results
 - **ScheduleExecutor**: Runs user-created cron-based scheduled tasks
 
 Each agent owns its own OllamaClient instance and can have its own tools and prompts.
@@ -66,8 +67,9 @@ Background tasks are managed by a priority-based scheduler with a global idle th
 1. **Schedule** (AlwaysRunSchedule) — runs user-created cron-based tasks every 60s
 2. **Research** (AlwaysRunSchedule) — processes in-progress research tasks
 3. **Preference** (PeriodicSchedule) — extracts user preferences from messages
-4. **Followup** (DelayedSchedule) — spontaneous conversation followups
-5. **Discovery** (DelayedSchedule) — proactive content sharing
+4. **EntityExtractor** (PeriodicSchedule) — extracts entities and facts from search results
+5. **Followup** (DelayedSchedule) — spontaneous conversation followups
+6. **Discovery** (DelayedSchedule) — proactive content sharing
 
 **Global idle threshold** (default: 300s): Idle-dependent background tasks wait for the system to become idle before they can run. Background tasks are suspended during foreground message processing.
 
@@ -158,6 +160,11 @@ Penny stores data in SQLite across several tables:
 
 **PersonalityPrompt**: Per-user personality customization
 - Prompt text that transforms Penny's response style
+
+**Entity**: Named entity knowledge base
+- User, name (lowercased), facts stored as bulleted text lines (e.g., "- costs $1599\n- uses MAT driver")
+- Extracted from SearchLog entries by EntityExtractor agent
+- Progress tracked via `entity_extraction_cursor` table (high-water mark per source type)
 
 **RuntimeConfig**: User-configurable settings (via `/config`)
 **CommandLog**: Log of every command invocation
@@ -345,7 +352,7 @@ CI runs `make check` in Docker on every push to `main` and on pull requests via 
 
 **Test Coverage:**
 - Message flow: tool calls, direct responses, typing indicators, DB logging
-- Background tasks: research, preferences, spontaneous followups, discovery
+- Background tasks: research, preferences, spontaneous followups, discovery, entity extraction
 - Commands: /debug, /config, /test, /commands, /personality, /research, /schedule, /bug, /draw, /email, /like, /dislike
 - Startup announcements, Signal channel integration, vision processing
 - Tool validation: timeouts, missing params, non-existent tools, search redaction
