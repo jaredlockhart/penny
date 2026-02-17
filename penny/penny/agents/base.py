@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
@@ -14,6 +15,20 @@ from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
+
+# Matches function call syntax that models sometimes leak into text content,
+# e.g. <function=search>{"query": "..."}</function>
+_FUNCTION_CALL_PATTERN = re.compile(r"<function=\w+>.*?</function>", re.DOTALL)
+
+
+def _strip_function_calls(content: str) -> str:
+    """Remove leaked function call syntax from model output.
+
+    Some models emit <function=name>...</function> tokens directly in their
+    text content instead of using structured tool_calls. These must never
+    reach the user.
+    """
+    return _FUNCTION_CALL_PATTERN.sub("", content).strip()
 
 
 class Agent:
@@ -254,7 +269,10 @@ class Agent:
                 continue
 
             # No tool calls - final answer
-            content = response.content.strip()
+            content = _strip_function_calls(response.content)
+
+            if content != response.content.strip():
+                logger.warning("Stripped leaked function call syntax from model response")
 
             if not content:
                 logger.error("Model returned empty content!")

@@ -8,6 +8,43 @@ from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
+async def test_function_call_syntax_not_leaked_to_user(
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+):
+    """
+    Regression test for #262: function call syntax leaked in off-topic reply.
+
+    When a model emits <function=...>...</function> syntax directly in its text
+    content (instead of using structured tool_calls), it must be stripped before
+    the response is sent to the user.
+    """
+    # Simulate a model that embeds function call syntax in plain text content
+    # rather than using proper JSON tool_calls
+    leaked_response = (
+        'I\'ll look that up! <function=search>{"query": "movie recommendations"}'
+        "</function> Here are some great movies for you!"
+    )
+
+    def response_with_leaked_function_call(request, count):
+        return mock_ollama._make_text_response(request, leaked_response)
+
+    mock_ollama.set_response_handler(response_with_leaked_function_call)
+
+    async with running_penny(test_config):
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="recommend a movie",
+        )
+
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        # The function call syntax must never appear in the user-facing response
+        assert "<function=" not in response["message"], (
+            f"Function call syntax leaked to user: {response['message']}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_basic_message_flow(
     signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
 ):
