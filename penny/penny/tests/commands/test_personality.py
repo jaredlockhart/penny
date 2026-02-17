@@ -19,7 +19,7 @@ async def test_personality_no_args_shows_default(
 
         # Should show default message
         assert "No custom personality set" in response["message"]
-        assert "default Penny personality" in response["message"]
+        assert "using the default" in response["message"]
 
 
 @pytest.mark.asyncio
@@ -105,4 +105,4 @@ async def test_personality_reset_when_not_set(
 
         # Wait for response
         response = await signal_server.wait_for_message(timeout=5.0)
-        assert "No custom personality was set" in response["message"]
+        assert "No custom personality to reset" in response["message"]

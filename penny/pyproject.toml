@@ -3,7 +3,7 @@ name = "penny"
 version = "0.1.0"
 description = "A simple, local-first AI agent that communicates via Signal"
 authors = [{ name = "Jared Lockhart" }]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "websockets>=13.0",
     "httpx>=0.27.0",
@@ -38,7 +38,7 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = [

@@ -30,7 +30,7 @@ __all__ = [
 
 def create_command_registry(
     message_agent_factory: Callable | None = None,
-    github_api: "GitHubAPI | None" = None,
+    github_api: GitHubAPI | None = None,
     ollama_image_model: str | None = None,
     fastmail_api_token: str | None = None,
 ) -> CommandRegistry:

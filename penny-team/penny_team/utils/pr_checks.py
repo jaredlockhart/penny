@@ -64,7 +64,7 @@ def enrich_issues_with_pr_status(
 
     try:
         prs = _fetch_open_prs(api)
-    except (OSError, RuntimeError):
+    except OSError, RuntimeError:
         logger.warning("Failed to fetch PR statuses, skipping CI/merge detection")
         return
 
@@ -226,7 +226,7 @@ def _collect_human_review_comments(
                 location = f" (`{comment.path}`)" if comment.path else ""
                 parts.append(f"**{comment.user.login}**{location}:\n{comment.body}\n")
         return parts
-    except (OSError, ValueError, RuntimeError):
+    except OSError, ValueError, RuntimeError:
         return []
 
 

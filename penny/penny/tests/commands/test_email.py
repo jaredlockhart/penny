@@ -10,8 +10,8 @@ import pytest
 from penny.commands.email import EmailCommand
 from penny.commands.models import CommandContext
 from penny.config import Config
-from penny.constants import EMAIL_NO_QUERY_TEXT
 from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary
+from penny.responses import EMAIL_NO_QUERY_TEXT
 from penny.tests.conftest import TEST_SENDER
 from penny.tools.email import NO_EMAILS_TO_READ, ReadEmailsTool
 

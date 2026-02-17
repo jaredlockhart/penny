@@ -6,7 +6,8 @@ import logging
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.constants import (
+from penny.responses import (
+    PERSONALITY_CURRENT,
     PERSONALITY_NO_CUSTOM,
     PERSONALITY_RESET_NOT_SET,
     PERSONALITY_RESET_SUCCESS,
@@ -44,7 +45,9 @@ class PersonalityCommand(Command):
             if not personality:
                 return CommandResult(text=PERSONALITY_NO_CUSTOM)
 
-            return CommandResult(text=f"Current personality: {personality.prompt_text}")
+            return CommandResult(
+                text=PERSONALITY_CURRENT.format(prompt_text=personality.prompt_text)
+            )
 
         # Reset personality
         if args.lower() == "reset":

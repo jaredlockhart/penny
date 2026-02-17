@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING, Any
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.constants import TEST_DB_PATH, TEST_MODE_PREFIX
+from penny.constants import TEST_DB_PATH
+from penny.responses import (
+    TEST_ERROR,
+    TEST_MODE_PREFIX,
+    TEST_NESTED_ERROR,
+    TEST_NO_RESPONSE,
+    TEST_USAGE,
+)
 
 if TYPE_CHECKING:
     from penny.agents.message import MessageAgent
@@ -47,11 +54,11 @@ class TestCommand(Command):
 
         # Validate args
         if not prompt:
-            return CommandResult(text="Usage: /test <prompt>")
+            return CommandResult(text=TEST_USAGE)
 
         # Reject nested commands
         if prompt.startswith("/"):
-            return CommandResult(text="Nested commands are not supported in test mode.")
+            return CommandResult(text=TEST_NESTED_ERROR)
 
         # Create test database instance
         from penny.database import Database
@@ -71,9 +78,9 @@ class TestCommand(Command):
             )
 
             # Prepend [TEST] to response
-            answer = response.answer.strip() if response.answer else "No response generated."
+            answer = response.answer.strip() if response.answer else TEST_NO_RESPONSE
             return CommandResult(text=f"{TEST_MODE_PREFIX}{answer}")
 
         except Exception as e:
             logger.exception("Error executing test command: %s", e)
-            return CommandResult(text=f"Test mode error: {e!s}")
+            return CommandResult(text=TEST_ERROR.format(error=e))

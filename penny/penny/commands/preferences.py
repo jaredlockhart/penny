@@ -7,6 +7,26 @@ import logging
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.constants import PreferenceType
+from penny.responses import (
+    DISLIKE_ADDED,
+    DISLIKE_ADDED_CONFLICT,
+    DISLIKE_DUPLICATE,
+    DISLIKES_EMPTY,
+    DISLIKES_HEADER,
+    LIKE_ADDED,
+    LIKE_ADDED_CONFLICT,
+    LIKE_DUPLICATE,
+    LIKES_EMPTY,
+    LIKES_HEADER,
+    UNDISLIKE_NOT_FOUND,
+    UNDISLIKE_OUT_OF_RANGE,
+    UNDISLIKE_REMOVED,
+    UNDISLIKE_USAGE,
+    UNLIKE_NOT_FOUND,
+    UNLIKE_OUT_OF_RANGE,
+    UNLIKE_REMOVED,
+    UNLIKE_USAGE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +55,9 @@ class LikeCommand(Command):
         if not args:
             likes = context.db.get_preferences(context.user, PreferenceType.LIKE)
             if not likes:
-                return CommandResult(text="You don't have any likes stored yet")
+                return CommandResult(text=LIKES_EMPTY)
 
-            lines = ["Here are your stored likes:", ""]
+            lines = [LIKES_HEADER, ""]
             for i, pref in enumerate(likes, 1):
                 lines.append(f"{i}. {pref.topic}")
             return CommandResult(text="\n".join(lines))
@@ -53,16 +73,14 @@ class LikeCommand(Command):
             context.db.remove_preference(context.user, topic, PreferenceType.DISLIKE)
             # Add to likes
             context.db.add_preference(context.user, topic, PreferenceType.LIKE)
-            return CommandResult(
-                text=f"I added {topic} to your likes and removed it from your dislikes"
-            )
+            return CommandResult(text=LIKE_ADDED_CONFLICT.format(topic=topic))
         else:
             # Just add to likes
             added = context.db.add_preference(context.user, topic, PreferenceType.LIKE)
             if added:
-                return CommandResult(text=f"I added {topic} to your likes")
+                return CommandResult(text=LIKE_ADDED.format(topic=topic))
             else:
-                return CommandResult(text=f"{topic} is already in your likes")
+                return CommandResult(text=LIKE_DUPLICATE.format(topic=topic))
 
 
 class DislikeCommand(Command):
@@ -89,9 +107,9 @@ class DislikeCommand(Command):
         if not args:
             dislikes = context.db.get_preferences(context.user, PreferenceType.DISLIKE)
             if not dislikes:
-                return CommandResult(text="You don't have any dislikes stored yet")
+                return CommandResult(text=DISLIKES_EMPTY)
 
-            lines = ["Here are your stored dislikes:", ""]
+            lines = [DISLIKES_HEADER, ""]
             for i, pref in enumerate(dislikes, 1):
                 lines.append(f"{i}. {pref.topic}")
             return CommandResult(text="\n".join(lines))
@@ -109,16 +127,14 @@ class DislikeCommand(Command):
             context.db.remove_preference(context.user, topic, PreferenceType.LIKE)
             # Add to dislikes
             context.db.add_preference(context.user, topic, PreferenceType.DISLIKE)
-            return CommandResult(
-                text=f"I added {topic} to your dislikes and removed it from your likes"
-            )
+            return CommandResult(text=DISLIKE_ADDED_CONFLICT.format(topic=topic))
         else:
             # Just add to dislikes
             added = context.db.add_preference(context.user, topic, PreferenceType.DISLIKE)
             if added:
-                return CommandResult(text=f"I added {topic} to your dislikes")
+                return CommandResult(text=DISLIKE_ADDED.format(topic=topic))
             else:
-                return CommandResult(text=f"{topic} is already in your dislikes")
+                return CommandResult(text=DISLIKE_DUPLICATE.format(topic=topic))
 
 
 class UnlikeCommand(Command):
@@ -141,7 +157,7 @@ class UnlikeCommand(Command):
         args = args.strip()
 
         if not args:
-            return CommandResult(text="Please specify what to remove, like: /unlike video games")
+            return CommandResult(text=UNLIKE_USAGE)
 
         # Check if args is a number (list position)
         if args.isdigit():
@@ -149,7 +165,7 @@ class UnlikeCommand(Command):
             likes = context.db.get_preferences(context.user, PreferenceType.LIKE)
 
             if position < 1 or position > len(likes):
-                return CommandResult(text=f"{position} doesn't match any of your likes")
+                return CommandResult(text=UNLIKE_OUT_OF_RANGE.format(position=position))
 
             # Get the topic at this position (1-indexed)
             topic = likes[position - 1].topic
@@ -160,9 +176,9 @@ class UnlikeCommand(Command):
         removed = context.db.remove_preference(context.user, topic, PreferenceType.LIKE)
 
         if removed:
-            return CommandResult(text=f"I removed {topic} from your likes")
+            return CommandResult(text=UNLIKE_REMOVED.format(topic=topic))
         else:
-            return CommandResult(text=f"{topic} wasn't in your likes")
+            return CommandResult(text=UNLIKE_NOT_FOUND.format(topic=topic))
 
 
 class UndislikeCommand(Command):
@@ -185,7 +201,7 @@ class UndislikeCommand(Command):
         args = args.strip()
 
         if not args:
-            return CommandResult(text="Please specify what to remove, like: /undislike bananas")
+            return CommandResult(text=UNDISLIKE_USAGE)
 
         # Check if args is a number (list position)
         if args.isdigit():
@@ -193,7 +209,7 @@ class UndislikeCommand(Command):
             dislikes = context.db.get_preferences(context.user, PreferenceType.DISLIKE)
 
             if position < 1 or position > len(dislikes):
-                return CommandResult(text=f"{position} doesn't match any of your dislikes")
+                return CommandResult(text=UNDISLIKE_OUT_OF_RANGE.format(position=position))
 
             # Get the topic at this position (1-indexed)
             topic = dislikes[position - 1].topic
@@ -204,6 +220,6 @@ class UndislikeCommand(Command):
         removed = context.db.remove_preference(context.user, topic, PreferenceType.DISLIKE)
 
         if removed:
-            return CommandResult(text=f"I removed {topic} from your dislikes")
+            return CommandResult(text=UNDISLIKE_REMOVED.format(topic=topic))
         else:
-            return CommandResult(text=f"{topic} wasn't in your dislikes")
+            return CommandResult(text=UNDISLIKE_NOT_FOUND.format(topic=topic))

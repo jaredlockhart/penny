@@ -28,8 +28,8 @@ async def test_debug_command(signal_server, test_config, mock_ollama, running_pe
         assert "**Background Tasks**:" in response["message"]
         assert "**Memory**:" in response["message"]
 
-        # Should show actual scheduler status, not "unknown (no scheduler)"
-        assert "unknown (no scheduler)" not in response["message"]
+        # Should show actual scheduler status, not "Unknown (no scheduler)"
+        assert "Unknown (no scheduler)" not in response["message"]
         # Should show at least one agent name from the scheduler
         assert any(
             agent in response["message"]

@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # System dependencies: git, make, curl, gpg (for repo key imports)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -48,7 +48,7 @@ RUN cd /repo/penny-team && uv pip install --system . --group dev --quiet
 # Claude CLI refuses --dangerously-skip-permissions as root
 COPY penny-team/scripts/entrypoint.sh /entrypoint.sh
 RUN useradd -m -s /bin/bash agent \
-    && chown -R agent:agent /repo /usr/local/lib/python3.12/ /usr/local/bin/ /usr/local/include/python3.12/ \
+    && chown -R agent:agent /repo /usr/local/lib/python3.14/ /usr/local/bin/ /usr/local/include/python3.14/ \
     && chmod +x /entrypoint.sh
 USER agent
 

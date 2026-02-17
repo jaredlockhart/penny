@@ -17,10 +17,10 @@ from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputI
 from penny.constants import (
     IMAGE_DOWNLOAD_TIMEOUT,
     IMAGE_MAX_RESULTS,
-    NO_RESULTS_TEXT,
     PERPLEXITY_PRESET,
     URL_BLOCKLIST_DOMAINS,
 )
+from penny.responses import NO_RESULTS_TEXT, SEARCH_ERROR
 from penny.tools.base import Tool
 from penny.tools.models import SearchResult
 
@@ -77,7 +77,7 @@ class SearchTool(Tool):
         if self.skip_images:
             text_result = await self._search_text(redacted_query)
             if isinstance(text_result, Exception):
-                return SearchResult(text=f"Error performing search: {text_result}")
+                return SearchResult(text=SEARCH_ERROR.format(error=text_result))
             text, urls = text_result
             return SearchResult(text=text, urls=urls)
 
@@ -90,7 +90,7 @@ class SearchTool(Tool):
         # Handle text result
         urls: list[str] = []
         if isinstance(text_result, Exception):
-            text = f"Error performing search: {text_result}"
+            text = SEARCH_ERROR.format(error=text_result)
         else:
             text, urls = text_result
 
