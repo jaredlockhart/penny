@@ -158,7 +158,8 @@ The base `Agent` class implements the core agentic loop:
 - Background task: extracts named entities and facts from SearchLog entries
 - Two-pass extraction: pass 1 identifies known+new entities, pass 2 extracts facts per entity (one LLM call each)
 - Each pass uses Ollama structured output with Pydantic schemas (`IdentifiedEntities`, `ExtractedFacts`)
-- Cursor-based progress tracking via `entity_extraction_cursor` table (high-water mark, avoids reprocessing)
+- Processes searches most-recent-first (descending by ID) so fresh searches get extracted sooner
+- Progress tracked via `entity_search_log` join table (also records entity-to-search provenance)
 - Fact dedup handled in Python-space: only appends genuinely new facts to existing entity records
 - Associates SearchLog entries with users via `find_sender_for_timestamp()`
 - ResearchIteration entries are NOT processed (their findings are LLM-synthesized reports of the same search results already in SearchLog)
@@ -333,6 +334,7 @@ Notable migrations:
 - 0009: `PersonalityPrompt` table for per-user personality customization
 - 0010–0011: `ResearchTask` and `ResearchIteration` tables with focus/options columns
 - 0012: `Entity` and `entity_extraction_cursor` tables for entity knowledge base
+- 0013: `entity_search_log` join table (replaces cursor; tracks entity-to-search provenance)
 
 ## Extending
 

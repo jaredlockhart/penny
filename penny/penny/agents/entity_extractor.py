@@ -83,7 +83,7 @@ class EntityExtractor(Agent):
 
             user = self.db.find_sender_for_timestamp(search_log.timestamp)
             if not user:
-                self.db.update_extraction_cursor("search", search_log.id)
+                self.db.link_entity_to_search_log(None, search_log.id)
                 continue
 
             logger.info("Extracting entities from search: %s", search_log.query)
@@ -91,15 +91,16 @@ class EntityExtractor(Agent):
                 user=user,
                 query=search_log.query,
                 content=search_log.response,
+                search_log_id=search_log.id,
             )
             if result:
                 work_done = True
 
-            self.db.update_extraction_cursor("search", search_log.id)
-
         return work_done
 
-    async def _extract_and_store(self, user: str, query: str, content: str) -> bool:
+    async def _extract_and_store(
+        self, user: str, query: str, content: str, search_log_id: int
+    ) -> bool:
         """
         Two-pass extraction for a single piece of content.
 
@@ -113,6 +114,7 @@ class EntityExtractor(Agent):
         # Pass 1: identify entities
         identified = await self._identify_entities(existing_entities, query, content)
         if not identified:
+            self.db.link_entity_to_search_log(None, search_log_id)
             return False
 
         work_done = False
@@ -143,6 +145,7 @@ class EntityExtractor(Agent):
         # Pass 2: extract facts for each identified entity
         for entity in entities_to_process:
             assert entity.id is not None
+            self.db.link_entity_to_search_log(entity.id, search_log_id)
             new_facts = await self._extract_facts(entity, query, content)
             if not new_facts:
                 continue
@@ -163,6 +166,10 @@ class EntityExtractor(Agent):
                 for fact in genuinely_new:
                     logger.info("  '%s' +fact: %s", entity.name, fact)
                 work_done = True
+
+        # If no entities were linked (all names were empty/invalid), insert sentinel
+        if not entities_to_process:
+            self.db.link_entity_to_search_log(None, search_log_id)
 
         return work_done
 

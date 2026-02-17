@@ -13,6 +13,7 @@ from penny.constants import PennyConstants
 from penny.database.models import (
     CommandLog,
     Entity,
+    EntitySearchLog,
     MessageLog,
     PersonalityPrompt,
     Preference,
@@ -935,53 +936,6 @@ class Database:
                 ).all()
             )
 
-    def get_extraction_cursor(self, source_type: str) -> int:
-        """
-        Get the high-water mark for entity extraction.
-
-        Args:
-            source_type: Source type ("search" or "research")
-
-        Returns:
-            Last processed ID, or 0 if not set
-        """
-        try:
-            with self.get_session() as session:
-                from sqlalchemy import text
-
-                sql = text(
-                    "SELECT last_processed_id FROM entity_extraction_cursor WHERE source_type = :st"
-                )
-                result = session.execute(sql, {"st": source_type})
-                row = result.first()
-                return row[0] if row else 0
-        except Exception:
-            return 0
-
-    def update_extraction_cursor(self, source_type: str, last_id: int) -> None:
-        """
-        Update the high-water mark for entity extraction.
-
-        Args:
-            source_type: Source type ("search" or "research")
-            last_id: Last processed ID
-        """
-        try:
-            with self.get_session() as session:
-                from sqlalchemy import text
-
-                session.execute(
-                    text(
-                        "INSERT INTO entity_extraction_cursor (source_type, last_processed_id)"
-                        " VALUES (:st, :lid)"
-                        " ON CONFLICT(source_type) DO UPDATE SET last_processed_id = :lid"
-                    ),
-                    {"st": source_type, "lid": last_id},
-                )
-                session.commit()
-        except Exception as e:
-            logger.error("Failed to update extraction cursor: %s", e)
-
     def get_unprocessed_search_logs(self, limit: int) -> list[SearchLog]:
         """
         Get SearchLog entries that haven't been processed for entity extraction.
@@ -990,18 +944,36 @@ class Database:
             limit: Maximum number of entries to return
 
         Returns:
-            List of SearchLog entries with id > cursor, ordered by id ascending
+            List of unprocessed SearchLog entries, most recent first
         """
-        cursor = self.get_extraction_cursor("search")
+        processed_ids = select(EntitySearchLog.search_log_id).distinct()
         with self.get_session() as session:
             return list(
                 session.exec(
                     select(SearchLog)
-                    .where(SearchLog.id > cursor)  # type: ignore[operator]
-                    .order_by(SearchLog.id.asc())  # type: ignore[unresolved-attribute]
+                    .where(SearchLog.id.not_in(processed_ids))  # type: ignore[union-attr]
+                    .order_by(SearchLog.id.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
+
+    def link_entity_to_search_log(self, entity_id: int | None, search_log_id: int) -> None:
+        """
+        Record that an entity was extracted from a search log.
+
+        When entity_id is None, acts as a sentinel marking the search as processed
+        (e.g., when no entities were found).
+        """
+        try:
+            with self.get_session() as session:
+                link = EntitySearchLog(
+                    entity_id=entity_id,
+                    search_log_id=search_log_id,
+                )
+                session.add(link)
+                session.commit()
+        except Exception as e:
+            logger.error("Failed to link entity %s to search %s: %s", entity_id, search_log_id, e)
 
     def find_sender_for_timestamp(self, timestamp: datetime) -> str | None:
         """

@@ -169,3 +169,18 @@ class Entity(SQLModel, table=True):
     facts: str = ""  # Bulleted text lines, e.g. "- costs $1599\n- uses MAT driver"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class EntitySearchLog(SQLModel, table=True):
+    """Join table linking entities to the search logs they were extracted from.
+
+    A row with entity_id=None is a sentinel marking the search as processed
+    when no entities were found.
+    """
+
+    __tablename__ = "entity_search_log"
+
+    id: int | None = Field(default=None, primary_key=True)
+    entity_id: int | None = Field(default=None, foreign_key="entity.id", index=True)
+    search_log_id: int = Field(foreign_key="searchlog.id", index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
