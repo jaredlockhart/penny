@@ -7,6 +7,7 @@ from penny.commands.base import Command, CommandRegistry
 from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
 from penny.commands.index import IndexCommand
+from penny.commands.memory import MemoryCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
 from penny.commands.personality import PersonalityCommand
 from penny.commands.preferences import DislikeCommand, LikeCommand, UndislikeCommand, UnlikeCommand
@@ -59,6 +60,7 @@ def create_command_registry(
     registry.register(ScheduleCommand())
     registry.register(ResearchCommand())
     registry.register(PersonalityCommand())
+    registry.register(MemoryCommand())
     registry.register(LikeCommand())
     registry.register(DislikeCommand())
     registry.register(UnlikeCommand())
