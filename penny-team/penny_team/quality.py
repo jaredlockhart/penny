@@ -399,10 +399,14 @@ class QualityAgent(Agent):
         # Step 2: Evaluate each pair individually and file issues
         found = 0
         filed = 0
-        for pair in pairs:
+        total = len(pairs)
+        for idx, pair in enumerate(pairs, 1):
             if filed >= QUALITY_MAX_ISSUES_PER_CYCLE:
                 break
 
+            logger.info(
+                f"[{self.name}] Evaluating pair {idx}/{total} (message #{pair.outgoing_id})"
+            )
             issue = self._evaluate_pair(pair)
             if issue is None:
                 continue
