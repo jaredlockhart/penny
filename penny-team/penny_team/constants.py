@@ -41,6 +41,7 @@ AGENT_PM = "product-manager"
 AGENT_ARCHITECT = "architect"
 AGENT_WORKER = "worker"
 AGENT_MONITOR = "monitor"
+AGENT_QUALITY = "quality"
 
 
 # =============================================================================
@@ -55,6 +56,8 @@ WORKER_INTERVAL = 300
 WORKER_TIMEOUT = 1800
 MONITOR_INTERVAL = 300
 MONITOR_TIMEOUT = 600
+QUALITY_INTERVAL = 3600
+QUALITY_TIMEOUT = 600
 
 
 # =============================================================================
@@ -229,3 +232,38 @@ MONITOR_MAX_ERROR_CONTEXT = 50 * 1024  # 50KB
 
 # State key for byte offset
 MONITOR_STATE_OFFSET = "byte_offset"
+
+
+# =============================================================================
+# Quality agent — response evaluation
+# =============================================================================
+
+# Labels applied to quality-filed issues
+QUALITY_LABELS = ["bug", "quality"]
+
+# Maximum issues to file per cycle (safety cap)
+QUALITY_MAX_ISSUES_PER_CYCLE = 3
+
+# State key for last processed timestamp
+QUALITY_STATE_TIMESTAMP = "last_processed_at"
+
+# Maximum lookback on first run (no saved state) — avoids re-evaluating
+# the entire message history, which may contain already-fixed issues
+QUALITY_MAX_LOOKBACK_HOURS = 48
+
+# Minimum message length for privacy substring checks (shorter messages
+# like "yes" or "thanks" would cause false positives)
+QUALITY_PRIVACY_MIN_LENGTH = 20
+
+# Default Ollama API URL
+OLLAMA_DEFAULT_URL = "http://host.docker.internal:11434"
+
+# Ollama API endpoint for chat completions
+OLLAMA_CHAT_ENDPOINT = "/api/chat"
+
+# Environment variable keys for Ollama config
+ENV_OLLAMA_URL = "OLLAMA_API_URL"
+ENV_OLLAMA_MODEL = "OLLAMA_BACKGROUND_MODEL"
+
+# Penny database path (relative to project root)
+PENNY_DB_RELATIVE_PATH = "data/penny.db"

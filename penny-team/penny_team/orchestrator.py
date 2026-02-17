@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import time
@@ -32,6 +33,7 @@ from penny_team.constants import (
     AGENT_ARCHITECT,
     AGENT_MONITOR,
     AGENT_PM,
+    AGENT_QUALITY,
     AGENT_WORKER,
     APP_PREFIX,
     ARCHITECT_INTERVAL,
@@ -41,18 +43,24 @@ from penny_team.constants import (
     ENV_FILENAME,
     ENV_INSTALL_ID,
     ENV_KEY_PATH,
+    ENV_OLLAMA_MODEL,
+    ENV_OLLAMA_URL,
     GITHUB_REPO_NAME,
     GITHUB_REPO_OWNER,
     MONITOR_INTERVAL,
     MONITOR_TIMEOUT,
+    OLLAMA_DEFAULT_URL,
     ORCHESTRATOR_LOG,
     PM_INTERVAL,
     PM_TIMEOUT,
+    QUALITY_INTERVAL,
+    QUALITY_TIMEOUT,
     WORKER_INTERVAL,
     WORKER_TIMEOUT,
     Label,
 )
 from penny_team.monitor import MonitorAgent
+from penny_team.quality import QualityAgent
 from penny_team.utils.codeowners import parse_codeowners
 
 AGENTS_DIR = Path(__file__).parent
@@ -64,7 +72,6 @@ logger = logging.getLogger(__name__)
 
 def load_github_app():
     """Load GitHub App config from environment variables."""
-    import os
 
     app_id = os.getenv(ENV_APP_ID)
     key_path = os.getenv(ENV_KEY_PATH)
@@ -114,7 +121,7 @@ def get_agents(github_app=None) -> list[Agent]:
         GitHubAPI(github_app.get_token, GITHUB_REPO_OWNER, GITHUB_REPO_NAME) if github_app else None
     )
 
-    return [
+    agents: list[Agent] = [
         Agent(
             name=AGENT_PM,
             interval_seconds=PM_INTERVAL,
@@ -156,6 +163,24 @@ def get_agents(github_app=None) -> list[Agent]:
             trusted_users=trusted,
         ),
     ]
+
+    # Quality agent is optional — only registered when Ollama model is configured
+    ollama_model = os.getenv(ENV_OLLAMA_MODEL)
+    if ollama_model:
+        agents.append(
+            QualityAgent(
+                name=AGENT_QUALITY,
+                interval_seconds=QUALITY_INTERVAL,
+                timeout_seconds=QUALITY_TIMEOUT,
+                ollama_url=os.getenv(ENV_OLLAMA_URL, OLLAMA_DEFAULT_URL),
+                ollama_model=ollama_model,
+                github_app=github_app,
+                github_api=github_api,
+                trusted_users=trusted,
+            )
+        )
+
+    return agents
 
 
 def setup_logging(log_file: Path | None = None) -> None:

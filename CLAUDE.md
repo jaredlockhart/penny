@@ -110,7 +110,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 **Ollama**:
 - `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
 - `OLLAMA_FOREGROUND_MODEL`: Fast model for user-facing messages (default: gpt-oss:20b)
-- `OLLAMA_BACKGROUND_MODEL`: Smart model for background tasks (default: same as foreground)
+- `OLLAMA_BACKGROUND_MODEL`: Smart model for background tasks (default: same as foreground). Also used by the Quality agent for response evaluation — if set, the Quality agent is registered in penny-team
 - `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
 - `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables the `/draw` command when set
 - `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
