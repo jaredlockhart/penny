@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
@@ -14,6 +15,16 @@ from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
+
+
+# Matches paired XML-like tags in content, e.g. <function=search>...</function>
+# or <tools><search>...</search></tools>
+_XML_TAG_PATTERN = re.compile(r"<[a-zA-Z]\w*[\s=>].*</[a-zA-Z]\w*>", re.DOTALL)
+
+
+def _has_xml_tags(content: str) -> bool:
+    """Return True if content contains XML-like tag pairs."""
+    return bool(_XML_TAG_PATTERN.search(content))
 
 
 class Agent:
@@ -193,15 +204,32 @@ class Agent:
         called_tools: set[str] = set()
         tool_call_records: list[ToolCallRecord] = []
 
+        max_xml_retries = 3
         steps = max_steps if max_steps is not None else self.max_steps
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
 
-            try:
-                response = await self._ollama_client.chat(messages=messages, tools=tools)
-            except Exception as e:
-                logger.error("Error calling Ollama: %s", e)
-                return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
+            # Retry the model call if it emits XML markup instead of using
+            # structured tool_calls. This doesn't consume an agentic loop step.
+            for xml_attempt in range(max_xml_retries):
+                try:
+                    response = await self._ollama_client.chat(messages=messages, tools=tools)
+                except Exception as e:
+                    logger.error("Error calling Ollama: %s", e)
+                    return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
+
+                if response.has_tool_calls:
+                    break
+
+                content = response.content.strip()
+                if not (tools and _has_xml_tags(content)):
+                    break
+
+                logger.warning(
+                    "Model emitted XML markup in content; retrying (attempt %d/%d)",
+                    xml_attempt + 1,
+                    max_xml_retries,
+                )
 
             if response.has_tool_calls:
                 logger.info(
@@ -253,7 +281,7 @@ class Agent:
 
                 continue
 
-            # No tool calls - final answer
+            # No tool calls — final answer
             content = response.content.strip()
 
             if not content:

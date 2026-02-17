@@ -8,6 +8,54 @@ from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "malformed_response",
+    [
+        "<function=search><parameter=query>Canadian wildfires</parameter></function>",
+        '<tools><search>{"query": "unusual instruments"}</search></tools>',
+    ],
+    ids=["function-param-xml", "tools-xml"],
+)
+async def test_xml_tool_call_not_leaked_to_user(
+    malformed_response,
+    signal_server,
+    mock_ollama,
+    test_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+):
+    """
+    Regression test for #262: malformed tool call leaked to user.
+
+    When a model emits XML-like markup in the content field instead of using
+    structured tool_calls, the agent retries without consuming an agentic loop
+    step, and the clean response reaches the user.
+    """
+    clean_response = "here are some great movies for you!"
+
+    def handler(request, count):
+        if count == 1:
+            return mock_ollama._make_text_response(request, malformed_response)
+        return mock_ollama._make_text_response(request, clean_response)
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(test_config):
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="recommend a movie",
+        )
+
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        assert mock_ollama._request_count >= 2, (
+            "Agent should have retried when XML markup was in content"
+        )
+        assert response["message"] == clean_response
+
+
+@pytest.mark.asyncio
 async def test_basic_message_flow(
     signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
 ):
