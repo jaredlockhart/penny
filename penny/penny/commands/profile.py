@@ -50,9 +50,9 @@ class ProfileCommand(Command):
         "- `/profile <name> <location> <date of birth>` — Create profile (if new)\n"
         "- `/profile <name> <location>` — Update name/location (if profile exists)\n\n"
         "**Examples**:\n"
-        "- `/profile alex seattle january 10 1995` (initial setup)\n"
-        "- `/profile jared toronto` (update existing)\n"
-        "- `/profile seattle` (update location only)\n\n"
+        "- `/profile sam denver march 5 1990` (initial setup)\n"
+        "- `/profile sam denver` (update existing)\n"
+        "- `/profile denver` (update location only)\n\n"
         "**Note**: Timezone is automatically derived from your location."
     )
 

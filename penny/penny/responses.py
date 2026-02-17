@@ -74,7 +74,7 @@ class PennyResponse:
     PROFILE_NO_PROFILE = (
         "You don't have a profile yet! Set it up with:\n"
         "`/profile <name> <location> <date of birth>`\n\n"
-        "For example: `/profile alex seattle january 10 1995` \U0001f4dd"
+        "For example: `/profile sam denver march 5 1990` \U0001f4dd"
     )
     PROFILE_HEADER = "**Your Profile**"
     PROFILE_NAME = "**Name**: {name}"
@@ -85,7 +85,7 @@ class PennyResponse:
     PROFILE_CREATE_PARSE_ERROR = (
         "I couldn't understand that. Please provide your name, location, "
         "and date of birth.\n\n"
-        "Example: `/profile alex seattle january 10 1995`"
+        "Example: `/profile sam denver march 5 1990`"
     )
     PROFILE_DATE_PARSE_ERROR = (
         "I couldn't parse '{date}' as a date. Try something like 'january 10 1995' \U0001f4c5"
@@ -97,7 +97,7 @@ class PennyResponse:
 
     PROFILE_UPDATE_PARSE_ERROR = (
         "I couldn't understand that. Please provide name and/or location.\n\n"
-        "Example: `/profile jared toronto`"
+        "Example: `/profile sam denver`"
     )
     PROFILE_UPDATE_NAME = "name to **{name}**"
     PROFILE_UPDATE_LOCATION = "location to **{location}** ({timezone})"
