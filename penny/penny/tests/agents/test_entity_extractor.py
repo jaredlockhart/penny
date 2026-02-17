@@ -19,11 +19,11 @@ async def test_entity_extractor_processes_search_log(
     running_penny,
 ):
     """
-    Test that EntityExtractor processes SearchLog entries and stores entities:
+    Test two-pass entity extraction from SearchLog entries:
     1. Send a message (triggers search, creates SearchLog entry)
     2. Run EntityExtractor.execute() directly
-    3. Verify entities and facts were stored in the database
-    4. Verify the extraction cursor was advanced
+    3. Pass 1: identify entities (known + new), Pass 2: extract facts per entity
+    4. Verify entities and facts were stored in the database
     """
     config = make_config()
 
@@ -39,21 +39,28 @@ async def test_entity_extractor_processes_search_log(
         elif request_count[0] == 2:
             # Message agent: final response
             return mock_ollama._make_text_response(request, "check out the KEF LS50 Meta! 🎵")
-        else:
-            # Entity extractor: structured output
+        elif request_count[0] == 3:
+            # Pass 1: identify entities (no known entities yet)
             return mock_ollama._make_text_response(
                 request,
                 json.dumps(
                     {
-                        "entities": [
-                            {
-                                "name": "KEF LS50 Meta",
-                                "entity_type": "product",
-                                "facts": [
-                                    "Costs $1,599 per pair",
-                                    "Features Metamaterial Absorption Technology",
-                                ],
-                            }
+                        "known": [],
+                        "new": [
+                            {"name": "KEF LS50 Meta", "entity_type": "product"},
+                        ],
+                    }
+                ),
+            )
+        else:
+            # Pass 2: facts for KEF LS50 Meta
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {
+                        "facts": [
+                            "Costs $1,599 per pair",
+                            "Features Metamaterial Absorption Technology",
                         ]
                     }
                 ),
@@ -120,20 +127,26 @@ async def test_entity_extractor_skips_processed(
             return mock_ollama._make_text_response(request, "check out the NVIDIA Jetson! 🤖")
         else:
             extraction_calls[0] += 1
-            return mock_ollama._make_text_response(
-                request,
-                json.dumps(
-                    {
-                        "entities": [
-                            {
-                                "name": "NVIDIA Jetson",
-                                "entity_type": "product",
-                                "facts": ["Edge AI computing module"],
-                            }
-                        ]
-                    }
-                ),
-            )
+            # Calls 3+: alternate pass 1 (identification) and pass 2 (facts)
+            if extraction_calls[0] == 1:
+                # Pass 1: identify entities
+                return mock_ollama._make_text_response(
+                    request,
+                    json.dumps(
+                        {
+                            "known": [],
+                            "new": [
+                                {"name": "NVIDIA Jetson", "entity_type": "product"},
+                            ],
+                        }
+                    ),
+                )
+            else:
+                # Pass 2: facts
+                return mock_ollama._make_text_response(
+                    request,
+                    json.dumps({"facts": ["Edge AI computing module"]}),
+                )
 
     mock_ollama.set_response_handler(handler)
 
@@ -180,8 +193,8 @@ async def test_entity_extractor_empty_extraction(
         elif request_count[0] == 2:
             return mock_ollama._make_text_response(request, "hey there! 👋")
         else:
-            # Empty extraction
-            return mock_ollama._make_text_response(request, '{"entities": []}')
+            # Pass 1: no entities found
+            return mock_ollama._make_text_response(request, json.dumps({"known": [], "new": []}))
 
     mock_ollama.set_response_handler(handler)
 

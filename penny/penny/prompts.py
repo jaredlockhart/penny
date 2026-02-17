@@ -151,15 +151,24 @@ Examples:
         "Keep it relaxed and low-key, like texting a friend. End with an emoji."
     )
 
-    # Entity extraction prompt
-    ENTITY_EXTRACTION_PROMPT = (
-        "Extract named entities and key facts from the following search results.\n"
-        "Only extract entities that are specific and identifiable "
+    # Entity extraction prompts (two-pass)
+    ENTITY_IDENTIFICATION_PROMPT = (
+        "Identify named entities in the following search results.\n"
+        "Return two lists: known entities that appear in the text, "
+        "and new entities not in the known list.\n"
+        "Only include entities that are specific and identifiable "
         "(products, people, places, organizations, events, or well-defined concepts).\n"
-        "For each entity, extract specific, verifiable facts.\n"
-        "Do NOT extract vague concepts like 'music' or 'technology'.\n"
-        "Do NOT extract the user or the search query as entities.\n"
-        "Keep facts concise (one sentence each)."
+        "Do NOT include vague concepts like 'music' or 'technology'.\n"
+        "Do NOT include the user or the search query as entities."
+    )
+
+    ENTITY_FACT_EXTRACTION_PROMPT = (
+        "Extract specific, verifiable facts about the given entity "
+        "from the following search results.\n"
+        "Only include facts that are directly stated in the content.\n"
+        "If known facts are provided, return only NEW facts not already listed.\n"
+        "Keep each fact concise (one sentence).\n"
+        "If no new facts are found, return an empty list."
     )
 
     # Personality transform prompt

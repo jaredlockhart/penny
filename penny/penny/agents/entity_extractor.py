@@ -8,30 +8,44 @@ from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
+from penny.database.models import Entity
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
 
 
-class ExtractedEntity(BaseModel):
-    """A single entity extracted from text."""
+class IdentifiedEntities(BaseModel):
+    """Schema for pass 1: which known and new entities appear in the text."""
+
+    known: list[str] = Field(
+        default_factory=list,
+        description="Names of already-known entities that appear in this text",
+    )
+    new: list[IdentifiedNewEntity] = Field(
+        default_factory=list,
+        description="New entities found in this text (not in the known list)",
+    )
+
+
+class IdentifiedNewEntity(BaseModel):
+    """A newly discovered entity from pass 1."""
 
     name: str = Field(description="Entity name (e.g., 'KEF LS50 Meta', 'NVIDIA Jetson')")
     entity_type: str = Field(
         description="Type: product, person, place, concept, organization, event"
     )
+
+
+# Rebuild IdentifiedEntities now that IdentifiedNewEntity is defined
+IdentifiedEntities.model_rebuild()
+
+
+class ExtractedFacts(BaseModel):
+    """Schema for pass 2: new facts about a single entity."""
+
     facts: list[str] = Field(
         default_factory=list,
-        description="Key facts about this entity from the text (specific, verifiable statements)",
-    )
-
-
-class ExtractedEntities(BaseModel):
-    """Schema for LLM response: entities and their facts from search results."""
-
-    entities: list[ExtractedEntity] = Field(
-        default_factory=list,
-        description="Entities found in the text with their key facts",
+        description="NEW specific, verifiable facts about the entity from the text",
     )
 
 
@@ -46,7 +60,12 @@ class EntityExtractor(Agent):
     async def execute(self) -> bool:
         """
         Process unprocessed SearchLog and ResearchIteration entries
-        to extract entities and facts.
+        to extract entities and facts in two passes.
+
+        Pass 1 (identification): Given the list of known entity names, identify
+        which known entities appear in the text and any new entities.
+        Pass 2 (facts): For each identified entity, given its existing facts,
+        extract only new facts from the text.
 
         Returns:
             True if any work was done.
@@ -72,14 +91,12 @@ class EntityExtractor(Agent):
                 self.db.update_extraction_cursor("search", search_log.id)
                 continue
 
-            extracted = await self._extract_entities(
+            result = await self._extract_and_store(
                 user=user,
                 query=search_log.query,
                 content=search_log.response,
             )
-
-            if extracted:
-                self._store_entities(user, extracted)
+            if result:
                 work_done = True
 
             self.db.update_extraction_cursor("search", search_log.id)
@@ -98,46 +115,147 @@ class EntityExtractor(Agent):
         for iteration, user in iterations:
             assert iteration.id is not None
 
-            extracted = await self._extract_entities(
+            result = await self._extract_and_store(
                 user=user,
                 query=f"Research iteration {iteration.iteration_num}",
                 content=iteration.findings,
             )
-
-            if extracted:
-                self._store_entities(user, extracted)
+            if result:
                 work_done = True
 
             self.db.update_extraction_cursor("research", iteration.id)
 
         return work_done
 
-    async def _extract_entities(self, user: str, query: str, content: str) -> list[ExtractedEntity]:
+    async def _extract_and_store(self, user: str, query: str, content: str) -> bool:
         """
-        Use LLM structured output to extract entities from content.
+        Two-pass extraction for a single piece of content.
 
-        Includes existing entity facts in the prompt so the LLM can
-        avoid extracting duplicate information.
+        Pass 1: Identify known + new entities in the text.
+        Pass 2: For each entity, extract new facts.
+
+        Returns True if any new entities or facts were stored.
         """
-        # Build context of existing entities for dedup
         existing_entities = self.db.get_user_entities(user)
-        existing_context = ""
-        if existing_entities:
-            entity_summaries = []
-            for entity in existing_entities:
-                if entity.facts.strip():
-                    entity_summaries.append(
-                        f"{entity.name} ({entity.entity_type}):\n{entity.facts}"
-                    )
-                else:
-                    entity_summaries.append(f"{entity.name} ({entity.entity_type}): (no facts yet)")
-            existing_context = (
-                "\n\nAlready known entities and facts (extract only NEW information):\n"
-                + "\n\n".join(entity_summaries)
+
+        # Pass 1: identify entities
+        identified = await self._identify_entities(existing_entities, query, content)
+        if not identified:
+            return False
+
+        valid_types = {t.value for t in PennyConstants.EntityType}
+        work_done = False
+
+        # Collect all entities to process facts for
+        entities_to_process: list[Entity] = []
+
+        # Store new entities
+        for new_entity in identified.new:
+            name = new_entity.name.lower().strip()
+            if not name:
+                continue
+
+            entity_type = new_entity.entity_type.lower().strip()
+            if entity_type not in valid_types:
+                entity_type = PennyConstants.EntityType.CONCEPT
+
+            entity = self.db.get_or_create_entity(user, name, entity_type)
+            if entity and entity.id is not None:
+                entities_to_process.append(entity)
+                work_done = True
+
+        # Look up known entities that were identified
+        existing_by_name = {e.name: e for e in existing_entities}
+        for known_name in identified.known:
+            normalized = known_name.lower().strip()
+            if normalized in existing_by_name:
+                entities_to_process.append(existing_by_name[normalized])
+
+        # Pass 2: extract facts for each identified entity
+        for entity in entities_to_process:
+            assert entity.id is not None
+            new_facts = await self._extract_facts(entity, query, content)
+            if not new_facts:
+                continue
+
+            # Merge new facts (dedup in Python-space)
+            existing_facts = {
+                line.strip() for line in entity.facts.strip().split("\n") if line.strip()
+            }
+            genuinely_new = [
+                f"- {fact.strip()}"
+                for fact in new_facts
+                if fact.strip() and f"- {fact.strip()}" not in existing_facts
+            ]
+
+            if genuinely_new:
+                all_facts = list(existing_facts) + genuinely_new
+                self.db.update_entity_facts(entity.id, "\n".join(all_facts))
+                logger.info(
+                    "Added %d facts to entity '%s' for user %s",
+                    len(genuinely_new),
+                    entity.name,
+                    user,
+                )
+                work_done = True
+
+        return work_done
+
+    async def _identify_entities(
+        self,
+        existing_entities: list[Entity],
+        query: str,
+        content: str,
+    ) -> IdentifiedEntities | None:
+        """
+        Pass 1: Identify which known entities appear in the text and any new entities.
+
+        Injects only entity names (not facts) to keep the prompt small.
+        """
+        known_names = [e.name for e in existing_entities]
+        known_context = ""
+        if known_names:
+            known_context = (
+                "\n\nKnown entities (return any that appear in the text):\n"
+                + "\n".join(f"- {name}" for name in known_names)
             )
 
         prompt = (
-            f"{Prompt.ENTITY_EXTRACTION_PROMPT}\n\n"
+            f"{Prompt.ENTITY_IDENTIFICATION_PROMPT}\n\n"
+            f"Search query: {query}\n\n"
+            f"Content:\n{content}"
+            f"{known_context}"
+        )
+
+        try:
+            response = await self._ollama_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=IdentifiedEntities.model_json_schema(),
+            )
+            result = IdentifiedEntities.model_validate_json(response.content)
+            if not result.known and not result.new:
+                return None
+            return result
+        except Exception as e:
+            logger.error("Failed to identify entities: %s", e)
+            return None
+
+    async def _extract_facts(self, entity: Entity, query: str, content: str) -> list[str]:
+        """
+        Pass 2: Extract new facts about a specific entity from content.
+
+        Injects the entity's existing facts so the LLM only returns new ones.
+        """
+        existing_context = ""
+        if entity.facts.strip():
+            existing_context = (
+                f"\n\nAlready known facts (return only NEW facts not listed here):\n{entity.facts}"
+            )
+
+        prompt = (
+            f"{Prompt.ENTITY_FACT_EXTRACTION_PROMPT}\n\n"
+            f"Entity: {entity.name} ({entity.entity_type})\n\n"
             f"Search query: {query}\n\n"
             f"Content:\n{content}"
             f"{existing_context}"
@@ -147,47 +265,10 @@ class EntityExtractor(Agent):
             response = await self._ollama_client.generate(
                 prompt=prompt,
                 tools=None,
-                format=ExtractedEntities.model_json_schema(),
+                format=ExtractedFacts.model_json_schema(),
             )
-            result = ExtractedEntities.model_validate_json(response.content)
-            return result.entities
+            result = ExtractedFacts.model_validate_json(response.content)
+            return result.facts
         except Exception as e:
-            logger.error("Failed to extract entities: %s", e)
+            logger.error("Failed to extract facts for '%s': %s", entity.name, e)
             return []
-
-    def _store_entities(self, user: str, entities: list[ExtractedEntity]) -> None:
-        """Store extracted entities and merge new facts into existing ones."""
-        valid_types = {t.value for t in PennyConstants.EntityType}
-
-        for extracted in entities:
-            name = extracted.name.lower().strip()
-            if not name:
-                continue
-
-            entity_type = extracted.entity_type.lower().strip()
-            if entity_type not in valid_types:
-                entity_type = PennyConstants.EntityType.CONCEPT
-
-            entity = self.db.get_or_create_entity(user, name, entity_type)
-            if not entity or entity.id is None:
-                continue
-
-            # Parse existing facts and merge new ones
-            existing_facts = {
-                line.strip() for line in entity.facts.strip().split("\n") if line.strip()
-            }
-            new_facts = [
-                f"- {fact.strip()}"
-                for fact in extracted.facts
-                if fact.strip() and f"- {fact.strip()}" not in existing_facts
-            ]
-
-            if new_facts:
-                all_facts = list(existing_facts) + new_facts
-                self.db.update_entity_facts(entity.id, "\n".join(all_facts))
-                logger.info(
-                    "Added %d facts to entity '%s' for user %s",
-                    len(new_facts),
-                    name,
-                    user,
-                )
