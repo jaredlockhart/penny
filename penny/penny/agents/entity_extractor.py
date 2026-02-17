@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,19 @@ from penny.database.models import Entity
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
+
+# Pattern to collapse whitespace and strip bullet prefixes for fact comparison
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_fact(fact: str) -> str:
+    """Normalize a fact string for dedup comparison.
+
+    Strips leading '- ', lowercases, and collapses whitespace so that
+    near-duplicate facts with minor formatting differences are caught.
+    """
+    text = fact.strip().lstrip("-").strip()
+    return _WHITESPACE_RE.sub(" ", text).lower()
 
 
 class IdentifiedEntities(BaseModel):
@@ -150,14 +164,15 @@ class EntityExtractor(Agent):
             if not new_facts:
                 continue
 
-            # Merge new facts (dedup in Python-space)
+            # Merge new facts (dedup in Python-space with normalization)
             existing_facts = {
                 line.strip() for line in entity.facts.strip().split("\n") if line.strip()
             }
+            existing_normalized = {_normalize_fact(line) for line in existing_facts}
             genuinely_new = [
                 f"- {fact.strip()}"
                 for fact in new_facts
-                if fact.strip() and f"- {fact.strip()}" not in existing_facts
+                if fact.strip() and _normalize_fact(f"- {fact.strip()}") not in existing_normalized
             ]
 
             if genuinely_new:

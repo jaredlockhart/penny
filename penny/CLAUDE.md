@@ -16,7 +16,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Preference · Discovery · EntityExtractor"]
+    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Preference · Discovery · EntityExtractor · EntityCleaner"]
 ```
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
@@ -46,6 +46,7 @@ penny/
     discovery.py      — DiscoveryAgent: proactive content sharing based on user interests
     research.py       — ResearchAgent: autonomous multi-iteration deep research
     entity_extractor.py — EntityExtractor: background entity/fact extraction from search results
+    entity_cleaner.py — EntityCleaner: periodic merge of duplicate entities
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
     schedules.py      — PeriodicSchedule, DelayedSchedule, AlwaysRunSchedule implementations
@@ -98,7 +99,7 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_followup.py, test_preference.py, test_discovery.py, test_research.py, test_entity_extractor.py
+      test_message.py, test_followup.py, test_preference.py, test_discovery.py, test_research.py, test_entity_extractor.py, test_entity_cleaner.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py, test_startup_announcement.py
     commands/         — Per-command tests
@@ -163,6 +164,14 @@ The base `Agent` class implements the core agentic loop:
 - Fact dedup handled in Python-space: only appends genuinely new facts to existing entity records
 - Associates SearchLog entries with users via `find_sender_for_timestamp()`
 - ResearchIteration entries are NOT processed (their findings are LLM-synthesized reports of the same search results already in SearchLog)
+- Fact dedup uses normalized comparison (lowercase, collapse whitespace, strip bullet prefix)
+
+**EntityCleaner** (`agents/entity_cleaner.py`)
+- Background task: periodically merges duplicate entities in the knowledge base
+- Enforces minimum interval between runs (default 24h) via DB-stored timestamp in RuntimeConfig
+- Sends entity name list to LLM, which identifies groups of duplicates and picks canonical names
+- Merge executed in Python-space: combines deduplicated facts, reassigns entity_search_log refs, deletes duplicates
+- Uses Ollama structured output with Pydantic schemas (`MergeGroups`, `MergeGroup`)
 
 **ResearchAgent** (`agents/research.py`)
 - Background task: autonomous multi-iteration deep research on user-requested topics
@@ -186,7 +195,7 @@ The base `Agent` class implements the core agentic loop:
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule → research → preference → entity_extractor → followup → discovery)
+- Runs tasks in priority order (schedule → research → preference → entity_extractor → entity_cleaner → followup → discovery)
 - Tracks global idle threshold (default: 300s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
@@ -296,7 +305,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Specialized agents**: Each task type (message, research, followup, preference, discovery) has its own agent subclass
-- **Priority scheduling**: Schedule → research → preference → entity_extractor → followup → discovery
+- **Priority scheduling**: Schedule → research → preference → entity_extractor → entity_cleaner → followup → discovery
 - **Always-run schedules**: Research and user-created schedules run regardless of idle state; preference/followup/discovery wait for idle
 - **Global idle threshold**: Single configurable idle time (default: 300s) controls when idle-dependent tasks become eligible
 - **Background suspension**: Foreground message processing suspends background tasks to prevent interference

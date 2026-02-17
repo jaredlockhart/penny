@@ -18,6 +18,7 @@ from penny.database.models import (
     PersonalityPrompt,
     Preference,
     PromptLog,
+    RuntimeConfig,
     SearchLog,
     UserInfo,
 )
@@ -1032,3 +1033,80 @@ class Database:
                 .limit(1)
             ).first()
             return msg
+
+    def merge_entities(self, primary_id: int, duplicate_ids: list[int], merged_facts: str) -> None:
+        """
+        Merge duplicate entities into a primary entity.
+
+        Reassigns entity_search_log references from duplicates to the primary,
+        updates the primary's facts, and deletes the duplicate entity rows.
+        All operations happen in a single transaction.
+
+        Args:
+            primary_id: Entity ID to keep
+            duplicate_ids: Entity IDs to merge into primary and delete
+            merged_facts: Combined deduplicated facts text
+        """
+        try:
+            with self.get_session() as session:
+                # Update primary entity facts
+                primary = session.get(Entity, primary_id)
+                if not primary:
+                    logger.error("Primary entity %d not found for merge", primary_id)
+                    return
+
+                primary.facts = merged_facts
+                primary.updated_at = datetime.now(UTC)
+                session.add(primary)
+
+                # Reassign entity_search_log references
+                for dup_id in duplicate_ids:
+                    links = list(
+                        session.exec(
+                            select(EntitySearchLog).where(EntitySearchLog.entity_id == dup_id)
+                        ).all()
+                    )
+                    for link in links:
+                        link.entity_id = primary_id
+                        session.add(link)
+
+                    # Delete the duplicate entity
+                    dup = session.get(Entity, dup_id)
+                    if dup:
+                        session.delete(dup)
+
+                session.commit()
+                logger.info("Merged entities %s into %d", duplicate_ids, primary_id)
+        except Exception as e:
+            logger.error("Failed to merge entities: %s", e)
+
+    def get_entity_cleaning_timestamp(self) -> datetime | None:
+        """Get the timestamp of the last entity cleaning run."""
+        key = "LAST_ENTITY_CLEANING"
+        with self.get_session() as session:
+            row = session.exec(select(RuntimeConfig).where(RuntimeConfig.key == key)).first()
+            if row:
+                return datetime.fromisoformat(row.value)
+            return None
+
+    def set_entity_cleaning_timestamp(self, timestamp: datetime) -> None:
+        """Store the timestamp of the last entity cleaning run."""
+        key = "LAST_ENTITY_CLEANING"
+        try:
+            with self.get_session() as session:
+                row = session.exec(select(RuntimeConfig).where(RuntimeConfig.key == key)).first()
+                if row:
+                    row.value = timestamp.isoformat()
+                    row.updated_at = datetime.now(UTC)
+                    session.add(row)
+                else:
+                    session.add(
+                        RuntimeConfig(
+                            key=key,
+                            value=timestamp.isoformat(),
+                            description="Last entity cleaning run timestamp",
+                        )
+                    )
+                session.commit()
+        except Exception as e:
+            logger.error("Failed to set entity cleaning timestamp: %s", e)

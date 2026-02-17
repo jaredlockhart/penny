@@ -55,3 +55,5 @@ class PennyConstants:
 
     # Entity knowledge base constants
     ENTITY_EXTRACTION_BATCH_LIMIT = 10
+    ENTITY_CLEANING_BATCH_LIMIT = 200
+    ENTITY_CLEANING_INTERVAL_SECONDS = 86400.0
