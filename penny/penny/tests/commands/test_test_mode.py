@@ -6,7 +6,7 @@ import pytest
 
 from penny.constants import PennyConstants
 from penny.responses import PennyResponse
-from penny.tests.conftest import TEST_SENDER
+from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 @pytest.mark.asyncio
@@ -241,6 +241,14 @@ async def test_test_mode_shows_typing_indicator(
         # Verify the response
         assert response["recipients"] == [TEST_SENDER]
         assert response["message"].startswith(PennyResponse.TEST_MODE_PREFIX)
+
+        # Wait for the stop typing event — the finally block in _handle_command
+        # sends the stop indicator AFTER the response, so it may not have arrived
+        # by the time wait_for_message returns.
+        await wait_until(
+            lambda: any(action == "stop" for action, _ in signal_server.typing_events),
+            timeout=5.0,
+        )
 
         # Verify typing indicators were sent (at least one start and one stop)
         assert len(signal_server.typing_events) >= 2, "Should have typing events"
