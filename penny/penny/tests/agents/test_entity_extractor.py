@@ -170,6 +170,100 @@ async def test_entity_extractor_skips_processed(
 
 
 @pytest.mark.asyncio
+async def test_entity_extractor_known_and_new_entities(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test mixed known + new entity extraction:
+    1. Pre-seed an existing entity with facts
+    2. Send a message that mentions the existing entity and a new one
+    3. Pass 1 returns the existing entity as known and the new one as new
+    4. Pass 2 discovers new facts for the existing entity and facts for the new one
+    5. Verify existing entity got new facts appended, new entity was created with facts
+    """
+    config = make_config()
+
+    request_count = [0]
+    pass2_calls = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            return mock_ollama._make_tool_call_response(
+                request, "search", {"query": "KEF LS50 vs Wharfedale Linton"}
+            )
+        elif request_count[0] == 2:
+            return mock_ollama._make_text_response(request, "both are great speakers! 🎶")
+        elif request_count[0] == 3:
+            # Pass 1: identify known + new entities
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {
+                        "known": ["kef ls50 meta"],
+                        "new": [
+                            {"name": "Wharfedale Linton", "entity_type": "product"},
+                        ],
+                    }
+                ),
+            )
+        else:
+            # Pass 2: facts for each entity (called twice)
+            pass2_calls[0] += 1
+            if pass2_calls[0] == 1:
+                # Facts for new entity (Wharfedale Linton — processed first as new)
+                return mock_ollama._make_text_response(
+                    request,
+                    json.dumps(
+                        {"facts": ["Heritage design with modern drivers", "Costs $1,199 per pair"]}
+                    ),
+                )
+            else:
+                # New facts for known entity (KEF LS50 Meta)
+                return mock_ollama._make_text_response(
+                    request,
+                    json.dumps({"facts": ["Won What Hi-Fi 2024 award"]}),
+                )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Pre-seed an existing entity with a fact
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta", "product")
+        assert entity is not None and entity.id is not None
+        penny.db.update_entity_facts(entity.id, "- Costs $1,599 per pair")
+
+        # Send message to create a SearchLog entry
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="compare KEF LS50 Meta vs Wharfedale Linton"
+        )
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Run extraction
+        work_done = await penny.entity_extractor.execute()
+        assert work_done
+
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        assert len(entities) == 2
+
+        # Existing entity should have original fact + new fact
+        kef = next(e for e in entities if e.name == "kef ls50 meta")
+        assert "Costs $1,599 per pair" in kef.facts
+        assert "Won What Hi-Fi 2024 award" in kef.facts
+
+        # New entity should have its facts
+        wharfedale = next(e for e in entities if e.name == "wharfedale linton")
+        assert wharfedale.entity_type == "product"
+        assert "Heritage design with modern drivers" in wharfedale.facts
+        assert "Costs $1,199 per pair" in wharfedale.facts
+
+
+@pytest.mark.asyncio
 async def test_entity_extractor_empty_extraction(
     signal_server,
     mock_ollama,
