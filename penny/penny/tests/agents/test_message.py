@@ -8,27 +8,35 @@ from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
-async def test_function_call_syntax_not_leaked_to_user(
-    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+@pytest.mark.parametrize(
+    "malformed_response",
+    [
+        "<function=search><parameter=query>Canadian wildfires</parameter></function>",
+        '<tools><search>{"query": "unusual instruments"}</search></tools>',
+    ],
+    ids=["function-param-xml", "tools-xml"],
+)
+async def test_xml_tool_call_not_leaked_to_user(
+    malformed_response,
+    signal_server,
+    mock_ollama,
+    test_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
 ):
     """
-    Regression test for #262: function call syntax leaked in off-topic reply.
+    Regression test for #262: malformed tool call leaked to user.
 
-    When a model emits <function=...>...</function> syntax directly in its text
-    content (instead of using structured tool_calls), the agent must retry the
-    prompt rather than forwarding the malformed output to the user.
+    When a model emits XML-like markup in the content field instead of using
+    structured tool_calls, the agent retries without consuming an agentic loop
+    step, and the clean response reaches the user.
     """
-    # Simulate a model that embeds function call syntax in plain text content on the
-    # first attempt, then returns a clean response on retry.
-    leaked_response = (
-        'I\'ll look that up! <function=search>{"query": "movie recommendations"}'
-        "</function> Here are some great movies for you!"
-    )
     clean_response = "here are some great movies for you!"
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_text_response(request, leaked_response)
+            return mock_ollama._make_text_response(request, malformed_response)
         return mock_ollama._make_text_response(request, clean_response)
 
     mock_ollama.set_response_handler(handler)
@@ -41,15 +49,9 @@ async def test_function_call_syntax_not_leaked_to_user(
 
         response = await signal_server.wait_for_message(timeout=10.0)
 
-        # The function call syntax must never appear in the user-facing response
-        assert "<function=" not in response["message"], (
-            f"Function call syntax leaked to user: {response['message']}"
-        )
-        # The agent must have retried (at least 2 Ollama requests)
         assert mock_ollama._request_count >= 2, (
-            "Agent should have retried the prompt when text-embedded function call was detected"
+            "Agent should have retried when XML markup was in content"
         )
-        # The clean retry response should be what the user sees
         assert response["message"] == clean_response
 
 
