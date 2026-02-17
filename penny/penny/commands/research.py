@@ -10,7 +10,7 @@ from sqlmodel import Session, func, select
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.database.models import ResearchIteration, ResearchTask
-from penny.prompts import RESEARCH_OUTPUT_OPTIONS_PROMPT, RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT
+from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -204,10 +204,10 @@ class ResearchCommand(Command):
 
     async def _generate_output_options(self, topic: str, context: CommandContext) -> str:
         """Generate output format options for a research topic using LLM."""
-        prompt = RESEARCH_OUTPUT_OPTIONS_PROMPT.format(topic=topic)
+        prompt = Prompt.RESEARCH_OUTPUT_OPTIONS_PROMPT.format(topic=topic)
         response = await context.ollama_client.chat(
             messages=[
-                {"role": "system", "content": RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT},
+                {"role": "system", "content": Prompt.RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ]
         )

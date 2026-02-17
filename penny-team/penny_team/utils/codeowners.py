@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from penny_team.constants import CODEOWNERS_PATHS
+from penny_team.constants import TeamConstants
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def parse_codeowners(project_root: Path) -> set[str]:
 
     Returns empty set if no CODEOWNERS file found.
     """
-    for relative_path in CODEOWNERS_PATHS:
+    for relative_path in TeamConstants.CODEOWNERS_PATHS:
         codeowners_path = project_root / relative_path
         if codeowners_path.is_file():
             return _parse_file(codeowners_path)

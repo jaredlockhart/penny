@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 
 from penny.agents.base import Agent
 from penny.agents.models import MessageRole
-from penny.constants import MessageDirection, PreferenceType
-from penny.prompts import FOLLOWUP_PROMPT
+from penny.constants import PennyConstants
+from penny.prompts import Prompt
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -67,7 +67,7 @@ class FollowupAgent(Agent):
         history = self._format_history(thread)
 
         # Add dislike exclusions if the user has any
-        dislikes = self.db.get_preferences(recipient, PreferenceType.DISLIKE)
+        dislikes = self.db.get_preferences(recipient, PennyConstants.PreferenceType.DISLIKE)
         if dislikes:
             dislike_topics = [d.topic for d in dislikes]
             dislike_list = ", ".join(dislike_topics)
@@ -79,7 +79,7 @@ class FollowupAgent(Agent):
                 ),
             )
 
-        response = await self.run(prompt=FOLLOWUP_PROMPT, history=history, sender=recipient)
+        response = await self.run(prompt=Prompt.FOLLOWUP_PROMPT, history=history, sender=recipient)
 
         answer = response.answer.strip() if response.answer else None
         if not answer:
@@ -102,7 +102,7 @@ class FollowupAgent(Agent):
     def _find_recipient(self, thread: list[MessageLog]) -> str | None:
         """Find the user's sender ID from the thread."""
         for msg in thread:
-            if msg.direction == MessageDirection.INCOMING:
+            if msg.direction == PennyConstants.MessageDirection.INCOMING:
                 return msg.sender
         return None
 
@@ -111,7 +111,7 @@ class FollowupAgent(Agent):
         return [
             (
                 MessageRole.USER.value
-                if m.direction == MessageDirection.INCOMING
+                if m.direction == PennyConstants.MessageDirection.INCOMING
                 else MessageRole.ASSISTANT.value,
                 m.content,
             )

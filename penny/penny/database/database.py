@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from penny.agents.models import MessageRole
-from penny.constants import MessageDirection
+from penny.constants import PennyConstants
 from penny.database.models import (
     CommandLog,
     MessageLog,
@@ -159,7 +159,7 @@ class Database:
             The id of the created message, or None on failure
         """
         # Strip formatting from outgoing messages for reliable quote matching
-        if direction == MessageDirection.OUTGOING:
+        if direction == PennyConstants.MessageDirection.OUTGOING:
             content = self._strip_formatting(content)
 
         try:
@@ -234,13 +234,13 @@ class Database:
             )
             # Subquery: IDs of incoming messages
             incoming_ids = select(MessageLog.id).where(
-                MessageLog.direction == MessageDirection.INCOMING
+                MessageLog.direction == PennyConstants.MessageDirection.INCOMING
             )
             return list(
                 session.exec(
                     select(MessageLog)
                     .where(
-                        MessageLog.direction == MessageDirection.OUTGOING,
+                        MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
                         MessageLog.id.notin_(has_child),  # type: ignore[unresolved-attribute]
                         MessageLog.parent_id.in_(incoming_ids),  # type: ignore[unresolved-attribute]
                     )
@@ -266,7 +266,7 @@ class Database:
             return session.exec(
                 select(MessageLog)
                 .where(
-                    MessageLog.direction == MessageDirection.OUTGOING,
+                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
                     MessageLog.content.startswith(content),
                 )
                 .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
@@ -327,7 +327,7 @@ class Database:
         history = [
             (
                 MessageRole.USER
-                if m.direction == MessageDirection.INCOMING
+                if m.direction == PennyConstants.MessageDirection.INCOMING
                 else MessageRole.ASSISTANT,
                 m.content,
             )
@@ -373,7 +373,7 @@ class Database:
                     select(MessageLog)
                     .where(
                         MessageLog.sender == sender,
-                        MessageLog.direction == MessageDirection.INCOMING,
+                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
                     )
                     .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
@@ -399,7 +399,7 @@ class Database:
                     select(MessageLog)
                     .where(
                         MessageLog.sender == sender,
-                        MessageLog.direction == MessageDirection.INCOMING,
+                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
                         MessageLog.is_reaction == False,  # noqa: E712
                         MessageLog.processed == False,  # noqa: E712
                     )
@@ -425,7 +425,7 @@ class Database:
                     select(MessageLog)
                     .where(
                         MessageLog.sender == sender,
-                        MessageLog.direction == MessageDirection.INCOMING,
+                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
                         MessageLog.is_reaction == True,  # noqa: E712
                         MessageLog.processed == False,  # noqa: E712
                     )
@@ -483,7 +483,7 @@ class Database:
         with self.get_session() as session:
             senders = session.exec(
                 select(MessageLog.sender)
-                .where(MessageLog.direction == MessageDirection.INCOMING)
+                .where(MessageLog.direction == PennyConstants.MessageDirection.INCOMING)
                 .distinct()
             ).all()
             return list(senders)

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.database.models import Schedule, UserInfo
-from penny.prompts import SCHEDULE_PARSE_PROMPT
+from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -134,7 +134,7 @@ class ScheduleCommand(Command):
             user_timezone = user_info.timezone
 
         # Parse command using LLM
-        prompt = SCHEDULE_PARSE_PROMPT.format(timezone=user_timezone, command=command)
+        prompt = Prompt.SCHEDULE_PARSE_PROMPT.format(timezone=user_timezone, command=command)
 
         try:
             response = await context.ollama_client.generate(

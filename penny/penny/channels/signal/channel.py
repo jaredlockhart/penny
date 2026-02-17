@@ -23,7 +23,7 @@ from penny.channels.signal.models import (
     SignalEnvelope,
     TypingIndicatorRequest,
 )
-from penny.constants import VISION_SUPPORTED_CONTENT_TYPES
+from penny.constants import PennyConstants
 
 if TYPE_CHECKING:
     from penny.agents import MessageAgent
@@ -500,7 +500,7 @@ class SignalChannel(MessageChannel):
 
         images: list[str] = []
         for attachment in attachments:
-            if attachment.contentType not in VISION_SUPPORTED_CONTENT_TYPES:
+            if attachment.contentType not in PennyConstants.VISION_SUPPORTED_CONTENT_TYPES:
                 logger.debug("Skipping non-image attachment: %s", attachment.contentType)
                 continue
 

@@ -6,7 +6,7 @@ import logging
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.constants import PreferenceType
+from penny.constants import PennyConstants
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class LikeCommand(Command):
 
         # No args - list all likes
         if not args:
-            likes = context.db.get_preferences(context.user, PreferenceType.LIKE)
+            likes = context.db.get_preferences(context.user, PennyConstants.PreferenceType.LIKE)
             if not likes:
                 return CommandResult(text=PennyResponse.LIKES_EMPTY)
 
@@ -47,17 +47,21 @@ class LikeCommand(Command):
         topic = args
 
         # Check for conflicts in dislikes
-        conflict = context.db.find_conflicting_preference(context.user, topic, PreferenceType.LIKE)
+        conflict = context.db.find_conflicting_preference(
+            context.user, topic, PennyConstants.PreferenceType.LIKE
+        )
 
         if conflict:
             # Remove from dislikes
-            context.db.remove_preference(context.user, topic, PreferenceType.DISLIKE)
+            context.db.remove_preference(context.user, topic, PennyConstants.PreferenceType.DISLIKE)
             # Add to likes
-            context.db.add_preference(context.user, topic, PreferenceType.LIKE)
+            context.db.add_preference(context.user, topic, PennyConstants.PreferenceType.LIKE)
             return CommandResult(text=PennyResponse.LIKE_ADDED_CONFLICT.format(topic=topic))
         else:
             # Just add to likes
-            added = context.db.add_preference(context.user, topic, PreferenceType.LIKE)
+            added = context.db.add_preference(
+                context.user, topic, PennyConstants.PreferenceType.LIKE
+            )
             if added:
                 return CommandResult(text=PennyResponse.LIKE_ADDED.format(topic=topic))
             else:
@@ -86,7 +90,9 @@ class DislikeCommand(Command):
 
         # No args - list all dislikes
         if not args:
-            dislikes = context.db.get_preferences(context.user, PreferenceType.DISLIKE)
+            dislikes = context.db.get_preferences(
+                context.user, PennyConstants.PreferenceType.DISLIKE
+            )
             if not dislikes:
                 return CommandResult(text=PennyResponse.DISLIKES_EMPTY)
 
@@ -100,18 +106,20 @@ class DislikeCommand(Command):
 
         # Check for conflicts in likes
         conflict = context.db.find_conflicting_preference(
-            context.user, topic, PreferenceType.DISLIKE
+            context.user, topic, PennyConstants.PreferenceType.DISLIKE
         )
 
         if conflict:
             # Remove from likes
-            context.db.remove_preference(context.user, topic, PreferenceType.LIKE)
+            context.db.remove_preference(context.user, topic, PennyConstants.PreferenceType.LIKE)
             # Add to dislikes
-            context.db.add_preference(context.user, topic, PreferenceType.DISLIKE)
+            context.db.add_preference(context.user, topic, PennyConstants.PreferenceType.DISLIKE)
             return CommandResult(text=PennyResponse.DISLIKE_ADDED_CONFLICT.format(topic=topic))
         else:
             # Just add to dislikes
-            added = context.db.add_preference(context.user, topic, PreferenceType.DISLIKE)
+            added = context.db.add_preference(
+                context.user, topic, PennyConstants.PreferenceType.DISLIKE
+            )
             if added:
                 return CommandResult(text=PennyResponse.DISLIKE_ADDED.format(topic=topic))
             else:
@@ -143,7 +151,7 @@ class UnlikeCommand(Command):
         # Check if args is a number (list position)
         if args.isdigit():
             position = int(args)
-            likes = context.db.get_preferences(context.user, PreferenceType.LIKE)
+            likes = context.db.get_preferences(context.user, PennyConstants.PreferenceType.LIKE)
 
             if position < 1 or position > len(likes):
                 return CommandResult(
@@ -156,7 +164,9 @@ class UnlikeCommand(Command):
             # Use the full topic string
             topic = args
 
-        removed = context.db.remove_preference(context.user, topic, PreferenceType.LIKE)
+        removed = context.db.remove_preference(
+            context.user, topic, PennyConstants.PreferenceType.LIKE
+        )
 
         if removed:
             return CommandResult(text=PennyResponse.UNLIKE_REMOVED.format(topic=topic))
@@ -189,7 +199,9 @@ class UndislikeCommand(Command):
         # Check if args is a number (list position)
         if args.isdigit():
             position = int(args)
-            dislikes = context.db.get_preferences(context.user, PreferenceType.DISLIKE)
+            dislikes = context.db.get_preferences(
+                context.user, PennyConstants.PreferenceType.DISLIKE
+            )
 
             if position < 1 or position > len(dislikes):
                 return CommandResult(
@@ -202,7 +214,9 @@ class UndislikeCommand(Command):
             # Use the full topic string
             topic = args
 
-        removed = context.db.remove_preference(context.user, topic, PreferenceType.DISLIKE)
+        removed = context.db.remove_preference(
+            context.user, topic, PennyConstants.PreferenceType.DISLIKE
+        )
 
         if removed:
             return CommandResult(text=PennyResponse.UNDISLIKE_REMOVED.format(topic=topic))

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from penny.constants import TEST_DB_PATH
+from penny.constants import PennyConstants
 from penny.responses import PennyResponse
 from penny.tests.conftest import TEST_SENDER
 
@@ -37,7 +37,7 @@ async def test_test_mode_basic_flow(
         assert "here's what i found" in response["message"].lower()
 
         # Verify test database was used (message should be in test db)
-        test_db_path = Path(test_config.db_path).parent / TEST_DB_PATH.name
+        test_db_path = Path(test_config.db_path).parent / PennyConstants.TEST_DB_PATH.name
         assert test_db_path.exists(), "Test database should have been created"
 
         # Note: The incoming message is still logged to production database by the channel
@@ -198,7 +198,7 @@ async def test_test_mode_snapshot_created_at_startup(test_config, running_penny)
     assert prod_path.exists(), "Production database should exist before starting Penny"
 
     # Manually create test snapshot (simulating entrypoint.sh behavior in tests)
-    test_db_path = prod_path.parent / TEST_DB_PATH.name
+    test_db_path = prod_path.parent / PennyConstants.TEST_DB_PATH.name
     shutil.copyfile(prod_path, test_db_path)
 
     # Start Penny

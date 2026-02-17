@@ -12,10 +12,7 @@ from dataclasses import dataclass, field
 
 from github_api.api import GitHubAPI, IssueDetail
 
-from penny_team.constants import (
-    CI_STATUS_FAILING,
-    Label,
-)
+from penny_team.constants import TeamConstants
 
 logger = logging.getLogger(__name__)
 
@@ -156,11 +153,11 @@ def pick_actionable_issue(
 
     # Prioritize bugs over non-bugs (external signals like CI/merge/review
     # are handled by early return inside the loop and remain highest priority)
-    sorted_issues = sorted(issues, key=lambda i: Label.BUG not in i.labels)
+    sorted_issues = sorted(issues, key=lambda i: TeamConstants.Label.BUG not in i.labels)
 
     for issue in sorted_issues:
         # Check if external signals require attention regardless of comments
-        if issue.ci_status == CI_STATUS_FAILING:
+        if issue.ci_status == TeamConstants.CI_STATUS_FAILING:
             return issue
         if issue.merge_conflict:
             return issue
@@ -172,7 +169,7 @@ def pick_actionable_issue(
 
         if last_processed is None:
             # Agent has never processed this issue
-            if not issue.trusted_comments and Label.IN_REVIEW in issue.labels:
+            if not issue.trusted_comments and TeamConstants.Label.IN_REVIEW in issue.labels:
                 # in-review with no issue comments — PR already created,
                 # and no CI/merge/review issues detected above. Waiting
                 # for human review.

@@ -7,7 +7,7 @@ from typing import Any
 
 from penny.jmap.client import JmapClient
 from penny.ollama.client import OllamaClient
-from penny.prompts import EMAIL_SUMMARIZE_PROMPT
+from penny.prompts import Prompt
 from penny.tools.base import Tool
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ class ReadEmailsTool(Tool):
             return NO_EMAILS_TO_READ
 
         raw_content = "\n\n---\n\n".join(str(e) for e in emails)
-        prompt = EMAIL_SUMMARIZE_PROMPT.format(
+        prompt = Prompt.EMAIL_SUMMARIZE_PROMPT.format(
             query=self._user_query,
             emails=raw_content,
         )
