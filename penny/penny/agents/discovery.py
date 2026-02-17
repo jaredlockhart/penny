@@ -81,7 +81,7 @@ class DiscoveryAgent(Agent):
                 "\n".join(context_parts),
             )
         ]
-        response = await self.run(prompt=Prompt.DISCOVERY_PROMPT, history=history, sender=recipient)
+        response = await self.run(prompt=Prompt.DISCOVERY_PROMPT, history=history)
 
         answer = response.answer.strip() if response.answer else None
         if not answer:

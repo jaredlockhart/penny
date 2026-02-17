@@ -101,7 +101,6 @@ class Agent:
         prompt: str,
         history: list[tuple[str, str]] | None = None,
         system_prompt: str | None = None,
-        sender: str | None = None,
     ) -> list[dict]:
         """Build message list for Ollama chat API.
 
@@ -109,7 +108,6 @@ class Agent:
             prompt: The user message/prompt to respond to
             history: Optional conversation history as (role, content) tuples
             system_prompt: Optional system prompt override
-            sender: Optional user identifier for personality injection
 
         Returns:
             List of message dicts for Ollama chat API
@@ -119,27 +117,10 @@ class Agent:
         effective_prompt = system_prompt or self.system_prompt
         now = datetime.now(UTC).strftime("%A, %B %d, %Y at %I:%M %p UTC")
 
-        # Build system prompt with personality injection
+        # Build system prompt: timestamp → identity → agent-specific prompt
         system_parts = [f"Current date and time: {now}", ""]
 
-        # Check if user has custom personality prompt
-        personality_text = None
-        if sender:
-            try:
-                personality = self.db.get_personality_prompt(sender)
-                if personality:
-                    personality_text = personality.prompt_text
-            except Exception as e:
-                # Table might not exist yet (e.g., during migration or in test snapshots)
-                logger.debug("Failed to query personality prompt: %s", e)
-                personality_text = None
-
-        # Build system prompt: identity → personality (optional) → agent-specific prompt
         system_parts.append(Prompt.PENNY_IDENTITY)
-
-        if personality_text:
-            system_parts.append("")
-            system_parts.append(personality_text)
 
         if effective_prompt:
             system_parts.append("")
@@ -179,7 +160,6 @@ class Agent:
         use_tools: bool = True,
         max_steps: int | None = None,
         system_prompt: str | None = None,
-        sender: str | None = None,
     ) -> ControllerResponse:
         """
         Run the agent with a prompt.
@@ -190,12 +170,11 @@ class Agent:
             use_tools: Whether to enable tools for this run (default: True)
             max_steps: Override max_steps for this run (default: use agent's max_steps)
             system_prompt: Override system prompt for this run (default: use agent's prompt)
-            sender: Optional user identifier for personality injection
 
         Returns:
             ControllerResponse with answer, thinking, and attachments
         """
-        messages = self._build_messages(prompt, history, system_prompt, sender)
+        messages = self._build_messages(prompt, history, system_prompt)
         tools = self._tool_registry.get_ollama_tools() if use_tools else None
         logger.debug("Using %d tools", len(tools) if tools else 0)
 
