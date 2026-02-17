@@ -5,7 +5,7 @@ import json
 import pytest
 from sqlmodel import select
 
-from penny.database.models import SearchLog
+from penny.database.models import EntitySearchLog, SearchLog
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -91,9 +91,14 @@ async def test_entity_extractor_processes_search_log(
         assert "Costs $1,599 per pair" in entity.facts
         assert "Metamaterial Absorption Technology" in entity.facts
 
-        # Verify cursor was advanced
-        cursor = penny.db.get_extraction_cursor("search")
-        assert cursor > 0
+        # Verify entity-search link was created
+        with penny.db.get_session() as session:
+            links = list(session.exec(select(EntitySearchLog)).all())
+            assert len(links) >= 1
+            assert any(
+                link.entity_id == entity.id and link.search_log_id == search_logs[0].id
+                for link in links
+            )
 
 
 @pytest.mark.asyncio
@@ -107,7 +112,7 @@ async def test_entity_extractor_skips_processed(
 ):
     """
     Test that EntityExtractor doesn't reprocess entries:
-    1. Process entries once (cursor advances)
+    1. Process entries once (join table rows created)
     2. Run execute() again
     3. Verify no additional Ollama calls for extraction
     """
@@ -184,6 +189,7 @@ async def test_entity_extractor_known_and_new_entities(
     3. Pass 1 returns the existing entity as known and the new one as new
     4. Pass 2 discovers new facts for the existing entity and facts for the new one
     5. Verify existing entity got new facts appended, new entity was created with facts
+    6. Verify join table links both entities to the search log
     """
     config = make_config()
 
@@ -260,6 +266,13 @@ async def test_entity_extractor_known_and_new_entities(
         assert "Heritage design with modern drivers" in wharfedale.facts
         assert "Costs $1,199 per pair" in wharfedale.facts
 
+        # Verify join table has links for both entities
+        with penny.db.get_session() as session:
+            links = list(session.exec(select(EntitySearchLog)).all())
+            entity_ids = {link.entity_id for link in links}
+            assert kef.id in entity_ids
+            assert wharfedale.id in entity_ids
+
 
 @pytest.mark.asyncio
 async def test_entity_extractor_empty_extraction(
@@ -272,7 +285,7 @@ async def test_entity_extractor_empty_extraction(
 ):
     """
     Test that EntityExtractor handles empty extraction results gracefully
-    and still advances the cursor.
+    and still marks the search as processed via a sentinel join table row.
     """
     config = make_config()
 
@@ -297,9 +310,11 @@ async def test_entity_extractor_empty_extraction(
         work_done = await penny.entity_extractor.execute()
         assert work_done is False, "No entities extracted means no work done"
 
-        # Cursor should still advance so we don't reprocess
-        cursor = penny.db.get_extraction_cursor("search")
-        assert cursor > 0
+        # Sentinel row should exist so we don't reprocess
+        with penny.db.get_session() as session:
+            links = list(session.exec(select(EntitySearchLog)).all())
+            assert len(links) >= 1
+            assert any(link.entity_id is None for link in links)
 
         # No entities stored
         entities = penny.db.get_user_entities(TEST_SENDER)
