@@ -68,11 +68,13 @@ def create_command_registry(
     if message_agent_factory:
         registry.register(TestCommand(message_agent_factory))
 
-    # Register bug command if GitHub API is configured
+    # Register bug and feature commands if GitHub API is configured
     if github_api:
         from penny.commands.bug import BugCommand
+        from penny.commands.feature import FeatureCommand
 
         registry.register(BugCommand(github_api))
+        registry.register(FeatureCommand(github_api))
 
     # Register draw command if image model is configured
     if ollama_image_model:
