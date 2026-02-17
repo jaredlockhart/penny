@@ -19,6 +19,7 @@ from penny.prompts import (
     RESEARCH_FOLLOWUP_PROMPT,
     RESEARCH_REPORT_BUILD_PROMPT,
 )
+from penny.tools.builtin import SearchTool
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -33,6 +34,8 @@ class ResearchAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._channel: MessageChannel | None = None
         self._config = config
+        self._pending_attachments: list[str] = []
+        self._search_tool = self._find_search_tool()
 
     @property
     def name(self) -> str:
@@ -75,6 +78,11 @@ class ResearchAgent(Agent):
             return True
 
         # Run next search iteration (use followup prompt after first iteration)
+        # Only fetch images on the last iteration (for the report attachment)
+        is_last_iteration = current_iteration == task.max_iterations - 1
+        if self._search_tool:
+            self._search_tool.skip_images = not is_last_iteration
+
         history = self._build_history(task, iterations)
         prompt = (
             "Begin researching this topic." if current_iteration == 0 else RESEARCH_FOLLOWUP_PROMPT
@@ -85,6 +93,10 @@ class ResearchAgent(Agent):
             logger.warning("Research iteration returned empty response")
             self._mark_failed(task.id, "Empty response from LLM")
             return False
+
+        # Store attachments from last iteration for the report
+        if is_last_iteration and response.attachments:
+            self._pending_attachments = response.attachments
 
         # Extract the actual search query from tool calls (if any)
         search_query = self._extract_search_query(response.tool_calls)
@@ -149,14 +161,16 @@ class ResearchAgent(Agent):
                 self._mark_failed(task.id, "Could not find recipient")
             return
 
-        # Send report
+        # Send report with image attachment from last iteration (if any)
+        attachments = self._pending_attachments or None
+        self._pending_attachments = []
         typing_task = asyncio.create_task(self._channel._typing_loop(recipient))
         try:
             message_id = await self._channel.send_response(
                 recipient,
                 report,
                 parent_id=None,  # Not continuing a specific thread
-                attachments=None,
+                attachments=attachments,
             )
 
             # Mark task complete and store message_id for continuation detection
@@ -337,6 +351,13 @@ class ResearchAgent(Agent):
                         int(elapsed),
                     )
             session.commit()
+
+    def _find_search_tool(self) -> SearchTool | None:
+        """Find the SearchTool instance in this agent's tools."""
+        for tool in self.tools:
+            if isinstance(tool, SearchTool):
+                return tool
+        return None
 
     def _find_recipient_for_thread(self, thread_id: str) -> str | None:
         """Find a recipient (user) who has sent messages in this thread."""

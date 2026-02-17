@@ -47,10 +47,11 @@ class SearchTool(Tool):
         "required": ["query"],
     }
 
-    def __init__(self, perplexity_api_key: str, db=None):
+    def __init__(self, perplexity_api_key: str, db=None, skip_images: bool = False):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
         self.redact_terms: list[str] = []
+        self.skip_images = skip_images
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -69,9 +70,17 @@ class SearchTool(Tool):
         return text.strip()
 
     async def execute(self, **kwargs) -> Any:
-        """Run Perplexity text search and DuckDuckGo image search in parallel."""
+        """Run Perplexity text search and optionally DuckDuckGo image search in parallel."""
         query: str = kwargs["query"]
         redacted_query = self._redact_query(query)
+
+        if self.skip_images:
+            text_result = await self._search_text(redacted_query)
+            if isinstance(text_result, Exception):
+                return SearchResult(text=f"Error performing search: {text_result}")
+            text, urls = text_result
+            return SearchResult(text=text, urls=urls)
+
         text_result, image_result = await asyncio.gather(
             self._search_text(redacted_query),
             self._search_image(redacted_query),

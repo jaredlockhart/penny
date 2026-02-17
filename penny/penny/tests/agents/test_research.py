@@ -74,8 +74,17 @@ async def test_research_agent_executes_iterations(
         assert "started research" in confirmation["message"].lower()
 
         # Drive iterations directly — 3 iterations + 1 completion call
-        for _ in range(4):
+        search_tool = penny.research_agent._search_tool
+        for i in range(4):
             await penny.research_agent.execute()
+            # After each iteration, verify skip_images was set correctly:
+            # iterations 0,1 → skip_images=True; iteration 2 (last) → skip_images=False
+            # iteration 3 is the completion call (doesn't change the flag)
+            if search_tool and i < 3:
+                expected = i < 2  # True for iter 0,1; False for iter 2
+                assert search_tool.skip_images == expected, (
+                    f"Iteration {i}: expected skip_images={expected}, got {search_tool.skip_images}"
+                )
 
         # Last message should be the research report
         report = signal_server.outgoing_messages[-1]
