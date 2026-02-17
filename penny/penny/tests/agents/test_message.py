@@ -15,20 +15,23 @@ async def test_function_call_syntax_not_leaked_to_user(
     Regression test for #262: function call syntax leaked in off-topic reply.
 
     When a model emits <function=...>...</function> syntax directly in its text
-    content (instead of using structured tool_calls), it must be stripped before
-    the response is sent to the user.
+    content (instead of using structured tool_calls), the agent must retry the
+    prompt rather than forwarding the malformed output to the user.
     """
-    # Simulate a model that embeds function call syntax in plain text content
-    # rather than using proper JSON tool_calls
+    # Simulate a model that embeds function call syntax in plain text content on the
+    # first attempt, then returns a clean response on retry.
     leaked_response = (
         'I\'ll look that up! <function=search>{"query": "movie recommendations"}'
         "</function> Here are some great movies for you!"
     )
+    clean_response = "here are some great movies for you!"
 
-    def response_with_leaked_function_call(request, count):
-        return mock_ollama._make_text_response(request, leaked_response)
+    def handler(request, count):
+        if count == 1:
+            return mock_ollama._make_text_response(request, leaked_response)
+        return mock_ollama._make_text_response(request, clean_response)
 
-    mock_ollama.set_response_handler(response_with_leaked_function_call)
+    mock_ollama.set_response_handler(handler)
 
     async with running_penny(test_config):
         await signal_server.push_message(
@@ -42,6 +45,12 @@ async def test_function_call_syntax_not_leaked_to_user(
         assert "<function=" not in response["message"], (
             f"Function call syntax leaked to user: {response['message']}"
         )
+        # The agent must have retried (at least 2 Ollama requests)
+        assert mock_ollama._request_count >= 2, (
+            "Agent should have retried the prompt when text-embedded function call was detected"
+        )
+        # The clean retry response should be what the user sees
+        assert response["message"] == clean_response
 
 
 @pytest.mark.asyncio

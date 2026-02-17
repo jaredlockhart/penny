@@ -16,19 +16,14 @@ from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
 
-# Matches function call syntax that models sometimes leak into text content,
-# e.g. <function=search>{"query": "..."}</function>
+# Matches function call syntax that models sometimes emit as plain text instead
+# of using structured tool_calls, e.g. <function=search>{"query": "..."}</function>
 _FUNCTION_CALL_PATTERN = re.compile(r"<function=\w+>.*?</function>", re.DOTALL)
 
 
-def _strip_function_calls(content: str) -> str:
-    """Remove leaked function call syntax from model output.
-
-    Some models emit <function=name>...</function> tokens directly in their
-    text content instead of using structured tool_calls. These must never
-    reach the user.
-    """
-    return _FUNCTION_CALL_PATTERN.sub("", content).strip()
+def _has_text_function_calls(content: str) -> bool:
+    """Return True if content contains text-embedded function call syntax."""
+    return bool(_FUNCTION_CALL_PATTERN.search(content))
 
 
 class Agent:
@@ -268,11 +263,16 @@ class Agent:
 
                 continue
 
-            # No tool calls - final answer
-            content = _strip_function_calls(response.content)
-
-            if content != response.content.strip():
-                logger.warning("Stripped leaked function call syntax from model response")
+            # No tool calls - check if the model emitted function call syntax as
+            # plain text instead of using structured tool_calls. If so, retry the
+            # same prompt rather than passing malformed output to the user.
+            content = response.content.strip()
+            if tools and _has_text_function_calls(content):
+                logger.warning(
+                    "Model emitted text-embedded function call syntax; retrying prompt (step %d)",
+                    step + 1,
+                )
+                continue
 
             if not content:
                 logger.error("Model returned empty content!")
