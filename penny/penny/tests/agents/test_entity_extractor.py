@@ -47,7 +47,7 @@ async def test_entity_extractor_processes_search_log(
                     {
                         "known": [],
                         "new": [
-                            {"name": "KEF LS50 Meta", "entity_type": "product"},
+                            {"name": "KEF LS50 Meta"},
                         ],
                     }
                 ),
@@ -88,7 +88,6 @@ async def test_entity_extractor_processes_search_log(
         entities = penny.db.get_user_entities(TEST_SENDER)
         assert len(entities) >= 1
         entity = next(e for e in entities if e.name == "kef ls50 meta")
-        assert entity.entity_type == "product"
         assert "Costs $1,599 per pair" in entity.facts
         assert "Metamaterial Absorption Technology" in entity.facts
 
@@ -136,7 +135,7 @@ async def test_entity_extractor_skips_processed(
                         {
                             "known": [],
                             "new": [
-                                {"name": "NVIDIA Jetson", "entity_type": "product"},
+                                {"name": "NVIDIA Jetson"},
                             ],
                         }
                     ),
@@ -207,7 +206,7 @@ async def test_entity_extractor_known_and_new_entities(
                     {
                         "known": ["kef ls50 meta"],
                         "new": [
-                            {"name": "Wharfedale Linton", "entity_type": "product"},
+                            {"name": "Wharfedale Linton"},
                         ],
                     }
                 ),
@@ -234,7 +233,7 @@ async def test_entity_extractor_known_and_new_entities(
 
     async with running_penny(config) as penny:
         # Pre-seed an existing entity with a fact
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta", "product")
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
         penny.db.update_entity_facts(entity.id, "- Costs $1,599 per pair")
 
@@ -258,7 +257,6 @@ async def test_entity_extractor_known_and_new_entities(
 
         # New entity should have its facts
         wharfedale = next(e for e in entities if e.name == "wharfedale linton")
-        assert wharfedale.entity_type == "product"
         assert "Heritage design with modern drivers" in wharfedale.facts
         assert "Costs $1,199 per pair" in wharfedale.facts
 

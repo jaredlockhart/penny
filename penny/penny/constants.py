@@ -54,14 +54,4 @@ class PennyConstants:
     VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
 
     # Entity knowledge base constants
-    class EntityType(StrEnum):
-        """Type of entity in the knowledge base."""
-
-        PRODUCT = "product"
-        PERSON = "person"
-        PLACE = "place"
-        CONCEPT = "concept"
-        ORGANIZATION = "organization"
-        EVENT = "event"
-
     ENTITY_EXTRACTION_BATCH_LIMIT = 10

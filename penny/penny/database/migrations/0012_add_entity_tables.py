@@ -14,7 +14,6 @@ def up(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user TEXT NOT NULL,
             name TEXT NOT NULL,
-            entity_type TEXT NOT NULL,
             facts TEXT NOT NULL DEFAULT '',
             created_at TIMESTAMP NOT NULL,
             updated_at TIMESTAMP NOT NULL
@@ -25,14 +24,10 @@ def up(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS ix_entity_user ON entity (user)
     """)
 
+    # Unique constraint on (user, name) to prevent duplicates
     conn.execute("""
-        CREATE INDEX IF NOT EXISTS ix_entity_entity_type ON entity (entity_type)
-    """)
-
-    # Unique constraint on (user, name, entity_type) to prevent duplicates
-    conn.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS ix_entity_user_name_type
-        ON entity (user, name, entity_type)
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_entity_user_name
+        ON entity (user, name)
     """)
 
     # Cursor table for tracking entity extraction progress per source type

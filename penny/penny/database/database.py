@@ -855,14 +855,13 @@ class Database:
 
     # --- Entity knowledge base methods ---
 
-    def get_or_create_entity(self, user: str, name: str, entity_type: str) -> Entity | None:
+    def get_or_create_entity(self, user: str, name: str) -> Entity | None:
         """
         Get an existing entity or create a new one.
 
         Args:
             user: User identifier
             name: Entity name (will be lowercased)
-            entity_type: Entity type string (EntityType enum value)
 
         Returns:
             The Entity (existing or newly created), or None on failure
@@ -874,7 +873,6 @@ class Database:
                     select(Entity).where(
                         Entity.user == user,
                         Entity.name == name,
-                        Entity.entity_type == entity_type,
                     )
                 ).first()
 
@@ -888,14 +886,13 @@ class Database:
                 entity = Entity(
                     user=user,
                     name=name,
-                    entity_type=entity_type,
                     created_at=datetime.now(UTC),
                     updated_at=datetime.now(UTC),
                 )
                 session.add(entity)
                 session.commit()
                 session.refresh(entity)
-                logger.debug("Created entity '%s' (%s) for user %s", name, entity_type, user)
+                logger.debug("Created entity '%s' for user %s", name, user)
                 return entity
         except Exception as e:
             logger.error("Failed to get_or_create entity: %s", e)

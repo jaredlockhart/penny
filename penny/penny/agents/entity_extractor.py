@@ -31,9 +31,6 @@ class IdentifiedNewEntity(BaseModel):
     """A newly discovered entity from pass 1."""
 
     name: str = Field(description="Entity name (e.g., 'KEF LS50 Meta', 'NVIDIA Jetson')")
-    entity_type: str = Field(
-        description="Type: product, person, place, concept, organization, event"
-    )
 
 
 # Rebuild IdentifiedEntities now that IdentifiedNewEntity is defined
@@ -116,7 +113,6 @@ class EntityExtractor(Agent):
         if not identified:
             return False
 
-        valid_types = {t.value for t in PennyConstants.EntityType}
         work_done = False
 
         # Collect all entities to process facts for
@@ -128,11 +124,7 @@ class EntityExtractor(Agent):
             if not name:
                 continue
 
-            entity_type = new_entity.entity_type.lower().strip()
-            if entity_type not in valid_types:
-                entity_type = PennyConstants.EntityType.CONCEPT
-
-            entity = self.db.get_or_create_entity(user, name, entity_type)
+            entity = self.db.get_or_create_entity(user, name)
             if entity and entity.id is not None:
                 entities_to_process.append(entity)
                 work_done = True
@@ -228,7 +220,7 @@ class EntityExtractor(Agent):
 
         prompt = (
             f"{Prompt.ENTITY_FACT_EXTRACTION_PROMPT}\n\n"
-            f"Entity: {entity.name} ({entity.entity_type})\n\n"
+            f"Entity: {entity.name}\n\n"
             f"Search query: {query}\n\n"
             f"Content:\n{content}"
             f"{existing_context}"

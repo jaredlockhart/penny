@@ -162,8 +162,7 @@ Penny stores data in SQLite across several tables:
 - Prompt text that transforms Penny's response style
 
 **Entity**: Named entity knowledge base
-- User, name (lowercased), entity type (product, person, place, concept, organization, event)
-- Facts stored as bulleted text lines (e.g., "- costs $1599\n- uses MAT driver")
+- User, name (lowercased), facts stored as bulleted text lines (e.g., "- costs $1599\n- uses MAT driver")
 - Extracted from SearchLog entries by EntityExtractor agent
 - Progress tracked via `entity_extraction_cursor` table (high-water mark per source type)
 
