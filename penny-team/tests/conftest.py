@@ -109,6 +109,10 @@ class MockGitHubAPI:
         if self._comment_issue_fail:
             raise RuntimeError("Mock comment_issue failure")
 
+    def create_issue(self, title: str, body: str, labels: list[str]) -> str:
+        self.calls.append(("create_issue", (title, body, labels), {}))
+        return f"https://github.com/test/issues/{len(self.calls)}"
+
     def list_open_prs(self, limit: int = 20) -> list[PullRequest]:
         self.calls.append(("list_open_prs", (), {"limit": limit}))
         if self._list_prs_fail:

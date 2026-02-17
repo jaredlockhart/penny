@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.constants import TEST_DB_PATH
+from penny.constants import PennyConstants
 from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
@@ -57,7 +57,7 @@ class TestCommand(Command):
         # Create test database instance
         from penny.database import Database
 
-        test_db_path = Path(context.db.db_path).parent / TEST_DB_PATH.name
+        test_db_path = Path(context.db.db_path).parent / PennyConstants.TEST_DB_PATH.name
         test_db = Database(str(test_db_path))
 
         # Create message agent with test database

@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 
 from penny.agents.base import Agent
 from penny.agents.models import MessageRole
-from penny.constants import PreferenceType
-from penny.prompts import DISCOVERY_PROMPT
+from penny.constants import PennyConstants
+from penny.prompts import Prompt
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -55,7 +55,7 @@ class DiscoveryAgent(Agent):
         recipient = random.choice(users)
 
         # Get user's likes
-        likes = self.db.get_preferences(recipient, PreferenceType.LIKE)
+        likes = self.db.get_preferences(recipient, PennyConstants.PreferenceType.LIKE)
         if not likes:
             logger.debug("DiscoveryAgent: user %s has no likes yet", recipient)
             return False
@@ -68,7 +68,7 @@ class DiscoveryAgent(Agent):
         context_parts = [f"User likes: {random_like.topic}"]
 
         # Get user's dislikes to exclude from search
-        dislikes = self.db.get_preferences(recipient, PreferenceType.DISLIKE)
+        dislikes = self.db.get_preferences(recipient, PennyConstants.PreferenceType.DISLIKE)
         if dislikes:
             dislike_topics = [d.topic for d in dislikes]
             context_parts.append(
@@ -81,7 +81,7 @@ class DiscoveryAgent(Agent):
                 "\n".join(context_parts),
             )
         ]
-        response = await self.run(prompt=DISCOVERY_PROMPT, history=history, sender=recipient)
+        response = await self.run(prompt=Prompt.DISCOVERY_PROMPT, history=history, sender=recipient)
 
         answer = response.answer.strip() if response.answer else None
         if not answer:

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import time
@@ -28,31 +29,9 @@ from github_api.api import GitHubAPI
 from github_api.auth import GitHubAuth
 
 from penny_team.base import Agent
-from penny_team.constants import (
-    AGENT_ARCHITECT,
-    AGENT_MONITOR,
-    AGENT_PM,
-    AGENT_WORKER,
-    APP_PREFIX,
-    ARCHITECT_INTERVAL,
-    ARCHITECT_TIMEOUT,
-    BOT_SUFFIX,
-    ENV_APP_ID,
-    ENV_FILENAME,
-    ENV_INSTALL_ID,
-    ENV_KEY_PATH,
-    GITHUB_REPO_NAME,
-    GITHUB_REPO_OWNER,
-    MONITOR_INTERVAL,
-    MONITOR_TIMEOUT,
-    ORCHESTRATOR_LOG,
-    PM_INTERVAL,
-    PM_TIMEOUT,
-    WORKER_INTERVAL,
-    WORKER_TIMEOUT,
-    Label,
-)
+from penny_team.constants import TeamConstants
 from penny_team.monitor import MonitorAgent
+from penny_team.quality import QualityAgent
 from penny_team.utils.codeowners import parse_codeowners
 
 AGENTS_DIR = Path(__file__).parent
@@ -64,11 +43,10 @@ logger = logging.getLogger(__name__)
 
 def load_github_app():
     """Load GitHub App config from environment variables."""
-    import os
 
-    app_id = os.getenv(ENV_APP_ID)
-    key_path = os.getenv(ENV_KEY_PATH)
-    install_id = os.getenv(ENV_INSTALL_ID)
+    app_id = os.getenv(TeamConstants.ENV_APP_ID)
+    key_path = os.getenv(TeamConstants.ENV_KEY_PATH)
+    install_id = os.getenv(TeamConstants.ENV_INSTALL_ID)
 
     if app_id is None or key_path is None or install_id is None:
         return None
@@ -106,20 +84,24 @@ def get_agents(github_app=None) -> list[Agent]:
     if trusted is not None and github_app is not None:
         slug = github_app._fetch_slug()
         trusted.add(slug)
-        trusted.add(f"{slug}{BOT_SUFFIX}")
-        trusted.add(f"{APP_PREFIX}{slug}")
+        trusted.add(f"{slug}{TeamConstants.BOT_SUFFIX}")
+        trusted.add(f"{TeamConstants.APP_PREFIX}{slug}")
 
     # Create shared GitHub API client for all agents
     github_api = (
-        GitHubAPI(github_app.get_token, GITHUB_REPO_OWNER, GITHUB_REPO_NAME) if github_app else None
+        GitHubAPI(
+            github_app.get_token, TeamConstants.GITHUB_REPO_OWNER, TeamConstants.GITHUB_REPO_NAME
+        )
+        if github_app
+        else None
     )
 
-    return [
+    agents: list[Agent] = [
         Agent(
-            name=AGENT_PM,
-            interval_seconds=PM_INTERVAL,
-            timeout_seconds=PM_TIMEOUT,
-            required_labels=[Label.REQUIREMENTS],
+            name=TeamConstants.AGENT_PM,
+            interval_seconds=TeamConstants.PM_INTERVAL,
+            timeout_seconds=TeamConstants.PM_TIMEOUT,
+            required_labels=[TeamConstants.Label.REQUIREMENTS],
             github_app=github_app,
             github_api=github_api,
             trusted_users=trusted,
@@ -127,10 +109,10 @@ def get_agents(github_app=None) -> list[Agent]:
             allowed_tools=[],
         ),
         Agent(
-            name=AGENT_ARCHITECT,
-            interval_seconds=ARCHITECT_INTERVAL,
-            timeout_seconds=ARCHITECT_TIMEOUT,
-            required_labels=[Label.SPECIFICATION],
+            name=TeamConstants.AGENT_ARCHITECT,
+            interval_seconds=TeamConstants.ARCHITECT_INTERVAL,
+            timeout_seconds=TeamConstants.ARCHITECT_TIMEOUT,
+            required_labels=[TeamConstants.Label.SPECIFICATION],
             github_app=github_app,
             github_api=github_api,
             trusted_users=trusted,
@@ -138,24 +120,48 @@ def get_agents(github_app=None) -> list[Agent]:
             allowed_tools=[],
         ),
         Agent(
-            name=AGENT_WORKER,
-            interval_seconds=WORKER_INTERVAL,
-            timeout_seconds=WORKER_TIMEOUT,
-            required_labels=[Label.IN_PROGRESS, Label.IN_REVIEW, Label.BUG],
+            name=TeamConstants.AGENT_WORKER,
+            interval_seconds=TeamConstants.WORKER_INTERVAL,
+            timeout_seconds=TeamConstants.WORKER_TIMEOUT,
+            required_labels=[
+                TeamConstants.Label.IN_PROGRESS,
+                TeamConstants.Label.IN_REVIEW,
+                TeamConstants.Label.BUG,
+            ],
             github_app=github_app,
             github_api=github_api,
             trusted_users=trusted,
             suppress_system_prompt=False,
         ),
         MonitorAgent(
-            name=AGENT_MONITOR,
-            interval_seconds=MONITOR_INTERVAL,
-            timeout_seconds=MONITOR_TIMEOUT,
+            name=TeamConstants.AGENT_MONITOR,
+            interval_seconds=TeamConstants.MONITOR_INTERVAL,
+            timeout_seconds=TeamConstants.MONITOR_TIMEOUT,
             github_app=github_app,
             github_api=github_api,
             trusted_users=trusted,
         ),
     ]
+
+    # Quality agent is optional — only registered when Ollama model is configured
+    ollama_model = os.getenv(TeamConstants.ENV_OLLAMA_MODEL)
+    if ollama_model:
+        agents.append(
+            QualityAgent(
+                name=TeamConstants.AGENT_QUALITY,
+                interval_seconds=TeamConstants.QUALITY_INTERVAL,
+                timeout_seconds=TeamConstants.QUALITY_TIMEOUT,
+                ollama_url=os.getenv(
+                    TeamConstants.ENV_OLLAMA_URL, TeamConstants.OLLAMA_DEFAULT_URL
+                ),
+                ollama_model=ollama_model,
+                github_app=github_app,
+                github_api=github_api,
+                trusted_users=trusted,
+            )
+        )
+
+    return agents
 
 
 def setup_logging(log_file: Path | None = None) -> None:
@@ -198,7 +204,7 @@ def main() -> None:
         default=None,
         help="Run only the named agent (e.g. 'product-manager' or 'worker')",
     )
-    parser.add_argument("--log-file", type=Path, default=LOG_DIR / ORCHESTRATOR_LOG)
+    parser.add_argument("--log-file", type=Path, default=LOG_DIR / TeamConstants.ORCHESTRATOR_LOG)
     args = parser.parse_args()
 
     setup_logging(args.log_file)
@@ -207,7 +213,7 @@ def main() -> None:
     # Load .env so orchestrator works without shell exports
     from dotenv import load_dotenv
 
-    load_dotenv(PROJECT_ROOT / ENV_FILENAME)
+    load_dotenv(PROJECT_ROOT / TeamConstants.ENV_FILENAME)
 
     github_app = load_github_app()
     if github_app:

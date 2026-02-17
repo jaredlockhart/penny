@@ -17,12 +17,7 @@ from pathlib import Path
 from github_api.api import GitHubAPI
 
 from penny_team.base import Agent, AgentRun
-from penny_team.constants import (
-    LOG_LEVELS_ERROR,
-    MONITOR_FIRST_RUN_MAX_BYTES,
-    MONITOR_MAX_ERROR_CONTEXT,
-    MONITOR_STATE_OFFSET,
-)
+from penny_team.constants import TeamConstants
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +62,7 @@ def extract_errors(log_text: str) -> list[ErrorBlock]:
         match = _LOG_LINE_RE.match(lines[i])
         if match:
             timestamp, module, level, message = match.groups()
-            if level in LOG_LEVELS_ERROR:
+            if level in TeamConstants.LOG_LEVELS_ERROR:
                 # Collect traceback lines that follow
                 traceback_lines: list[str] = []
                 j = i + 1
@@ -162,11 +157,11 @@ class MonitorAgent(Agent):
     def _load_offset(self) -> int:
         """Load saved byte offset from state file."""
         state = self._load_state()
-        return int(state.get(MONITOR_STATE_OFFSET, "0"))
+        return int(state.get(TeamConstants.MONITOR_STATE_OFFSET, "0"))
 
     def _save_offset(self, offset: int) -> None:
         """Persist byte offset to state file."""
-        self._save_state({MONITOR_STATE_OFFSET: str(offset)})
+        self._save_state({TeamConstants.MONITOR_STATE_OFFSET: str(offset)})
 
     def has_work(self) -> bool:
         """Check if the log file has new content since the last read.
@@ -215,8 +210,8 @@ class MonitorAgent(Agent):
         if file_size < saved_offset:
             saved_offset = 0
 
-        if saved_offset == 0 and file_size > MONITOR_FIRST_RUN_MAX_BYTES:
-            saved_offset = file_size - MONITOR_FIRST_RUN_MAX_BYTES
+        if saved_offset == 0 and file_size > TeamConstants.MONITOR_FIRST_RUN_MAX_BYTES:
+            saved_offset = file_size - TeamConstants.MONITOR_FIRST_RUN_MAX_BYTES
 
         with open(self.log_path) as f:
             f.seek(saved_offset)
@@ -266,8 +261,10 @@ class MonitorAgent(Agent):
         prompt = self.prompt_path.read_text()
         error_section = format_errors_for_prompt(errors)
 
-        if len(error_section) > MONITOR_MAX_ERROR_CONTEXT:
-            error_section = error_section[:MONITOR_MAX_ERROR_CONTEXT] + "\n\n... (truncated)\n"
+        if len(error_section) > TeamConstants.MONITOR_MAX_ERROR_CONTEXT:
+            error_section = (
+                error_section[: TeamConstants.MONITOR_MAX_ERROR_CONTEXT] + "\n\n... (truncated)\n"
+            )
 
         prompt += error_section
 

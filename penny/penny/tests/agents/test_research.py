@@ -127,11 +127,11 @@ async def test_research_agent_no_channel(
 
     async with running_penny(config) as penny:
         from penny.agents import ResearchAgent
-        from penny.prompts import SEARCH_PROMPT
+        from penny.prompts import Prompt
 
         research_agent = ResearchAgent(
             config=config,
-            system_prompt=SEARCH_PROMPT,
+            system_prompt=Prompt.SEARCH_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
@@ -157,11 +157,11 @@ async def test_research_agent_no_tasks(
 
     async with running_penny(config) as penny:
         from penny.agents import ResearchAgent
-        from penny.prompts import SEARCH_PROMPT
+        from penny.prompts import Prompt
 
         research_agent = ResearchAgent(
             config=config,
-            system_prompt=SEARCH_PROMPT,
+            system_prompt=Prompt.SEARCH_PROMPT,
             model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],

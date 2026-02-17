@@ -17,18 +17,7 @@ from pathlib import Path
 from github_api.api import GitHubAPI
 from pydantic import BaseModel
 
-from penny_team.constants import (
-    APP_PREFIX,
-    BLOCK_TEXT,
-    BLOCK_TOOL_USE,
-    CI_STATUS_FAILING,
-    CLAUDE_CLI,
-    EVENT_ASSISTANT,
-    EVENT_RESULT,
-    LABELS_WITH_EXTERNAL_STATE,
-    MAX_CI_FIX_ATTEMPTS,
-    PROMPT_FILENAME,
-)
+from penny_team.constants import TeamConstants
 
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent.parent
@@ -82,7 +71,7 @@ class Agent:
         suppress_system_prompt: bool = True,
     ):
         self.name = name
-        self.prompt_path = AGENTS_DIR / name / PROMPT_FILENAME
+        self.prompt_path = AGENTS_DIR / name / TeamConstants.PROMPT_FILENAME
         self.interval_seconds = interval_seconds
         self.working_dir = working_dir
         self.timeout_seconds = timeout_seconds
@@ -124,7 +113,7 @@ class Agent:
         if self.github_app is None:
             return None
         slug = self.github_app._fetch_slug()
-        return {slug, self.github_app.bot_name, f"{APP_PREFIX}{slug}"}
+        return {slug, self.github_app.bot_name, f"{TeamConstants.APP_PREFIX}{slug}"}
 
     @property
     def _state_path(self) -> Path:
@@ -229,7 +218,7 @@ class Agent:
         # Timestamps unchanged. For labels with external state (CI, reviews),
         # check if any issue actually needs attention.
         has_external_state = any(
-            label in LABELS_WITH_EXTERNAL_STATE for label in self.required_labels
+            label in TeamConstants.LABELS_WITH_EXTERNAL_STATE for label in self.required_labels
         )
         if has_external_state:
             return self._check_actionable_issues()
@@ -272,7 +261,7 @@ class Agent:
 
     def _build_command(self, prompt: str) -> list[str]:
         cmd = [
-            CLAUDE_CLI,
+            TeamConstants.CLAUDE_CLI,
             "-p",
             prompt,
             "--verbose",
@@ -326,7 +315,7 @@ class Agent:
                 try:
                     event = json.loads(line)
                     self._log_event(event)
-                    if event.get("type") == EVENT_RESULT:
+                    if event.get("type") == TeamConstants.EVENT_RESULT:
                         result_text = event.get("result", "")
                 except json.JSONDecodeError:
                     logger.info(f"[{self.name}] {line}")
@@ -399,24 +388,25 @@ class Agent:
             attempts = state.ci_fix_attempts.get(issue_key, 0)
 
             if (
-                issue.ci_status == CI_STATUS_FAILING
+                issue.ci_status == TeamConstants.CI_STATUS_FAILING
                 and not issue.has_review_feedback
-                and attempts >= MAX_CI_FIX_ATTEMPTS
+                and attempts >= TeamConstants.MAX_CI_FIX_ATTEMPTS
             ):
                 duration = (datetime.now() - start).total_seconds()
                 self.last_run = datetime.now()
                 self.run_count += 1
+                max_attempts = TeamConstants.MAX_CI_FIX_ATTEMPTS
                 msg = (
                     f"*[Worker Agent]*\n\n"
-                    f"I've attempted to fix CI {MAX_CI_FIX_ATTEMPTS} times without success. "
+                    f"I've attempted to fix CI {max_attempts} times without success. "
                     f"Pausing automated attempts — a human needs to take a look at the "
                     f"failing checks and provide guidance."
                 )
                 self._post_comment(issue.number, msg)
                 self._mark_processed(issue.number)
                 logger.warning(
-                    f"[{self.name}] CI fix attempt limit ({MAX_CI_FIX_ATTEMPTS}) reached "
-                    f"for issue #{issue.number}, pausing"
+                    f"[{self.name}] CI fix attempt limit ({max_attempts})"
+                    f" reached for issue #{issue.number}, pausing"
                 )
                 return AgentRun(
                     agent_name=self.name,
@@ -428,7 +418,7 @@ class Agent:
 
             # Reset CI fix counter when CI passes or human has provided feedback
             if (
-                issue.ci_status != CI_STATUS_FAILING or issue.has_review_feedback
+                issue.ci_status != TeamConstants.CI_STATUS_FAILING or issue.has_review_feedback
             ) and issue_key in state.ci_fix_attempts:
                 del state.ci_fix_attempts[issue_key]
                 self._save_full_state(state)
@@ -456,7 +446,7 @@ class Agent:
 
                 # Increment CI fix attempt counter if this run was for failing CI
                 if (
-                    selected_issue.ci_status == CI_STATUS_FAILING
+                    selected_issue.ci_status == TeamConstants.CI_STATUS_FAILING
                     and not selected_issue.has_review_feedback
                 ):
                     s = self._load_full_state()
@@ -489,16 +479,16 @@ class Agent:
         """Log a stream-json event in a human-readable way."""
         event_type = event.get("type", "")
 
-        if event_type == EVENT_ASSISTANT:
+        if event_type == TeamConstants.EVENT_ASSISTANT:
             # Assistant text output
             for block in event.get("message", {}).get("content", []):
-                if block.get("type") == BLOCK_TEXT:
-                    for text_line in block[BLOCK_TEXT].split("\n"):
+                if block.get("type") == TeamConstants.BLOCK_TEXT:
+                    for text_line in block[TeamConstants.BLOCK_TEXT].split("\n"):
                         logger.info(f"[{self.name}] {text_line}")
-                elif block.get("type") == BLOCK_TOOL_USE:
+                elif block.get("type") == TeamConstants.BLOCK_TOOL_USE:
                     tool_name = block.get("name", "?")
                     logger.info(f"[{self.name}] [tool] {tool_name}")
 
-        elif event_type == EVENT_RESULT:
+        elif event_type == TeamConstants.EVENT_RESULT:
             for text_line in event.get("result", "").split("\n"):
                 logger.info(f"[{self.name}] {text_line}")

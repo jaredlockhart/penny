@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.database import Database
 from penny.ollama import OllamaClient
-from penny.prompts import PENNY_IDENTITY, VISION_AUTO_DESCRIBE_PROMPT
+from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.models import SearchResult
@@ -135,7 +135,7 @@ class Agent:
                 personality_text = None
 
         # Build system prompt: identity → personality (optional) → agent-specific prompt
-        system_parts.append(PENNY_IDENTITY)
+        system_parts.append(Prompt.PENNY_IDENTITY)
 
         if personality_text:
             system_parts.append("")
@@ -167,7 +167,7 @@ class Agent:
             Text description of the image
         """
         messages = [
-            {"role": "user", "content": VISION_AUTO_DESCRIBE_PROMPT, "images": [image_b64]},
+            {"role": "user", "content": Prompt.VISION_AUTO_DESCRIBE_PROMPT, "images": [image_b64]},
         ]
         response = await self._ollama_client.chat(messages=messages, model=self.vision_model)
         return response.content.strip()

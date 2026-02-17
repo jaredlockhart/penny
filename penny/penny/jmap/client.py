@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from penny.constants import EMAIL_BODY_MAX_LENGTH, JMAP_REQUEST_TIMEOUT, JMAP_SESSION_URL
+from penny.constants import PennyConstants
 from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary, JmapSession
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class JmapClient:
         self._api_token = api_token
         self._session: JmapSession | None = None
         self._http = httpx.AsyncClient(
-            timeout=JMAP_REQUEST_TIMEOUT,
+            timeout=PennyConstants.JMAP_REQUEST_TIMEOUT,
             headers={"Authorization": f"Bearer {api_token}"},
         )
 
@@ -58,7 +58,7 @@ class JmapClient:
         if self._session:
             return self._session
 
-        resp = await self._http.get(JMAP_SESSION_URL)
+        resp = await self._http.get(PennyConstants.JMAP_SESSION_URL)
         resp.raise_for_status()
         data = resp.json()
 
@@ -202,8 +202,8 @@ class JmapClient:
                         text_body += _strip_html(html_content)
 
             # Truncate long bodies
-            if len(text_body) > EMAIL_BODY_MAX_LENGTH:
-                text_body = text_body[:EMAIL_BODY_MAX_LENGTH] + "\n\n[truncated]"
+            if len(text_body) > PennyConstants.EMAIL_BODY_MAX_LENGTH:
+                text_body = text_body[: PennyConstants.EMAIL_BODY_MAX_LENGTH] + "\n\n[truncated]"
 
             results.append(
                 EmailDetail(

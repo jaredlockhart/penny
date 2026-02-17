@@ -9,12 +9,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
-from penny.constants import (
-    DISLIKE_REACTIONS,
-    LIKE_REACTIONS,
-    PREFERENCE_BATCH_LIMIT,
-    PreferenceType,
-)
+from penny.constants import PennyConstants
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -68,8 +63,12 @@ class PreferenceAgent(Agent):
 
         work_done = False
         for sender in senders:
-            reactions = self.db.get_user_reactions(sender, limit=PREFERENCE_BATCH_LIMIT)
-            messages = self.db.get_unprocessed_messages(sender, limit=PREFERENCE_BATCH_LIMIT)
+            reactions = self.db.get_user_reactions(
+                sender, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
+            )
+            messages = self.db.get_unprocessed_messages(
+                sender, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
+            )
 
             if not reactions and not messages:
                 continue
@@ -79,14 +78,17 @@ class PreferenceAgent(Agent):
             dislike_reaction_texts: list[str] = []
             for reaction in reactions:
                 emoji = reaction.content
-                if emoji not in LIKE_REACTIONS and emoji not in DISLIKE_REACTIONS:
+                if (
+                    emoji not in PennyConstants.LIKE_REACTIONS
+                    and emoji not in PennyConstants.DISLIKE_REACTIONS
+                ):
                     continue
                 if not reaction.parent_id:
                     continue
                 parent_msg = self.db.get_message_by_id(reaction.parent_id)
                 if not parent_msg:
                     continue
-                if emoji in LIKE_REACTIONS:
+                if emoji in PennyConstants.LIKE_REACTIONS:
                     like_reaction_texts.append(parent_msg.content)
                 else:
                     dislike_reaction_texts.append(parent_msg.content)
@@ -95,8 +97,8 @@ class PreferenceAgent(Agent):
 
             # Two passes: likes then dislikes
             for pref_type, reaction_texts in [
-                (PreferenceType.LIKE, like_reaction_texts),
-                (PreferenceType.DISLIKE, dislike_reaction_texts),
+                (PennyConstants.PreferenceType.LIKE, like_reaction_texts),
+                (PennyConstants.PreferenceType.DISLIKE, dislike_reaction_texts),
             ]:
                 if not reaction_texts and not user_message_texts:
                     continue
@@ -141,7 +143,7 @@ class PreferenceAgent(Agent):
 
         sentiment_desc = (
             "enjoys or is enthusiastic about"
-            if pref_type == PreferenceType.LIKE
+            if pref_type == PennyConstants.PreferenceType.LIKE
             else "dislikes or expresses negativity toward"
         )
 

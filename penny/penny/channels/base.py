@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from penny.config import Config
-from penny.constants import MessageDirection
+from penny.constants import PennyConstants
 from penny.database.models import MessageLog
-from penny.prompts import PERSONALITY_TRANSFORM_PROMPT
+from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
@@ -192,7 +192,7 @@ class MessageChannel(ABC):
         )
 
         # Build personality transform prompt
-        system_prompt = PERSONALITY_TRANSFORM_PROMPT.format(
+        system_prompt = Prompt.PERSONALITY_TRANSFORM_PROMPT.format(
             personality_prompt=personality.prompt_text
         )
         messages = [
@@ -313,7 +313,7 @@ class MessageChannel(ABC):
         # We log the prepared content so quote matching works correctly
         prepared = self.prepare_outgoing(transformed)
         message_id = self._db.log_message(
-            MessageDirection.OUTGOING,
+            PennyConstants.MessageDirection.OUTGOING,
             self.sender_id,
             prepared,
             parent_id=parent_id,
@@ -405,7 +405,7 @@ class MessageChannel(ABC):
 
                 # Log incoming message linked to parent
                 incoming_id = self._db.log_message(
-                    MessageDirection.INCOMING,
+                    PennyConstants.MessageDirection.INCOMING,
                     message.sender,
                     message.content,
                     parent_id=parent_id,
@@ -418,7 +418,7 @@ class MessageChannel(ABC):
                 # Quote-reply to the user's incoming message
                 incoming_log = MessageLog(
                     id=incoming_id,
-                    direction=MessageDirection.INCOMING,
+                    direction=PennyConstants.MessageDirection.INCOMING,
                     sender=message.sender,
                     content=message.content,
                     signal_timestamp=message.signal_timestamp,
@@ -461,7 +461,7 @@ class MessageChannel(ABC):
 
         # Log the reaction as an incoming message with is_reaction=True
         self._db.log_message(
-            MessageDirection.INCOMING,
+            PennyConstants.MessageDirection.INCOMING,
             message.sender,
             message.content,  # The emoji
             parent_id=reacted_msg.id,
