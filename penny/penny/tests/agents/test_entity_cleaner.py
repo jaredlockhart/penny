@@ -7,7 +7,7 @@ import pytest
 from sqlmodel import select
 
 from penny.constants import PennyConstants
-from penny.database.models import EntitySearchLog
+from penny.database.models import Fact
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -22,10 +22,9 @@ async def test_entity_cleaner_merges_duplicates(
 ):
     """
     Test that EntityCleaner merges duplicate entities:
-    1. Pre-seed three entities (two duplicates + one distinct)
-    2. Create entity_search_log links for all three
-    3. Mock LLM returns a merge group for the duplicate pair
-    4. Verify: entities merged, facts combined, search log refs updated, duplicate deleted
+    1. Pre-seed three entities (two duplicates + one distinct) with Fact rows
+    2. Mock LLM returns a merge group for the duplicate pair
+    3. Verify: entities merged, facts combined and deduplicated, duplicate deleted
     """
     config = make_config()
 
@@ -58,32 +57,25 @@ async def test_entity_cleaner_merges_duplicates(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Send a message to create a SearchLog entry
+        # Send a message so we have a valid sender
         await signal_server.push_message(
             sender=TEST_SENDER, content="tell me about stanford physics"
         )
         await signal_server.wait_for_message(timeout=10.0)
 
-        # Pre-seed three entities
+        # Pre-seed three entities with individual Fact rows
         stanford = penny.db.get_or_create_entity(TEST_SENDER, "stanford")
         assert stanford is not None and stanford.id is not None
-        penny.db.update_entity_facts(stanford.id, "- Located in California")
+        penny.db.add_fact(stanford.id, "Located in California")
 
         stanford_uni = penny.db.get_or_create_entity(TEST_SENDER, "stanford university")
         assert stanford_uni is not None and stanford_uni.id is not None
-        penny.db.update_entity_facts(stanford_uni.id, "- Founded in 1885\n- Located in California")
+        penny.db.add_fact(stanford_uni.id, "Founded in 1885")
+        penny.db.add_fact(stanford_uni.id, "Located in California")  # Duplicate fact
 
         kef = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
         assert kef is not None and kef.id is not None
-        penny.db.update_entity_facts(kef.id, "- Costs $1,599 per pair")
-
-        # Create entity_search_log links
-        with penny.db.get_session() as session:
-            search_log = session.exec(select(EntitySearchLog)).first()
-            search_log_id = search_log.search_log_id if search_log else 1
-
-        penny.db.link_entity_to_search_log(stanford.id, search_log_id)
-        penny.db.link_entity_to_search_log(stanford_uni.id, search_log_id)
+        penny.db.add_fact(kef.id, "Costs $1,599 per pair")
 
         # Run the entity cleaner
         work_done = await penny.entity_cleaner.execute()
@@ -99,32 +91,29 @@ async def test_entity_cleaner_merges_duplicates(
 
         # Verify facts were combined and deduplicated
         merged = next(e for e in entities if e.name == "stanford")
-        assert "Located in California" in merged.facts
-        assert "Founded in 1885" in merged.facts
-        # "Located in California" was on both entities — should appear only once after dedup
-        assert merged.facts.count("Located in California") == 1
+        merged_facts = penny.db.get_entity_facts(merged.id)
+        merged_contents = [f.content for f in merged_facts]
+        assert "Located in California" in merged_contents
+        assert "Founded in 1885" in merged_contents
+        # "Located in California" was on both entities — should appear only once
+        assert merged_contents.count("Located in California") == 1
+
+        # Verify all facts belong to the primary entity
+        with penny.db.get_session() as session:
+            all_facts = list(session.exec(select(Fact).where(Fact.entity_id == stanford.id)).all())
+            assert len(all_facts) == 2  # Two unique facts
+
+            # No orphaned facts for the deleted entity
+            orphan_facts = list(
+                session.exec(select(Fact).where(Fact.entity_id == stanford_uni.id)).all()
+            )
+            assert len(orphan_facts) == 0
 
         # Verify unrelated entity is unchanged
         kef_after = next(e for e in entities if e.name == "kef ls50 meta")
-        assert kef_after.facts == "- Costs $1,599 per pair"
-
-        # Verify entity_search_log references were reassigned from duplicate to primary
-        with penny.db.get_session() as session:
-            links = list(
-                session.exec(
-                    select(EntitySearchLog).where(EntitySearchLog.entity_id == stanford.id)
-                ).all()
-            )
-            # Original link + reassigned link from duplicate
-            assert len(links) == 2
-
-            # No orphaned references to the deleted entity
-            orphans = list(
-                session.exec(
-                    select(EntitySearchLog).where(EntitySearchLog.entity_id == stanford_uni.id)
-                ).all()
-            )
-            assert len(orphans) == 0
+        kef_facts = penny.db.get_entity_facts(kef_after.id)
+        assert len(kef_facts) == 1
+        assert kef_facts[0].content == "Costs $1,599 per pair"
 
         # Verify cleaning timestamp was stored
         ts = penny.db.get_entity_cleaning_timestamp()

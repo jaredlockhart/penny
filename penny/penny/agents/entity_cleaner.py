@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from penny.agents.base import Agent
 from penny.agents.entity_extractor import _normalize_fact
 from penny.constants import PennyConstants
+from penny.database.models import Fact
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
@@ -116,20 +117,21 @@ class EntityCleaner(Agent):
 
             assert primary.id is not None
 
-            # Combine facts from all entities (dedup with normalization)
-            all_fact_lines: list[str] = []
-            seen_normalized: set[str] = set()
-            for entity in [primary, *dup_entities]:
-                for line in entity.facts.strip().split("\n"):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    normalized = _normalize_fact(line)
-                    if normalized not in seen_normalized:
-                        seen_normalized.add(normalized)
-                        all_fact_lines.append(line)
+            # Collect all facts from primary and duplicates, dedup by content
+            all_facts: list[Fact] = self.db.get_entity_facts(primary.id)
+            for dup in dup_entities:
+                assert dup.id is not None
+                all_facts.extend(self.db.get_entity_facts(dup.id))
 
-            merged_facts = "\n".join(all_fact_lines)
+            keep_fact_ids: list[int] = []
+            seen_normalized: set[str] = set()
+            for fact in all_facts:
+                assert fact.id is not None
+                normalized = _normalize_fact(fact.content)
+                if normalized not in seen_normalized:
+                    seen_normalized.add(normalized)
+                    keep_fact_ids.append(fact.id)
+
             dup_ids = [e.id for e in dup_entities if e.id is not None]
 
             logger.info(
@@ -140,7 +142,7 @@ class EntityCleaner(Agent):
                 user,
             )
 
-            self.db.merge_entities(primary.id, dup_ids, merged_facts)
+            self.db.merge_entities(primary.id, dup_ids, keep_fact_ids)
             work_done = True
 
         return work_done

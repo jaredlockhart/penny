@@ -11,13 +11,6 @@ from penny.responses import PennyResponse
 logger = logging.getLogger(__name__)
 
 
-def _count_facts(facts: str) -> int:
-    """Count the number of bullet-point facts in an entity's facts string."""
-    if not facts.strip():
-        return 0
-    return sum(1 for line in facts.splitlines() if line.strip().startswith("- "))
-
-
 class MemoryCommand(Command):
     """View or manage Penny's knowledge base."""
 
@@ -48,7 +41,9 @@ class MemoryCommand(Command):
 
             lines = [PennyResponse.MEMORY_LIST_HEADER, ""]
             for i, entity in enumerate(entities, 1):
-                count = _count_facts(entity.facts)
+                assert entity.id is not None
+                facts = context.db.get_entity_facts(entity.id)
+                count = len(facts)
                 lines.append(f"{i}. {entity.name} ({count} fact{'s' if count != 1 else ''})")
             return CommandResult(text="\n".join(lines))
 
@@ -67,22 +62,23 @@ class MemoryCommand(Command):
 
         # Number + "delete" — delete entity
         if len(parts) >= 2 and parts[1].lower() == "delete":
-            count = _count_facts(entity.facts)
+            facts = context.db.get_entity_facts(entity.id)
             context.db.delete_entity(entity.id)
             return CommandResult(
-                text=PennyResponse.MEMORY_DELETED.format(name=entity.name, count=count)
+                text=PennyResponse.MEMORY_DELETED.format(name=entity.name, count=len(facts))
             )
 
         # Number only — show entity details
-        fact_count = _count_facts(entity.facts)
-        if fact_count == 0:
+        facts = context.db.get_entity_facts(entity.id)
+        if not facts:
             return CommandResult(text=PennyResponse.MEMORY_NO_FACTS.format(name=entity.name))
 
         updated = entity.updated_at.strftime("%Y-%m-%d %H:%M")
+        facts_text = "\n".join(f"- {f.content}" for f in facts)
         lines = [
             f"**{entity.name}**",
             f"Updated: {updated}",
             "",
-            entity.facts,
+            facts_text,
         ]
         return CommandResult(text="\n".join(lines))
