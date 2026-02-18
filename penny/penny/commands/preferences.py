@@ -7,9 +7,81 @@ import logging
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.constants import PennyConstants
+from penny.database.models import Preference
+from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
+
+# Similarity threshold for matching entities to preference topics
+_ENTITY_MATCH_THRESHOLD = 0.4
+_ENTITY_MATCH_TOP_K = 10
+
+
+async def _record_preference_engagements(
+    context: CommandContext,
+    preference: Preference,
+    engagement_type: str,
+    valence: str,
+    strength: float,
+) -> None:
+    """Record engagements for a preference command (like or dislike).
+
+    Creates a preference-level engagement, then tries to find matching
+    entities via embedding similarity and records entity-level engagements
+    for each match. Entity matching is best-effort — fails silently if
+    no embedding model is configured or Ollama is unavailable.
+    """
+    assert preference.id is not None
+
+    # Record preference-level engagement
+    context.db.add_engagement(
+        user=context.user,
+        engagement_type=engagement_type,
+        valence=valence,
+        strength=strength,
+        preference_id=preference.id,
+    )
+
+    # Try to find matching entities via embedding similarity
+    embedding_model = context.config.ollama_embedding_model
+    if not embedding_model:
+        return
+
+    try:
+        entities = context.db.get_user_entities_with_embeddings(context.user)
+        if not entities:
+            return
+
+        # Embed the preference topic
+        vecs = await context.ollama_client.embed(preference.topic, model=embedding_model)
+        query_embedding = vecs[0]
+
+        # Build candidates from entities with embeddings
+        candidates = []
+        for entity in entities:
+            assert entity.id is not None
+            assert entity.embedding is not None
+            candidates.append((entity.id, deserialize_embedding(entity.embedding)))
+
+        matches = find_similar(
+            query_embedding,
+            candidates,
+            top_k=_ENTITY_MATCH_TOP_K,
+            threshold=_ENTITY_MATCH_THRESHOLD,
+        )
+
+        for entity_id, _score in matches:
+            context.db.add_engagement(
+                user=context.user,
+                engagement_type=engagement_type,
+                valence=valence,
+                strength=strength,
+                entity_id=entity_id,
+                preference_id=preference.id,
+            )
+    except Exception:
+        logger.debug("Entity matching skipped for preference '%s'", preference.topic, exc_info=True)
 
 
 class LikeCommand(Command):
@@ -55,14 +127,31 @@ class LikeCommand(Command):
             # Remove from dislikes
             context.db.remove_preference(context.user, topic, PennyConstants.PreferenceType.DISLIKE)
             # Add to likes
-            context.db.add_preference(context.user, topic, PennyConstants.PreferenceType.LIKE)
+            pref = context.db.add_preference(
+                context.user, topic, PennyConstants.PreferenceType.LIKE
+            )
+            if pref:
+                await _record_preference_engagements(
+                    context,
+                    pref,
+                    PennyConstants.EngagementType.LIKE_COMMAND,
+                    PennyConstants.EngagementValence.POSITIVE,
+                    PennyConstants.ENGAGEMENT_STRENGTH_LIKE_COMMAND,
+                )
             return CommandResult(text=PennyResponse.LIKE_ADDED_CONFLICT.format(topic=topic))
         else:
             # Just add to likes
-            added = context.db.add_preference(
+            pref = context.db.add_preference(
                 context.user, topic, PennyConstants.PreferenceType.LIKE
             )
-            if added:
+            if pref:
+                await _record_preference_engagements(
+                    context,
+                    pref,
+                    PennyConstants.EngagementType.LIKE_COMMAND,
+                    PennyConstants.EngagementValence.POSITIVE,
+                    PennyConstants.ENGAGEMENT_STRENGTH_LIKE_COMMAND,
+                )
                 return CommandResult(text=PennyResponse.LIKE_ADDED.format(topic=topic))
             else:
                 return CommandResult(text=PennyResponse.LIKE_DUPLICATE.format(topic=topic))
@@ -113,14 +202,31 @@ class DislikeCommand(Command):
             # Remove from likes
             context.db.remove_preference(context.user, topic, PennyConstants.PreferenceType.LIKE)
             # Add to dislikes
-            context.db.add_preference(context.user, topic, PennyConstants.PreferenceType.DISLIKE)
+            pref = context.db.add_preference(
+                context.user, topic, PennyConstants.PreferenceType.DISLIKE
+            )
+            if pref:
+                await _record_preference_engagements(
+                    context,
+                    pref,
+                    PennyConstants.EngagementType.DISLIKE_COMMAND,
+                    PennyConstants.EngagementValence.NEGATIVE,
+                    PennyConstants.ENGAGEMENT_STRENGTH_DISLIKE_COMMAND,
+                )
             return CommandResult(text=PennyResponse.DISLIKE_ADDED_CONFLICT.format(topic=topic))
         else:
             # Just add to dislikes
-            added = context.db.add_preference(
+            pref = context.db.add_preference(
                 context.user, topic, PennyConstants.PreferenceType.DISLIKE
             )
-            if added:
+            if pref:
+                await _record_preference_engagements(
+                    context,
+                    pref,
+                    PennyConstants.EngagementType.DISLIKE_COMMAND,
+                    PennyConstants.EngagementValence.NEGATIVE,
+                    PennyConstants.ENGAGEMENT_STRENGTH_DISLIKE_COMMAND,
+                )
                 return CommandResult(text=PennyResponse.DISLIKE_ADDED.format(topic=topic))
             else:
                 return CommandResult(text=PennyResponse.DISLIKE_DUPLICATE.format(topic=topic))

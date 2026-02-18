@@ -2,6 +2,7 @@
 
 import pytest
 
+from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -21,12 +22,24 @@ async def test_like_list_empty(signal_server, test_config, mock_ollama, running_
 
 @pytest.mark.asyncio
 async def test_like_add_and_list(signal_server, test_config, mock_ollama, running_penny):
-    """Test /like <topic> adds a like and /like lists it."""
-    async with running_penny(test_config) as _penny:
+    """Test /like <topic> adds a like, records engagement, and /like lists it."""
+    async with running_penny(test_config) as penny:
         # Add a like
         await signal_server.push_message(sender=TEST_SENDER, content="/like cats")
         response1 = await signal_server.wait_for_message(timeout=5.0)
         assert "I added cats to your likes" in response1["message"]
+
+        # Verify engagement was recorded
+        engagements = penny.db.get_user_engagements(TEST_SENDER)
+        like_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.LIKE_COMMAND
+        ]
+        assert len(like_engagements) == 1
+        assert like_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
+        assert like_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_LIKE_COMMAND
+        assert like_engagements[0].preference_id is not None
 
         # List likes
         await signal_server.push_message(sender=TEST_SENDER, content="/like")
@@ -59,7 +72,7 @@ async def test_like_add_multiple(signal_server, test_config, mock_ollama, runnin
 @pytest.mark.asyncio
 async def test_like_conflict_with_dislike(signal_server, test_config, mock_ollama, running_penny):
     """Test adding a like that conflicts with an existing dislike."""
-    async with running_penny(test_config) as _penny:
+    async with running_penny(test_config) as penny:
         # Add dislike first
         await signal_server.push_message(sender=TEST_SENDER, content="/dislike bananas")
         response1 = await signal_server.wait_for_message(timeout=5.0)
@@ -72,6 +85,21 @@ async def test_like_conflict_with_dislike(signal_server, test_config, mock_ollam
             "I added bananas to your likes and removed it from your dislikes"
             in response2["message"]
         )
+
+        # Verify both dislike and like engagements exist (historical signals preserved)
+        engagements = penny.db.get_user_engagements(TEST_SENDER)
+        dislike_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.DISLIKE_COMMAND
+        ]
+        like_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.LIKE_COMMAND
+        ]
+        assert len(dislike_engagements) == 1
+        assert len(like_engagements) == 1
 
         # Verify it's in likes
         await signal_server.push_message(sender=TEST_SENDER, content="/like")
@@ -100,12 +128,24 @@ async def test_dislike_list_empty(signal_server, test_config, mock_ollama, runni
 
 @pytest.mark.asyncio
 async def test_dislike_add_and_list(signal_server, test_config, mock_ollama, running_penny):
-    """Test /dislike <topic> adds a dislike and /dislike lists it."""
-    async with running_penny(test_config) as _penny:
+    """Test /dislike <topic> adds a dislike, records engagement, and /dislike lists it."""
+    async with running_penny(test_config) as penny:
         # Add a dislike
         await signal_server.push_message(sender=TEST_SENDER, content="/dislike ai music")
         response1 = await signal_server.wait_for_message(timeout=5.0)
         assert "I added ai music to your dislikes" in response1["message"]
+
+        # Verify engagement was recorded
+        engagements = penny.db.get_user_engagements(TEST_SENDER)
+        dislike_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.DISLIKE_COMMAND
+        ]
+        assert len(dislike_engagements) == 1
+        assert dislike_engagements[0].valence == PennyConstants.EngagementValence.NEGATIVE
+        assert dislike_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_DISLIKE_COMMAND
+        assert dislike_engagements[0].preference_id is not None
 
         # List dislikes
         await signal_server.push_message(sender=TEST_SENDER, content="/dislike")
@@ -260,3 +300,28 @@ async def test_undislike_by_number(signal_server, test_config, mock_ollama, runn
         assert "1. bananas" in response2["message"]
         assert "2. ai music" in response2["message"]
         assert "sports" not in response2["message"]
+
+
+@pytest.mark.asyncio
+async def test_like_duplicate_no_extra_engagement(
+    signal_server, test_config, mock_ollama, running_penny
+):
+    """Test /like with duplicate topic does not record an extra engagement."""
+    async with running_penny(test_config) as penny:
+        # Add a like
+        await signal_server.push_message(sender=TEST_SENDER, content="/like cats")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        # Try to add the same like again
+        await signal_server.push_message(sender=TEST_SENDER, content="/like cats")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "cats is already in your likes" in response["message"]
+
+        # Should still only have one engagement
+        engagements = penny.db.get_user_engagements(TEST_SENDER)
+        like_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.LIKE_COMMAND
+        ]
+        assert len(like_engagements) == 1

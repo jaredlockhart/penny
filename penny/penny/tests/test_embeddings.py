@@ -216,7 +216,7 @@ class TestDatabaseEmbeddingMethods:
         db = self._setup_db(tmp_path)
         embedding = serialize_embedding([0.4, 0.5, 0.6])
         added = db.add_preference("+1234", "cats", "like", embedding=embedding)
-        assert added is True
+        assert added is not None
 
         prefs = db.get_preferences("+1234", "like")
         assert len(prefs) == 1

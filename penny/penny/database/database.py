@@ -647,7 +647,7 @@ class Database:
 
     def add_preference(
         self, user: str, topic: str, pref_type: str, embedding: bytes | None = None
-    ) -> bool:
+    ) -> Preference | None:
         """
         Add a preference for a user.
 
@@ -658,7 +658,7 @@ class Database:
             embedding: Serialized embedding vector (optional)
 
         Returns:
-            True if added, False if already exists
+            The created Preference if added, None if already exists or on error
         """
         try:
             with self.get_session() as session:
@@ -672,7 +672,7 @@ class Database:
                 ).first()
 
                 if existing:
-                    return False
+                    return None
 
                 pref = Preference(
                     user=user,
@@ -682,11 +682,12 @@ class Database:
                 )
                 session.add(pref)
                 session.commit()
+                session.refresh(pref)
                 logger.debug("Added %s preference for %s: %s", pref_type, user, topic)
-                return True
+                return pref
         except Exception as e:
             logger.error("Failed to add preference: %s", e)
-            return False
+            return None
 
     def remove_preference(self, user: str, topic: str, pref_type: str) -> bool:
         """
@@ -919,6 +920,26 @@ class Database:
             return list(
                 session.exec(
                     select(Entity).where(Entity.user == user).order_by(Entity.updated_at.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
+    def get_user_entities_with_embeddings(self, user: str) -> list[Entity]:
+        """
+        Get all entities for a user that have embeddings.
+
+        Args:
+            user: User identifier
+
+        Returns:
+            List of entities with non-null embeddings
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Entity).where(
+                        Entity.user == user,
+                        Entity.embedding != None,  # noqa: E711
+                    )
                 ).all()
             )
 

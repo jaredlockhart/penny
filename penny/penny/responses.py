@@ -58,6 +58,13 @@ class PennyResponse:
     UNDISLIKE_REMOVED = "I removed {topic} from your dislikes"
     UNDISLIKE_NOT_FOUND = "{topic} wasn't in your dislikes"
 
+    # ── Interests ──────────────────────────────────────────────────────────
+
+    INTERESTS_EMPTY = (
+        "No interest data yet. As you interact, I'll build a picture of what you care about."
+    )
+    INTERESTS_HEADER = "Here's what I think you're interested in:"
+
     # ── Memory ───────────────────────────────────────────────────────────────
 
     MEMORY_EMPTY = "You don't have any stored memories yet."

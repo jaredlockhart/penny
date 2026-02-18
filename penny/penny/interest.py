@@ -25,6 +25,9 @@ def _recency_weight(created_at: datetime, now: datetime | None = None) -> float:
     """
     if now is None:
         now = datetime.now(UTC)
+    # SQLite returns naive datetimes; treat them as UTC
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
     age_days = (now - created_at).total_seconds() / 86400.0
     if age_days < 0:
         age_days = 0.0
