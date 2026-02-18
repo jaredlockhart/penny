@@ -49,6 +49,7 @@ class Config:
     log_file: str | None = None
     ollama_vision_model: str | None = None  # Vision model for image understanding
     ollama_image_model: str | None = None  # Image generation model (e.g., x/z-image-turbo)
+    ollama_embedding_model: str | None = None  # Embedding model (e.g., nomic-embed-text)
 
     # GitHub App Configuration (optional, needed for /bug command)
     github_app_id: str | None = None
@@ -153,6 +154,7 @@ class Config:
         ollama_background_model = os.getenv("OLLAMA_BACKGROUND_MODEL", ollama_foreground_model)
         ollama_vision_model = os.getenv("OLLAMA_VISION_MODEL")  # Optional
         ollama_image_model = os.getenv("OLLAMA_IMAGE_MODEL")  # Optional
+        ollama_embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL")  # Optional
         perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")  # Optional
         log_level = os.getenv("LOG_LEVEL", "INFO")
         db_path = os.getenv("DB_PATH", "/penny/data/penny.db")
@@ -194,6 +196,7 @@ class Config:
             ollama_background_model=ollama_background_model,
             ollama_vision_model=ollama_vision_model,
             ollama_image_model=ollama_image_model,
+            ollama_embedding_model=ollama_embedding_model,
             perplexity_api_key=perplexity_api_key,
             github_app_id=github_app_id,
             github_app_private_key_path=github_app_private_key_path,

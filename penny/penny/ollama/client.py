@@ -200,6 +200,44 @@ class OllamaClient:
         )
         raise last_error  # type: ignore[misc]
 
+    async def embed(self, text: str | list[str], model: str) -> list[list[float]]:
+        """
+        Generate embeddings for one or more texts.
+
+        Args:
+            text: Single text or list of texts to embed
+            model: Embedding model name (e.g., nomic-embed-text)
+
+        Returns:
+            List of embedding vectors (one per input text)
+        """
+        last_error: Exception | None = None
+
+        for attempt in range(self.max_retries):
+            try:
+                logger.debug(
+                    "Sending embed request to Ollama (attempt %d/%d)", attempt + 1, self.max_retries
+                )
+
+                response = await self.client.embed(model=model, input=text)
+                embeddings = [list(e) for e in response.embeddings]
+
+                logger.debug(
+                    "Generated %d embedding(s), dim=%d", len(embeddings), len(embeddings[0])
+                )
+                return embeddings
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Ollama embed error (attempt %d/%d): %s", attempt + 1, self.max_retries, e
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
+
+        logger.error("Ollama embed failed after %d attempts: %s", self.max_retries, last_error)
+        raise last_error  # type: ignore[misc]
+
     async def close(self) -> None:
         """Close the client (SDK handles cleanup automatically)."""
         logger.info("Ollama client closed")
