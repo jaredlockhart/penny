@@ -99,3 +99,6 @@ class PennyConstants:
 
     # Interest score recency decay half-life in days
     INTEREST_SCORE_HALF_LIFE_DAYS = 30.0
+
+    # Maximum entities shown by /interests command
+    INTERESTS_DISPLAY_LIMIT = 20

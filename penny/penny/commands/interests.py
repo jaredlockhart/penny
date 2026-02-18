@@ -7,6 +7,7 @@ from collections import defaultdict
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
+from penny.constants import PennyConstants
 from penny.database.models import Engagement
 from penny.interest import compute_interest_score
 from penny.responses import PennyResponse
@@ -63,8 +64,11 @@ class InterestsCommand(Command):
         if not scored:
             return CommandResult(text=PennyResponse.INTERESTS_EMPTY)
 
-        # Sort by absolute score descending (strongest signals first)
+        # Sort by absolute score descending (strongest signals first), cap display
         scored.sort(key=lambda x: abs(x[1]), reverse=True)
+        display_limit = PennyConstants.INTERESTS_DISPLAY_LIMIT
+        total = len(scored)
+        scored = scored[:display_limit]
 
         lines = [PennyResponse.INTERESTS_HEADER, ""]
         for i, (name, score, fact_count, last_activity) in enumerate(scored, 1):
@@ -73,5 +77,8 @@ class InterestsCommand(Command):
             lines.append(
                 f"{i}. **{name}** ({sign}{score:.2f}) — {facts_label}, last {last_activity}"
             )
+
+        if total > display_limit:
+            lines.append(f"\n({total - display_limit} more not shown)")
 
         return CommandResult(text="\n".join(lines))
