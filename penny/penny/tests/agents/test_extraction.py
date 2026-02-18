@@ -7,7 +7,7 @@ from sqlmodel import select
 
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog, SearchLog
-from penny.ollama.embeddings import deserialize_embedding
+from penny.ollama.embeddings import deserialize_embedding, serialize_embedding
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 # --- Search log entity/fact extraction (migrated from test_entity_extractor) ---
@@ -99,6 +99,17 @@ async def test_extraction_processes_search_log(
 
         # Verify facts have source_search_log_id set
         assert all(f.source_search_log_id == search_logs[0].id for f in facts)
+
+        # Verify SEARCH_INITIATED engagement was created
+        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        search_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.SEARCH_INITIATED
+        ]
+        assert len(search_engagements) >= 1
+        assert search_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
+        assert search_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_SEARCH_INITIATED
 
         # Verify SearchLog is marked as extracted
         with penny.db.get_session() as session:
@@ -494,6 +505,129 @@ async def test_extraction_processes_messages_for_entities(
         assert len(mention_engagements) >= 1
         assert mention_engagements[0].valence == PennyConstants.EngagementValence.NEUTRAL
         assert mention_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_MESSAGE_MENTION
+
+
+@pytest.mark.asyncio
+async def test_extraction_creates_follow_up_engagements(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    When a user quote-replies to Penny's message, FOLLOW_UP_QUESTION
+    engagements are created for entities related to the parent message.
+    Short follow-ups (< 20 chars) should still trigger detection.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    # Embed handler: return identical vectors so everything matches
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        return [[1.0, 0.0, 0.0, 0.0]] * len(texts)
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    async with running_penny(config) as penny:
+        # Seed entity with embedding
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
+
+        # Simulate Penny's outgoing message about the entity
+        outgoing_id = penny.db.log_message(
+            direction="outgoing",
+            sender="penny",
+            content="the KEF LS50 Meta costs $1,599 and uses Metamaterial Absorption Technology!",
+        )
+        assert outgoing_id is not None
+
+        # User replies with a short follow-up (< 20 chars, skipped by entity extraction)
+        incoming_id = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="how much?",  # 9 chars — below MIN_EXTRACTION_MESSAGE_LENGTH
+            parent_id=outgoing_id,
+        )
+        assert incoming_id is not None
+
+        work_done = await penny.extraction_pipeline.execute()
+        assert work_done, "Follow-up detection should count as work done"
+
+        # Verify FOLLOW_UP_QUESTION engagement was created
+        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        follow_up_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.FOLLOW_UP_QUESTION
+        ]
+        assert len(follow_up_engagements) == 1
+        assert follow_up_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
+        assert (
+            follow_up_engagements[0].strength
+            == PennyConstants.ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION
+        )
+        assert follow_up_engagements[0].source_message_id == incoming_id
+
+
+@pytest.mark.asyncio
+async def test_extraction_no_follow_up_for_reply_to_user(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Replying to an incoming message (not Penny's) should NOT create
+    FOLLOW_UP_QUESTION engagements.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        return [[1.0, 0.0, 0.0, 0.0]] * len(texts)
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    async with running_penny(config) as penny:
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "test entity")
+        assert entity is not None and entity.id is not None
+        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+
+        # Parent is an incoming message (user's own message, not Penny's)
+        parent_id = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="I love this test entity so much!",
+        )
+        assert parent_id is not None
+        penny.db.mark_messages_processed([parent_id])
+
+        # Reply to own message
+        reply_id = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="actually let me tell you more about it",
+            parent_id=parent_id,
+        )
+        assert reply_id is not None
+
+        await penny.extraction_pipeline.execute()
+
+        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        follow_up_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.FOLLOW_UP_QUESTION
+        ]
+        assert len(follow_up_engagements) == 0, (
+            "No FOLLOW_UP_QUESTION for replies to user's own messages"
+        )
 
 
 @pytest.mark.asyncio

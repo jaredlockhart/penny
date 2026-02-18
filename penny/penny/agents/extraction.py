@@ -154,6 +154,17 @@ class ExtractionPipeline(Agent):
             if result:
                 work_done = True
 
+                # Create SEARCH_INITIATED engagements for entities found in search
+                for entity in result:
+                    assert entity.id is not None
+                    self.db.add_engagement(
+                        user=user,
+                        engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
+                        valence=PennyConstants.EngagementValence.POSITIVE,
+                        strength=PennyConstants.ENGAGEMENT_STRENGTH_SEARCH_INITIATED,
+                        entity_id=entity.id,
+                    )
+
             self.db.mark_search_extracted(search_log.id)
 
         return work_done
@@ -208,6 +219,12 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                             source_message_id=message.id,
                         )
+
+            # --- Follow-up detection (separate from entity extraction, no min-length filter) ---
+            for message in messages:
+                created = await self._create_follow_up_engagements(sender, message)
+                if created:
+                    work_done = True
 
             # --- Preference extraction from reactions + messages ---
             like_reaction_texts: list[str] = []
@@ -642,6 +659,61 @@ class ExtractionPipeline(Agent):
         if len(content) < PennyConstants.MIN_EXTRACTION_MESSAGE_LENGTH:
             return False
         return not content.startswith("/")
+
+    # --- Follow-up detection ---
+
+    async def _create_follow_up_engagements(self, sender: str, message: MessageLog) -> bool:
+        """Create FOLLOW_UP_QUESTION engagements when user replies to Penny's message.
+
+        Embeds the parent message content and finds similar entities to determine
+        which entities the user is following up on.
+
+        Returns:
+            True if any engagements were created.
+        """
+        if not message.parent_id or not self.embedding_model:
+            return False
+
+        parent_msg = self.db.get_message_by_id(message.parent_id)
+        if not parent_msg:
+            return False
+        if parent_msg.direction != PennyConstants.MessageDirection.OUTGOING:
+            return False
+
+        entities = self.db.get_user_entities_with_embeddings(sender)
+        if not entities:
+            return False
+
+        candidates = [
+            (e.id, deserialize_embedding(e.embedding)) for e in entities if e.id and e.embedding
+        ]
+        if not candidates:
+            return False
+
+        try:
+            vecs = await self._ollama_client.embed(parent_msg.content, model=self.embedding_model)
+            query_vec = vecs[0]
+            matches = find_similar(
+                query_vec,
+                candidates,
+                top_k=PennyConstants.ENTITY_CONTEXT_TOP_K,
+                threshold=PennyConstants.ENTITY_CONTEXT_THRESHOLD,
+            )
+
+            for entity_id, _score in matches:
+                self.db.add_engagement(
+                    user=sender,
+                    engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
+                    valence=PennyConstants.EngagementValence.POSITIVE,
+                    strength=PennyConstants.ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION,
+                    entity_id=entity_id,
+                    source_message_id=message.id,
+                )
+
+            return len(matches) > 0
+        except Exception:
+            logger.debug("Follow-up engagement extraction failed", exc_info=True)
+            return False
 
     # --- Notifications ---
 
