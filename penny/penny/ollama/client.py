@@ -115,6 +115,16 @@ class OllamaClient:
 
                 return response
 
+            except ollama.ResponseError as e:
+                last_error = e
+                if e.status_code == 404:
+                    logger.error("Ollama chat failed (model not found, no retry): %s", e)
+                    raise
+                logger.warning(
+                    "Ollama chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, e
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
             except Exception as e:
                 last_error = e
                 logger.warning(
@@ -184,6 +194,21 @@ class OllamaClient:
                 logger.info("Image generated successfully with model %s", model)
                 return image_data
 
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code == 404:
+                    logger.error(
+                        "Ollama image generation failed (model not found, no retry): %s", e
+                    )
+                    raise
+                logger.warning(
+                    "Ollama image generation error (attempt %d/%d): %s",
+                    attempt + 1,
+                    self.max_retries,
+                    e,
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
             except Exception as e:
                 last_error = e
                 logger.warning(
@@ -227,6 +252,16 @@ class OllamaClient:
                 )
                 return embeddings
 
+            except ollama.ResponseError as e:
+                last_error = e
+                if e.status_code == 404:
+                    logger.error("Ollama embed failed (model not found, no retry): %s", e)
+                    raise
+                logger.warning(
+                    "Ollama embed error (attempt %d/%d): %s", attempt + 1, self.max_retries, e
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
             except Exception as e:
                 last_error = e
                 logger.warning(
