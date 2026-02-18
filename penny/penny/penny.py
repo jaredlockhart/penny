@@ -10,10 +10,9 @@ from typing import Any
 from penny.agents import (
     Agent,
     DiscoveryAgent,
-    EntityExtractor,
+    ExtractionPipeline,
     FollowupAgent,
     MessageAgent,
-    PreferenceAgent,
 )
 from penny.agents.entity_cleaner import EntityCleaner
 from penny.agents.research import ResearchAgent
@@ -128,21 +127,8 @@ class Penny:
             tool_timeout=config.tool_timeout,
         )
 
-        self.preference_agent = PreferenceAgent(
-            system_prompt="",  # PreferenceAgent uses ollama_client.generate() directly
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
-            tools=[],
-            db=self.db,
-            max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-            tool_timeout=config.tool_timeout,
-            embedding_model=config.ollama_embedding_model,
-        )
-
-        self.entity_extractor = EntityExtractor(
-            system_prompt="",  # EntityExtractor uses ollama_client.generate() directly
+        self.extraction_pipeline = ExtractionPipeline(
+            system_prompt="",  # ExtractionPipeline uses ollama_client.generate() directly
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
@@ -215,11 +201,11 @@ class Penny:
         # Connect agents that send messages to channel
         self.followup_agent.set_channel(self.channel)
         self.discovery_agent.set_channel(self.channel)
-        self.preference_agent.set_channel(self.channel)
+        self.extraction_pipeline.set_channel(self.channel)
         self.research_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Create schedules (priority order: schedule, research, preference, followup, discovery)
+        # Create schedules (priority: schedule, research, extraction, cleaner, followup, discovery)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
         # ResearchAgent runs always (whenever scheduler ticks) to process in-progress research
         schedules = [
@@ -232,11 +218,7 @@ class Penny:
                 interval=config.research_schedule_interval,
             ),
             PeriodicSchedule(
-                agent=self.preference_agent,
-                interval=config.maintenance_interval_seconds,
-            ),
-            PeriodicSchedule(
-                agent=self.entity_extractor,
+                agent=self.extraction_pipeline,
                 interval=config.maintenance_interval_seconds,
             ),
             PeriodicSchedule(

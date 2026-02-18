@@ -42,7 +42,7 @@ class PennyConstants:
     LIKE_REACTIONS = ("❤️", "👍", "😆")
     DISLIKE_REACTIONS = ("😠", "👎", "😢")
 
-    # Max messages/reactions the PreferenceAgent processes per user per wake cycle.
+    # Max messages/reactions the extraction pipeline processes per user per wake cycle.
     # Keeps LLM prompts small; remaining items are processed on subsequent invocations.
     PREFERENCE_BATCH_LIMIT = 20
 
@@ -77,6 +77,15 @@ class PennyConstants:
     ENTITY_CLEANING_BATCH_LIMIT = 200
     ENTITY_CLEANING_INTERVAL_SECONDS = 86400.0
     EMBEDDING_BACKFILL_BATCH_LIMIT = 50
+
+    # Message pre-filter constants for extraction pipeline
+    MIN_EXTRACTION_MESSAGE_LENGTH = 20
+
+    # Fact deduplication via embedding similarity
+    FACT_DEDUP_SIMILARITY_THRESHOLD = 0.85
+
+    # Preference-to-entity linking via embedding similarity
+    PREFERENCE_ENTITY_LINK_THRESHOLD = 0.5
 
     # Entity context injection constants
     ENTITY_CONTEXT_TOP_K = 5

@@ -992,6 +992,7 @@ class Database:
         content: str,
         source_url: str | None = None,
         source_search_log_id: int | None = None,
+        source_message_id: int | None = None,
         embedding: bytes | None = None,
     ) -> Fact | None:
         """
@@ -1002,6 +1003,7 @@ class Database:
             content: The fact text
             source_url: URL where the fact was found
             source_search_log_id: SearchLog ID that produced this fact
+            source_message_id: MessageLog ID that produced this fact
             embedding: Serialized embedding vector (optional)
 
         Returns:
@@ -1014,6 +1016,7 @@ class Database:
                     content=content,
                     source_url=source_url,
                     source_search_log_id=source_search_log_id,
+                    source_message_id=source_message_id,
                     embedding=embedding,
                 )
                 session.add(fact)

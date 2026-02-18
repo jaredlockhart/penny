@@ -198,6 +198,43 @@ Examples:
         "- If no genuinely new facts are found, return an empty list"
     )
 
+    # Message entity extraction prompts (two-pass, adapted for user messages)
+    MESSAGE_ENTITY_IDENTIFICATION_PROMPT = (
+        "Identify named entities in the following user message.\n"
+        "Return two lists: known entities that appear in the text, "
+        "and new entities not in the known list.\n\n"
+        "ENTITY NAME RULES:\n"
+        "- Use short canonical names (1-5 words). "
+        "No parenthetical annotations or descriptions.\n"
+        "- Good: 'KEF LS50 Meta', 'Leonard Susskind', 'ROCm', 'SYK model'\n"
+        "- Bad: 'KEF LS50 Meta (bookshelf speaker)', "
+        "'Leonard Susskind (physicist at Stanford)', "
+        "'ROCm (AMD GPU software stack)'\n\n"
+        "WHAT TO INCLUDE:\n"
+        "- Products, people, places, organizations, scientific concepts, "
+        "software, hardware\n\n"
+        "WHAT TO SKIP:\n"
+        "- Vague concepts ('music', 'technology', 'quantum gravity')\n"
+        "- Paper titles or article titles\n"
+        "- Specific dates, launch windows, or deadlines\n"
+        "- The user themselves"
+    )
+
+    MESSAGE_FACT_EXTRACTION_PROMPT = (
+        "Extract specific, verifiable facts about the given entity "
+        "from the following user message.\n\n"
+        "RULES:\n"
+        "- Only include facts DIRECTLY about the named entity, "
+        "not about related or associated entities\n"
+        "- Only extract verifiable factual claims, not opinions or preferences\n"
+        "- Do NOT store negative facts "
+        "('X does not exist', 'no evidence of Y', 'not currently available')\n"
+        "- Do NOT paraphrase facts already listed — "
+        "if an existing fact says the same thing in different words, skip it\n"
+        "- Keep each fact concise (one sentence)\n"
+        "- If no genuinely new facts are found, return an empty list"
+    )
+
     # Entity cleaning prompt (merge duplicates)
     ENTITY_MERGE_PROMPT = (
         "You are given a list of entity names from a knowledge base.\n"

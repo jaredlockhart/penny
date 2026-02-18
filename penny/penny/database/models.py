@@ -50,7 +50,7 @@ class MessageLog(SQLModel, table=True):
     is_reaction: bool = Field(default=False, index=True)  # True if this is a reaction message
     processed: bool = Field(
         default=False
-    )  # True if this message has been processed by PreferenceAgent
+    )  # True if this message has been processed by extraction pipeline
 
 
 class UserInfo(SQLModel, table=True):
@@ -195,6 +195,7 @@ class Fact(SQLModel, table=True):
     content: str  # The fact text (e.g., "Costs $1,599 per pair")
     source_url: str | None = None  # URL where the fact was found
     source_search_log_id: int | None = Field(default=None, foreign_key="searchlog.id", index=True)
+    source_message_id: int | None = Field(default=None, foreign_key="messagelog.id", index=True)
     learned_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_verified: datetime | None = None
     embedding: bytes | None = None  # Serialized float32 embedding vector

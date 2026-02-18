@@ -16,7 +16,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Preference · Discovery · EntityExtractor · EntityCleaner"]
+    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Extraction · Discovery · EntityCleaner"]
 ```
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
@@ -42,10 +42,9 @@ penny/
     models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
     message.py        — MessageAgent: handles incoming user messages
     followup.py       — FollowupAgent: spontaneous conversation followups
-    preference.py     — PreferenceAgent: extracts user preferences from messages and reactions
+    extraction.py     — ExtractionPipeline: unified entity/fact/preference extraction from search results and messages
     discovery.py      — DiscoveryAgent: proactive content sharing based on user interests
     research.py       — ResearchAgent: autonomous multi-iteration deep research
-    entity_extractor.py — EntityExtractor: background entity/fact extraction from search results
     entity_cleaner.py — EntityCleaner: periodic merge of duplicate entities
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
@@ -99,7 +98,7 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_followup.py, test_preference.py, test_discovery.py, test_research.py, test_entity_extractor.py, test_entity_cleaner.py
+      test_message.py, test_followup.py, test_extraction.py, test_discovery.py, test_research.py, test_entity_cleaner.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py, test_startup_announcement.py
     commands/         — Per-command tests
@@ -142,29 +141,25 @@ The base `Agent` class implements the core agentic loop:
 - Searches for something new about the topic
 - Sends response via channel
 
-**PreferenceAgent** (`agents/preference.py`)
-- Background task: extracts user preferences from messages and reactions
-- Analyzes emoji reactions to determine likes/dislikes from reacted-to messages
-- Batch-analyzes unprocessed user messages to find new preferences via LLM
-- Tracks processed messages via `processed` flag to avoid reprocessing
-- Stores preferences in `Preference` table for use by DiscoveryAgent
+**ExtractionPipeline** (`agents/extraction.py`)
+- Unified background task replacing the former EntityExtractor and PreferenceAgent
+- Processes both SearchLog entries and MessageLog entries in a single pipeline
+- Three phases per execution: search log extraction → message extraction → embedding backfill
+- **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results
+- **Message extraction**: Extracts entities/facts from user messages AND preferences from messages+reactions
+- Pre-filters messages before LLM calls: skips short messages (< 20 chars) and slash commands
+- Creates MESSAGE_MENTION engagements when entities are found in user messages
+- Links new preferences to existing entities via embedding similarity
+- Fact dedup: normalized string match (fast) then embedding similarity (paraphrase detection, threshold=0.85)
+- Facts track provenance via `source_search_log_id` or `source_message_id`
+- Sends batched preference notifications via channel
+- All content processed newest-first (ORDER BY timestamp DESC)
 
 **DiscoveryAgent** (`agents/discovery.py`)
 - Background task: shares new content based on user interests
 - Picks random user with preferences, uses them as search context
 - Sends unsolicited but relevant content via channel
 - Not threaded (sends as new conversation, not a reply)
-
-**EntityExtractor** (`agents/entity_extractor.py`)
-- Background task: extracts named entities and facts from SearchLog entries
-- Two-pass extraction: pass 1 identifies known+new entities, pass 2 extracts facts per entity (one LLM call each)
-- Each pass uses Ollama structured output with Pydantic schemas (`IdentifiedEntities`, `ExtractedFacts`)
-- Processes searches most-recent-first (descending by ID) so fresh searches get extracted sooner
-- Progress tracked via `entity_search_log` join table (also records entity-to-search provenance)
-- Fact dedup handled in Python-space: only appends genuinely new facts to existing entity records
-- Associates SearchLog entries with users via `find_sender_for_timestamp()`
-- ResearchIteration entries are NOT processed (their findings are LLM-synthesized reports of the same search results already in SearchLog)
-- Fact dedup uses normalized comparison (lowercase, collapse whitespace, strip bullet prefix)
 
 **EntityCleaner** (`agents/entity_cleaner.py`)
 - Background task: periodically merges duplicate entities in the knowledge base
@@ -195,7 +190,7 @@ The base `Agent` class implements the core agentic loop:
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule → research → preference → entity_extractor → entity_cleaner → followup → discovery)
+- Runs tasks in priority order (schedule → research → extraction → entity_cleaner → followup → discovery)
 - Tracks global idle threshold (default: 300s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
@@ -211,7 +206,7 @@ The `scheduler/` module manages background tasks:
 
 **PeriodicSchedule**
 - Runs periodically while system is idle at a configurable interval
-- Used for preference extraction (default: `MAINTENANCE_INTERVAL_SECONDS`, 300s)
+- Used for extraction pipeline (default: `MAINTENANCE_INTERVAL_SECONDS`, 300s)
 - Tracks last run time and fires again after interval elapses
 - Resets when a message arrives
 
@@ -305,8 +300,8 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Specialized agents**: Each task type (message, research, followup, preference, discovery) has its own agent subclass
-- **Priority scheduling**: Schedule → research → preference → entity_extractor → entity_cleaner → followup → discovery
-- **Always-run schedules**: Research and user-created schedules run regardless of idle state; preference/followup/discovery wait for idle
+- **Priority scheduling**: Schedule → research → extraction → entity_cleaner → followup → discovery
+- **Always-run schedules**: Research and user-created schedules run regardless of idle state; extraction/followup/discovery wait for idle
 - **Global idle threshold**: Single configurable idle time (default: 300s) controls when idle-dependent tasks become eligible
 - **Background suspension**: Foreground message processing suspends background tasks to prevent interference
 - **Delayed scheduling**: Followup and discovery add random delays after idle threshold to prevent predictable bot behavior
@@ -327,7 +322,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0012):
+File-based migration system in `database/migrations/` (currently 0001–0017):
 - Each migration is a numbered Python file (e.g., `0001_add_reaction_fields.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -344,6 +339,8 @@ Notable migrations:
 - 0010–0011: `ResearchTask` and `ResearchIteration` tables with focus/options columns
 - 0012: `Entity` and `entity_extraction_cursor` tables for entity knowledge base
 - 0013: `entity_search_log` join table (replaces cursor; tracks entity-to-search provenance)
+- 0014–0016: Facts restructure, embedding columns, engagement table (knowledge system phases 1–3)
+- 0017: `source_message_id` on `fact` table (message-sourced fact provenance)
 
 ## Extending
 

@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
-from penny.agents.entity_extractor import _normalize_fact
+from penny.agents.extraction import _normalize_fact
 from penny.constants import PennyConstants
 from penny.database.models import Fact
 from penny.ollama.embeddings import build_entity_embed_text, serialize_embedding
