@@ -19,6 +19,7 @@ from penny.ollama.embeddings import (
     serialize_embedding,
 )
 from penny.prompts import Prompt
+from penny.tools.image_search import search_image
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -595,7 +596,7 @@ class ExtractionPipeline(Agent):
                 else:
                     bullet_list = "\n".join(f"• {topic}" for topic in topics)
                     message = f"I added these to your {pref_type}s:\n{bullet_list}"
-                await self._send_notification(sender, message)
+                await self._send_notification(sender, message, image_query=topics[0])
 
             return len(added_preferences) > 0
 
@@ -717,10 +718,15 @@ class ExtractionPipeline(Agent):
 
     # --- Notifications ---
 
-    async def _send_notification(self, recipient: str, message: str) -> None:
-        """Send a notification message to the user."""
+    async def _send_notification(
+        self, recipient: str, message: str, image_query: str | None = None
+    ) -> None:
+        """Send a notification message to the user with an optional image."""
         if not self._channel:
             return
+
+        image = await search_image(image_query) if image_query else None
+        attachments = [image] if image else None
 
         typing_task = asyncio.create_task(self._channel._typing_loop(recipient))
         try:
@@ -728,7 +734,7 @@ class ExtractionPipeline(Agent):
                 recipient,
                 message,
                 parent_id=None,
-                attachments=None,
+                attachments=attachments,
             )
         finally:
             typing_task.cancel()

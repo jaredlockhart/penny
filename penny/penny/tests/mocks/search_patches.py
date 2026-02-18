@@ -61,7 +61,7 @@ class MockDDGS:
 def mock_search(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fixture to patch Perplexity and DuckDuckGo SDKs with default mocks."""
     monkeypatch.setattr("penny.tools.builtin.Perplexity", MockPerplexity)
-    monkeypatch.setattr("penny.tools.builtin.DDGS", MockDDGS)
+    monkeypatch.setattr("penny.tools.image_search.DDGS", MockDDGS)
 
 
 @pytest.fixture
@@ -98,6 +98,6 @@ def mock_search_with_results(monkeypatch: pytest.MonkeyPatch):
                 return images or []
 
         monkeypatch.setattr("penny.tools.builtin.Perplexity", ConfiguredPerplexity)
-        monkeypatch.setattr("penny.tools.builtin.DDGS", ConfiguredDDGS)
+        monkeypatch.setattr("penny.tools.image_search.DDGS", ConfiguredDDGS)
 
     return _configure
