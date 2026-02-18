@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
+from penny.ollama.embeddings import serialize_embedding
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -53,15 +54,13 @@ class PreferenceAgent(Agent):
         Returns:
             True if work was done, False if nothing to do
         """
-        if not self._channel:
-            logger.warning("PreferenceAgent: no channel set, skipping")
-            return False
-
-        senders = self.db.get_all_senders()
-        if not senders:
-            return False
-
         work_done = False
+
+        # Extract preferences from messages and reactions
+        senders = self.db.get_all_senders() if self._channel else []
+        if not self._channel:
+            logger.warning("PreferenceAgent: no channel set, skipping extraction")
+
         for sender in senders:
             reactions = self.db.get_user_reactions(
                 sender, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
@@ -116,6 +115,12 @@ class PreferenceAgent(Agent):
                 self.db.mark_messages_processed(reaction_ids)
             if message_ids:
                 self.db.mark_messages_processed(message_ids)
+
+        # Backfill embeddings for existing preferences without them
+        if self.embedding_model:
+            backfilled = await self._backfill_embeddings()
+            if backfilled:
+                work_done = True
 
         return work_done
 
@@ -179,17 +184,28 @@ class PreferenceAgent(Agent):
             )
             result = ExtractedTopics.model_validate_json(response.content)
 
-            added_topics: list[str] = []
+            # Collect new topics (deduped against existing)
+            new_topics: list[str] = []
             for raw_topic in result.topics:
                 topic = raw_topic.lower().strip()
                 if not topic:
                     continue
-
-                # Skip if already known
                 if any(p.topic == topic for p in existing):
                     continue
+                new_topics.append(topic)
 
-                self.db.add_preference(sender, topic, pref_type)
+            # Batch-embed all new topics at once
+            topic_embeddings: list[bytes | None] = [None] * len(new_topics)
+            if new_topics and self.embedding_model:
+                try:
+                    vecs = await self._ollama_client.embed(new_topics, model=self.embedding_model)
+                    topic_embeddings = [serialize_embedding(v) for v in vecs]
+                except Exception as e:
+                    logger.warning("Failed to embed preference topics: %s", e)
+
+            added_topics: list[str] = []
+            for topic, emb in zip(new_topics, topic_embeddings, strict=True):
+                self.db.add_preference(sender, topic, pref_type, embedding=emb)
                 logger.info("Added %s preference for %s: %s", pref_type, sender, topic)
                 added_topics.append(topic)
 
@@ -224,3 +240,29 @@ class PreferenceAgent(Agent):
         finally:
             typing_task.cancel()
             await self._channel.send_typing(recipient, False)
+
+    async def _backfill_embeddings(self) -> bool:
+        """Backfill embeddings for preferences that don't have them.
+
+        Returns:
+            True if any embeddings were generated.
+        """
+        assert self.embedding_model is not None
+
+        prefs = self.db.get_preferences_without_embeddings(
+            limit=PennyConstants.EMBEDDING_BACKFILL_BATCH_LIMIT
+        )
+        if not prefs:
+            return False
+
+        topics = [p.topic for p in prefs]
+        try:
+            vecs = await self._ollama_client.embed(topics, model=self.embedding_model)
+            for pref, vec in zip(prefs, vecs, strict=True):
+                assert pref.id is not None
+                self.db.update_preference_embedding(pref.id, serialize_embedding(vec))
+            logger.info("Backfilled embeddings for %d preferences", len(prefs))
+            return True
+        except Exception as e:
+            logger.warning("Failed to backfill preference embeddings: %s", e)
+            return False

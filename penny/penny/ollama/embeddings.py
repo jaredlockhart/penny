@@ -53,3 +53,18 @@ def find_similar(
 
     scored.sort(key=lambda x: x[1], reverse=True)
     return scored[:top_k]
+
+
+def build_entity_embed_text(name: str, facts: list[str]) -> str:
+    """Build text for embedding an entity (name + facts).
+
+    Args:
+        name: Entity name
+        facts: List of fact content strings
+
+    Returns:
+        Combined text suitable for embedding
+    """
+    if facts:
+        return f"{name}: {'; '.join(facts)}"
+    return name

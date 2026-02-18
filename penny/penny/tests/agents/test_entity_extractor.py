@@ -6,6 +6,7 @@ import pytest
 from sqlmodel import select
 
 from penny.database.models import SearchLog
+from penny.ollama.embeddings import deserialize_embedding
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -326,3 +327,118 @@ async def test_entity_extractor_empty_extraction(
         # No entities stored
         entities = penny.db.get_user_entities(TEST_SENDER)
         assert len(entities) == 0
+
+
+@pytest.mark.asyncio
+async def test_entity_extractor_generates_embeddings(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that EntityExtractor generates embeddings for facts and entities
+    when embedding_model is configured.
+    """
+    config = make_config(ollama_embedding_model="nomic-embed-text")
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            return mock_ollama._make_tool_call_response(
+                request, "search", {"query": "best speakers"}
+            )
+        elif request_count[0] == 2:
+            return mock_ollama._make_text_response(request, "check out KEF speakers! 🎵")
+        elif request_count[0] == 3:
+            # Pass 1: identify entities
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"known": [], "new": [{"name": "KEF LS50 Meta"}]}),
+            )
+        else:
+            # Pass 2: facts
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"facts": ["Costs $1,599", "Award winning"]}),
+            )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        await signal_server.push_message(sender=TEST_SENDER, content="best speakers?")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        work_done = await penny.entity_extractor.execute()
+        assert work_done
+
+        # Verify facts have embeddings
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        entity = next(e for e in entities if e.name == "kef ls50 meta")
+        facts = penny.db.get_entity_facts(entity.id)
+        assert len(facts) == 2
+        for fact in facts:
+            assert fact.embedding is not None, f"Fact '{fact.content}' should have embedding"
+            vec = deserialize_embedding(fact.embedding)
+            assert len(vec) == 4  # Default mock returns dim=4 zero vectors
+
+        # Verify entity has embedding
+        assert entity.embedding is not None, "Entity should have embedding"
+        vec = deserialize_embedding(entity.embedding)
+        assert len(vec) == 4
+
+        # Verify embed was called (facts batch + entity)
+        assert len(mock_ollama.embed_requests) >= 2
+
+        # Verify no facts/entities without embeddings remain
+        assert len(penny.db.get_facts_without_embeddings(limit=10)) == 0
+        assert len(penny.db.get_entities_without_embeddings(limit=10)) == 0
+
+
+@pytest.mark.asyncio
+async def test_entity_extractor_backfills_embeddings(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that EntityExtractor backfills embeddings for existing
+    entities/facts that don't have them.
+    """
+    config = make_config(ollama_embedding_model="nomic-embed-text")
+
+    # Simple handler: no extraction work, just backfill
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Pre-seed entity and facts WITHOUT embeddings
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "test entity")
+        assert entity is not None and entity.id is not None
+        penny.db.add_fact(entity.id, "fact one")
+        penny.db.add_fact(entity.id, "fact two")
+
+        # Verify no embeddings initially
+        assert len(penny.db.get_facts_without_embeddings(limit=10)) == 2
+        assert len(penny.db.get_entities_without_embeddings(limit=10)) == 1
+
+        # Run entity extractor (no unprocessed search logs, only backfill)
+        work_done = await penny.entity_extractor.execute()
+        assert work_done, "Backfill should count as work done"
+
+        # Verify embeddings were backfilled
+        assert len(penny.db.get_facts_without_embeddings(limit=10)) == 0
+        assert len(penny.db.get_entities_without_embeddings(limit=10)) == 0
+
+        facts = penny.db.get_entity_facts(entity.id)
+        for fact in facts:
+            assert fact.embedding is not None

@@ -137,6 +137,7 @@ class Penny:
             max_retries=config.ollama_max_retries,
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
+            embedding_model=config.ollama_embedding_model,
         )
 
         self.entity_extractor = EntityExtractor(
@@ -149,6 +150,7 @@ class Penny:
             max_retries=config.ollama_max_retries,
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
+            embedding_model=config.ollama_embedding_model,
         )
 
         self.entity_cleaner = EntityCleaner(
@@ -161,6 +163,7 @@ class Penny:
             max_retries=config.ollama_max_retries,
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
+            embedding_model=config.ollama_embedding_model,
         )
 
         self.discovery_agent = DiscoveryAgent(
