@@ -367,8 +367,9 @@ class MessageChannel(ABC):
                 commands_supporting_quotes = {"bug"}  # Commands that can use quote-reply metadata
 
                 if message.quoted_text and command_name not in commands_supporting_quotes:
-                    await self.send_status_message(
-                        message.sender, PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS
+                    prepared = self.prepare_outgoing(PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS)
+                    await self.send_message(
+                        message.sender, prepared, attachments=None, quote_message=None
                     )
                     return
                 await self._handle_command(message)
@@ -376,8 +377,9 @@ class MessageChannel(ABC):
 
             # Check if thread-replying to a command (quoted text is a command)
             if message.quoted_text and message.quoted_text.strip().startswith("/"):
-                await self.send_status_message(
-                    message.sender, PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS
+                prepared = self.prepare_outgoing(PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS)
+                await self.send_message(
+                    message.sender, prepared, attachments=None, quote_message=None
                 )
                 return
 
@@ -587,7 +589,8 @@ class MessageChannel(ABC):
         command = self._command_registry.get(command_name)
         if not command:
             response = PennyResponse.UNKNOWN_COMMAND.format(command_name=command_name)
-            await self.send_status_message(message.sender, response)
+            prepared = self.prepare_outgoing(response)
+            await self.send_message(message.sender, prepared, attachments=None, quote_message=None)
             self._db.log_command(
                 user=message.sender,
                 channel_type=self._command_context.channel_type,
@@ -613,14 +616,11 @@ class MessageChannel(ABC):
             result = await command.execute(command_args, context)
             response = result.text
 
-            # Send response (with attachments if present)
-            if result.attachments:
-                prepared = self.prepare_outgoing(response) if response else ""
-                await self.send_message(
-                    message.sender, prepared, attachments=result.attachments, quote_message=None
-                )
-            else:
-                await self.send_status_message(message.sender, response)
+            # Send response — commands skip personality transforms
+            prepared = self.prepare_outgoing(response) if response else ""
+            await self.send_message(
+                message.sender, prepared, attachments=result.attachments, quote_message=None
+            )
 
             # Log command execution
             self._db.log_command(
@@ -636,7 +636,8 @@ class MessageChannel(ABC):
         except Exception as e:
             logger.exception("Error executing command /%s: %s", command_name, e)
             error_response = PennyResponse.COMMAND_ERROR.format(error=e)
-            await self.send_status_message(message.sender, error_response)
+            prepared = self.prepare_outgoing(error_response)
+            await self.send_message(message.sender, prepared, attachments=None, quote_message=None)
             self._db.log_command(
                 user=message.sender,
                 channel_type=self._command_context.channel_type,
