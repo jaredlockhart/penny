@@ -55,8 +55,6 @@ class PennyConstants:
         "apps.apple.com",
     )
 
-    RESEARCH_FOCUS_TIMEOUT_SECONDS = 300
-
     # Email command constants
     JMAP_SESSION_URL = "https://api.fastmail.com/jmap/session"
     JMAP_REQUEST_TIMEOUT = 30.0

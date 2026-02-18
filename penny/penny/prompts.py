@@ -12,7 +12,7 @@ class Prompt:
         "When the user says 'penny' or 'hey penny', they are addressing you directly."
     )
 
-    # Search-focused agent prompt (used by message, followup, discovery agents)
+    # Search-focused agent prompt (used by MessageAgent)
     SEARCH_PROMPT = (
         "You MUST call the search tool on EVERY message - no exceptions. "
         "Never respond without searching first. Never ask clarifying questions. "
@@ -32,77 +32,6 @@ class Prompt:
         "You only get ONE search per message, so combine everything "
         "into a single comprehensive query. "
         "Include a URL from the results if you search."
-    )
-
-    FOLLOWUP_PROMPT = (
-        "Follow up on this conversation by searching for something new about the topic. "
-        "Share what you found."
-    )
-
-    DISCOVERY_PROMPT = (
-        "Search for something new and interesting about the user's topic. "
-        "Share a cool discovery out of the blue."
-    )
-
-    RESEARCH_PROMPT = (
-        "You are conducting deep research on a topic. "
-        "Search for comprehensive information and analyze the results. "
-        "Structure your findings starting with the highest-level insights first, "
-        "then break down into increasingly specific details. "
-        "Based on what you find, determine what specific aspect or angle to investigate next. "
-        "Be thorough and systematic - cover different perspectives, recent developments, "
-        "and key details."
-    )
-
-    RESEARCH_REPORT_BUILD_PROMPT = (
-        "You are building a research report incrementally. "
-        "If an existing report draft is provided, integrate the new search results into it — "
-        "add new information, fill gaps, and refine existing sections. "
-        "If no existing report is provided, create an initial report from the search results. "
-        "The report structure MUST match the user's requested focus. "
-        "Include ONLY information from the search results and existing report — "
-        "do not add commentary, strategic analysis, or recommendations "
-        "unless the focus asks for them. "
-        "Preserve all specific data points, ratings, and scores — "
-        "do not generalize or merge them into a single overall rating. "
-        "Do NOT include source URLs in the report body. "
-        "Use markdown formatting (## headings, bullet points, tables)."
-    )
-
-    RESEARCH_OUTPUT_OPTIONS_SYSTEM_PROMPT = (
-        "You suggest what information a research summary report should focus on. "
-        "The output is always a plain text report — never a database, app, visual, "
-        "or interactive tool. "
-        "Output ONLY a numbered list of exactly 3 options (1., 2., 3.). "
-        "Each option describes what information and structure the report should have. "
-        "No preamble, no explanation, just the 3 numbered options."
-    )
-
-    RESEARCH_OUTPUT_OPTIONS_PROMPT = (
-        "Someone wants to research: {topic}\n\n"
-        "Suggest 3 ways to structure the summary report. Examples:\n"
-        "- A ranked list of top picks with pros, cons, and key details for each\n"
-        "- A comprehensive catalog covering every item found with dates and details\n"
-        "- A brief executive summary with the top 5 highlights and actionable takeaways\n"
-        "- A side-by-side comparison organized by key criteria\n"
-        "- A chronological breakdown with dates, locations, and highlights"
-    )
-
-    RESEARCH_FOLLOWUP_PROMPT = (
-        "You are conducting deep research. Review your previous findings above "
-        "and search for NEW information you haven't covered yet. "
-        "Try a different search angle — different keywords, a different aspect of the topic, "
-        "or drill deeper into a specific area. Do NOT repeat searches you've already done. "
-        "Structure your findings starting with the most important new insights."
-    )
-
-    RESEARCH_FOCUS_EXTRACTION_PROMPT = (
-        "You are interpreting what the user wants in a research report. "
-        "They were shown some suggested options and replied. "
-        "Based on the options and their reply, output a short phrase describing "
-        "what information and structure the report should have. "
-        "The user may pick an option, modify one, or describe something entirely different. "
-        "Output ONLY the focus description — no preamble, no explanation."
     )
 
     # Email prompts

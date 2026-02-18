@@ -476,7 +476,7 @@ class MessageChannel(ABC):
             reacted_msg.id,
         )
 
-        # Extract engagement signals from the reaction
+        # Extract engagements from the reaction
         await self._extract_reaction_engagements(message.sender, message.content, reacted_msg)
 
     def _is_proactive_message(self, message: MessageLog) -> bool:

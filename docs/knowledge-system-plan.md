@@ -12,7 +12,7 @@ Two parallel datasets grow together:
 
 **World Knowledge** — entities and facts that exist objectively. "The KEF LS50 Meta is a bookshelf speaker. It costs $1,600. It uses a MAT driver." Sourced from searches, user teaching, and proactive research. Every fact tracks where it came from and when.
 
-**User Interest Graph** — what the user cares about and how much. "User likes audio equipment (high confidence). User is interested in KEF LS50 Meta (very high — searched 3 times, used /learn, reacted positively to a message about it). User dislikes sports (medium — said so once)." Built from accumulated signals across all interactions.
+**User Interest Graph** — what the user cares about and how much. "User likes audio equipment (high confidence). User is interested in KEF LS50 Meta (very high — searched 3 times, used /learn, reacted positively to a message about it). User dislikes sports (medium — said so once)." Built from accumulated engagements across all interactions.
 
 These two datasets combine to drive everything: what Penny says in conversation, what it researches next, and what it proactively shares. High interest + thin knowledge = research priority. High interest + rich knowledge + time elapsed = check for news.
 
@@ -27,14 +27,14 @@ User sends a message. Penny responds — same as today, except:
 - Before responding, retrieve relevant entities via embedding similarity against the message
 - Inject known facts into the response prompt so Penny can reference what it already knows
 - **Knowledge sufficiency check**: if existing facts are enough to answer the question, respond from memory without searching (faster, feels like Penny remembers). If not, search as usual but with better context.
-- After responding, extract entities/facts/signals from both the search results and the user's message
-- The message itself is a signal: entities mentioned get a low-strength positive signal
+- After responding, extract entities/facts/engagements from both the search results and the user's message
+- The message itself is an engagement: entities mentioned get a low-strength positive engagement
 
 ### 2. /like, /unlike, /dislike, /undislike (preference management)
 
 Explicit preference manipulation:
-- `/like espresso machines` — adds a like preference, high-strength positive signal
-- `/dislike sports` — adds a dislike preference, high-strength negative signal
+- `/like espresso machines` — adds a like preference, high-strength positive engagement
+- `/dislike sports` — adds a dislike preference, high-strength negative engagement
 - `/unlike espresso machines` — removes the like
 - `/undislike sports` — removes the dislike
 
@@ -42,7 +42,7 @@ These complement implicit preference extraction from messages and reactions with
 
 ### 3. /learn [topic] (active research)
 
-Signals the system that this is an active area to explore:
+Tells the system that this is an active area to explore:
 - Creates or boosts the entity to high interest
 - Research loop picks it up as top priority (high interest × low knowledge)
 - As the research loop discovers information, it messages the user with findings
@@ -65,10 +65,10 @@ View what Penny thinks you care about:
 - Displays: entity name, interest score, fact count, last activity
 - Lets the user verify Penny's model matches reality and correct misunderstandings
 
-### 6. Passive signals (no user action required)
+### 6. Passive engagements (no user action required)
 
-- **Emoji reactions** to Penny's messages — positive reaction = positive signal for entities in that message, negative = negative signal. **Negative reaction on a proactive message = strong "stop" signal** that sharply drops that entity's research priority.
-- **Conversation patterns** — repeated questions about the same entity, follow-up questions, sustained engagement accumulate as interest signals
+- **Emoji reactions** to Penny's messages — positive reaction = positive engagement for entities in that message, negative = negative engagement. **Negative reaction on a proactive message = strong "stop" engagement** that sharply drops that entity's research priority.
+- **Conversation patterns** — repeated questions about the same entity, follow-up questions, sustained interaction accumulate as engagements
 - **Search patterns** — what the user asks Penny to search for reveals what they care about
 
 ---
@@ -99,17 +99,17 @@ The current EntitySearchLog join table is replaced by:
 - `embedding` — vector embedding of the entity name + key facts
 - Used for fuzzy matching ("those speakers" → "KEF LS50 Meta") and for computing preference-entity relationships
 
-### Signal model
+### Engagement model
 
-**Signal table** (new):
+**Engagement table** (new):
 - `id`, `user`, `entity_id` (nullable), `preference_id` (nullable)
-- `signal_type` — explicit_statement, emoji_reaction, search_initiated, follow_up_question, learn_command, message_mention, like_command, dislike_command
+- `engagement_type` — explicit_statement, emoji_reaction, search_initiated, follow_up_question, learn_command, message_mention, like_command, dislike_command
 - `valence` — positive, negative, neutral
 - `strength` — numeric weight
-- `source_message_id` — which message produced this signal
+- `source_message_id` — which message produced this engagement
 - `created_at`
 
-**Interest score** — computed from accumulated signals per entity per user: `sum(strength × recency_decay)`. Drives research priority and context injection ranking. Negative scores possible for disliked entities (suppresses them from research).
+**Interest score** — computed from accumulated engagements per entity per user: `sum(strength × recency_decay)`. Drives research priority and context injection ranking. Negative scores possible for disliked entities (suppresses them from research).
 
 ### Preference-entity relationships (computed, not stored)
 
@@ -132,8 +132,8 @@ Two background loops replace the current four systems (EntityExtractor, Preferen
 **What it does**:
 1. Extract entities and facts from content (search results AND user messages)
 2. Track fact sources (URL, search log, timestamp)
-3. Extract user signals — what does this interaction reveal about preferences?
-4. Link signals to entities found in the same context
+3. Extract user engagements — what does this interaction reveal about preferences?
+4. Link engagements to entities found in the same context
 5. Match new entities against existing preferences via embedding similarity
 6. Generate/update embeddings for new entities, facts, and preferences
 7. Deduplicate facts using embedding similarity
@@ -174,9 +174,9 @@ This is one loop that naturally transitions per entity as knowledge accumulates.
 
 ---
 
-## Signals Reference
+## Engagements Reference
 
-| Signal | Source | Strength | Example |
+| Engagement | Source | Strength | Example |
 |---|---|---|---|
 | /learn command | User types /learn X | Very high (1.0) | `/learn kef ls50 meta` |
 | /like command | User types /like X | High (0.8) | `/like audio equipment` |
@@ -197,7 +197,7 @@ This is one loop that naturally transitions per entity as knowledge accumulates.
 |---|---|---|
 | Followup agent | Research loop (enrichment mode) | Followup picks random old conversations and repeats info. Research loop targets the most valuable knowledge gaps. |
 | Discovery agent | Research loop (briefing mode) | Discovery picks random broad likes and produces irrelevant results. Research loop monitors specific entities for genuine novelty. |
-| Research system (/research) | /learn + Research loop | Research is a closed one-shot report. /learn signals ongoing interest; research loop incrementally builds knowledge and reports findings. |
+| Research system (/research) | /learn + Research loop | Research is a closed one-shot report. /learn expresses ongoing interest; research loop incrementally builds knowledge and reports findings. |
 | PreferenceAgent | Extraction loop | Preference extraction becomes part of unified extraction. |
 | EntityExtractor | Extraction loop | Entity extraction expands to process messages (not just search results) and generate embeddings. |
 | EntityCleaner | Stays (unchanged) | Duplicate merging still needed. Eventually updated to use embeddings for better detection. |
@@ -216,11 +216,11 @@ This is one loop that naturally transitions per entity as knowledge accumulates.
 
 - [ ] #285 — Entity context injection + knowledge sufficiency check (blocked by #284)
 
-### Phase 3 — Signal Model & Preferences
+### Phase 3 — Engagement Model & Preferences
 
-- [ ] #286 — Signal model: track user interest signals and compute interest scores (blocked by #282)
+- [ ] #286 — Engagement model: track user interest engagements and compute interest scores (blocked by #282)
 - [ ] #287 — Preference commands (/like etc.) + /interests command (blocked by #286)
-- [ ] #288 — Emoji reaction signal extraction + proactive message stop mechanism (blocked by #286, #284)
+- [ ] #288 — Emoji reaction engagement extraction + proactive message stop mechanism (blocked by #286, #284)
 
 ### Phase 4 — Unified Extraction
 
@@ -249,9 +249,9 @@ Phase 2                                               │
   #285  Entity context injection + sufficiency check ←┘
                                                       
 Phase 3                                               
-  #286  Signal model & interest scoring ←── #282      
+  #286  Engagement model & interest scoring ←── #282
   #287  Preference commands + /interests ←── #286     
-  #288  Emoji reaction signals + stop mechanism ←── #286, #284
+  #288  Emoji reaction engagements + stop mechanism ←── #286, #284
 
 Phase 4
   #289  Unified extraction loop + message filtering ←── #282, #284, #286
@@ -277,5 +277,5 @@ Phase 6
 3. **Processed flag replaces EntitySearchLog** — Simpler extraction tracking. Fact-level source tracking handles provenance.
 4. **Knowledge sufficiency check before search** — Penny responds from memory when it can, searches when it can't. Makes knowledge tangible.
 5. **Message filtering in extraction** — Not every message needs LLM processing. Lightweight pre-filter saves compute.
-6. **Thumbs-down as stop mechanism** — Negative reaction on proactive messages is the user's way to say "enough about this." High-strength negative signal sharply drops priority.
+6. **Thumbs-down as stop mechanism** — Negative reaction on proactive messages is the user's way to say "enough about this." High-strength negative engagement sharply drops priority.
 7. **Interest graph visibility** — /interests lets the user see and verify what Penny thinks they care about.

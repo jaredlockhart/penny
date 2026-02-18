@@ -1,4 +1,4 @@
-"""Unified extraction pipeline for entities, facts, preferences, and signals."""
+"""Unified extraction pipeline for entities, facts, preferences, and engagements."""
 
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ class ExtractedTopics(BaseModel):
 
 
 class ExtractionPipeline(Agent):
-    """Unified background agent that extracts entities, facts, preferences, and signals.
+    """Unified background agent that extracts entities, facts, preferences, and engagements.
 
     Replaces the separate EntityExtractor and PreferenceAgent with a single pipeline
     that processes both SearchLog and MessageLog entries.

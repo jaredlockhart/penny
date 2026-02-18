@@ -9,14 +9,11 @@ from typing import Any
 
 from penny.agents import (
     Agent,
-    DiscoveryAgent,
     ExtractionPipeline,
-    FollowupAgent,
     LearnLoopAgent,
     MessageAgent,
 )
 from penny.agents.entity_cleaner import EntityCleaner
-from penny.agents.research import ResearchAgent
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
@@ -27,7 +24,6 @@ from penny.prompts import Prompt
 from penny.scheduler import (
     AlwaysRunSchedule,
     BackgroundScheduler,
-    DelayedSchedule,
     PeriodicSchedule,
 )
 from penny.scheduler.schedule_runner import ScheduleExecutor
@@ -121,18 +117,6 @@ class Penny:
             search_tool=shared_search_tool,
         )
 
-        self.followup_agent = FollowupAgent(
-            system_prompt=Prompt.SEARCH_PROMPT,
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
-            tools=search_tools(self.db),
-            db=self.db,
-            max_steps=config.message_max_steps,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-            tool_timeout=config.tool_timeout,
-        )
-
         self.extraction_pipeline = ExtractionPipeline(
             system_prompt="",  # ExtractionPipeline uses ollama_client.generate() directly
             model=config.ollama_background_model,
@@ -157,31 +141,6 @@ class Penny:
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
             embedding_model=config.ollama_embedding_model,
-        )
-
-        self.discovery_agent = DiscoveryAgent(
-            system_prompt=Prompt.SEARCH_PROMPT,
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
-            tools=search_tools(self.db),
-            db=self.db,
-            max_steps=config.message_max_steps,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-            tool_timeout=config.tool_timeout,
-        )
-
-        self.research_agent = ResearchAgent(
-            config=config,
-            system_prompt=Prompt.RESEARCH_PROMPT,
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
-            tools=search_tools(self.db),
-            db=self.db,
-            max_steps=config.message_max_steps,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-            tool_timeout=config.tool_timeout,
         )
 
         # Learn loop uses SearchTool directly (not the agentic loop)
@@ -220,25 +179,17 @@ class Penny:
         )
 
         # Connect agents that send messages to channel
-        self.followup_agent.set_channel(self.channel)
-        self.discovery_agent.set_channel(self.channel)
         self.extraction_pipeline.set_channel(self.channel)
-        self.research_agent.set_channel(self.channel)
         self.learn_loop.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Schedules (priority: schedule, research, extract, clean, learn, followup, discover)
+        # Schedules (priority: schedule, extract, clean, learn)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
-        # ResearchAgent runs always (whenever scheduler ticks) to process in-progress research
         # LearnLoopAgent runs periodically while idle to research entities by interest score
         schedules = [
             AlwaysRunSchedule(
                 agent=self.schedule_executor,
                 interval=60.0,  # Check every minute for due schedules
-            ),
-            AlwaysRunSchedule(
-                agent=self.research_agent,
-                interval=config.research_schedule_interval,
             ),
             PeriodicSchedule(
                 agent=self.extraction_pipeline,
@@ -251,16 +202,6 @@ class Penny:
             PeriodicSchedule(
                 agent=self.learn_loop,
                 interval=config.learn_loop_interval,
-            ),
-            DelayedSchedule(
-                agent=self.followup_agent,
-                min_delay=config.followup_min_seconds,
-                max_delay=config.followup_max_seconds,
-            ),
-            DelayedSchedule(
-                agent=self.discovery_agent,
-                min_delay=config.discovery_min_seconds,
-                max_delay=config.discovery_max_seconds,
             ),
         ]
         self.scheduler = BackgroundScheduler(
@@ -399,16 +340,6 @@ async def main() -> None:
     logger.info("  ollama_api_url: %s", config.ollama_api_url)
     logger.info("  idle_threshold: %.0fs", config.idle_seconds)
     logger.info("  maintenance_interval: %.0fs", config.maintenance_interval_seconds)
-    logger.info(
-        "  followup_delay: %.0fs-%.0fs",
-        config.followup_min_seconds,
-        config.followup_max_seconds,
-    )
-    logger.info(
-        "  discovery_delay: %.0fs-%.0fs",
-        config.discovery_min_seconds,
-        config.discovery_max_seconds,
-    )
 
     agent = Penny(config)
     await agent.run()

@@ -28,7 +28,7 @@ class LearnCommand(Command):
     name = "learn"
     description = "Start learning about a topic"
     help_text = (
-        "Signal interest in a topic so Penny researches it in the background.\n\n"
+        "Express interest in a topic so Penny researches it in the background.\n\n"
         "**Usage**:\n"
         "- `/learn` — List what's being actively tracked\n"
         "- `/learn <topic>` — Start learning about a topic\n\n"
