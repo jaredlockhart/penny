@@ -273,6 +273,23 @@ class OllamaClient:
         logger.error("Ollama embed failed after %d attempts: %s", self.max_retries, last_error)
         raise last_error  # type: ignore[misc]
 
+    async def list_models(self) -> list[str]:
+        """
+        List all locally available Ollama models.
+
+        Returns:
+            List of model names available on the Ollama host
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10) as http_client:
+                resp = await http_client.get(f"{self.api_url}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+            return [m["name"] for m in data.get("models", []) if m.get("name")]
+        except Exception as e:
+            logger.warning("Failed to list Ollama models: %s", e)
+            return []
+
     async def close(self) -> None:
         """Close the client (SDK handles cleanup automatically)."""
         logger.info("Ollama client closed")

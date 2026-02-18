@@ -1,5 +1,7 @@
 """Integration tests for startup announcement feature."""
 
+import logging
+
 import pytest
 
 from penny.tests.conftest import TEST_SENDER, wait_until
@@ -250,3 +252,74 @@ async def test_startup_announcement_multiple_recipients(
             assert "i updated something cool" in message, (
                 f"Expected restart message in announcement, got: {message}"
             )
+
+
+@pytest.mark.asyncio
+async def test_startup_warns_when_embedding_model_not_available(
+    signal_server, make_config, mock_ollama, running_penny, caplog, monkeypatch
+):
+    """Startup validation logs a warning when OLLAMA_EMBEDDING_MODEL is not pulled."""
+    # Configure an embedding model that is NOT in the available models list
+    config = make_config(ollama_embedding_model="qwen3-embedding:4b")
+
+    # Patch list_models to return only the base chat model (embedding model absent)
+    async def mock_list_models(self):
+        return ["test-model"]
+
+    monkeypatch.setattr("penny.ollama.client.OllamaClient.list_models", mock_list_models)
+
+    with caplog.at_level(logging.WARNING, logger="penny.penny"):
+        async with running_penny(config):
+            pass
+
+    warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("qwen3-embedding:4b" in m for m in warning_messages), (
+        f"Expected warning about missing embedding model, got: {warning_messages}"
+    )
+    assert any("OLLAMA_EMBEDDING_MODEL" in m for m in warning_messages), (
+        f"Expected env var name in warning, got: {warning_messages}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_startup_no_warning_when_embedding_model_available(
+    signal_server, make_config, mock_ollama, running_penny, caplog, monkeypatch
+):
+    """Startup validation does not warn when OLLAMA_EMBEDDING_MODEL is present."""
+    config = make_config(ollama_embedding_model="nomic-embed-text")
+
+    async def mock_list_models(self):
+        return ["test-model", "nomic-embed-text"]
+
+    monkeypatch.setattr("penny.ollama.client.OllamaClient.list_models", mock_list_models)
+
+    with caplog.at_level(logging.WARNING, logger="penny.penny"):
+        async with running_penny(config):
+            pass
+
+    warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert not any("nomic-embed-text" in m for m in warning_messages), (
+        f"Expected no warning for available model, got: {warning_messages}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_startup_no_warning_when_no_optional_models_configured(
+    signal_server, test_config, mock_ollama, running_penny, caplog, monkeypatch
+):
+    """Startup validation does not warn when no optional models are configured."""
+
+    # test_config has no embedding/vision/image models set
+    async def mock_list_models(self):
+        return ["test-model"]
+
+    monkeypatch.setattr("penny.ollama.client.OllamaClient.list_models", mock_list_models)
+
+    with caplog.at_level(logging.WARNING, logger="penny.penny"):
+        async with running_penny(test_config):
+            pass
+
+    warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert not any("not available on the Ollama host" in m for m in warning_messages), (
+        f"Expected no model-availability warnings, got: {warning_messages}"
+    )
