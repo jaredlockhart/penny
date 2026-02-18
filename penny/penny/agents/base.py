@@ -63,6 +63,7 @@ class Agent:
         retry_delay: float = 0.5,
         tool_timeout: float = 60.0,
         vision_model: str | None = None,
+        embedding_model: str | None = None,
         allow_repeat_tools: bool = False,
     ):
         self.system_prompt = system_prompt
@@ -71,6 +72,7 @@ class Agent:
         self.db = db
         self.max_steps = max_steps
         self.vision_model = vision_model
+        self.embedding_model = embedding_model
         self.allow_repeat_tools = allow_repeat_tools
 
         self._ollama_client = OllamaClient(

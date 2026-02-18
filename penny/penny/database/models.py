@@ -102,6 +102,7 @@ class Preference(SQLModel, table=True):
     topic: str  # Arbitrary natural language phrase
     type: str  # "like" or "dislike"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    embedding: bytes | None = None  # Serialized float32 embedding vector
 
 
 class ResearchTask(SQLModel, table=True):
@@ -169,6 +170,7 @@ class Entity(SQLModel, table=True):
     name: str  # Lowercased canonical name (e.g., "kef ls50 meta")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    embedding: bytes | None = None  # Serialized float32 embedding vector
 
 
 class Fact(SQLModel, table=True):
@@ -181,3 +183,4 @@ class Fact(SQLModel, table=True):
     source_search_log_id: int | None = Field(default=None, foreign_key="searchlog.id", index=True)
     learned_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_verified: datetime | None = None
+    embedding: bytes | None = None  # Serialized float32 embedding vector

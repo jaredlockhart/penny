@@ -5,6 +5,7 @@ import math
 import pytest
 
 from penny.ollama.embeddings import (
+    build_entity_embed_text,
     cosine_similarity,
     deserialize_embedding,
     find_similar,
@@ -158,3 +159,148 @@ class TestOllamaClientEmbed:
 
         assert len(result) == 1
         assert all(v == 0.0 for v in result[0])
+
+
+class TestBuildEntityEmbedText:
+    """Tests for build_entity_embed_text utility."""
+
+    def test_name_only(self):
+        assert build_entity_embed_text("kef ls50 meta", []) == "kef ls50 meta"
+
+    def test_name_with_facts(self):
+        result = build_entity_embed_text("kef ls50 meta", ["Costs $1,599", "Award winner"])
+        assert result == "kef ls50 meta: Costs $1,599; Award winner"
+
+    def test_single_fact(self):
+        result = build_entity_embed_text("python", ["A programming language"])
+        assert result == "python: A programming language"
+
+
+class TestDatabaseEmbeddingMethods:
+    """Tests for database embedding storage and retrieval."""
+
+    def _setup_db(self, tmp_path):
+        """Create a test database with tables and migrations."""
+        from penny.database import Database
+        from penny.database.migrate import migrate
+
+        db_path = str(tmp_path / "test.db")
+        db = Database(db_path)
+        db.create_tables()
+        migrate(db_path)
+        return db
+
+    def test_add_fact_with_embedding(self, tmp_path):
+        db = self._setup_db(tmp_path)
+        entity = db.get_or_create_entity("+1234", "test entity")
+        assert entity is not None and entity.id is not None
+
+        embedding = serialize_embedding([0.1, 0.2, 0.3])
+        fact = db.add_fact(entity.id, "test fact", embedding=embedding)
+
+        assert fact is not None
+        assert fact.embedding == embedding
+        restored = deserialize_embedding(fact.embedding)
+        assert len(restored) == 3
+
+    def test_add_fact_without_embedding(self, tmp_path):
+        db = self._setup_db(tmp_path)
+        entity = db.get_or_create_entity("+1234", "test entity")
+        assert entity is not None and entity.id is not None
+
+        fact = db.add_fact(entity.id, "test fact")
+        assert fact is not None
+        assert fact.embedding is None
+
+    def test_add_preference_with_embedding(self, tmp_path):
+        db = self._setup_db(tmp_path)
+        embedding = serialize_embedding([0.4, 0.5, 0.6])
+        added = db.add_preference("+1234", "cats", "like", embedding=embedding)
+        assert added is True
+
+        prefs = db.get_preferences("+1234", "like")
+        assert len(prefs) == 1
+        assert prefs[0].embedding == embedding
+
+    def test_update_entity_embedding(self, tmp_path):
+        db = self._setup_db(tmp_path)
+        entity = db.get_or_create_entity("+1234", "test entity")
+        assert entity is not None and entity.id is not None
+        assert entity.embedding is None
+
+        embedding = serialize_embedding([0.1, 0.2, 0.3])
+        db.update_entity_embedding(entity.id, embedding)
+
+        # Verify update
+        entities = db.get_user_entities("+1234")
+        assert len(entities) == 1
+        assert entities[0].embedding == embedding
+
+    def test_update_fact_embedding(self, tmp_path):
+        db = self._setup_db(tmp_path)
+        entity = db.get_or_create_entity("+1234", "test entity")
+        assert entity is not None and entity.id is not None
+
+        fact = db.add_fact(entity.id, "test fact")
+        assert fact is not None and fact.id is not None
+
+        embedding = serialize_embedding([0.7, 0.8])
+        db.update_fact_embedding(fact.id, embedding)
+
+        facts = db.get_entity_facts(entity.id)
+        assert len(facts) == 1
+        assert facts[0].embedding == embedding
+
+    def test_update_preference_embedding(self, tmp_path):
+        db = self._setup_db(tmp_path)
+        db.add_preference("+1234", "dogs", "like")
+        prefs = db.get_preferences("+1234", "like")
+        assert len(prefs) == 1 and prefs[0].id is not None
+
+        embedding = serialize_embedding([0.9, 1.0])
+        db.update_preference_embedding(prefs[0].id, embedding)
+
+        prefs = db.get_preferences("+1234", "like")
+        assert prefs[0].embedding == embedding
+
+    def test_get_entities_without_embeddings(self, tmp_path):
+        db = self._setup_db(tmp_path)
+        # Create two entities
+        e1 = db.get_or_create_entity("+1234", "entity a")
+        e2 = db.get_or_create_entity("+1234", "entity b")
+        assert e1 is not None and e1.id is not None
+        assert e2 is not None and e2.id is not None
+
+        # Both should be returned (no embeddings)
+        without = db.get_entities_without_embeddings(limit=10)
+        assert len(without) == 2
+
+        # Give one an embedding
+        db.update_entity_embedding(e1.id, serialize_embedding([0.1]))
+
+        # Only the other should be returned
+        without = db.get_entities_without_embeddings(limit=10)
+        assert len(without) == 1
+        assert without[0].name == "entity b"
+
+    def test_get_facts_without_embeddings(self, tmp_path):
+        db = self._setup_db(tmp_path)
+        entity = db.get_or_create_entity("+1234", "test")
+        assert entity is not None and entity.id is not None
+
+        f1 = db.add_fact(entity.id, "fact one")
+        f2 = db.add_fact(entity.id, "fact two", embedding=serialize_embedding([0.1]))
+        assert f1 is not None and f2 is not None
+
+        without = db.get_facts_without_embeddings(limit=10)
+        assert len(without) == 1
+        assert without[0].content == "fact one"
+
+    def test_get_preferences_without_embeddings(self, tmp_path):
+        db = self._setup_db(tmp_path)
+        db.add_preference("+1234", "cats", "like")
+        db.add_preference("+1234", "dogs", "like", embedding=serialize_embedding([0.1]))
+
+        without = db.get_preferences_without_embeddings(limit=10)
+        assert len(without) == 1
+        assert without[0].topic == "cats"

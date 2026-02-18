@@ -394,7 +394,7 @@ class Database:
             limit: Maximum number of messages to return
 
         Returns:
-            Unprocessed messages ordered by timestamp ascending (oldest first)
+            Unprocessed messages ordered by timestamp descending (newest first)
         """
         with self.get_session() as session:
             return list(
@@ -406,7 +406,7 @@ class Database:
                         MessageLog.is_reaction == False,  # noqa: E712
                         MessageLog.processed == False,  # noqa: E712
                     )
-                    .order_by(MessageLog.timestamp.asc())  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
@@ -644,7 +644,9 @@ class Database:
                 ).all()
             )
 
-    def add_preference(self, user: str, topic: str, pref_type: str) -> bool:
+    def add_preference(
+        self, user: str, topic: str, pref_type: str, embedding: bytes | None = None
+    ) -> bool:
         """
         Add a preference for a user.
 
@@ -652,6 +654,7 @@ class Database:
             user: User identifier (phone number or Discord user ID)
             topic: The topic/phrase to add
             pref_type: Preference type ("like" or "dislike")
+            embedding: Serialized embedding vector (optional)
 
         Returns:
             True if added, False if already exists
@@ -674,6 +677,7 @@ class Database:
                     user=user,
                     topic=topic,
                     type=pref_type,
+                    embedding=embedding,
                 )
                 session.add(pref)
                 session.commit()
@@ -954,6 +958,7 @@ class Database:
         content: str,
         source_url: str | None = None,
         source_search_log_id: int | None = None,
+        embedding: bytes | None = None,
     ) -> Fact | None:
         """
         Add a fact to an entity.
@@ -963,6 +968,7 @@ class Database:
             content: The fact text
             source_url: URL where the fact was found
             source_search_log_id: SearchLog ID that produced this fact
+            embedding: Serialized embedding vector (optional)
 
         Returns:
             The created Fact, or None on failure
@@ -974,6 +980,7 @@ class Database:
                     content=content,
                     source_url=source_url,
                     source_search_log_id=source_search_log_id,
+                    embedding=embedding,
                 )
                 session.add(fact)
 
@@ -1025,7 +1032,7 @@ class Database:
                 session.exec(
                     select(SearchLog)
                     .where(SearchLog.extracted == False)  # noqa: E712
-                    .order_by(SearchLog.id.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(SearchLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
@@ -1154,3 +1161,113 @@ class Database:
                 session.commit()
         except Exception as e:
             logger.error("Failed to set entity cleaning timestamp: %s", e)
+
+    # --- Embedding methods ---
+
+    def update_entity_embedding(self, entity_id: int, embedding: bytes) -> None:
+        """Update the embedding for an entity.
+
+        Args:
+            entity_id: Entity primary key
+            embedding: Serialized embedding vector
+        """
+        try:
+            with self.get_session() as session:
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.embedding = embedding
+                    session.add(entity)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update entity %d embedding: %s", entity_id, e)
+
+    def update_fact_embedding(self, fact_id: int, embedding: bytes) -> None:
+        """Update the embedding for a fact.
+
+        Args:
+            fact_id: Fact primary key
+            embedding: Serialized embedding vector
+        """
+        try:
+            with self.get_session() as session:
+                fact = session.get(Fact, fact_id)
+                if fact:
+                    fact.embedding = embedding
+                    session.add(fact)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update fact %d embedding: %s", fact_id, e)
+
+    def update_preference_embedding(self, preference_id: int, embedding: bytes) -> None:
+        """Update the embedding for a preference.
+
+        Args:
+            preference_id: Preference primary key
+            embedding: Serialized embedding vector
+        """
+        try:
+            with self.get_session() as session:
+                pref = session.get(Preference, preference_id)
+                if pref:
+                    pref.embedding = embedding
+                    session.add(pref)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update preference %d embedding: %s", preference_id, e)
+
+    def get_entities_without_embeddings(self, limit: int) -> list[Entity]:
+        """Get entities that don't have embeddings yet.
+
+        Args:
+            limit: Maximum number of entities to return
+
+        Returns:
+            List of Entity objects without embeddings
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Entity)
+                    .where(Entity.embedding == None)  # noqa: E711
+                    .order_by(Entity.created_at.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+
+    def get_facts_without_embeddings(self, limit: int) -> list[Fact]:
+        """Get facts that don't have embeddings yet.
+
+        Args:
+            limit: Maximum number of facts to return
+
+        Returns:
+            List of Fact objects without embeddings
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Fact)
+                    .where(Fact.embedding == None)  # noqa: E711
+                    .order_by(Fact.learned_at.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+
+    def get_preferences_without_embeddings(self, limit: int) -> list[Preference]:
+        """Get preferences that don't have embeddings yet.
+
+        Args:
+            limit: Maximum number of preferences to return
+
+        Returns:
+            List of Preference objects without embeddings
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Preference)
+                    .where(Preference.embedding == None)  # noqa: E711
+                    .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )

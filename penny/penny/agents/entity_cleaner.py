@@ -11,6 +11,7 @@ from penny.agents.base import Agent
 from penny.agents.entity_extractor import _normalize_fact
 from penny.constants import PennyConstants
 from penny.database.models import Fact
+from penny.ollama.embeddings import build_entity_embed_text, serialize_embedding
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,10 @@ class EntityCleaner(Agent):
             self.db.merge_entities(primary.id, dup_ids, keep_fact_ids)
             work_done = True
 
+            # Regenerate embedding for merged entity (facts changed)
+            if self.embedding_model:
+                await self._regenerate_entity_embedding(primary.id, primary.name)
+
         return work_done
 
     async def _identify_merge_groups(self, names: list[str]) -> list[MergeGroup]:
@@ -171,3 +176,15 @@ class EntityCleaner(Agent):
         except Exception as e:
             logger.error("Failed to identify merge groups: %s", e)
             return []
+
+    async def _regenerate_entity_embedding(self, entity_id: int, entity_name: str) -> None:
+        """Regenerate the embedding for an entity after its facts changed."""
+        assert self.embedding_model is not None
+        try:
+            facts = self.db.get_entity_facts(entity_id)
+            embed_text = build_entity_embed_text(entity_name, [f.content for f in facts])
+            vecs = await self._ollama_client.embed(embed_text, model=self.embedding_model)
+            self.db.update_entity_embedding(entity_id, serialize_embedding(vecs[0]))
+            logger.debug("Regenerated entity embedding for '%s' after merge", entity_name)
+        except Exception as e:
+            logger.warning("Failed to regenerate entity %d embedding: %s", entity_id, e)

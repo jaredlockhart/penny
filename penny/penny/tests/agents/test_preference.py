@@ -510,3 +510,100 @@ async def test_preference_agent_batches_notifications(
         assert "painting" in notification
         assert "drawing" in notification
         assert "sculpting" in notification
+
+
+@pytest.mark.asyncio
+async def test_preference_agent_generates_embeddings(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that PreferenceAgent generates embeddings for preferences
+    when embedding_model is configured.
+    """
+    config = make_config(ollama_embedding_model="nomic-embed-text")
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            return mock_ollama._make_tool_call_response(request, "search", {"query": "guitar tips"})
+        elif request_count[0] == 2:
+            return mock_ollama._make_text_response(request, "guitar is great! 🎸")
+        elif request_count[0] == 3:
+            # Likes pass: extract guitar
+            return mock_ollama._make_text_response(request, '{"topics": ["guitar"]}')
+        else:
+            # Dislikes pass: nothing
+            return mock_ollama._make_text_response(request, '{"topics": []}')
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        await signal_server.push_message(sender=TEST_SENDER, content="I love playing guitar!")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        work_done = await penny.preference_agent.execute()
+        assert work_done
+
+        # Verify preference has embedding
+        prefs = penny.db.get_preferences(TEST_SENDER, PennyConstants.PreferenceType.LIKE)
+        assert len(prefs) >= 1
+        guitar_pref = next(p for p in prefs if p.topic == "guitar")
+        assert guitar_pref.embedding is not None, "Preference should have embedding"
+
+        # Verify embed was called
+        assert len(mock_ollama.embed_requests) >= 1
+
+        # Verify no preferences without embeddings
+        assert len(penny.db.get_preferences_without_embeddings(limit=10)) == 0
+
+
+@pytest.mark.asyncio
+async def test_preference_agent_backfills_embeddings(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that PreferenceAgent backfills embeddings for existing
+    preferences that don't have them.
+    """
+    config = make_config(ollama_embedding_model="nomic-embed-text")
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+        return mock_ollama._make_text_response(request, "ok 👍")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Pre-seed preferences WITHOUT embeddings
+        penny.db.add_preference(TEST_SENDER, "cats", "like")
+        penny.db.add_preference(TEST_SENDER, "dogs", "like")
+
+        # Verify no embeddings initially
+        assert len(penny.db.get_preferences_without_embeddings(limit=10)) == 2
+
+        # Run preference agent (no unprocessed messages, only backfill)
+        work_done = await penny.preference_agent.execute()
+        assert work_done, "Backfill should count as work done"
+
+        # Verify embeddings were backfilled
+        assert len(penny.db.get_preferences_without_embeddings(limit=10)) == 0
+
+        prefs = penny.db.get_preferences(TEST_SENDER, "like")
+        for pref in prefs:
+            assert pref.embedding is not None
