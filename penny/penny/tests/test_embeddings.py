@@ -304,3 +304,122 @@ class TestDatabaseEmbeddingMethods:
         without = db.get_preferences_without_embeddings(limit=10)
         assert len(without) == 1
         assert without[0].topic == "cats"
+
+
+class TestDatabaseEngagementMethods:
+    """Tests for database engagement storage and retrieval."""
+
+    def _setup_db(self, tmp_path):
+        """Create a test database with tables and migrations."""
+        from penny.database import Database
+        from penny.database.migrate import migrate
+
+        db_path = str(tmp_path / "test.db")
+        db = Database(db_path)
+        db.create_tables()
+        migrate(db_path)
+        return db
+
+    def test_add_and_get_entity_engagements(self, tmp_path):
+        from penny.constants import PennyConstants
+
+        db = self._setup_db(tmp_path)
+        entity = db.get_or_create_entity("+1234", "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+
+        # Add two engagements for this entity
+        e1 = db.add_engagement(
+            user="+1234",
+            engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.6,
+            entity_id=entity.id,
+        )
+        e2 = db.add_engagement(
+            user="+1234",
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.2,
+            entity_id=entity.id,
+        )
+        assert e1 is not None and e2 is not None
+
+        # Add an engagement for a different entity
+        other = db.get_or_create_entity("+1234", "wharfedale linton")
+        assert other is not None and other.id is not None
+        db.add_engagement(
+            user="+1234",
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.2,
+            entity_id=other.id,
+        )
+
+        # get_entity_engagements should return only the two for kef
+        engagements = db.get_entity_engagements("+1234", entity.id)
+        assert len(engagements) == 2
+        assert all(e.entity_id == entity.id for e in engagements)
+
+    def test_get_user_engagements(self, tmp_path):
+        from penny.constants import PennyConstants
+
+        db = self._setup_db(tmp_path)
+        entity = db.get_or_create_entity("+1234", "test entity")
+        assert entity is not None and entity.id is not None
+
+        # Add engagements for two different users
+        db.add_engagement(
+            user="+1234",
+            engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.6,
+            entity_id=entity.id,
+        )
+        db.add_engagement(
+            user="+5678",
+            engagement_type=PennyConstants.EngagementType.LIKE_COMMAND,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.8,
+            entity_id=entity.id,
+        )
+
+        # get_user_engagements filters by user
+        user1_engagements = db.get_user_engagements("+1234")
+        assert len(user1_engagements) == 1
+        assert user1_engagements[0].user == "+1234"
+
+        user2_engagements = db.get_user_engagements("+5678")
+        assert len(user2_engagements) == 1
+        assert user2_engagements[0].user == "+5678"
+
+    def test_delete_entity_cascades_engagements(self, tmp_path):
+        from penny.constants import PennyConstants
+
+        db = self._setup_db(tmp_path)
+        entity = db.get_or_create_entity("+1234", "test entity")
+        assert entity is not None and entity.id is not None
+
+        db.add_engagement(
+            user="+1234",
+            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=entity.id,
+        )
+        db.add_engagement(
+            user="+1234",
+            engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.6,
+            entity_id=entity.id,
+        )
+
+        # Verify engagements exist
+        assert len(db.get_entity_engagements("+1234", entity.id)) == 2
+
+        # Delete entity
+        deleted = db.delete_entity(entity.id)
+        assert deleted is True
+
+        # Engagements should be gone
+        assert len(db.get_entity_engagements("+1234", entity.id)) == 0
