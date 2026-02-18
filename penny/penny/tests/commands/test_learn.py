@@ -5,14 +5,14 @@ import json
 import pytest
 
 from penny.constants import PennyConstants
-from penny.tests.conftest import TEST_SENDER
+from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 @pytest.mark.asyncio
 async def test_learn_discovers_entities_from_search(
     signal_server, test_config, mock_ollama, _mock_search, running_penny
 ):
-    """Search-based /learn discovers entities and creates them with engagements."""
+    """Search-based /learn acknowledges immediately, discovers entities in background."""
 
     def handler(request: dict, count: int) -> dict:
         messages = request.get("messages", [])
@@ -39,11 +39,13 @@ async def test_learn_discovers_entities_from_search(
         await signal_server.push_message(sender=TEST_SENDER, content="/learn kef speakers")
         response = await signal_server.wait_for_message(timeout=10.0)
 
-        assert "I'll look into these" in response["message"]
-        assert "kef ls50 meta" in response["message"]
-        assert "kef r3 meta" in response["message"]
+        # Immediate response acknowledges the topic (no entity list)
+        assert "Okay" in response["message"]
+        assert "kef speakers" in response["message"]
 
-        # Verify entities were created (names lowercased by DB)
+        # Background discovery creates entities asynchronously
+        await wait_until(lambda: len(penny.db.get_user_entities(TEST_SENDER)) >= 2)
+
         entities = penny.db.get_user_entities(TEST_SENDER)
         entity_names = [e.name for e in entities]
         assert "kef ls50 meta" in entity_names
@@ -93,11 +95,12 @@ async def test_learn_includes_known_entities(
         await signal_server.push_message(sender=TEST_SENDER, content="/learn espresso")
         response = await signal_server.wait_for_message(timeout=10.0)
 
-        assert "I'll look into these" in response["message"]
-        assert "espresso machines" in response["message"]
-        assert "breville barista express" in response["message"]
+        # Immediate response acknowledges the topic
+        assert "espresso" in response["message"].lower()
 
-        # Both should have LEARN_COMMAND engagements
+        # Background discovery finds both known and new entities
+        await wait_until(lambda: len(penny.db.get_user_engagements(TEST_SENDER)) >= 2)
+
         engagements = penny.db.get_user_engagements(TEST_SENDER)
         learn_engagements = [
             e
@@ -108,21 +111,21 @@ async def test_learn_includes_known_entities(
 
 
 @pytest.mark.asyncio
-async def test_learn_no_search_tool_fallback(
+async def test_learn_no_search_tool_acknowledges(
     signal_server, mock_ollama, _mock_search, make_config, running_penny
 ):
-    """Without Perplexity API key, falls back to creating entity from text."""
+    """Without Perplexity API key, acknowledges topic but no background discovery."""
     config = make_config(perplexity_api_key=None)
 
     async with running_penny(config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/learn kef ls50")
         response = await signal_server.wait_for_message(timeout=10.0)
 
-        assert "I'll look into kef ls50" in response["message"]
+        assert "kef ls50" in response["message"]
 
-        # Entity created from topic text directly
+        # No entities created (no search tool to discover them)
         entities = penny.db.get_user_entities(TEST_SENDER)
-        assert any(e.name == "kef ls50" for e in entities)
+        assert len(entities) == 0
 
 
 @pytest.mark.asyncio
