@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from penny.config import Config
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog
+from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
@@ -474,6 +475,96 @@ class MessageChannel(ABC):
             message.content,
             reacted_msg.id,
         )
+
+        # Extract engagement signals from the reaction
+        await self._extract_reaction_engagements(message.sender, message.content, reacted_msg)
+
+    def _is_proactive_message(self, message: MessageLog) -> bool:
+        """Determine if an outgoing message was proactive (not a reply to user input).
+
+        Proactive messages are discovery, research reports, preference notifications
+        (parent_id=None) and followup continuations (parent is also outgoing).
+        """
+        if message.parent_id is None:
+            return True
+        parent = self._db.get_message_by_id(message.parent_id)
+        return bool(parent and parent.direction == PennyConstants.MessageDirection.OUTGOING)
+
+    async def _extract_reaction_engagements(
+        self, sender: str, emoji: str, reacted_msg: MessageLog
+    ) -> None:
+        """Create engagement records for entities mentioned in the reacted-to message.
+
+        Maps the emoji to positive/negative valence and adjusts strength based on
+        whether the reacted-to message was proactive or user-initiated.
+        """
+        # Classify emoji
+        if emoji in PennyConstants.LIKE_REACTIONS:
+            valence = PennyConstants.EngagementValence.POSITIVE
+        elif emoji in PennyConstants.DISLIKE_REACTIONS:
+            valence = PennyConstants.EngagementValence.NEGATIVE
+        else:
+            return  # Unrecognized emoji — skip
+
+        # Need embedding model for entity matching
+        if not self._config or not self._config.ollama_embedding_model:
+            return
+
+        try:
+            is_proactive = self._is_proactive_message(reacted_msg)
+
+            # Determine strength based on valence and proactive status
+            if valence == PennyConstants.EngagementValence.NEGATIVE and is_proactive:
+                strength = PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE
+            elif is_proactive:
+                strength = PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE
+            else:
+                strength = PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL
+
+            # Find entities in the reacted-to message via embedding similarity
+            entities = self._db.get_user_entities_with_embeddings(sender)
+            if not entities:
+                return
+
+            from penny.ollama import OllamaClient
+
+            ollama_client = OllamaClient(
+                api_url=self._config.ollama_api_url,
+                model=self._config.ollama_foreground_model,
+                db=self._db,
+                max_retries=self._config.ollama_max_retries,
+                retry_delay=self._config.ollama_retry_delay,
+            )
+
+            vecs = await ollama_client.embed(
+                reacted_msg.content, model=self._config.ollama_embedding_model
+            )
+            query_embedding = vecs[0]
+
+            candidates = []
+            for entity in entities:
+                assert entity.id is not None
+                assert entity.embedding is not None
+                candidates.append((entity.id, deserialize_embedding(entity.embedding)))
+
+            matches = find_similar(
+                query_embedding,
+                candidates,
+                top_k=PennyConstants.ENTITY_CONTEXT_TOP_K,
+                threshold=PennyConstants.ENTITY_CONTEXT_THRESHOLD,
+            )
+
+            for entity_id, _score in matches:
+                self._db.add_engagement(
+                    user=sender,
+                    engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+                    valence=valence,
+                    strength=strength,
+                    entity_id=entity_id,
+                    source_message_id=reacted_msg.id,
+                )
+        except Exception:
+            logger.debug("Reaction engagement extraction failed", exc_info=True)
 
     async def _handle_command(self, message: IncomingMessage) -> None:
         """
