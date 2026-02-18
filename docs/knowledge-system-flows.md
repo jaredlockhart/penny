@@ -1,342 +1,336 @@
-# Knowledge System — Example Flows
+# Knowledge System v2 — Sequence Diagrams
 
-## Scenario 1: First Conversation → Knowledge Building → Research
+## Flow 1: User Message → Search → Entity + Fact Discovery
 
-User asks about something Penny doesn't know yet. Over time, Penny builds knowledge and starts proactively sharing.
+User sends a message that triggers a search. The search creates a SearchLog tagged `trigger=user_message`. The extraction pipeline processes it later and can create new entities and facts.
 
 ```mermaid
 sequenceDiagram
     actor User
     participant Penny as Penny<br/>(Message Handler)
-    participant DB as Knowledge Store
-    participant Search as Perplexity
+    participant Search as SearchTool
+    participant DB as Database
+    participant Extract as Extraction Pipeline
     participant LLM as Ollama
-    participant Extract as Extraction Loop
-    participant Research as Research Loop
 
-    Note over User,Research: ── User asks about something new ──
+    Note over User,LLM: ── User sends a message ──
 
-    User->>Penny: "what's a good bookshelf speaker for a desk?"
-    Penny->>DB: retrieve entities matching message (embedding similarity)
-    DB-->>Penny: (no matches — empty knowledge)
-    Note over Penny: Knowledge sufficiency check: no relevant facts → search needed
-    Penny->>Search: search "good bookshelf speaker for desk"
-    Search-->>Penny: results mentioning KEF LS50 Meta, Edifier S3000Pro, etc.
-    Penny->>LLM: generate response with search results
-    LLM-->>Penny: "A few great options: the KEF LS50 Meta ($1,600)..."
+    User->>Penny: "what's a good bookshelf speaker?"
+    Penny->>DB: embed message, find similar entities
+    DB-->>Penny: (no close matches or partial matches)
+    Note over Penny: Knowledge sufficiency check → search needed
+    Penny->>Search: search("good bookshelf speaker")
+    Search->>DB: log_search(query, response, trigger="user_message")
+    Note over DB: SearchLog created<br/>trigger=user_message<br/>extracted=false
+    Search-->>Penny: search results
+    Penny->>LLM: generate response with results
+    LLM-->>Penny: "A few great options: the KEF LS50 Meta..."
     Penny->>User: response
-    Penny->>DB: store SearchLog, MessageLog
+    Penny->>DB: log incoming + outgoing messages
 
-    Note over Extract,DB: ── Extraction loop runs (next idle tick) ──
+    Note over Extract,LLM: ── Extraction pipeline runs (next idle tick) ──
 
-    Extract->>DB: get unprocessed SearchLogs + MessageLogs (filtered for substance)
-    DB-->>Extract: search results about speakers
-    Extract->>LLM: extract entities + facts from search results
-    LLM-->>Extract: entities: [KEF LS50 Meta, Edifier S3000Pro, JBL 4305P]
-    Extract->>LLM: extract facts per entity
-    LLM-->>Extract: KEF LS50 Meta: [costs $1600, 12th gen Uni-Q driver, ...]
-    Extract->>DB: create Entity("kef ls50 meta") + Fact rows with source URLs
-    Extract->>DB: mark SearchLog as extracted
-    Extract->>LLM: generate embeddings for entities + facts
-    LLM-->>Extract: embedding vectors
-    Extract->>DB: store embeddings
-    Extract->>LLM: extract engagements from user message
-    LLM-->>Extract: engagement: search_initiated, "bookshelf speakers", medium strength
-    Extract->>DB: create Engagement(user, entity=null, type=search_initiated, strength=0.6)
+    Extract->>DB: get_unprocessed_search_logs()
+    DB-->>Extract: SearchLog (trigger=user_message)
+    Note over Extract: trigger=user_message → allow new entities ✓
 
-    Note over User,Research: ── User follows up (interest strengthens) ──
+    Extract->>LLM: Pass 1 — identify entities in search results<br/>(full identification prompt + known entities list)
+    LLM-->>Extract: known: [], new: [KEF LS50 Meta, Wharfedale Denton 85]
+    Extract->>DB: get_or_create_entity("kef ls50 meta")
+    Extract->>DB: get_or_create_entity("wharfedale denton 85")
 
-    User->>Penny: "tell me more about the kef ls50 meta"
-    Penny->>DB: retrieve entities matching message
-    DB-->>Penny: Entity("kef ls50 meta") + 5 facts
-    Note over Penny: Injects known facts into prompt
-    Note over Penny: Knowledge sufficiency check: has basic facts but user wants more → search
-    Penny->>Search: search "KEF LS50 Meta detailed review"
-    Search-->>Penny: deeper results
-    Penny->>LLM: generate response with known facts + new search results
-    LLM-->>Penny: "Building on what I know — the LS50 Meta uses a MAT driver..."
-    Penny->>User: enriched response (references existing knowledge)
-    Penny->>DB: store SearchLog, MessageLog
+    Extract->>LLM: Pass 2 — extract facts for "kef ls50 meta"
+    LLM-->>Extract: ["costs $1,599", "12th gen Uni-Q driver", "bookshelf speaker"]
+    Extract->>DB: add_fact(entity=kef_ls50, content=..., source_search_log_id=...)
 
-    Note over Extract,DB: ── Extraction loop processes new data ──
+    Extract->>LLM: Pass 2 — extract facts for "wharfedale denton 85"
+    LLM-->>Extract: ["classic warm sound", "85th anniversary edition", "6.5-inch woofer"]
+    Extract->>DB: add_fact(entity=wharfedale, content=..., source_search_log_id=...)
 
-    Extract->>DB: get unprocessed content
-    Extract->>LLM: extract new facts (deduplicate via embedding similarity)
-    Extract->>DB: add 4 new Fact rows to KEF LS50 Meta with sources
-    Extract->>DB: create Engagement(user, entity=kef_ls50, type=follow_up, strength=0.5)
-    Extract->>LLM: regenerate entity embedding (facts changed)
-    Extract->>DB: update embedding
+    Extract->>DB: add_engagement(type=SEARCH_INITIATED, entity=kef_ls50, strength=0.6)
+    Extract->>DB: add_engagement(type=SEARCH_INITIATED, entity=wharfedale, strength=0.6)
+    Extract->>DB: mark_search_extracted(search_log_id)
 
-    Note over User,Penny: ── User reacts positively ──
+    Note over Extract,User: ── Fact discovery notification ──
 
-    User->>Penny: 👍 (reaction to LS50 Meta message)
-    Penny->>DB: lookup message content, match entities via embeddings
-    Penny->>DB: create Engagement(user, entity=kef_ls50, type=emoji_reaction, valence=positive, strength=0.3)
-
-    Note over DB: KEF LS50 Meta interest score is now HIGH<br/>(search + follow_up + reaction = ~1.4)
-
-    Note over Research,DB: ── Research loop runs (idle period) — enrichment mode ──
-
-    Research->>DB: score all entities: interest × (1/fact_count) × staleness
-    DB-->>Research: top candidate: KEF LS50 Meta (high interest, 9 facts — enrichment mode)
-    Research->>DB: get existing facts for KEF LS50 Meta
-    DB-->>Research: 9 facts about price, driver, design...
-    Research->>Search: "KEF LS50 Meta reviews comparisons pros cons" (targeting gaps)
-    Search-->>Research: new results about sound signature, room placement, amp pairing
-    Research->>LLM: extract facts NOT already known (compare via embeddings)
-    LLM-->>Research: 3 new facts about amp pairing + room placement
-    Research->>DB: store new Facts with source URLs, update last_verified on confirmed facts
-    Research->>LLM: compose message about findings
-    LLM-->>Research: "Found some more on the LS50 Meta — they pair really well with..."
-    Research->>User: proactive message with new findings
+    Extract->>LLM: compose notification about new discoveries
+    Extract->>User: "I just discovered kef ls50 meta and wharfedale denton 85<br/>and learned some stuff about them"
 ```
 
-## Scenario 2: /learn Command → Research Cycle → Interest Decay
+## Flow 2: /learn → Search Sequence → Entity + Fact Discovery
 
-User explicitly asks to learn about something. Research loop investigates aggressively at first, then cools off as knowledge fills in.
+User uses `/learn` to express interest. Penny generates multiple varied search queries, executes them, and the extraction pipeline processes the results.
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant Penny as Penny<br/>(Message Handler)
-    participant DB as Knowledge Store
-    participant Search as Perplexity
+    participant Penny as Penny<br/>(/learn Command)
+    participant Search as SearchTool
+    participant DB as Database
     participant LLM as Ollama
-    participant Research as Research Loop
+    participant Extract as Extraction Pipeline
 
-    Note over User,Research: ── User uses /learn ──
+    Note over User,Extract: ── User sends /learn ──
 
-    User->>Penny: "/learn decent de1 espresso machine"
-    Penny->>DB: find or create Entity("decent de1")
-    Penny->>LLM: generate embedding for "decent de1 espresso machine"
-    Penny->>DB: create Engagement(user, entity=de1, type=learn_command, strength=1.0)
-    Penny->>User: "Got it, I'll look into the Decent DE1 and let you know what I find."
+    User->>Penny: "/learn ai conferences in europe"
+    Penny->>DB: create LearnPrompt(user, "ai conferences in europe", status=active)
+    DB-->>Penny: LearnPrompt(id=1)
+    Penny->>User: "Okay, I'll learn more about ai conferences in europe"
 
-    Note over DB: Decent DE1: interest=1.0, facts=0<br/>Priority = 1.0 × (1/0) × 1.0 = MAXIMUM
+    Note over Penny,LLM: ── Background: generate search sequence ──
 
-    Note over Research,DB: ── Research cycle 1 (minutes later) — enrichment mode ──
+    Penny->>LLM: generate 3-5 varied search queries from prompt
+    LLM-->>Penny: queries: [<br/>  "top AI conferences Europe 2026",<br/>  "ML Prague conference schedule speakers",<br/>  "European AI summit agenda registration",<br/>  "AI research conferences EU academic industry",<br/>  "NeurIPS ICML ICLR European alternatives"<br/>]
+    Penny->>DB: update_learn_prompt_remaining(id=1, count=5)
 
-    Research->>DB: score entities → Decent DE1 is #1 (max interest, zero facts)
-    Note over Research: fact_count=0 → enrichment mode (broad research)
-    Research->>DB: get existing facts → (none)
-    Research->>Search: "Decent DE1 espresso machine overview features price"
-    Search-->>Research: comprehensive results
-    Research->>LLM: extract all facts
-    LLM-->>Research: 8 facts: price $3,500, pressure profiling, flow control, tablet UI, ...
-    Research->>DB: store 8 Fact rows with sources
-    Research->>LLM: generate embeddings for new facts
-    Research->>DB: store embeddings, update entity embedding
-    Research->>LLM: compose findings message
-    Research->>User: "Here's what I found about the Decent DE1: it's a $3,500 espresso machine with real-time pressure profiling..."
+    Note over Penny,DB: ── Execute searches sequentially ──
 
-    Note over User,Penny: ── User engages with findings ──
+    loop For each search query
+        Penny->>Search: search(query, trigger="learn_command", learn_prompt_id=1)
+        Search->>DB: log_search(query, response,<br/>trigger="learn_command", learn_prompt_id=1)
+        Note over DB: SearchLog created<br/>trigger=learn_command<br/>learn_prompt_id=1
+        Penny->>DB: decrement_learn_prompt_remaining(id=1)
+    end
 
-    User->>Penny: 👍 (reaction on proactive message)
-    Penny->>DB: create Engagement(user, entity=de1, type=emoji_reaction, strength=0.5)
-    Note over DB: Higher strength (0.5) because it's a reaction on a proactive message
+    Penny->>DB: complete_learn_prompt(id=1)
 
-    Note over DB: DE1 interest refreshed: 1.0 + 0.5 = 1.5
+    Note over Extract,LLM: ── Extraction pipeline processes SearchLogs ──
 
-    Note over Research,DB: ── Research cycle 2 (next idle period) — still enrichment mode ──
+    Extract->>DB: get_unprocessed_search_logs()
+    DB-->>Extract: 5 SearchLogs (trigger=learn_command)
+    Note over Extract: trigger=learn_command → allow new entities ✓
 
-    Research->>DB: score entities → DE1 still top (high interest, but now has 8 facts)
-    Note over Research: fact_count=8 → enrichment mode (targeted gap-filling)
-    Research->>DB: get existing facts (8 facts about price, features, UI)
-    Research->>Search: "Decent DE1 user reviews workflow comparison to other machines"
-    Search-->>Research: results about user experience, comparison to Lelit Bianca
-    Research->>LLM: extract facts NOT already known (compare via embeddings)
-    LLM-->>Research: 4 new facts: workflow differences, learning curve, community support
-    Research->>DB: store new facts
-    Research->>User: "More on the DE1 — users say the learning curve is steep but the community is great..."
+    loop For each SearchLog
+        Extract->>LLM: identify entities (full mode)
+        LLM-->>Extract: known + new entities
+        Extract->>DB: create new entities
+        Extract->>LLM: extract facts per entity
+        Extract->>DB: store facts with source_search_log_id
+        Extract->>DB: create SEARCH_INITIATED engagements
+    end
 
-    Note over Research,DB: ── Research cycle 3 (later) — transitioning to briefing mode ──
+    Note over Extract,User: ── Fact discovery notification ──
 
-    Research->>DB: score entities → DE1: interest decaying (recency), 12 facts now
-    Note over Research: Priority dropping: decayed interest × more facts = lower score
-    Note over Research: fact_count=12 → still enrichment but approaching briefing territory
-    Research->>DB: get existing facts (12 facts — pretty comprehensive now)
-    Research->>Search: "Decent DE1 accessories maintenance tips"
-    Search-->>Research: some new info about maintenance
-    Research->>LLM: extract genuinely new facts
-    LLM-->>Research: 1 new fact about descaling schedule
-    Research->>DB: store fact, update last_verified on others
-    Note over Research: Only 1 new fact — not substantial enough to message
-    Note over Research: (no message sent to user)
-
-    Note over Research,DB: ── Subsequent cycles — briefing mode ──
-
-    Note over DB: DE1 interest continues decaying (no new engagements)<br/>DE1 has 13 facts, all recently verified<br/>Priority score now LOW — other entities get attention
-    Note over Research: DE1 naturally in briefing mode now<br/>Only checked when staleness_factor rises (days/weeks pass)<br/>Only messaged if something genuinely novel is found
+    Extract->>User: "I just learned a bunch of stuff about<br/>ml prague 2026, neurips, and more..."
 ```
 
-## Scenario 3: Research Loop Finds News + Entity Cleaner
+## Flow 3: /learn Status View (Provenance Chain)
 
-Time passes. Research loop (in briefing mode) finds something genuinely new about a well-known entity. Entity cleaner merges duplicates.
+User queries `/learn` with no args to see what's being learned and what's been discovered.
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant Penny as Penny<br/>(Message Handler)
-    participant DB as Knowledge Store
-    participant Search as Perplexity
+    participant Penny as Penny<br/>(/learn Command)
+    participant DB as Database
+
+    User->>Penny: "/learn"
+    Penny->>DB: get_user_learn_prompts(user)
+    DB-->>Penny: [<br/>  LearnPrompt(id=1, "find me stuff about speakers", status=completed),<br/>  LearnPrompt(id=2, "ai conferences in europe", status=active, remaining=2)<br/>]
+
+    loop For each LearnPrompt
+        Penny->>DB: get_entities_for_learn_prompt(learn_prompt_id)
+        Note over DB: SELECT DISTINCT entity.*<br/>FROM entity<br/>JOIN fact ON fact.entity_id = entity.id<br/>JOIN searchlog ON searchlog.id = fact.source_search_log_id<br/>WHERE searchlog.learn_prompt_id = ?
+        DB-->>Penny: entities + fact counts
+    end
+
+    Penny->>User: Queued learning<br/><br/>1) 'find me stuff about speakers' ✓<br/>   - wharfedale denton 85 (17 facts)<br/>   - kef ls50 meta (8 facts)<br/>   - totem loon speakers (5 facts)<br/>2) 'ai conferences in europe' ...<br/>   - ml prague 2026 (3 facts)<br/>   - neurips 2026 (1 fact)
+```
+
+## Flow 4: Penny Enrichment → Fact-Only Extraction (No New Entities)
+
+Penny's learn loop picks a known entity, searches for more facts, and sends a proactive message. The SearchLog is tagged `penny_enrichment` so the extraction pipeline won't create new entities from it.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Loop as Learn Loop<br/>(Penny Enrichment)
+    participant Search as SearchTool
+    participant DB as Database
     participant LLM as Ollama
-    participant Clean as Entity Cleaner
-    participant Research as Research Loop
+    participant Extract as Extraction Pipeline
 
-    Note over Clean,DB: ── Entity Cleaner runs (daily) ──
+    Note over Loop,LLM: ── Learn loop picks highest-priority entity ──
 
-    Clean->>DB: get all entities for user
-    DB-->>Clean: [..., "kef ls50 meta", "kef ls50", "ls50 meta", ...]
-    Clean->>LLM: identify duplicate groups, pick canonical names
-    LLM-->>Clean: merge group: ["kef ls50 meta", "kef ls50", "ls50 meta"] → "kef ls50 meta"
-    Clean->>DB: merge facts (deduplicate via embedding similarity)
-    Clean->>DB: reassign engagements from duplicates to canonical entity
-    Clean->>DB: delete duplicate entities
-    Clean->>LLM: regenerate embedding for merged entity
-    Clean->>DB: update embedding
+    Loop->>DB: get all entities + engagements
+    DB-->>Loop: entities with interest scores
+    Loop->>Loop: score entities:<br/>interest × (1/fact_count) × staleness
+    Note over Loop: Top candidate: "kef ls50 meta"<br/>(interest=1.6, facts=5, stale=3 days)
+    Note over Loop: fact_count=5 → enrichment mode
 
-    Note over Research,DB: ── Research loop runs — briefing mode ──
+    Loop->>Search: search("kef ls50 meta reviews comparisons",<br/>trigger="penny_enrichment")
+    Search->>DB: log_search(query, response, trigger="penny_enrichment")
+    Note over DB: SearchLog created<br/>trigger=penny_enrichment<br/>extracted=false
 
-    Research->>DB: score entities (interest × 1/fact_count × staleness)
-    DB-->>Research: KEF LS50 Meta (interest=0.9, facts=15, last_verified=3 days ago)
-    Note over Research: fact_count=15, stale → briefing mode ("what's new?")
-    Research->>Search: "KEF LS50 Meta news updates 2026"
-    Search-->>Research: result: "KEF releases LS50 Meta firmware v2.1 with improved DSP"
-    Research->>LLM: extract candidate facts
-    LLM-->>Research: "firmware v2.1 released Feb 2026 with improved DSP processing"
-    Research->>DB: get existing facts for KEF LS50 Meta
-    Research->>LLM: compare candidate fact embeddings against existing fact embeddings
-    LLM-->>Research: similarity < threshold for all existing facts → GENUINELY NEW
-    Research->>DB: store new Fact with source URL, update last_verified on others
-    Research->>LLM: compose brief message
-    LLM-->>Research: "Heads up — KEF just pushed firmware v2.1 for the LS50 Meta with improved DSP."
-    Research->>User: proactive message
+    Note over Loop,LLM: ── Learn loop extracts facts inline ──
 
-    Note over User,Penny: ── User engages ──
+    Loop->>DB: get_entity_facts("kef ls50 meta")
+    DB-->>Loop: 5 existing facts
+    Loop->>LLM: extract new facts (excluding known facts)
+    LLM-->>Loop: 3 new facts about amp pairing, room placement
+    Loop->>DB: add_fact × 3 (source_search_log_id=...)
+    Loop->>DB: update_entity_embedding()
 
-    User->>Penny: "oh nice, what does the dsp update actually change?"
-    Penny->>DB: retrieve KEF LS50 Meta entity (16 facts now, including firmware update)
-    Note over Penny: Injects all known facts including the new firmware one
-    Note over Penny: Knowledge sufficiency check: knows about update but not details → search
-    Penny->>Search: "KEF LS50 Meta firmware v2.1 DSP changes details"
-    Search-->>Penny: detailed changelog
-    Penny->>LLM: respond using known facts + new search results
-    Penny->>User: "The v2.1 update refines the crossover tuning and adds..."
-    Penny->>DB: store SearchLog, MessageLog
+    Note over Loop,User: ── Learn loop sends proactive message ──
 
-    Note over DB: Follow-up question about KEF LS50 Meta<br/>→ new engagement (follow_up, strength=0.5)<br/>→ interest score refreshed, stays in research rotation
+    Loop->>LLM: compose casual message about findings
+    LLM-->>Loop: "Found some more on the LS50 Meta..."
+    Loop->>User: proactive message + image
+
+    Note over Extract,LLM: ── Extraction pipeline processes same SearchLog later ──
+
+    Extract->>DB: get_unprocessed_search_logs()
+    DB-->>Extract: SearchLog (trigger=penny_enrichment)
+    Note over Extract: trigger=penny_enrichment → known entities ONLY ✗ no new entities
+
+    Extract->>LLM: identify entities (known-only prompt)
+    LLM-->>Extract: known: [kef ls50 meta], new: []
+    Note over Extract: Skips any new entities the LLM might mention
+    Extract->>LLM: extract facts for "kef ls50 meta"
+    Note over Extract: Facts deduplicated against existing<br/>(learn loop already stored them)
+    Extract->>DB: mark_search_extracted(search_log_id)
+    Note over Extract: No notification sent<br/>(trigger=penny_enrichment, learn loop already messaged)
 ```
 
-## Scenario 4: Passive Learning Across Conversations
+## Flow 5: Passive Learning Across Conversations
 
-User never uses /learn or /like. System builds knowledge purely from conversation patterns.
+User never uses `/learn`. Knowledge builds purely from conversation patterns and message-triggered searches.
 
 ```mermaid
 sequenceDiagram
     actor User
     participant Penny as Penny<br/>(Message Handler)
-    participant DB as Knowledge Store
-    participant Extract as Extraction Loop
-    participant Research as Research Loop
+    participant DB as Database
+    participant Extract as Extraction Pipeline
+    participant Loop as Learn Loop
 
-    Note over User,Research: ── Week 1: Scattered mentions ──
+    Note over User,Loop: ── Week 1: User asks about obsidian ──
 
     User->>Penny: "search for obsidian markdown plugins"
-    Note over Extract: → Entity: "obsidian", Engagement: search_initiated (0.6)
+    Note over Penny: SearchLog created (trigger=user_message)
+    Note over Extract: Extraction: creates Entity("obsidian"), 3 facts<br/>Engagement: SEARCH_INITIATED (0.6)
+
     User->>Penny: "what's the best way to do daily notes in obsidian?"
     Note over Penny: Retrieves "obsidian" entity, injects 3 known facts
-    Note over Penny: Knowledge sufficiency: partial → search for more
-    Note over Extract: → Engagement: follow_up for "obsidian" (0.5), new facts extracted
-    User->>Penny: "can you find a comparison of notion vs obsidian?"
-    Note over Extract: → Entity: "notion", Engagement: search_initiated (0.6)<br/>→ Engagement: another follow_up for "obsidian" (0.5)
+    Note over Penny: Knowledge insufficient → searches again
+    Note over Extract: Extraction: 4 more facts for "obsidian"<br/>Engagement: FOLLOW_UP_QUESTION (0.5)
 
-    Note over DB: Obsidian: interest = 1.6 (three interactions)<br/>Notion: interest = 0.6 (one interaction)<br/>No /learn, no /like — just conversation engagements
+    User->>Penny: "can you compare notion vs obsidian?"
+    Note over Penny: SearchLog created (trigger=user_message)
+    Note over Extract: Extraction: creates Entity("notion"), adds facts<br/>More facts for "obsidian"<br/>Engagement: SEARCH_INITIATED for both (0.6)
 
-    Note over User,Research: ── Week 2: User mentions it in passing ──
+    Note over DB: Obsidian: interest=1.7 (search + follow-up + search)<br/>Notion: interest=0.6 (one search)<br/>No /learn, no /like — just conversation
 
-    User->>Penny: "I was organizing my obsidian vault and found this article about PKM"
-    Note over Penny: Retrieves "obsidian" entity (8 facts now), injects into prompt
-    Note over Penny: Knowledge sufficiency: user is sharing, not asking → no search needed
-    Note over Extract: → Engagement: message_mention for "obsidian" (0.2)<br/>→ Entity: "PKM" (personal knowledge management)
+    Note over Loop,DB: ── Learn loop notices the pattern ──
 
-    Note over DB: Obsidian: interest = 1.8 (still accumulating)<br/>Obsidian has 8 facts from previous searches<br/>PKM: interest = 0.2 (single weak mention)
-
-    Note over Research,DB: ── Research loop notices the pattern — enrichment mode ──
-
-    Research->>DB: score entities
-    Note over Research: Obsidian: high interest (1.8) × moderate gaps = top candidate
-    Research->>DB: get known facts about Obsidian
-    Note over Research: Knows about: plugins, daily notes, vs Notion<br/>Gaps: advanced workflows, community templates, new features
-    Research->>User: "By the way — Obsidian released a new plugin for canvas-based PKM workflows. Thought you'd find it interesting since you've been digging into this."
+    Loop->>DB: score entities
+    Note over Loop: Obsidian: high interest (1.7) × moderate gaps<br/>→ top enrichment candidate
+    Loop->>DB: search for more obsidian facts (trigger=penny_enrichment)
+    Note over Loop: Enrichment mode: fills knowledge gaps
+    Loop->>User: "By the way — Obsidian released a new plugin<br/>for canvas-based PKM workflows"
 
     User->>Penny: 👍
-    Note over DB: Engagement: emoji_reaction for "obsidian" (0.5, proactive message)<br/>Interest reinforced without user ever explicitly saying "I like Obsidian"
+    Note over DB: Engagement: EMOJI_REACTION (0.5, proactive message)<br/>Interest reinforced organically
 ```
 
-## Scenario 5: /like and /dislike Shape What Penny Investigates
+## Flow 6: /like and /dislike Shape Research Priorities
 
-User preferences steer research away from uninteresting directions.
+User preferences steer Penny's enrichment away from uninteresting directions.
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant Penny as Penny<br/>(Message Handler)
-    participant DB as Knowledge Store
-    participant Research as Research Loop
+    participant Penny as Penny<br/>(Commands)
+    participant DB as Database
+    participant Loop as Learn Loop
 
     User->>Penny: "/like mechanical keyboards"
-    Penny->>DB: create Preference(user, "mechanical keyboards", type=like)
+    Penny->>DB: create Preference("mechanical keyboards", type=like)
     Penny->>DB: find matching entities via embedding similarity
-    Note over DB: Matches: "keychron q1", "cherry mx switches"<br/>(entities from previous conversations)
-    Penny->>DB: create Engagement(user, type=like_command, strength=0.8) for each matched entity
-    Penny->>User: "Added 'mechanical keyboards' to your likes."
+    Note over DB: Matches: "keychron q1", "cherry mx switches"
+    Penny->>DB: create LIKE_COMMAND engagement (0.8) for each match
+    Penny->>User: "Added 'mechanical keyboards' to your likes"
 
     User->>Penny: "/dislike sports"
-    Penny->>DB: create Preference(user, "sports", type=dislike)
-    Penny->>DB: create Engagement(user, type=dislike_command, valence=negative, strength=0.8)
-    Penny->>User: "Noted — I'll avoid sports content."
+    Penny->>DB: create Preference("sports", type=dislike)
+    Penny->>DB: create DISLIKE_COMMAND engagement (negative, 0.8)
+    Penny->>User: "Noted — I'll avoid sports content"
 
-    Note over Research,DB: ── Research loop ──
+    Note over Loop,DB: ── Learn loop ──
 
-    Research->>DB: score entities (interest × knowledge_gap × staleness)
-    Note over Research: Entities with positive engagements: keychron q1 (boosted by /like)<br/>Entities with negative engagements: anything sports-related (suppressed)<br/>Negative interest score = SKIP entirely
-    Research->>DB: pick "keychron q1" — boosted interest, thin knowledge
-    Note over Research: (researches keyboards, NOT sports)
+    Loop->>DB: score entities
+    Note over Loop: keychron q1: boosted by /like engagement<br/>sports entities: negative interest → SKIP
+    Loop->>DB: pick "keychron q1" for enrichment
+    Note over Loop: Researches keyboards, NOT sports
 
-    Note over User,Research: ── Later: new entity matches existing preference ──
+    Note over User,DB: ── Later: new entity matches preference ──
 
     User->>Penny: "what do you know about the nuphy air75?"
-    Note over DB: New entity: "nuphy air75"<br/>Extraction matches to "mechanical keyboards" preference via embedding similarity<br/>→ Inherits interest boost from the /like
-    Note over Research: nuphy air75 immediately gets moderate priority<br/>(preference-linked interest + thin knowledge)
+    Note over DB: New entity: "nuphy air75" created (user-triggered)<br/>Embedding similarity → matches "mechanical keyboards" preference<br/>→ inherits interest boost
+    Note over Loop: nuphy air75 gets moderate priority<br/>(preference-linked + thin knowledge)
 ```
 
-## Scenario 6: Thumbs-Down Stops Proactive Messages
+## Flow 7: Thumbs-Down Stops Proactive Messages
 
-User tells Penny to stop talking about something by reacting negatively to a proactive message.
+User reacts negatively to a proactive message, suppressing that entity from research.
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant Penny as Penny<br/>(Message Handler)
-    participant DB as Knowledge Store
-    participant Research as Research Loop
+    participant Loop as Learn Loop
+    participant DB as Database
 
-    Note over Research,DB: ── Research loop sends proactive message ──
+    Note over Loop,DB: ── Learn loop sends proactive message ──
 
-    Research->>User: "Found something interesting about sourdough starters — there's a new technique using..."
+    Loop->>User: "Found something interesting about sourdough<br/>starters — there's a new technique..."
 
-    Note over User,Penny: ── User doesn't care ──
+    Note over User,DB: ── User doesn't care ──
 
-    User->>Penny: 👎 (reaction on proactive message)
-    Penny->>DB: lookup message content, match entities via embeddings
-    Note over Penny: Entity: "sourdough starters"<br/>Proactive message + negative reaction = strong negative engagement
-    Penny->>DB: create Engagement(user, entity=sourdough, type=emoji_reaction, valence=negative, strength=0.8)
+    User->>DB: 👎 (reaction on proactive message)
+    Note over DB: Entity: "sourdough starters"<br/>Proactive message + negative reaction<br/>= strong negative engagement (0.8)
 
-    Note over DB: "sourdough starters" interest score drops sharply<br/>Was 0.7 → now effectively -0.1 (negative)
+    Note over DB: "sourdough starters" interest drops<br/>Was 0.7 → now effectively -0.1
 
-    Note over Research,DB: ── Next research cycle ──
+    Note over Loop,DB: ── Next enrichment cycle ──
 
-    Research->>DB: score entities
-    Note over Research: "sourdough starters": negative interest → SKIP<br/>Penny stops researching and messaging about sourdough
-    Note over Research: (picks a different entity with positive interest)
+    Loop->>DB: score entities
+    Note over Loop: "sourdough starters": negative interest → SKIP<br/>Penny stops researching sourdough
+```
+
+## Flow 8: Entity Creation Boundary — What Gets Blocked
+
+Demonstrates the key architectural boundary: penny-triggered searches cannot create entities even when the search results contain new topics.
+
+```mermaid
+sequenceDiagram
+    participant Loop as Learn Loop
+    participant Search as SearchTool
+    participant DB as Database
+    participant Extract as Extraction Pipeline
+    participant LLM as Ollama
+
+    Note over Loop,LLM: ── Learn loop enriches "ml prague 2026" ──
+
+    Loop->>Search: search("ML Prague 2026 speakers schedule",<br/>trigger="penny_enrichment")
+    Search->>DB: log_search(trigger="penny_enrichment")
+
+    Note over DB: Search results mention:<br/>- ML Prague 2026 (KNOWN entity)<br/>- Sanofi (NOT an entity)<br/>- Bloomreach (NOT an entity)<br/>- NVIDIA (KNOWN entity)
+
+    Note over Extract,LLM: ── Extraction processes the SearchLog ──
+
+    Extract->>DB: get SearchLog (trigger=penny_enrichment)
+    Note over Extract: trigger=penny_enrichment<br/>→ KNOWN ENTITIES ONLY
+
+    Extract->>LLM: identify entities (known-only prompt)
+    LLM-->>Extract: known: [ml prague 2026, nvidia]<br/>new: [sanofi, bloomreach]
+    Note over Extract: ✗ DISCARDS sanofi, bloomreach<br/>(penny cannot create new entities)
+
+    Extract->>LLM: extract facts for "ml prague 2026"
+    Extract->>DB: add new facts for ml prague 2026
+    Extract->>LLM: extract facts for "nvidia"
+    Extract->>DB: add new facts for nvidia
+
+    Note over Extract: ✓ New facts stored for known entities<br/>✗ No new entities created<br/>✗ No engagements created<br/>✗ No notification sent
+
+    Extract->>DB: mark_search_extracted()
 ```
