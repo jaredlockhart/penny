@@ -18,6 +18,13 @@ class MockOllamaResponse:
         return self._data
 
 
+class MockEmbedResponse:
+    """Mock response from Ollama embed API."""
+
+    def __init__(self, embeddings: list[list[float]]):
+        self.embeddings = embeddings
+
+
 class MockOllamaAsyncClient:
     """Mock for ollama.AsyncClient."""
 
@@ -26,6 +33,8 @@ class MockOllamaAsyncClient:
         self.requests: list[dict] = []
         self._response_handler: Callable[[dict, int], dict] | None = None
         self._request_count = 0
+        self._embed_handler: Callable[[str, str | list[str]], list[list[float]]] | None = None
+        self.embed_requests: list[dict] = []
 
     def set_response_handler(self, handler: Callable[[dict, int], dict]) -> None:
         """
@@ -72,6 +81,25 @@ class MockOllamaAsyncClient:
             response_dict = self._make_text_response(request_data, "default mock response")
 
         return MockOllamaResponse(response_dict)
+
+    def set_embed_handler(
+        self, handler: Callable[[str, str | list[str]], list[list[float]]]
+    ) -> None:
+        """Set a custom embed handler: (model, input) -> list of embedding vectors."""
+        self._embed_handler = handler
+
+    async def embed(self, model: str, input: str | list[str]) -> MockEmbedResponse:
+        """Mock embed() call."""
+        self.embed_requests.append({"model": model, "input": input})
+
+        if self._embed_handler:
+            embeddings = self._embed_handler(model, input)
+        else:
+            # Default: return zero vectors of dimension 4
+            texts = [input] if isinstance(input, str) else input
+            embeddings = [[0.0] * 4 for _ in texts]
+
+        return MockEmbedResponse(embeddings)
 
     def _make_text_response(self, request: dict, content: str) -> dict:
         """Create a text-only response."""
