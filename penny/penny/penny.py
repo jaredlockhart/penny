@@ -69,6 +69,7 @@ class Penny:
                 retry_delay=config.ollama_retry_delay,
                 tool_timeout=config.tool_timeout,
                 vision_model=config.ollama_vision_model,
+                embedding_model=config.ollama_embedding_model,
             )
 
         # Create message agent for production use

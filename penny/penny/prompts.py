@@ -19,19 +19,29 @@ class Prompt:
         "You only get ONE search per message, so combine everything "
         "into a single comprehensive query. "
         "Just search for something relevant and share what you find. "
-        "Include a URL from the results. Keep it relaxed and low-key, end with an emoji."
+        "Include a URL from the results."
+    )
+
+    # Knowledge-augmented agent prompt (used when entity context is sufficient)
+    KNOWLEDGE_PROMPT = (
+        "You have relevant knowledge about this topic (see context above). "
+        "If the knowledge is sufficient to answer the question, respond directly — "
+        "no need to search. "
+        "If the question asks for current/recent information or goes beyond what you know, "
+        "use the search tool. "
+        "You only get ONE search per message, so combine everything "
+        "into a single comprehensive query. "
+        "Include a URL from the results if you search."
     )
 
     FOLLOWUP_PROMPT = (
         "Follow up on this conversation by searching for something new about the topic. "
-        "Open casually, then share what you found. "
-        "Keep it short, like texting a friend."
+        "Share what you found."
     )
 
     DISCOVERY_PROMPT = (
         "Search for something new and interesting about the user's topic. "
-        "Share a cool discovery out of the blue. "
-        "Open casually, keep it short, like texting a friend."
+        "Share a cool discovery out of the blue."
     )
 
     RESEARCH_PROMPT = (
@@ -104,8 +114,7 @@ class Prompt:
         "2. Read promising emails with read_emails (pass all relevant IDs at once)\n"
         "3. If needed, refine your search and read more emails\n"
         "4. Synthesize a clear, concise answer\n\n"
-        "Be concise. Include specific dates, names, and details. "
-        "Keep it relaxed, like texting a friend."
+        "Be concise. Include specific dates, names, and details."
     )
 
     EMAIL_SUMMARIZE_PROMPT = (
@@ -147,8 +156,7 @@ Examples:
     VISION_AUTO_DESCRIBE_PROMPT = "Describe this image in detail."
 
     VISION_RESPONSE_PROMPT = (
-        "The user sent an image. Respond naturally to the image description provided. "
-        "Keep it relaxed and low-key, like texting a friend. End with an emoji."
+        "The user sent an image. Respond naturally to the image description provided."
     )
 
     # Entity extraction prompts (two-pass)

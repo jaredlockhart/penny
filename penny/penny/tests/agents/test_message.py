@@ -4,6 +4,7 @@ import pytest
 from sqlmodel import select
 
 from penny.database.models import MessageLog, SearchLog
+from penny.ollama.embeddings import serialize_embedding
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -220,3 +221,139 @@ async def test_name_not_redacted_when_user_says_it(
         assert len(search_logs) >= 1, "Search should have been logged"
         logged_query = search_logs[0].query
         assert "Test User" in logged_query, "Name should NOT be redacted when user said it"
+
+
+@pytest.mark.asyncio
+async def test_entity_context_responds_from_knowledge(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """
+    When entity knowledge is sufficient to answer the question,
+    the agent uses KNOWLEDGE_PROMPT (not SEARCH_PROMPT) and can
+    respond directly without searching.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    # Embed handler returns identical vectors → high cosine similarity
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        return [[1.0, 0.0, 0.0, 0.0]] * len(texts)
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    # Direct response (no tool call) since knowledge is sufficient
+    def handler(request, count):
+        return mock_ollama._make_text_response(
+            request, "the KEF LS50 Meta costs $1,599 per pair! 🎵"
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Seed entity with embedding and enough facts for sufficiency
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
+        penny.db.add_fact(entity.id, "Features Metamaterial Absorption Technology")
+        penny.db.add_fact(entity.id, "Made by KEF, a British audio company")
+        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="how much does the KEF LS50 cost?"
+        )
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        assert "1,599" in response["message"]
+
+        # Verify KNOWLEDGE_PROMPT used (not SEARCH_PROMPT)
+        first_request = mock_ollama.requests[0]
+        system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
+        all_system_text = " ".join(m.get("content", "") for m in system_msgs)
+        assert "relevant knowledge" in all_system_text.lower()
+        assert "You MUST call the search tool" not in all_system_text
+
+        # Entity context was injected
+        assert "kef ls50 meta" in all_system_text.lower()
+        assert "$1,599" in all_system_text
+
+        # Only 1 Ollama chat call (no search tool call)
+        assert len(mock_ollama.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_entity_context_searches_when_insufficient(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """
+    When entity knowledge exists but similarity is below threshold,
+    the agent uses SEARCH_PROMPT and forces search.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    # Embed handler: message vector is orthogonal to entity vector → low similarity
+    call_count = [0]
+
+    def embed_handler(model, input_text):
+        call_count[0] += 1
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        # Message embedding is orthogonal to entity embedding
+        return [[0.0, 1.0, 0.0, 0.0]] * len(texts)
+
+    mock_ollama.set_embed_handler(embed_handler)
+    mock_ollama.set_default_flow(
+        search_query="weather forecast",
+        final_response="here's the weather! 🌤️",
+    )
+
+    async with running_penny(config) as penny:
+        # Seed entity with embedding (orthogonal to message)
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
+        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+
+        await signal_server.push_message(sender=TEST_SENDER, content="what's the weather today?")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # SEARCH_PROMPT used (mandatory search)
+        first_request = mock_ollama.requests[0]
+        system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
+        all_system_text = " ".join(m.get("content", "") for m in system_msgs)
+        assert "You MUST call the search tool" in all_system_text
+
+        # 2 Ollama calls (tool call + final)
+        assert len(mock_ollama.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_entity_context_graceful_on_embed_failure(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """
+    When the embed call fails, entity context is skipped and
+    the normal search flow proceeds.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    def embed_handler(model, input_text):
+        raise RuntimeError("embed service unavailable")
+
+    mock_ollama.set_embed_handler(embed_handler)
+    mock_ollama.set_default_flow(
+        search_query="test query",
+        final_response="search result! 🔍",
+    )
+
+    async with running_penny(config) as penny:
+        # Seed entity with embedding
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "test entity")
+        assert entity is not None and entity.id is not None
+        penny.db.add_fact(entity.id, "some fact")
+        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+
+        await signal_server.push_message(sender=TEST_SENDER, content="tell me about test entity")
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        # Falls back to normal search behavior
+        assert "search result" in response["message"].lower()
+        assert len(mock_ollama.requests) == 2
