@@ -228,6 +228,40 @@ class Penny:
         logger.info("Received shutdown signal, stopping agent...")
         self.scheduler.stop()
 
+    async def _validate_optional_models(self) -> None:
+        """
+        Check that all configured optional Ollama models are available on the host.
+
+        Logs a warning for each model that is configured but not yet pulled.
+        This surfaces misconfigured model names immediately at startup rather than
+        letting background tasks fail repeatedly with opaque 404 errors.
+        """
+        optional_models: list[tuple[str, str]] = []
+        if self.config.ollama_vision_model:
+            optional_models.append((self.config.ollama_vision_model, "OLLAMA_VISION_MODEL"))
+        if self.config.ollama_image_model:
+            optional_models.append((self.config.ollama_image_model, "OLLAMA_IMAGE_MODEL"))
+        if self.config.ollama_embedding_model:
+            optional_models.append((self.config.ollama_embedding_model, "OLLAMA_EMBEDDING_MODEL"))
+
+        if not optional_models:
+            return
+
+        available = await self.message_agent._ollama_client.list_models()
+        for model_name, env_var in optional_models:
+            # Strip tag for comparison since some models report without tag
+            base_name = model_name.split(":")[0]
+            is_available = any(m == model_name or m.split(":")[0] == base_name for m in available)
+            if not is_available:
+                logger.warning(
+                    "Configured model %r (%s) is not available on the Ollama host. "
+                    "Run `ollama pull %s` to download it. "
+                    "Features depending on this model will be disabled until it is pulled.",
+                    model_name,
+                    env_var,
+                    model_name,
+                )
+
     async def run(self) -> None:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
@@ -244,6 +278,8 @@ class Penny:
         validate_fn = getattr(self.channel, "validate_connectivity", None)
         if validate_fn and callable(validate_fn):
             await validate_fn()
+
+        await self._validate_optional_models()
 
         await self._send_startup_announcement()
         await self._prompt_for_missing_profiles()
