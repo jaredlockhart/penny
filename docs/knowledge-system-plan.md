@@ -123,10 +123,12 @@ The chain: `LearnPrompt → SearchLog (via learn_prompt_id) → Fact (via source
 ### 3. /like, /unlike, /dislike, /undislike (preference management)
 
 Explicit preference manipulation:
-- `/like espresso machines` — adds a like preference, high-strength positive engagement
+- `/like espresso machines` — adds a like preference, high-strength positive engagement, and **creates an entity** for the topic if none exists
 - `/dislike sports` — adds a dislike preference, high-strength negative engagement
 - `/unlike espresso machines` — removes the like
 - `/undislike sports` — removes the dislike
+
+`/like` is a user-triggered entity creation path — the entity gets a `LIKE_COMMAND` engagement (strength 0.8), making it an immediate candidate for enrichment by the learn loop.
 
 ### 4. /memory (knowledge browsing)
 

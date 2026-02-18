@@ -246,8 +246,10 @@ sequenceDiagram
 
     User->>Penny: "/like mechanical keyboards"
     Penny->>DB: create Preference("mechanical keyboards", type=like)
-    Penny->>DB: find matching entities via embedding similarity
-    Note over DB: Matches: "keychron q1", "cherry mx switches"
+    Penny->>DB: get_or_create_entity("mechanical keyboards")
+    Penny->>DB: create LIKE_COMMAND engagement (0.8) for entity
+    Penny->>DB: find additional matching entities via embedding similarity
+    Note over DB: Also matches: "keychron q1", "cherry mx switches"
     Penny->>DB: create LIKE_COMMAND engagement (0.8) for each match
     Penny->>User: "Added 'mechanical keyboards' to your likes"
 
