@@ -8,6 +8,7 @@ from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
 from penny.commands.index import IndexCommand
 from penny.commands.interests import InterestsCommand
+from penny.commands.learn import LearnCommand
 from penny.commands.memory import MemoryCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
 from penny.commands.personality import PersonalityCommand
@@ -19,6 +20,8 @@ from penny.commands.test import TestCommand
 
 if TYPE_CHECKING:
     from github_api.api import GitHubAPI
+
+    from penny.tools import Tool
 
 __all__ = [
     "Command",
@@ -35,6 +38,7 @@ def create_command_registry(
     github_api: GitHubAPI | None = None,
     ollama_image_model: str | None = None,
     fastmail_api_token: str | None = None,
+    search_tool: Tool | None = None,
 ) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
@@ -67,6 +71,7 @@ def create_command_registry(
     registry.register(DislikeCommand())
     registry.register(UnlikeCommand())
     registry.register(UndislikeCommand())
+    registry.register(LearnCommand(search_tool))
 
     # Register test command if factory provided
     if message_agent_factory:

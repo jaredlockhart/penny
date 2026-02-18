@@ -16,7 +16,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Extraction · Discovery · EntityCleaner"]
+    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Extraction · Discovery · EntityCleaner · LearnLoop"]
 ```
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
@@ -46,6 +46,7 @@ penny/
     discovery.py      — DiscoveryAgent: proactive content sharing based on user interests
     research.py       — ResearchAgent: autonomous multi-iteration deep research
     entity_cleaner.py — EntityCleaner: periodic merge of duplicate entities
+    learn_loop.py     — LearnLoopAgent: adaptive background research driven by interest scores
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
     schedules.py      — PeriodicSchedule, DelayedSchedule, AlwaysRunSchedule implementations
@@ -58,6 +59,7 @@ penny/
     debug.py          — /debug: show agent status, git commit, system info
     index.py          — /commands: list available commands
     profile.py        — /profile: user info collection (name, location, DOB, timezone)
+    learn.py          — /learn: signal active research interest in a topic
     preferences.py    — /like, /dislike, /unlike, /undislike: explicit preference management
     personality.py    — /personality: customize Penny's tone and behavior per user
     research.py       — /research: start autonomous deep research tasks
@@ -98,13 +100,13 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_followup.py, test_extraction.py, test_discovery.py, test_research.py, test_entity_cleaner.py
+      test_message.py, test_followup.py, test_extraction.py, test_discovery.py, test_research.py, test_entity_cleaner.py, test_learn_loop.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py, test_startup_announcement.py
     commands/         — Per-command tests
       test_commands.py, test_debug.py, test_config.py, test_draw.py, test_email.py,
-      test_preferences.py, test_personality.py, test_research.py, test_schedule.py,
-      test_bug.py, test_system.py, test_test_mode.py
+      test_learn.py, test_preferences.py, test_personality.py, test_research.py,
+      test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
     jmap/             — JMAP client tests
@@ -168,6 +170,20 @@ The base `Agent` class implements the core agentic loop:
 - Merge executed in Python-space: combines deduplicated facts, reassigns entity_search_log refs, deletes duplicates
 - Uses Ollama structured output with Pydantic schemas (`MergeGroups`, `MergeGroup`)
 
+**LearnLoopAgent** (`agents/learn_loop.py`)
+- Background task: adaptive research driven by entity interest scores
+- Picks the highest-priority entity across all users each cycle
+- Priority scoring: `interest × (1/fact_count) × staleness_factor` (Python-space, no LLM)
+- Two modes: **enrichment** (< 5 facts, broad search) and **briefing** (5+ facts, novelty check)
+- Skips entities with negative interest or recently verified facts (< 1 day)
+- Uses SearchTool directly (not the agentic loop) for Perplexity searches
+- Extracts facts via `ollama_client.generate()` with structured output (Pydantic schema)
+- Two-pass fact dedup: normalized string match (fast) then embedding similarity (threshold 0.85)
+- Confirms existing facts by updating `last_verified` timestamps
+- Composes casual message about novel findings and sends via channel
+- Triggered by `/learn` command (creates LEARN_COMMAND engagement with high strength)
+- Scheduled as `PeriodicSchedule` (idle-only, default 300s interval)
+
 **ResearchAgent** (`agents/research.py`)
 - Background task: autonomous multi-iteration deep research on user-requested topics
 - Manages `ResearchTask` and `ResearchIteration` database records
@@ -190,7 +206,7 @@ The base `Agent` class implements the core agentic loop:
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule → research → extraction → entity_cleaner → followup → discovery)
+- Runs tasks in priority order (schedule → research → extraction → entity_cleaner → learn_loop → followup → discovery)
 - Tracks global idle threshold (default: 300s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
@@ -251,6 +267,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/debug** (`debug.py`): Shows agent status, git commit, system info, background task state
 - **/config** (`config.py`): View and modify runtime settings (e.g., `/config idle_seconds 600`)
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
+- **/learn** (`learn.py`): Signal active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` searches via SearchTool, discovers entities from results via LLM entity identification, creates them with LEARN_COMMAND engagements. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`). Falls back to creating a single entity from topic text if no SearchTool is configured
 - **/like**, **/dislike**, **/unlike**, **/undislike** (`preferences.py`): Explicitly manage preferences for discovery
 - **/personality** (`personality.py`): View, set, or reset custom personality prompt per user. Affects Penny's tone and behavior
 - **/research** (`research.py`): Start autonomous multi-iteration research. Supports clarification step with output format options, task queueing, and cancellation
@@ -266,7 +283,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `/config` reads and writes to a `RuntimeConfig` table in SQLite (migration `0002_add_runtime_config_table.py`)
 - `ConfigParam` definitions in `config_params.py` declare which settings are runtime-configurable, with types and validation
 - Config values are read on each use (not cached), so changes take effect immediately
-- Configurable params: `MESSAGE_MAX_STEPS`, `IDLE_SECONDS`, `FOLLOWUP_MIN/MAX_SECONDS`, `DISCOVERY_MIN/MAX_SECONDS`, `MAINTENANCE_INTERVAL_SECONDS`, `RESEARCH_MAX_ITERATIONS`, `RESEARCH_OUTPUT_MAX_LENGTH`
+- Configurable params: `MESSAGE_MAX_STEPS`, `IDLE_SECONDS`, `FOLLOWUP_MIN/MAX_SECONDS`, `DISCOVERY_MIN/MAX_SECONDS`, `MAINTENANCE_INTERVAL_SECONDS`, `RESEARCH_MAX_ITERATIONS`, `RESEARCH_OUTPUT_MAX_LENGTH`, `LEARN_LOOP_INTERVAL`
 
 ## Message Flow
 
@@ -300,7 +317,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Specialized agents**: Each task type (message, research, followup, preference, discovery) has its own agent subclass
-- **Priority scheduling**: Schedule → research → extraction → entity_cleaner → followup → discovery
+- **Priority scheduling**: Schedule → research → extraction → entity_cleaner → learn_loop → followup → discovery
 - **Always-run schedules**: Research and user-created schedules run regardless of idle state; extraction/followup/discovery wait for idle
 - **Global idle threshold**: Single configurable idle time (default: 300s) controls when idle-dependent tasks become eligible
 - **Background suspension**: Foreground message processing suspends background tasks to prevent interference

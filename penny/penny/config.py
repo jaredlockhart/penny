@@ -88,6 +88,9 @@ class Config:
     research_output_max_length: int = 2000
     research_schedule_interval: float = 5.0
 
+    # Learn loop configuration
+    learn_loop_interval: float = 300.0
+
     # Fastmail JMAP configuration (optional, enables /email command)
     fastmail_api_token: str | None = None
     email_max_steps: int = 5

@@ -12,6 +12,7 @@ from penny.agents import (
     DiscoveryAgent,
     ExtractionPipeline,
     FollowupAgent,
+    LearnLoopAgent,
     MessageAgent,
 )
 from penny.agents.entity_cleaner import EntityCleaner
@@ -107,12 +108,17 @@ class Penny:
             except Exception:
                 logger.exception("Failed to initialize GitHub client")
 
+        # Shared search tool for commands and agents that call SearchTool directly
+        shared_search_tools = search_tools(self.db)
+        shared_search_tool = shared_search_tools[0] if shared_search_tools else None
+
         # Create command registry with message agent factory for test command
         self.command_registry = create_command_registry(
             message_agent_factory=create_message_agent,
             github_api=github_api,
             ollama_image_model=config.ollama_image_model,
             fastmail_api_token=config.fastmail_api_token,
+            search_tool=shared_search_tool,
         )
 
         self.followup_agent = FollowupAgent(
@@ -178,6 +184,21 @@ class Penny:
             tool_timeout=config.tool_timeout,
         )
 
+        # Learn loop uses SearchTool directly (not the agentic loop)
+        self.learn_loop = LearnLoopAgent(
+            search_tool=shared_search_tool,
+            system_prompt="",  # LearnLoopAgent uses ollama_client.generate() directly
+            model=config.ollama_background_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=[],
+            db=self.db,
+            max_steps=1,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
+            embedding_model=config.ollama_embedding_model,
+        )
+
         self.schedule_executor = ScheduleExecutor(
             system_prompt="",  # ScheduleExecutor delegates to message_agent.run()
             model=config.ollama_background_model,
@@ -203,11 +224,13 @@ class Penny:
         self.discovery_agent.set_channel(self.channel)
         self.extraction_pipeline.set_channel(self.channel)
         self.research_agent.set_channel(self.channel)
+        self.learn_loop.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Create schedules (priority: schedule, research, extraction, cleaner, followup, discovery)
+        # Schedules (priority: schedule, research, extract, clean, learn, followup, discover)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
         # ResearchAgent runs always (whenever scheduler ticks) to process in-progress research
+        # LearnLoopAgent runs periodically while idle to research entities by interest score
         schedules = [
             AlwaysRunSchedule(
                 agent=self.schedule_executor,
@@ -224,6 +247,10 @@ class Penny:
             PeriodicSchedule(
                 agent=self.entity_cleaner,
                 interval=config.maintenance_interval_seconds,
+            ),
+            PeriodicSchedule(
+                agent=self.learn_loop,
+                interval=config.learn_loop_interval,
             ),
             DelayedSchedule(
                 agent=self.followup_agent,

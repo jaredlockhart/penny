@@ -106,4 +106,11 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {
         default_value=2000,
         validator=_validate_positive_int,
     ),
+    "LEARN_LOOP_INTERVAL": ConfigParam(
+        key="LEARN_LOOP_INTERVAL",
+        description="Interval for learn loop in seconds (runs during idle)",
+        type=float,
+        default_value=300.0,
+        validator=_validate_positive_float,
+    ),
 }

@@ -159,6 +159,20 @@ Examples:
         "The user sent an image. Respond naturally to the image description provided."
     )
 
+    # Learn loop message composition prompts
+    LEARN_ENRICHMENT_MESSAGE_PROMPT = (
+        "You just learned new facts about {entity_name}. "
+        "Write a short, casual message sharing what you discovered, "
+        "as if telling a friend something interesting you just found out. "
+        "Include the most interesting 2-3 findings. Keep it under 200 words."
+    )
+
+    LEARN_BRIEFING_MESSAGE_PROMPT = (
+        "You just found new developments about {entity_name}. "
+        "Write a brief heads-up message sharing what's new, "
+        "as if giving a friend a quick update. Keep it under 150 words."
+    )
+
     # Entity extraction prompts (two-pass)
     ENTITY_IDENTIFICATION_PROMPT = (
         "Identify named entities in the following search results.\n"

@@ -4,6 +4,7 @@ from penny.agents.base import Agent
 from penny.agents.discovery import DiscoveryAgent
 from penny.agents.extraction import ExtractionPipeline
 from penny.agents.followup import FollowupAgent
+from penny.agents.learn_loop import LearnLoopAgent
 from penny.agents.message import MessageAgent
 from penny.agents.models import (
     ChatMessage,
@@ -19,6 +20,7 @@ __all__ = [
     "DiscoveryAgent",
     "ExtractionPipeline",
     "FollowupAgent",
+    "LearnLoopAgent",
     "MessageAgent",
     "MessageRole",
     "ResearchAgent",
