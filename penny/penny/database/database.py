@@ -394,7 +394,7 @@ class Database:
             limit: Maximum number of messages to return
 
         Returns:
-            Unprocessed messages ordered by timestamp ascending (oldest first)
+            Unprocessed messages ordered by timestamp descending (newest first)
         """
         with self.get_session() as session:
             return list(
@@ -406,7 +406,7 @@ class Database:
                         MessageLog.is_reaction == False,  # noqa: E712
                         MessageLog.processed == False,  # noqa: E712
                     )
-                    .order_by(MessageLog.timestamp.asc())  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
@@ -1032,7 +1032,7 @@ class Database:
                 session.exec(
                     select(SearchLog)
                     .where(SearchLog.extracted == False)  # noqa: E712
-                    .order_by(SearchLog.id.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(SearchLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
@@ -1229,6 +1229,7 @@ class Database:
                 session.exec(
                     select(Entity)
                     .where(Entity.embedding == None)  # noqa: E711
+                    .order_by(Entity.created_at.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
@@ -1247,6 +1248,7 @@ class Database:
                 session.exec(
                     select(Fact)
                     .where(Fact.embedding == None)  # noqa: E711
+                    .order_by(Fact.learned_at.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
@@ -1265,6 +1267,7 @@ class Database:
                 session.exec(
                     select(Preference)
                     .where(Preference.embedding == None)  # noqa: E711
+                    .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
