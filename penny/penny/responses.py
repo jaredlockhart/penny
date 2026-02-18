@@ -136,43 +136,6 @@ class PennyResponse:
     PROFILE_UPDATED = "Ok, I updated your {changes}! \u2705"
     PROFILE_UNCHANGED = "Your profile is unchanged \U0001f937"
 
-    # ── Research ─────────────────────────────────────────────────────────────
-
-    RESEARCH_TOPIC_REQUIRED = "Please provide a topic after `!`"
-    RESEARCH_QUEUED = "Queued '{topic}' for research (currently researching '{existing_topic}')"
-    RESEARCH_STARTED = (
-        "Ok, started research on '{topic}'."
-        " I'll post results when done (this might take a few minutes)"
-    )
-    RESEARCH_STARTED_WITH_FOCUS = (
-        "Got it \u2014 researching '{topic}' with focus: {focus}. I'll post results when done."
-    )
-    RESEARCH_CONTINUATION = (
-        "Ok, continuing research with focus: {content}. I'll post results when done."
-    )
-    RESEARCH_FOCUS_PROMPT = (
-        "What should the report focus on for '{topic}'?\n\n"
-        "{options}\n\n"
-        "Reply with a number, describe what you want, or say 'go' to start right away."
-    )
-
-    RESEARCH_LIST_HEADER = "**Currently researching:**\n"
-    RESEARCH_NO_ACTIVE = "No active research tasks"
-    RESEARCH_STATUS_QUEUED = "*Queued*"
-    RESEARCH_STATUS_AWAITING = "*Awaiting focus*"
-    RESEARCH_CANCEL_FOOTER = "\nCancel with `/research cancel <number>`"
-
-    RESEARCH_CANCEL_USAGE = "Please provide a task number: `/research cancel 1`"
-    RESEARCH_CANCEL_INVALID = "'{number}' is not a valid number"
-    RESEARCH_CANCEL_MIN = "Task number must be 1 or higher"
-    RESEARCH_CANCEL_NONE = "No active research tasks to cancel"
-    RESEARCH_CANCEL_RANGE = "Only {count} active task(s) \u2014 pick a number from 1 to {count}"
-    RESEARCH_CANCELLED = "Ok, cancelled research on '{topic}'"
-
-    RESEARCH_TRUNCATED = (
-        "\n\n[Report truncated due to length limits \u2014 reply to request full details]"
-    )
-
     # ── Schedule ─────────────────────────────────────────────────────────────
 
     SCHEDULE_NO_TASKS = "You don't have any scheduled tasks yet \U0001f4c5"

@@ -4,27 +4,16 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import UTC, datetime
-
-from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
-from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.constants import PennyConstants
-from penny.database.models import ResearchTask
 from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.builtin import SearchTool
 
-RESEARCH_MAX_ITERATIONS_DEFAULT = int(
-    RUNTIME_CONFIG_PARAMS["RESEARCH_MAX_ITERATIONS"].default_value
-)
-
 logger = logging.getLogger(__name__)
-
-GO_KEYWORDS = ("go", "go!", "start", "just go", "go ahead")
 
 
 class MessageAgent(Agent):
@@ -48,17 +37,6 @@ class MessageAgent(Agent):
         Returns:
             Tuple of (parent_id for thread linking, ControllerResponse with answer)
         """
-        # Check if this is a quote-reply to a research report
-        if quoted_text:
-            research_continuation = self._handle_research_continuation(sender, content, quoted_text)
-            if research_continuation:
-                return None, research_continuation
-
-        # Check if user is replying to a research clarification prompt
-        focus_reply = await self._handle_research_focus_reply(sender, content)
-        if focus_reply:
-            return None, focus_reply
-
         # Get thread context if quoted
         parent_id = None
         history = None
@@ -132,126 +110,6 @@ class MessageAgent(Agent):
         )
 
         return parent_id, response
-
-    def _handle_research_continuation(
-        self, sender: str, content: str, quoted_text: str
-    ) -> ControllerResponse | None:
-        """
-        Check if quoted_text is a research report and create continuation task.
-
-        Args:
-            sender: User identifier
-            content: User's new research prompt
-            quoted_text: The quoted message text
-
-        Returns:
-            ControllerResponse if this is a research continuation, None otherwise
-        """
-        # Find the quoted message in database
-        quoted_message = self.db.find_outgoing_by_content(quoted_text)
-        if not quoted_message or not quoted_message.id:
-            return None
-
-        # Check if this message is associated with a completed research task
-        with Session(self.db.engine) as session:
-            research_task = session.exec(
-                select(ResearchTask).where(ResearchTask.message_id == str(quoted_message.id))
-            ).first()
-
-            if not research_task or research_task.status != "completed":
-                return None
-
-            logger.info("Detected research continuation for task %d: %s", research_task.id, content)
-
-            # Get max_iterations from config_params default
-            max_iterations = RESEARCH_MAX_ITERATIONS_DEFAULT
-
-            # Create new research task as continuation
-            new_task = ResearchTask(
-                thread_id=research_task.thread_id,
-                parent_task_id=research_task.id,
-                topic=content,  # User's refinement becomes the new topic
-                status="in_progress",
-                max_iterations=max_iterations,
-                created_at=datetime.now(UTC),
-            )
-            session.add(new_task)
-            session.commit()
-            logger.info("Created continuation research task %d", new_task.id)
-
-        return ControllerResponse(
-            answer=PennyResponse.RESEARCH_CONTINUATION.format(content=content)
-        )
-
-    async def _handle_research_focus_reply(
-        self, sender: str, content: str
-    ) -> ControllerResponse | None:
-        """
-        Check if sender has an awaiting_focus research task and handle focus reply.
-
-        If the user says "go" (or similar), start research with no focus.
-        Otherwise, use LLM to interpret the user's reply against the presented
-        options and extract a clear focus description for the research report.
-
-        Returns:
-            ControllerResponse if this is a focus reply, None otherwise
-        """
-        try:
-            with Session(self.db.engine) as session:
-                task = session.exec(
-                    select(ResearchTask).where(
-                        ResearchTask.thread_id == sender,
-                        ResearchTask.status == "awaiting_focus",
-                    )
-                ).first()
-
-                if not task:
-                    return None
-
-                # "go" or similar → start with no focus
-                if content.strip().lower() in GO_KEYWORDS:
-                    task.status = "in_progress"
-                    session.add(task)
-                    session.commit()
-                    logger.info("Research task %d started without focus (user said 'go')", task.id)
-                    return ControllerResponse(
-                        answer=PennyResponse.RESEARCH_STARTED.format(topic=task.topic)
-                    )
-
-                # Use LLM to interpret user's reply against the options
-                focus = await self._extract_focus(task.options, content.strip())
-
-                task.focus = focus
-                task.status = "in_progress"
-                session.add(task)
-                session.commit()
-                logger.info("Research task %d started with focus: %s", task.id, task.focus)
-                return ControllerResponse(
-                    answer=PennyResponse.RESEARCH_STARTED_WITH_FOCUS.format(
-                        topic=task.topic, focus=task.focus
-                    )
-                )
-        except Exception:
-            # Table may not exist (e.g., in test mode databases)
-            return None
-
-    async def _extract_focus(self, options: str | None, user_reply: str) -> str:
-        """Use LLM to interpret the user's reply and extract a report focus."""
-        if not options:
-            # No stored options (e.g., old task) — use reply directly
-            return user_reply
-
-        user_content = f"Options presented:\n{options}\n\nUser replied: {user_reply}"
-
-        response = await self._ollama_client.chat(
-            messages=[
-                {"role": "system", "content": Prompt.RESEARCH_FOCUS_EXTRACTION_PROMPT},
-                {"role": "user", "content": user_content},
-            ]
-        )
-        extracted = response.content.strip()
-        # Fall back to raw reply if LLM returns empty
-        return extracted or user_reply
 
     async def _retrieve_entity_context(self, content: str, sender: str) -> tuple[str | None, bool]:
         """

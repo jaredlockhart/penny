@@ -72,21 +72,8 @@ class Config:
     # Global idle threshold for background tasks
     idle_seconds: float = 300.0
 
-    # Spontaneous followup (random delay after idle)
-    followup_min_seconds: float = 3600.0
-    followup_max_seconds: float = 7200.0
-
-    # Discovery (random delay after idle)
-    discovery_min_seconds: float = 7200.0
-    discovery_max_seconds: float = 14400.0
-
-    # Periodic maintenance (summarize, profile) interval while idle
+    # Periodic maintenance interval while idle
     maintenance_interval_seconds: float = 300.0
-
-    # Research agent configuration
-    research_max_iterations: int = 10
-    research_output_max_length: int = 2000
-    research_schedule_interval: float = 5.0
 
     # Learn loop configuration
     learn_loop_interval: float = 300.0
@@ -174,15 +161,7 @@ class Config:
         # Global idle threshold for all background tasks
         idle_seconds = float(os.getenv("IDLE_SECONDS", "300"))
 
-        # Followup timing (random delay after idle)
-        followup_min_seconds = float(os.getenv("FOLLOWUP_MIN_SECONDS", "3600"))
-        followup_max_seconds = float(os.getenv("FOLLOWUP_MAX_SECONDS", "7200"))
-
-        # Discovery timing (random delay after idle)
-        discovery_min_seconds = float(os.getenv("DISCOVERY_MIN_SECONDS", "7200"))
-        discovery_max_seconds = float(os.getenv("DISCOVERY_MAX_SECONDS", "14400"))
-
-        # Periodic maintenance interval (summarize, profile)
+        # Periodic maintenance interval
         maintenance_interval_seconds = float(os.getenv("MAINTENANCE_INTERVAL_SECONDS", "300"))
 
         # Tool execution timeout
@@ -209,10 +188,6 @@ class Config:
             log_file=log_file,
             tool_timeout=tool_timeout,
             idle_seconds=idle_seconds,
-            followup_min_seconds=followup_min_seconds,
-            followup_max_seconds=followup_max_seconds,
-            discovery_min_seconds=discovery_min_seconds,
-            discovery_max_seconds=discovery_max_seconds,
             maintenance_interval_seconds=maintenance_interval_seconds,
             fastmail_api_token=fastmail_api_token,
         )

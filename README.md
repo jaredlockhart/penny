@@ -43,7 +43,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nResearch · Followup · Preference · Discovery · EntityExtractor"]
+    Penny -.->|"schedule"| BG["Background Agents\nExtraction · EntityCleaner · LearnLoop"]
 ```
 
 ### Agent Architecture
@@ -51,11 +51,9 @@ flowchart TD
 Penny uses specialized agent subclasses for different tasks:
 
 - **MessageAgent**: Handles incoming user messages, prepares context, runs agentic loop
-- **ResearchAgent**: Autonomous multi-iteration deep research on user-requested topics
-- **FollowupAgent**: Background task that spontaneously follows up on conversations
-- **PreferenceAgent**: Background task that extracts user preferences from messages and reactions
-- **DiscoveryAgent**: Background task that shares new content based on user interests
-- **EntityExtractor**: Background task that extracts named entities and facts from search results
+- **ExtractionPipeline**: Unified background task that extracts entities, facts, and preferences from search results and messages
+- **EntityCleaner**: Periodically merges duplicate entities in the knowledge base
+- **LearnLoopAgent**: Adaptive background research driven by interest scores — picks the most interesting entity and searches for new facts
 - **ScheduleExecutor**: Runs user-created cron-based scheduled tasks
 
 Each agent owns its own OllamaClient instance and can have its own tools and prompts.
@@ -65,25 +63,22 @@ Each agent owns its own OllamaClient instance and can have its own tools and pro
 Background tasks are managed by a priority-based scheduler with a global idle threshold. The scheduler runs tasks in priority order:
 
 1. **Schedule** (AlwaysRunSchedule) — runs user-created cron-based tasks every 60s
-2. **Research** (AlwaysRunSchedule) — processes in-progress research tasks
-3. **Preference** (PeriodicSchedule) — extracts user preferences from messages
-4. **EntityExtractor** (PeriodicSchedule) — extracts entities and facts from search results
-5. **Followup** (DelayedSchedule) — spontaneous conversation followups
-6. **Discovery** (DelayedSchedule) — proactive content sharing
+2. **Extraction** (PeriodicSchedule) — extracts entities, facts, and preferences from search results and messages
+3. **EntityCleaner** (PeriodicSchedule) — merges duplicate entities
+4. **LearnLoop** (PeriodicSchedule) — adaptive background research on interesting entities
 
 **Global idle threshold** (default: 300s): Idle-dependent background tasks wait for the system to become idle before they can run. Background tasks are suspended during foreground message processing.
 
 Schedule types:
-- **AlwaysRunSchedule**: Runs regardless of idle state at a configurable interval (used for research and user-created schedules)
-- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for preference extraction, default: 300s)
-- **DelayedSchedule**: Runs after system becomes idle + random delay (used for followups and discovery)
+- **AlwaysRunSchedule**: Runs regardless of idle state at a configurable interval (used for user-created schedules)
+- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for extraction, entity cleaner, learn loop; default: 300s)
 
 The scheduler resets all timers when a new message arrives.
 
 ### Message Flow
 
 1. User sends message (Signal or Discord)
-2. Channel extracts message → checks for slash commands or research replies
+2. Channel extracts message → checks for slash commands
 3. Channel notifies scheduler (resets timers, suspends background tasks)
 4. MessageAgent handles the message:
    - If quote-reply: look up quoted message, walk parent chain for history
@@ -91,7 +86,7 @@ The scheduler resets all timers when a new message arrives.
    - Run agentic loop with tools (Perplexity search + DuckDuckGo images)
 5. Log messages to database (linked via parent_id)
 6. Send response back via channel with image attachment (if available)
-7. Background: research tasks run continuously; when idle, extract preferences, follow up on conversations, and share new discoveries
+7. Background: when idle, extract entities/facts/preferences, clean up duplicates, and research interesting topics
 
 ### Design Decisions
 
@@ -112,9 +107,9 @@ Penny supports slash commands sent as messages:
 - **/debug**: Show agent status, git commit, background task state
 - **/config**: View and modify runtime settings (e.g., `/config idle_seconds 600`)
 - **/profile**: Set up user profile (name, location, DOB) — required before chatting
-- **/like**, **/dislike**: Explicitly manage topic preferences for discovery
+- **/like**, **/dislike**: Explicitly manage topic preferences
 - **/personality**: Customize Penny's tone and behavior (e.g., `/personality be a pirate`)
-- **/research**: Start autonomous deep research on a topic with multi-iteration search
+- **/learn**: Express active interest in a topic for background research
 - **/schedule**: Create recurring background tasks (e.g., `/schedule daily 9am weather forecast`)
 - **/draw**: Generate an image from a text description (requires `OLLAMA_IMAGE_MODEL`)
 - **/bug**: File a bug report on GitHub (requires GitHub App config)
@@ -138,33 +133,33 @@ Penny stores data in SQLite across several tables:
 - Parent ID (foreign key to self) for threading
 - External ID (platform-specific message ID for quote-reply lookup)
 - Is-reaction flag (true if message is a reaction)
-- Processed flag (tracks whether PreferenceAgent has analyzed this message)
+- Processed flag (tracks whether extraction pipeline has analyzed this message)
 
 **UserInfo**: User profile information
 - Name, location, timezone (IANA), date of birth
 - Collected via `/profile` command, required before chatting
 
-**Preference**: User topic preferences for discovery
+**Preference**: User topic preferences
 - User, topic, type (like/dislike)
-- Set explicitly via `/like`/`/dislike` or extracted by PreferenceAgent from messages
+- Set explicitly via `/like`/`/dislike` or extracted by ExtractionPipeline from messages
 
-**ResearchTask**: Autonomous research requests
-- Topic, status (awaiting_focus/in_progress/completed/failed), focus, max_iterations
-- Thread ID for sending results back to the right conversation
+**Entity**: Named entity knowledge base
+- User, name, embedding vector for semantic similarity
+- Extracted from search results and messages by ExtractionPipeline
 
-**ResearchIteration**: Individual search iterations within a research task
-- Query, findings (JSON), sources (JSON), iteration number
+**Fact**: Individual facts about entities
+- Entity reference, content text, embedding, source provenance
+- Deduplicated via normalized string match and embedding similarity
+
+**Engagement**: User interest signals for entities
+- Type (search, mention, reaction, learn command), strength, valence
+- Drives interest scores for LearnLoopAgent topic selection
 
 **Schedule**: User-created recurring background tasks
 - Cron expression, prompt text, user timezone, timing description
 
 **PersonalityPrompt**: Per-user personality customization
 - Prompt text that transforms Penny's response style
-
-**Entity**: Named entity knowledge base
-- User, name (lowercased), facts stored as bulleted text lines (e.g., "- costs $1599\n- uses MAT driver")
-- Extracted from SearchLog entries by EntityExtractor agent
-- Progress tracked via `entity_extraction_cursor` table (high-water mark per source type)
 
 **RuntimeConfig**: User-configurable settings (via `/config`)
 **CommandLog**: Log of every command invocation
@@ -248,10 +243,6 @@ LOG_LEVEL="INFO"
 # Agent behavior (optional, defaults shown)
 MESSAGE_MAX_STEPS=5
 IDLE_SECONDS=300                    # Global idle threshold for background tasks
-FOLLOWUP_MIN_SECONDS=3600           # Random delay after idle (followup)
-FOLLOWUP_MAX_SECONDS=7200
-DISCOVERY_MIN_SECONDS=7200          # Random delay after idle (discovery)
-DISCOVERY_MAX_SECONDS=14400
 
 # Fastmail JMAP (optional, enables /email command)
 # FASTMAIL_API_TOKEN="your-api-token"
@@ -303,12 +294,7 @@ Penny auto-detects which channel to use based on configured credentials:
 **Behavior:**
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
 - `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 300)
-- `FOLLOWUP_MIN_SECONDS`: Minimum random delay after idle for followup (default: 3600)
-- `FOLLOWUP_MAX_SECONDS`: Maximum random delay after idle for followup (default: 7200)
-- `DISCOVERY_MIN_SECONDS`: Minimum random delay after idle for discovery (default: 7200)
-- `DISCOVERY_MAX_SECONDS`: Maximum random delay after idle for discovery (default: 14400)
-- `RESEARCH_MAX_ITERATIONS`: Max search iterations per research task (default: 10)
-- `RESEARCH_OUTPUT_MAX_LENGTH`: Max research report length in characters (default: 2000)
+- `LEARN_LOOP_INTERVAL`: Interval for learn loop in seconds (default: 300)
 - `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
 
 **Logging:**
@@ -352,8 +338,8 @@ CI runs `make check` in Docker on every push to `main` and on pull requests via 
 
 **Test Coverage:**
 - Message flow: tool calls, direct responses, typing indicators, DB logging
-- Background tasks: research, preferences, spontaneous followups, discovery, entity extraction
-- Commands: /debug, /config, /test, /commands, /personality, /research, /schedule, /bug, /draw, /email, /like, /dislike
+- Background tasks: extraction pipeline, entity cleaner, learn loop
+- Commands: /debug, /config, /test, /commands, /personality, /learn, /schedule, /bug, /draw, /email, /like, /dislike
 - Startup announcements, Signal channel integration, vision processing
 - Tool validation: timeouts, missing params, non-existent tools, search redaction
 

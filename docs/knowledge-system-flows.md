@@ -40,11 +40,11 @@ sequenceDiagram
     Extract->>LLM: generate embeddings for entities + facts
     LLM-->>Extract: embedding vectors
     Extract->>DB: store embeddings
-    Extract->>LLM: extract signals from user message
-    LLM-->>Extract: signal: search_initiated, "bookshelf speakers", medium strength
-    Extract->>DB: create Signal(user, entity=null, type=search_initiated, strength=0.6)
+    Extract->>LLM: extract engagements from user message
+    LLM-->>Extract: engagement: search_initiated, "bookshelf speakers", medium strength
+    Extract->>DB: create Engagement(user, entity=null, type=search_initiated, strength=0.6)
 
-    Note over User,Research: ── User follows up (interest signal strengthens) ──
+    Note over User,Research: ── User follows up (interest strengthens) ──
 
     User->>Penny: "tell me more about the kef ls50 meta"
     Penny->>DB: retrieve entities matching message
@@ -63,7 +63,7 @@ sequenceDiagram
     Extract->>DB: get unprocessed content
     Extract->>LLM: extract new facts (deduplicate via embedding similarity)
     Extract->>DB: add 4 new Fact rows to KEF LS50 Meta with sources
-    Extract->>DB: create Signal(user, entity=kef_ls50, type=follow_up, strength=0.5)
+    Extract->>DB: create Engagement(user, entity=kef_ls50, type=follow_up, strength=0.5)
     Extract->>LLM: regenerate entity embedding (facts changed)
     Extract->>DB: update embedding
 
@@ -71,7 +71,7 @@ sequenceDiagram
 
     User->>Penny: 👍 (reaction to LS50 Meta message)
     Penny->>DB: lookup message content, match entities via embeddings
-    Penny->>DB: create Signal(user, entity=kef_ls50, type=emoji_reaction, valence=positive, strength=0.3)
+    Penny->>DB: create Engagement(user, entity=kef_ls50, type=emoji_reaction, valence=positive, strength=0.3)
 
     Note over DB: KEF LS50 Meta interest score is now HIGH<br/>(search + follow_up + reaction = ~1.4)
 
@@ -109,7 +109,7 @@ sequenceDiagram
     User->>Penny: "/learn decent de1 espresso machine"
     Penny->>DB: find or create Entity("decent de1")
     Penny->>LLM: generate embedding for "decent de1 espresso machine"
-    Penny->>DB: create Signal(user, entity=de1, type=learn_command, strength=1.0)
+    Penny->>DB: create Engagement(user, entity=de1, type=learn_command, strength=1.0)
     Penny->>User: "Got it, I'll look into the Decent DE1 and let you know what I find."
 
     Note over DB: Decent DE1: interest=1.0, facts=0<br/>Priority = 1.0 × (1/0) × 1.0 = MAXIMUM
@@ -132,7 +132,7 @@ sequenceDiagram
     Note over User,Penny: ── User engages with findings ──
 
     User->>Penny: 👍 (reaction on proactive message)
-    Penny->>DB: create Signal(user, entity=de1, type=emoji_reaction, strength=0.5)
+    Penny->>DB: create Engagement(user, entity=de1, type=emoji_reaction, strength=0.5)
     Note over DB: Higher strength (0.5) because it's a reaction on a proactive message
 
     Note over DB: DE1 interest refreshed: 1.0 + 0.5 = 1.5
@@ -165,7 +165,7 @@ sequenceDiagram
 
     Note over Research,DB: ── Subsequent cycles — briefing mode ──
 
-    Note over DB: DE1 interest continues decaying (no new user signals)<br/>DE1 has 13 facts, all recently verified<br/>Priority score now LOW — other entities get attention
+    Note over DB: DE1 interest continues decaying (no new engagements)<br/>DE1 has 13 facts, all recently verified<br/>Priority score now LOW — other entities get attention
     Note over Research: DE1 naturally in briefing mode now<br/>Only checked when staleness_factor rises (days/weeks pass)<br/>Only messaged if something genuinely novel is found
 ```
 
@@ -190,7 +190,7 @@ sequenceDiagram
     Clean->>LLM: identify duplicate groups, pick canonical names
     LLM-->>Clean: merge group: ["kef ls50 meta", "kef ls50", "ls50 meta"] → "kef ls50 meta"
     Clean->>DB: merge facts (deduplicate via embedding similarity)
-    Clean->>DB: reassign signals from duplicates to canonical entity
+    Clean->>DB: reassign engagements from duplicates to canonical entity
     Clean->>DB: delete duplicate entities
     Clean->>LLM: regenerate embedding for merged entity
     Clean->>DB: update embedding
@@ -224,7 +224,7 @@ sequenceDiagram
     Penny->>User: "The v2.1 update refines the crossover tuning and adds..."
     Penny->>DB: store SearchLog, MessageLog
 
-    Note over DB: Follow-up question about KEF LS50 Meta<br/>→ new signal (follow_up, strength=0.5)<br/>→ interest score refreshed, stays in research rotation
+    Note over DB: Follow-up question about KEF LS50 Meta<br/>→ new engagement (follow_up, strength=0.5)<br/>→ interest score refreshed, stays in research rotation
 ```
 
 ## Scenario 4: Passive Learning Across Conversations
@@ -242,22 +242,22 @@ sequenceDiagram
     Note over User,Research: ── Week 1: Scattered mentions ──
 
     User->>Penny: "search for obsidian markdown plugins"
-    Note over Extract: → Entity: "obsidian", Signal: search_initiated (0.6)
+    Note over Extract: → Entity: "obsidian", Engagement: search_initiated (0.6)
     User->>Penny: "what's the best way to do daily notes in obsidian?"
     Note over Penny: Retrieves "obsidian" entity, injects 3 known facts
     Note over Penny: Knowledge sufficiency: partial → search for more
-    Note over Extract: → Signal: follow_up for "obsidian" (0.5), new facts extracted
+    Note over Extract: → Engagement: follow_up for "obsidian" (0.5), new facts extracted
     User->>Penny: "can you find a comparison of notion vs obsidian?"
-    Note over Extract: → Entity: "notion", Signal: search_initiated (0.6)<br/>→ Signal: another follow_up for "obsidian" (0.5)
+    Note over Extract: → Entity: "notion", Engagement: search_initiated (0.6)<br/>→ Engagement: another follow_up for "obsidian" (0.5)
 
-    Note over DB: Obsidian: interest = 1.6 (three interactions)<br/>Notion: interest = 0.6 (one interaction)<br/>No /learn, no /like — just conversation signals
+    Note over DB: Obsidian: interest = 1.6 (three interactions)<br/>Notion: interest = 0.6 (one interaction)<br/>No /learn, no /like — just conversation engagements
 
     Note over User,Research: ── Week 2: User mentions it in passing ──
 
     User->>Penny: "I was organizing my obsidian vault and found this article about PKM"
     Note over Penny: Retrieves "obsidian" entity (8 facts now), injects into prompt
     Note over Penny: Knowledge sufficiency: user is sharing, not asking → no search needed
-    Note over Extract: → Signal: message_mention for "obsidian" (0.2)<br/>→ Entity: "PKM" (personal knowledge management)
+    Note over Extract: → Engagement: message_mention for "obsidian" (0.2)<br/>→ Entity: "PKM" (personal knowledge management)
 
     Note over DB: Obsidian: interest = 1.8 (still accumulating)<br/>Obsidian has 8 facts from previous searches<br/>PKM: interest = 0.2 (single weak mention)
 
@@ -270,7 +270,7 @@ sequenceDiagram
     Research->>User: "By the way — Obsidian released a new plugin for canvas-based PKM workflows. Thought you'd find it interesting since you've been digging into this."
 
     User->>Penny: 👍
-    Note over DB: Signal: emoji_reaction for "obsidian" (0.5, proactive message)<br/>Interest reinforced without user ever explicitly saying "I like Obsidian"
+    Note over DB: Engagement: emoji_reaction for "obsidian" (0.5, proactive message)<br/>Interest reinforced without user ever explicitly saying "I like Obsidian"
 ```
 
 ## Scenario 5: /like and /dislike Shape What Penny Investigates
@@ -288,18 +288,18 @@ sequenceDiagram
     Penny->>DB: create Preference(user, "mechanical keyboards", type=like)
     Penny->>DB: find matching entities via embedding similarity
     Note over DB: Matches: "keychron q1", "cherry mx switches"<br/>(entities from previous conversations)
-    Penny->>DB: create Signal(user, type=like_command, strength=0.8) for each matched entity
+    Penny->>DB: create Engagement(user, type=like_command, strength=0.8) for each matched entity
     Penny->>User: "Added 'mechanical keyboards' to your likes."
 
     User->>Penny: "/dislike sports"
     Penny->>DB: create Preference(user, "sports", type=dislike)
-    Penny->>DB: create Signal(user, type=dislike_command, valence=negative, strength=0.8)
+    Penny->>DB: create Engagement(user, type=dislike_command, valence=negative, strength=0.8)
     Penny->>User: "Noted — I'll avoid sports content."
 
     Note over Research,DB: ── Research loop ──
 
     Research->>DB: score entities (interest × knowledge_gap × staleness)
-    Note over Research: Entities with positive signals: keychron q1 (boosted by /like)<br/>Entities with negative signals: anything sports-related (suppressed)<br/>Negative interest score = SKIP entirely
+    Note over Research: Entities with positive engagements: keychron q1 (boosted by /like)<br/>Entities with negative engagements: anything sports-related (suppressed)<br/>Negative interest score = SKIP entirely
     Research->>DB: pick "keychron q1" — boosted interest, thin knowledge
     Note over Research: (researches keyboards, NOT sports)
 
@@ -329,8 +329,8 @@ sequenceDiagram
 
     User->>Penny: 👎 (reaction on proactive message)
     Penny->>DB: lookup message content, match entities via embeddings
-    Note over Penny: Entity: "sourdough starters"<br/>Proactive message + negative reaction = strong stop signal
-    Penny->>DB: create Signal(user, entity=sourdough, type=emoji_reaction, valence=negative, strength=0.8)
+    Note over Penny: Entity: "sourdough starters"<br/>Proactive message + negative reaction = strong negative engagement
+    Penny->>DB: create Engagement(user, entity=sourdough, type=emoji_reaction, valence=negative, strength=0.8)
 
     Note over DB: "sourdough starters" interest score drops sharply<br/>Was 0.7 → now effectively -0.1 (negative)
 

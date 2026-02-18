@@ -32,8 +32,7 @@ async def test_debug_command(signal_server, test_config, mock_ollama, running_pe
         assert "Unknown (no scheduler)" not in response["message"]
         # Should show at least one agent name from the scheduler
         assert any(
-            agent in response["message"]
-            for agent in ["summarize", "preference", "followup", "discovery"]
+            agent in response["message"] for agent in ["extraction", "entity_cleaner", "learn"]
         )
 
 

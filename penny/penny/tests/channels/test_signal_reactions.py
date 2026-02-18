@@ -27,7 +27,7 @@ async def test_signal_reaction_message(
     1. Send a message and get a response
     2. React to the response with an emoji
     3. Verify reaction is logged as a message with is_reaction=True
-    4. Verify thread is kept alive for followup
+    4. Verify reaction is available for extraction pipeline
     """
     config = make_config(idle_seconds=0.5)
     setup_ollama_flow(
@@ -292,7 +292,7 @@ async def test_negative_reaction_on_proactive_message(
 ):
     """
     Negative reaction on a proactive message (parent_id=None) creates a
-    high-strength negative engagement — the 'stop telling me about this' signal.
+    high-strength negative engagement — the 'stop telling me about this' mechanism.
     """
     config = make_config(ollama_embedding_model="test-embed-model")
     mock_ollama.set_default_flow(
@@ -338,7 +338,7 @@ async def test_negative_reaction_on_proactive_message(
 
         await wait_until(engagement_exists)
 
-        # Verify engagement details — strong negative signal
+        # Verify engagement details — strong negative engagement
         engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
         reaction_engagements = [
             e

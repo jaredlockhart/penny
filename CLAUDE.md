@@ -130,13 +130,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
 - `EMAIL_MAX_STEPS`: Max agent loop steps for `/email` command (default: 5)
 - `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 300)
-- `FOLLOWUP_MIN_SECONDS`: Minimum random delay after idle for followup (default: 3600)
-- `FOLLOWUP_MAX_SECONDS`: Maximum random delay after idle for followup (default: 7200)
-- `DISCOVERY_MIN_SECONDS`: Minimum random delay after idle for discovery (default: 7200)
-- `DISCOVERY_MAX_SECONDS`: Maximum random delay after idle for discovery (default: 14400)
 - `LEARN_LOOP_INTERVAL`: Interval for learn loop in seconds, runs during idle (default: 300, runtime-configurable)
-- `RESEARCH_MAX_ITERATIONS`: Max search iterations per research task (default: 10, runtime-configurable)
-- `RESEARCH_OUTPUT_MAX_LENGTH`: Max research report length in characters (default: 2000, runtime-configurable)
 - `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
 
 **Logging**:
