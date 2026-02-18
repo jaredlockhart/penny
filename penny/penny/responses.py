@@ -67,14 +67,7 @@ class PennyResponse:
 
     # ── Learn ────────────────────────────────────────────────────────────────
 
-    LEARN_DISCOVERED = "I'll look into these and let you know what I find:"
-    LEARN_NO_SEARCH = "Got it, I'll look into {entity_name} and let you know what I find."
-    LEARN_SEARCH_FAILED = (
-        "Search failed — I created {entity_name} to track, but couldn't discover related topics."
-    )
-    LEARN_NO_ENTITIES_FOUND = (
-        "I searched but couldn't identify specific topics. Try a more specific query."
-    )
+    LEARN_ACKNOWLEDGED = "Okay, I'll learn more about {topic}"
     LEARN_EMPTY = (
         "Nothing being actively researched right now. "
         "Use `/learn <topic>` to start learning about something."

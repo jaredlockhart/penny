@@ -1,7 +1,8 @@
-"""/learn command — search-based entity discovery for background research."""
+"""/learn command — express interest in a topic for background research."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class LearnCommand(Command):
-    """Search for a topic, discover entities, and track them for background research."""
+    """Express interest in a topic and discover entities via background search."""
 
     name = "learn"
     description = "Start learning about a topic"
@@ -84,34 +85,11 @@ class LearnCommand(Command):
         return CommandResult(text="\n".join(lines))
 
     async def _learn_topic(self, topic: str, context: CommandContext) -> CommandResult:
-        """Search for topic, discover entities, record learn engagements."""
-        # Without search tool, fall back to creating entity from topic text
-        if not self._search_tool:
-            logger.warning("LearnCommand: no search tool, creating entity directly")
-            return await self._fallback_create_entity(topic, context)
+        """Acknowledge topic immediately, discover entities via search in background."""
+        if self._search_tool:
+            asyncio.create_task(self._discover_entities_background(topic, context))
 
-        # Search for the topic
-        search_text = await self._search(topic)
-        if not search_text:
-            return await self._fallback_create_entity(topic, context)
-
-        # Identify entities from search results
-        entity_names = await self._identify_entities(search_text, topic, context)
-        if not entity_names:
-            return CommandResult(text=PennyResponse.LEARN_NO_ENTITIES_FOUND)
-
-        # Create entities and record engagements
-        created_names = self._create_entities_with_engagements(entity_names, context)
-
-        if not created_names:
-            return CommandResult(text=PennyResponse.LEARN_NO_ENTITIES_FOUND)
-
-        # Build response with entity list
-        lines = [PennyResponse.LEARN_DISCOVERED, ""]
-        for i, name in enumerate(created_names, 1):
-            lines.append(f"{i}. **{name}**")
-
-        return CommandResult(text="\n".join(lines))
+        return CommandResult(text=PennyResponse.LEARN_ACKNOWLEDGED.format(topic=topic))
 
     async def _search(self, query: str) -> str | None:
         """Execute search via SearchTool. Returns text or None."""
@@ -192,22 +170,19 @@ class LearnCommand(Command):
 
         return created
 
-    async def _fallback_create_entity(self, topic: str, context: CommandContext) -> CommandResult:
-        """Fallback: create entity directly from topic text (no search)."""
-        entity = context.db.get_or_create_entity(context.user, topic)
-        if entity is None or entity.id is None:
-            return CommandResult(text="Sorry, I couldn't create that topic.")
+    async def _discover_entities_background(self, topic: str, context: CommandContext) -> None:
+        """Search for topic and discover entities in the background."""
+        try:
+            search_text = await self._search(topic)
+            if not search_text:
+                return
 
-        context.db.add_engagement(
-            user=context.user,
-            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
-            entity_id=entity.id,
-        )
+            entity_names = await self._identify_entities(search_text, topic, context)
+            if not entity_names:
+                return
 
-        if self._search_tool:
-            return CommandResult(
-                text=PennyResponse.LEARN_SEARCH_FAILED.format(entity_name=entity.name)
-            )
-        return CommandResult(text=PennyResponse.LEARN_NO_SEARCH.format(entity_name=entity.name))
+            created = self._create_entities_with_engagements(entity_names, context)
+            if created:
+                logger.info("Background discovery for '%s' found: %s", topic, created)
+        except Exception:
+            logger.exception("Background entity discovery failed for '%s'", topic)
