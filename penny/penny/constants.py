@@ -19,6 +19,25 @@ class PennyConstants:
         LIKE = "like"
         DISLIKE = "dislike"
 
+    class EngagementType(StrEnum):
+        """Type of user engagement with an entity."""
+
+        EXPLICIT_STATEMENT = "explicit_statement"
+        EMOJI_REACTION = "emoji_reaction"
+        SEARCH_INITIATED = "search_initiated"
+        FOLLOW_UP_QUESTION = "follow_up_question"
+        LEARN_COMMAND = "learn_command"
+        MESSAGE_MENTION = "message_mention"
+        LIKE_COMMAND = "like_command"
+        DISLIKE_COMMAND = "dislike_command"
+
+    class EngagementValence(StrEnum):
+        """Sentiment direction of an engagement."""
+
+        POSITIVE = "positive"
+        NEGATIVE = "negative"
+        NEUTRAL = "neutral"
+
     # Reaction emoji mappings for sentiment analysis
     LIKE_REACTIONS = ("❤️", "👍", "😆")
     DISLIKE_REACTIONS = ("😠", "👎", "😢")
@@ -65,3 +84,18 @@ class PennyConstants:
     ENTITY_CONTEXT_MAX_FACTS = 5
     KNOWLEDGE_SUFFICIENT_MIN_FACTS = 3
     KNOWLEDGE_SUFFICIENT_MIN_SCORE = 0.5
+
+    # Engagement strength weights (0.0-1.0)
+    ENGAGEMENT_STRENGTH_LEARN_COMMAND = 1.0
+    ENGAGEMENT_STRENGTH_LIKE_COMMAND = 0.8
+    ENGAGEMENT_STRENGTH_DISLIKE_COMMAND = 0.8
+    ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT = 0.7
+    ENGAGEMENT_STRENGTH_SEARCH_INITIATED = 0.6
+    ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION = 0.5
+    ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE = 0.5
+    ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL = 0.3
+    ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE = 0.8
+    ENGAGEMENT_STRENGTH_MESSAGE_MENTION = 0.2
+
+    # Interest score recency decay half-life in days
+    INTEREST_SCORE_HALF_LIFE_DAYS = 30.0

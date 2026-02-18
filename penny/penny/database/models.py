@@ -173,6 +173,20 @@ class Entity(SQLModel, table=True):
     embedding: bytes | None = None  # Serialized float32 embedding vector
 
 
+class Engagement(SQLModel, table=True):
+    """A user engagement event recording interest in an entity or preference."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)  # Signal number or Discord user ID
+    entity_id: int | None = Field(default=None, foreign_key="entity.id", index=True)
+    preference_id: int | None = Field(default=None, foreign_key="preference.id", index=True)
+    engagement_type: str = Field(index=True)  # EngagementType enum value
+    valence: str  # EngagementValence enum value
+    strength: float  # Weight 0.0-1.0
+    source_message_id: int | None = Field(default=None, foreign_key="messagelog.id", index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+
+
 class Fact(SQLModel, table=True):
     """An individual fact about an entity with provenance tracking."""
 

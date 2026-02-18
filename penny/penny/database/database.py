@@ -12,6 +12,7 @@ from penny.agents.models import MessageRole
 from penny.constants import PennyConstants
 from penny.database.models import (
     CommandLog,
+    Engagement,
     Entity,
     Fact,
     MessageLog,
@@ -923,7 +924,7 @@ class Database:
 
     def delete_entity(self, entity_id: int) -> bool:
         """
-        Delete an entity and its associated facts.
+        Delete an entity and its associated facts and engagements.
 
         Args:
             entity_id: Entity primary key
@@ -937,14 +938,26 @@ class Database:
                 if not entity:
                     return False
 
-                # Delete associated facts first
+                # Delete associated engagements first
+                engagements = list(
+                    session.exec(select(Engagement).where(Engagement.entity_id == entity_id)).all()
+                )
+                for engagement in engagements:
+                    session.delete(engagement)
+
+                # Delete associated facts
                 facts = list(session.exec(select(Fact).where(Fact.entity_id == entity_id)).all())
                 for fact in facts:
                     session.delete(fact)
 
                 session.delete(entity)
                 session.commit()
-                logger.debug("Deleted entity %d and %d facts", entity_id, len(facts))
+                logger.debug(
+                    "Deleted entity %d (%d facts, %d engagements)",
+                    entity_id,
+                    len(facts),
+                    len(engagements),
+                )
                 return True
         except Exception as e:
             logger.error("Failed to delete entity: %s", e)
@@ -1119,6 +1132,14 @@ class Database:
                         else:
                             session.delete(fact)
 
+                    # Reassign engagements from duplicate to primary
+                    engagements = list(
+                        session.exec(select(Engagement).where(Engagement.entity_id == dup_id)).all()
+                    )
+                    for engagement in engagements:
+                        engagement.entity_id = primary_id
+                        session.add(engagement)
+
                     # Delete the duplicate entity
                     dup = session.get(Entity, dup_id)
                     if dup:
@@ -1269,5 +1290,100 @@ class Database:
                     .where(Preference.embedding == None)  # noqa: E711
                     .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
+                ).all()
+            )
+
+    # --- Engagement methods ---
+
+    def add_engagement(
+        self,
+        user: str,
+        engagement_type: str,
+        valence: str,
+        strength: float,
+        entity_id: int | None = None,
+        preference_id: int | None = None,
+        source_message_id: int | None = None,
+    ) -> Engagement | None:
+        """
+        Record a user engagement event.
+
+        Args:
+            user: User identifier
+            engagement_type: EngagementType enum value
+            valence: EngagementValence enum value
+            strength: Engagement weight (0.0-1.0)
+            entity_id: Optional entity FK
+            preference_id: Optional preference FK
+            source_message_id: Optional source message FK
+
+        Returns:
+            The created Engagement, or None on failure
+        """
+        try:
+            with self.get_session() as session:
+                engagement = Engagement(
+                    user=user,
+                    entity_id=entity_id,
+                    preference_id=preference_id,
+                    engagement_type=engagement_type,
+                    valence=valence,
+                    strength=strength,
+                    source_message_id=source_message_id,
+                )
+                session.add(engagement)
+                session.commit()
+                session.refresh(engagement)
+                logger.debug(
+                    "Added %s engagement (valence=%s, strength=%.2f) for user %s",
+                    engagement_type,
+                    valence,
+                    strength,
+                    user,
+                )
+                return engagement
+        except Exception as e:
+            logger.error("Failed to add engagement: %s", e)
+            return None
+
+    def get_entity_engagements(self, user: str, entity_id: int) -> list[Engagement]:
+        """
+        Get all engagements for a specific entity.
+
+        Args:
+            user: User identifier
+            entity_id: Entity primary key
+
+        Returns:
+            List of engagements ordered by created_at descending (newest first)
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Engagement)
+                    .where(
+                        Engagement.user == user,
+                        Engagement.entity_id == entity_id,
+                    )
+                    .order_by(Engagement.created_at.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
+    def get_user_engagements(self, user: str) -> list[Engagement]:
+        """
+        Get all engagements for a user.
+
+        Args:
+            user: User identifier
+
+        Returns:
+            List of engagements ordered by created_at descending (newest first)
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Engagement)
+                    .where(Engagement.user == user)
+                    .order_by(Engagement.created_at.desc())  # type: ignore[unresolved-attribute]
                 ).all()
             )

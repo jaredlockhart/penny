@@ -7,7 +7,7 @@ import pytest
 from sqlmodel import select
 
 from penny.constants import PennyConstants
-from penny.database.models import Fact
+from penny.database.models import Engagement, Fact
 from penny.ollama.embeddings import deserialize_embedding, serialize_embedding
 from penny.tests.conftest import TEST_SENDER
 
@@ -74,6 +74,15 @@ async def test_entity_cleaner_merges_duplicates(
         penny.db.add_fact(stanford_uni.id, "Founded in 1885")
         penny.db.add_fact(stanford_uni.id, "Located in California")  # Duplicate fact
 
+        # Pre-seed an engagement on the duplicate entity
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.6,
+            entity_id=stanford_uni.id,
+        )
+
         kef = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
         assert kef is not None and kef.id is not None
         penny.db.add_fact(kef.id, "Costs $1,599 per pair")
@@ -109,6 +118,22 @@ async def test_entity_cleaner_merges_duplicates(
                 session.exec(select(Fact).where(Fact.entity_id == stanford_uni.id)).all()
             )
             assert len(orphan_facts) == 0
+
+        # Verify engagements were reassigned from duplicate to primary
+        with penny.db.get_session() as session:
+            primary_engagements = list(
+                session.exec(select(Engagement).where(Engagement.entity_id == stanford.id)).all()
+            )
+            assert len(primary_engagements) == 1
+            assert primary_engagements[0].entity_id == stanford.id
+
+            # No orphaned engagements for the deleted entity
+            orphan_engagements = list(
+                session.exec(
+                    select(Engagement).where(Engagement.entity_id == stanford_uni.id)
+                ).all()
+            )
+            assert len(orphan_engagements) == 0
 
         # Verify unrelated entity is unchanged
         kef_after = next(e for e in entities if e.name == "kef ls50 meta")
