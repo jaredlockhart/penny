@@ -5,7 +5,7 @@ import json
 import pytest
 from sqlmodel import select
 
-from penny.database.models import EntitySearchLog, SearchLog
+from penny.database.models import SearchLog
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -23,7 +23,8 @@ async def test_entity_extractor_processes_search_log(
     1. Send a message (triggers search, creates SearchLog entry)
     2. Run EntityExtractor.execute() directly
     3. Pass 1: identify entities (known + new), Pass 2: extract facts per entity
-    4. Verify entities and facts were stored in the database
+    4. Verify entities and facts were stored as individual Fact rows
+    5. Verify SearchLog is marked as extracted
     """
     config = make_config()
 
@@ -88,17 +89,21 @@ async def test_entity_extractor_processes_search_log(
         entities = penny.db.get_user_entities(TEST_SENDER)
         assert len(entities) >= 1
         entity = next(e for e in entities if e.name == "kef ls50 meta")
-        assert "Costs $1,599 per pair" in entity.facts
-        assert "Metamaterial Absorption Technology" in entity.facts
 
-        # Verify entity-search link was created
+        # Verify facts stored as individual Fact rows
+        facts = penny.db.get_entity_facts(entity.id)
+        fact_contents = [f.content for f in facts]
+        assert "Costs $1,599 per pair" in fact_contents
+        assert "Features Metamaterial Absorption Technology" in fact_contents
+
+        # Verify facts have source_search_log_id set
+        assert all(f.source_search_log_id == search_logs[0].id for f in facts)
+
+        # Verify SearchLog is marked as extracted
         with penny.db.get_session() as session:
-            links = list(session.exec(select(EntitySearchLog)).all())
-            assert len(links) >= 1
-            assert any(
-                link.entity_id == entity.id and link.search_log_id == search_logs[0].id
-                for link in links
-            )
+            sl = session.get(SearchLog, search_logs[0].id)
+            assert sl is not None
+            assert sl.extracted is True
 
 
 @pytest.mark.asyncio
@@ -112,7 +117,7 @@ async def test_entity_extractor_skips_processed(
 ):
     """
     Test that EntityExtractor doesn't reprocess entries:
-    1. Process entries once (join table rows created)
+    1. Process entries once (extracted flag set)
     2. Run execute() again
     3. Verify no additional Ollama calls for extraction
     """
@@ -184,12 +189,12 @@ async def test_entity_extractor_known_and_new_entities(
 ):
     """
     Test mixed known + new entity extraction:
-    1. Pre-seed an existing entity with facts
+    1. Pre-seed an existing entity with a fact
     2. Send a message that mentions the existing entity and a new one
     3. Pass 1 returns the existing entity as known and the new one as new
     4. Pass 2 discovers new facts for the existing entity and facts for the new one
     5. Verify existing entity got new facts appended, new entity was created with facts
-    6. Verify join table links both entities to the search log
+    6. Verify SearchLog marked as extracted
     """
     config = make_config()
 
@@ -241,7 +246,7 @@ async def test_entity_extractor_known_and_new_entities(
         # Pre-seed an existing entity with a fact
         entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.update_entity_facts(entity.id, "- Costs $1,599 per pair")
+        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
 
         # Send message to create a SearchLog entry
         await signal_server.push_message(
@@ -258,20 +263,22 @@ async def test_entity_extractor_known_and_new_entities(
 
         # Existing entity should have original fact + new fact
         kef = next(e for e in entities if e.name == "kef ls50 meta")
-        assert "Costs $1,599 per pair" in kef.facts
-        assert "Won What Hi-Fi 2024 award" in kef.facts
+        kef_facts = [f.content for f in penny.db.get_entity_facts(kef.id)]
+        assert "Costs $1,599 per pair" in kef_facts
+        assert "Won What Hi-Fi 2024 award" in kef_facts
 
         # New entity should have its facts
         wharfedale = next(e for e in entities if e.name == "wharfedale linton")
-        assert "Heritage design with modern drivers" in wharfedale.facts
-        assert "Costs $1,199 per pair" in wharfedale.facts
+        wharfedale_facts = [f.content for f in penny.db.get_entity_facts(wharfedale.id)]
+        assert "Heritage design with modern drivers" in wharfedale_facts
+        assert "Costs $1,199 per pair" in wharfedale_facts
 
-        # Verify join table has links for both entities
+        # Verify SearchLog is marked as extracted
         with penny.db.get_session() as session:
-            links = list(session.exec(select(EntitySearchLog)).all())
-            entity_ids = {link.entity_id for link in links}
-            assert kef.id in entity_ids
-            assert wharfedale.id in entity_ids
+            search_logs = list(
+                session.exec(select(SearchLog).where(SearchLog.extracted == True)).all()  # noqa: E712
+            )
+            assert len(search_logs) >= 1
 
 
 @pytest.mark.asyncio
@@ -285,7 +292,7 @@ async def test_entity_extractor_empty_extraction(
 ):
     """
     Test that EntityExtractor handles empty extraction results gracefully
-    and still marks the search as processed via a sentinel join table row.
+    and still marks the SearchLog as extracted.
     """
     config = make_config()
 
@@ -310,11 +317,11 @@ async def test_entity_extractor_empty_extraction(
         work_done = await penny.entity_extractor.execute()
         assert work_done is False, "No entities extracted means no work done"
 
-        # Sentinel row should exist so we don't reprocess
+        # SearchLog should be marked as extracted so we don't reprocess
         with penny.db.get_session() as session:
-            links = list(session.exec(select(EntitySearchLog)).all())
-            assert len(links) >= 1
-            assert any(link.entity_id is None for link in links)
+            search_logs = list(session.exec(select(SearchLog)).all())
+            assert len(search_logs) >= 1
+            assert all(sl.extracted for sl in search_logs)
 
         # No entities stored
         entities = penny.db.get_user_entities(TEST_SENDER)

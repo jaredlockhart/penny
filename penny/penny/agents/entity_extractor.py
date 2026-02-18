@@ -97,7 +97,7 @@ class EntityExtractor(Agent):
 
             user = self.db.find_sender_for_timestamp(search_log.timestamp)
             if not user:
-                self.db.link_entity_to_search_log(None, search_log.id)
+                self.db.mark_search_extracted(search_log.id)
                 continue
 
             logger.info("Extracting entities from search: %s", search_log.query)
@@ -119,7 +119,7 @@ class EntityExtractor(Agent):
         Two-pass extraction for a single piece of content.
 
         Pass 1: Identify known + new entities in the text.
-        Pass 2: For each entity, extract new facts.
+        Pass 2: For each entity, extract new facts as individual Fact rows.
 
         Returns True if any new entities or facts were stored.
         """
@@ -128,7 +128,7 @@ class EntityExtractor(Agent):
         # Pass 1: identify entities
         identified = await self._identify_entities(existing_entities, query, content)
         if not identified:
-            self.db.link_entity_to_search_log(None, search_log_id)
+            self.db.mark_search_extracted(search_log_id)
             return False
 
         work_done = False
@@ -159,32 +159,32 @@ class EntityExtractor(Agent):
         # Pass 2: extract facts for each identified entity
         for entity in entities_to_process:
             assert entity.id is not None
-            self.db.link_entity_to_search_log(entity.id, search_log_id)
             new_facts = await self._extract_facts(entity, query, content)
             if not new_facts:
                 continue
 
-            # Merge new facts (dedup in Python-space with normalization)
-            existing_facts = {
-                line.strip() for line in entity.facts.strip().split("\n") if line.strip()
-            }
-            existing_normalized = {_normalize_fact(line) for line in existing_facts}
-            genuinely_new = [
-                f"- {fact.strip()}"
-                for fact in new_facts
-                if fact.strip() and _normalize_fact(f"- {fact.strip()}") not in existing_normalized
-            ]
+            # Dedup against existing Fact rows
+            existing_fact_rows = self.db.get_entity_facts(entity.id)
+            existing_normalized = {_normalize_fact(f.content) for f in existing_fact_rows}
 
-            if genuinely_new:
-                all_facts = list(existing_facts) + genuinely_new
-                self.db.update_entity_facts(entity.id, "\n".join(all_facts))
-                for fact in genuinely_new:
-                    logger.info("  '%s' +fact: %s", entity.name, fact)
+            for fact_text in new_facts:
+                fact_text = fact_text.strip()
+                if not fact_text:
+                    continue
+                if _normalize_fact(fact_text) in existing_normalized:
+                    continue
+
+                self.db.add_fact(
+                    entity_id=entity.id,
+                    content=fact_text,
+                    source_search_log_id=search_log_id,
+                )
+                existing_normalized.add(_normalize_fact(fact_text))
+                logger.info("  '%s' +fact: %s", entity.name, fact_text)
                 work_done = True
 
-        # If no entities were linked (all names were empty/invalid), insert sentinel
-        if not entities_to_process:
-            self.db.link_entity_to_search_log(None, search_log_id)
+        # Mark search as processed
+        self.db.mark_search_extracted(search_log_id)
 
         return work_done
 
@@ -234,10 +234,13 @@ class EntityExtractor(Agent):
 
         Injects the entity's existing facts so the LLM only returns new ones.
         """
+        assert entity.id is not None
+        existing_fact_rows = self.db.get_entity_facts(entity.id)
         existing_context = ""
-        if entity.facts.strip():
+        if existing_fact_rows:
+            facts_text = "\n".join(f"- {f.content}" for f in existing_fact_rows)
             existing_context = (
-                f"\n\nAlready known facts (return only NEW facts not listed here):\n{entity.facts}"
+                f"\n\nAlready known facts (return only NEW facts not listed here):\n{facts_text}"
             )
 
         prompt = (

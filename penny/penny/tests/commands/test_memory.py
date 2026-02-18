@@ -20,10 +20,11 @@ async def test_memory_list_and_show(signal_server, test_config, mock_ollama, run
     async with running_penny(test_config) as penny:
         # Seed entities (ordered by updated_at DESC, so last-updated appears first)
         entity1 = penny.db.get_or_create_entity(TEST_SENDER, "nvidia jetson")
-        penny.db.update_entity_facts(entity1.id, "- Edge AI compute module")
+        penny.db.add_fact(entity1.id, "Edge AI compute module")
 
         entity2 = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
-        penny.db.update_entity_facts(entity2.id, "- Costs $1,599 per pair\n- Uses MAT driver")
+        penny.db.add_fact(entity2.id, "Costs $1,599 per pair")
+        penny.db.add_fact(entity2.id, "Uses MAT driver")
 
         # List entities (most recently updated first)
         await signal_server.push_message(sender=TEST_SENDER, content="/memory")
@@ -55,7 +56,8 @@ async def test_memory_delete(signal_server, test_config, mock_ollama, running_pe
     async with running_penny(test_config) as penny:
         # Seed entity
         entity = penny.db.get_or_create_entity(TEST_SENDER, "wharfedale linton")
-        penny.db.update_entity_facts(entity.id, "- Classic heritage speaker\n- 3-way design")
+        penny.db.add_fact(entity.id, "Classic heritage speaker")
+        penny.db.add_fact(entity.id, "3-way design")
 
         # Delete it
         await signal_server.push_message(sender=TEST_SENDER, content="/memory 1 delete")

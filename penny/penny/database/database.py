@@ -13,7 +13,7 @@ from penny.constants import PennyConstants
 from penny.database.models import (
     CommandLog,
     Entity,
-    EntitySearchLog,
+    Fact,
     MessageLog,
     PersonalityPrompt,
     Preference,
@@ -900,26 +900,6 @@ class Database:
             logger.error("Failed to get_or_create entity: %s", e)
             return None
 
-    def update_entity_facts(self, entity_id: int, facts: str) -> None:
-        """
-        Replace the facts text for an entity.
-
-        Args:
-            entity_id: Entity primary key
-            facts: New facts text (bulleted lines)
-        """
-        try:
-            with self.get_session() as session:
-                entity = session.get(Entity, entity_id)
-                if entity:
-                    entity.facts = facts
-                    entity.updated_at = datetime.now(UTC)
-                    session.add(entity)
-                    session.commit()
-                    logger.debug("Updated facts for entity %d", entity_id)
-        except Exception as e:
-            logger.error("Failed to update entity facts: %s", e)
-
     def get_user_entities(self, user: str) -> list[Entity]:
         """
         Get all entities for a user.
@@ -939,7 +919,7 @@ class Database:
 
     def delete_entity(self, entity_id: int) -> bool:
         """
-        Delete an entity and its search log links.
+        Delete an entity and its associated facts.
 
         Args:
             entity_id: Entity primary key
@@ -953,20 +933,82 @@ class Database:
                 if not entity:
                     return False
 
-                # Delete associated search log links first
-                links = session.exec(
-                    select(EntitySearchLog).where(EntitySearchLog.entity_id == entity_id)
-                ).all()
-                for link in links:
-                    session.delete(link)
+                # Delete associated facts first
+                facts = list(session.exec(select(Fact).where(Fact.entity_id == entity_id)).all())
+                for fact in facts:
+                    session.delete(fact)
 
                 session.delete(entity)
                 session.commit()
-                logger.debug("Deleted entity %d", entity_id)
+                logger.debug("Deleted entity %d and %d facts", entity_id, len(facts))
                 return True
         except Exception as e:
             logger.error("Failed to delete entity: %s", e)
             return False
+
+    # --- Fact methods ---
+
+    def add_fact(
+        self,
+        entity_id: int,
+        content: str,
+        source_url: str | None = None,
+        source_search_log_id: int | None = None,
+    ) -> Fact | None:
+        """
+        Add a fact to an entity.
+
+        Args:
+            entity_id: Entity primary key
+            content: The fact text
+            source_url: URL where the fact was found
+            source_search_log_id: SearchLog ID that produced this fact
+
+        Returns:
+            The created Fact, or None on failure
+        """
+        try:
+            with self.get_session() as session:
+                fact = Fact(
+                    entity_id=entity_id,
+                    content=content,
+                    source_url=source_url,
+                    source_search_log_id=source_search_log_id,
+                )
+                session.add(fact)
+
+                # Touch the parent entity's updated_at
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.updated_at = datetime.now(UTC)
+                    session.add(entity)
+
+                session.commit()
+                session.refresh(fact)
+                logger.debug("Added fact to entity %d: %s", entity_id, content[:50])
+                return fact
+        except Exception as e:
+            logger.error("Failed to add fact to entity %d: %s", entity_id, e)
+            return None
+
+    def get_entity_facts(self, entity_id: int) -> list[Fact]:
+        """
+        Get all facts for an entity.
+
+        Args:
+            entity_id: Entity primary key
+
+        Returns:
+            List of facts ordered by learned_at ascending (oldest first)
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Fact).where(Fact.entity_id == entity_id).order_by(Fact.learned_at.asc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
+    # --- Search extraction tracking ---
 
     def get_unprocessed_search_logs(self, limit: int) -> list[SearchLog]:
         """
@@ -978,34 +1020,32 @@ class Database:
         Returns:
             List of unprocessed SearchLog entries, most recent first
         """
-        processed_ids = select(EntitySearchLog.search_log_id).distinct()
         with self.get_session() as session:
             return list(
                 session.exec(
                     select(SearchLog)
-                    .where(SearchLog.id.not_in(processed_ids))  # type: ignore[union-attr]
+                    .where(SearchLog.extracted == False)  # noqa: E712
                     .order_by(SearchLog.id.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
 
-    def link_entity_to_search_log(self, entity_id: int | None, search_log_id: int) -> None:
+    def mark_search_extracted(self, search_log_id: int) -> None:
         """
-        Record that an entity was extracted from a search log.
+        Mark a SearchLog entry as processed for entity extraction.
 
-        When entity_id is None, acts as a sentinel marking the search as processed
-        (e.g., when no entities were found).
+        Args:
+            search_log_id: SearchLog primary key
         """
         try:
             with self.get_session() as session:
-                link = EntitySearchLog(
-                    entity_id=entity_id,
-                    search_log_id=search_log_id,
-                )
-                session.add(link)
-                session.commit()
+                search_log = session.get(SearchLog, search_log_id)
+                if search_log:
+                    search_log.extracted = True
+                    session.add(search_log)
+                    session.commit()
         except Exception as e:
-            logger.error("Failed to link entity %s to search %s: %s", entity_id, search_log_id, e)
+            logger.error("Failed to mark search %d as extracted: %s", search_log_id, e)
 
     def find_sender_for_timestamp(self, timestamp: datetime) -> str | None:
         """
@@ -1034,41 +1074,43 @@ class Database:
             ).first()
             return msg
 
-    def merge_entities(self, primary_id: int, duplicate_ids: list[int], merged_facts: str) -> None:
+    # --- Entity merge ---
+
+    def merge_entities(
+        self, primary_id: int, duplicate_ids: list[int], keep_fact_ids: list[int]
+    ) -> None:
         """
         Merge duplicate entities into a primary entity.
 
-        Reassigns entity_search_log references from duplicates to the primary,
-        updates the primary's facts, and deletes the duplicate entity rows.
-        All operations happen in a single transaction.
+        Reassigns kept facts to the primary, deletes duplicate facts,
+        and deletes the duplicate entity rows. All in a single transaction.
 
         Args:
             primary_id: Entity ID to keep
             duplicate_ids: Entity IDs to merge into primary and delete
-            merged_facts: Combined deduplicated facts text
+            keep_fact_ids: Fact IDs to preserve (reassigned to primary);
+                           all other facts on duplicates are deleted
         """
         try:
+            keep_set = set(keep_fact_ids)
             with self.get_session() as session:
-                # Update primary entity facts
                 primary = session.get(Entity, primary_id)
                 if not primary:
                     logger.error("Primary entity %d not found for merge", primary_id)
                     return
 
-                primary.facts = merged_facts
                 primary.updated_at = datetime.now(UTC)
                 session.add(primary)
 
-                # Reassign entity_search_log references
                 for dup_id in duplicate_ids:
-                    links = list(
-                        session.exec(
-                            select(EntitySearchLog).where(EntitySearchLog.entity_id == dup_id)
-                        ).all()
-                    )
-                    for link in links:
-                        link.entity_id = primary_id
-                        session.add(link)
+                    # Reassign kept facts, delete the rest
+                    facts = list(session.exec(select(Fact).where(Fact.entity_id == dup_id)).all())
+                    for fact in facts:
+                        if fact.id in keep_set:
+                            fact.entity_id = primary_id
+                            session.add(fact)
+                        else:
+                            session.delete(fact)
 
                     # Delete the duplicate entity
                     dup = session.get(Entity, dup_id)
@@ -1079,6 +1121,8 @@ class Database:
                 logger.info("Merged entities %s into %d", duplicate_ids, primary_id)
         except Exception as e:
             logger.error("Failed to merge entities: %s", e)
+
+    # --- Entity cleaning timestamp ---
 
     def get_entity_cleaning_timestamp(self) -> datetime | None:
         """Get the timestamp of the last entity cleaning run."""

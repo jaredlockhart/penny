@@ -33,6 +33,7 @@ class SearchLog(SQLModel, table=True):
     query: str = Field(index=True)
     response: str
     duration_ms: int | None = None
+    extracted: bool = Field(default=False)  # True after entity extraction processing
 
 
 class MessageLog(SQLModel, table=True):
@@ -161,26 +162,22 @@ class PersonalityPrompt(SQLModel, table=True):
 
 
 class Entity(SQLModel, table=True):
-    """A named entity (product, person, place, concept) with accumulated facts."""
+    """A named entity (product, person, place, concept)."""
 
     id: int | None = Field(default=None, primary_key=True)
     user: str = Field(index=True)  # Signal number or Discord user ID
     name: str  # Lowercased canonical name (e.g., "kef ls50 meta")
-    facts: str = ""  # Bulleted text lines, e.g. "- costs $1599\n- uses MAT driver"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class EntitySearchLog(SQLModel, table=True):
-    """Join table linking entities to the search logs they were extracted from.
-
-    A row with entity_id=None is a sentinel marking the search as processed
-    when no entities were found.
-    """
-
-    __tablename__ = "entity_search_log"
+class Fact(SQLModel, table=True):
+    """An individual fact about an entity with provenance tracking."""
 
     id: int | None = Field(default=None, primary_key=True)
-    entity_id: int | None = Field(default=None, foreign_key="entity.id", index=True)
-    search_log_id: int = Field(foreign_key="searchlog.id", index=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    entity_id: int = Field(foreign_key="entity.id", index=True)
+    content: str  # The fact text (e.g., "Costs $1,599 per pair")
+    source_url: str | None = None  # URL where the fact was found
+    source_search_log_id: int | None = Field(default=None, foreign_key="searchlog.id", index=True)
+    learned_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_verified: datetime | None = None
