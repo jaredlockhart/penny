@@ -283,6 +283,13 @@ class ExtractionPipeline(Agent):
             if not reactions and not messages:
                 continue
 
+            logger.info(
+                "Processing messages for %s: %d messages, %d reactions",
+                sender,
+                len(messages),
+                len(reactions),
+            )
+
             # --- Entity/fact extraction from messages ---
             for message in messages:
                 if not self._should_process_message(message):
@@ -361,6 +368,8 @@ class ExtractionPipeline(Agent):
                 self.db.mark_messages_processed(reaction_ids)
             if message_ids:
                 self.db.mark_messages_processed(message_ids)
+
+            logger.info("Finished processing messages for %s", sender)
 
         return work_done
 
