@@ -60,6 +60,9 @@ scripts/
   workflows/
     check.yml                   — CI: runs make check on push/PR to main
   CODEOWNERS                    — Trusted maintainers (used by penny-team filtering)
+docs/                           — Design documents
+  knowledge-system-plan.md      — Knowledge System v2 design
+  knowledge-system-flows.md     — Knowledge System v2 sequence diagrams
 data/                           — Runtime data (gitignored)
 ```
 

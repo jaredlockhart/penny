@@ -35,6 +35,9 @@ penny/
   config.py           — Config dataclass loaded from .env, channel auto-detection
   config_params.py    — ConfigParam definitions for runtime-configurable settings
   constants.py        — System prompt, research prompts, all constants
+  interest.py         — Interest score computation (pure function, half-life decay)
+  prompts.py          — LLM prompt templates (extraction, entity merge, learn queries)
+  responses.py        — All user-facing response strings (PennyResponse class)
   startup.py          — Startup announcement message generation (git commit info)
   datetime_utils.py   — Timezone derivation from location (geopy + timezonefinder)
   agents/
@@ -57,11 +60,14 @@ penny/
     index.py          — /commands: list available commands
     profile.py        — /profile: user info collection (name, location, DOB, timezone)
     learn.py          — /learn: express active research interest in a topic
+    memory.py         — /memory: view/manage knowledge base entities and facts
+    interests.py      — /interests: ranked interest graph visibility
     preferences.py    — /like, /dislike, /unlike, /undislike: explicit preference management
     schedule.py       — /schedule: create, list, delete recurring background tasks
     test.py           — /test: isolated test mode for development
     draw.py           — /draw: generate images via Ollama image model (optional)
     bug.py            — /bug: file GitHub issues (optional, requires GitHub App)
+    feature.py        — /feature: file GitHub feature requests (optional, requires GitHub App)
     email.py          — /email: search Fastmail email via JMAP (optional)
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
@@ -84,12 +90,14 @@ penny/
     database.py       — Database: SQLite via SQLModel, thread walking, preference/entity storage
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0018)
+    migrations/       — Numbered migration files (0001–0019)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client
     models.py         — ChatResponse, ChatResponseMessage
+    embeddings.py     — Embedding utilities (serialize, deserialize, find_similar, build_entity_embed_text)
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
+    test_interest.py, test_embeddings.py, test_periodic_schedule.py
     mocks/
       signal_server.py  — Mock Signal WebSocket + REST server (aiohttp)
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
@@ -97,11 +105,12 @@ penny/
     agents/           — Per-agent integration tests
       test_message.py, test_extraction.py, test_entity_cleaner.py, test_learn_loop.py
     channels/         — Channel integration tests
-      test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py, test_startup_announcement.py
+      test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py,
+      test_signal_formatting.py, test_startup_announcement.py
     commands/         — Per-command tests
-      test_commands.py, test_debug.py, test_config.py, test_draw.py, test_email.py,
-      test_learn.py, test_preferences.py,
-      test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
+      test_commands.py, test_config.py, test_debug.py, test_draw.py, test_email.py,
+      test_feature.py, test_interests.py, test_learn.py, test_memory.py,
+      test_preferences.py, test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
     jmap/             — JMAP client tests
@@ -133,14 +142,16 @@ The base `Agent` class implements the core agentic loop:
 - Unified background task replacing the former EntityExtractor and PreferenceAgent
 - Processes both SearchLog entries and MessageLog entries in a single pipeline
 - Three phases per execution: search log extraction → message extraction → embedding backfill
-- **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results
+- **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results. Checks `trigger` field to determine mode — full extraction (user-triggered, creates entities with validation) vs known-only (penny-triggered, facts only)
+- **Entity validation**: New entity candidates pass structural filter (word count, LLM artifacts, URLs) then semantic filter (embedding similarity to query, threshold ~0.35)
 - **Message extraction**: Extracts entities/facts from user messages AND preferences from messages+reactions
 - Pre-filters messages before LLM calls: skips short messages (< 20 chars) and slash commands
 - Creates MESSAGE_MENTION engagements when entities are found in user messages
+- Creates SEARCH_INITIATED engagements for entities found in user-triggered searches
 - Links new preferences to existing entities via embedding similarity
 - Fact dedup: normalized string match (fast) then embedding similarity (paraphrase detection, threshold=0.85)
 - Facts track provenance via `source_search_log_id` or `source_message_id`
-- Sends batched preference notifications via channel
+- Sends fact discovery notifications: one proactive message per entity with new facts, exponential backoff on silence
 - All content processed newest-first (ORDER BY timestamp DESC)
 
 **EntityCleaner** (`agents/entity_cleaner.py`)
@@ -236,13 +247,16 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/config** (`config.py`): View and modify runtime settings (e.g., `/config idle_seconds 600`)
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
 - **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` searches via SearchTool, discovers entities from results via LLM entity identification, creates them with LEARN_COMMAND engagements. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`). Falls back to creating a single entity from topic text if no SearchTool is configured
-- **/like**, **/dislike**, **/unlike**, **/undislike** (`preferences.py`): Explicitly manage preferences
+- **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities with fact counts; `/memory <number>` shows entity details and facts; `/memory <number> delete` removes an entity and its facts
+- **/interests** (`interests.py`): View interest graph ranked by computed score. Displays entity name, score (with sign), fact count, and last activity date. Score = `sum(valence_sign × strength × recency_decay)` with 30-day half-life. Capped at 20 entries
+- **/like**, **/dislike**, **/unlike**, **/undislike** (`preferences.py`): Explicitly manage preferences. `/like` also creates an entity for the topic (user-triggered entity creation path) with a LIKE_COMMAND engagement
 - **/schedule** (`schedule.py`): Create, list, and delete recurring cron-based background tasks (uses LLM to parse natural language timing)
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
 
 ### Conditional Commands (registered based on config)
 - **/draw** (`draw.py`): Generate images via Ollama image model (requires `OLLAMA_IMAGE_MODEL`)
 - **/bug** (`bug.py`): File a bug report on GitHub (requires GitHub App config)
+- **/feature** (`feature.py`): File a feature request on GitHub (requires GitHub App config)
 - **/email** (`email.py`): Search Fastmail email via JMAP (requires `FASTMAIL_API_TOKEN`)
 
 ### Runtime Configuration
@@ -250,6 +264,54 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `ConfigParam` definitions in `config_params.py` declare which settings are runtime-configurable, with types and validation
 - Config values are read on each use (not cached), so changes take effect immediately
 - Configurable params: `MESSAGE_MAX_STEPS`, `IDLE_SECONDS`, `MAINTENANCE_INTERVAL_SECONDS`, `LEARN_LOOP_INTERVAL`
+
+## Knowledge System
+
+Penny learns what the user likes, finds information about those things, and proactively grows that knowledge over time. The system is built on three core principles:
+
+1. **Entity creation is user-gated** — only user-triggered actions (messages, `/learn`, `/like`) create new entities
+2. **Fact extraction is universal** — any search result can produce facts about known entities
+3. **Penny's enrichment is fact-only** — background searches deepen knowledge, never widen it
+
+### Data Model
+
+- **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search
+- **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at` and `last_verified` timestamps
+- **Engagement**: User interest signals (likes, searches, mentions, reactions). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
+- **Preference**: User likes/dislikes with optional embeddings for entity matching
+- **LearnPrompt**: First-class learning prompt with lifecycle tracking — enables provenance chain: prompt → searches → facts → entities
+
+### Interest Scores (`interest.py`)
+
+Pure function: `compute_interest_score(engagements) → float`
+
+Formula: `sum(valence_sign × strength × recency_decay)` with 30-day half-life. Drives research priority in the learn loop and ranking in `/interests`.
+
+### Search Trigger Tracking
+
+Every SearchLog has a `trigger` field determining extraction behavior:
+
+| Trigger | New entities? | New facts? | Engagements? |
+|---|---|---|---|
+| `user_message` | Yes | Yes | Yes |
+| `learn_command` | Yes | Yes | Yes |
+| `penny_enrichment` | No | Yes | No |
+
+### Two-Mode Extraction
+
+The ExtractionPipeline checks each SearchLog's trigger to determine mode:
+- **Full mode** (user-triggered): Identifies new AND known entities, validates candidates before creation
+- **Known-only mode** (penny-triggered): Only matches against known entities, never creates new ones
+
+### Entity Validation
+
+New entity candidates pass through two filters before creation:
+1. **Structural filter** (deterministic): Rejects names > 8 words, LLM output artifacts, URLs, markdown
+2. **Semantic filter** (embedding-based): Rejects candidates with low cosine similarity to the triggering query
+
+### Fact Discovery Notifications
+
+When extraction discovers new facts, one proactive message per entity is sent. Uses exponential backoff: each message without a user reply doubles the delay. User engagement resets backoff to zero.
 
 ## Message Flow
 
@@ -302,7 +364,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0018):
+File-based migration system in `database/migrations/` (currently 0001–0019):
 - Each migration is a numbered Python file (e.g., `0001_add_reaction_fields.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -321,6 +383,7 @@ Notable migrations:
 - 0014–0016: Facts restructure, embedding columns, engagement table (knowledge system phases 1–3)
 - 0017: `source_message_id` on `fact` table (message-sourced fact provenance)
 - 0018: Drop `research_tasks` and `research_iterations` tables (replaced by learn loop)
+- 0019: `LearnPrompt` table + `trigger`/`learn_prompt_id` columns on `SearchLog` (knowledge system v2)
 
 ## Extending
 
