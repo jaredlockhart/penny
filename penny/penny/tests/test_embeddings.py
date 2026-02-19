@@ -147,7 +147,7 @@ class TestOllamaClientEmbed:
 
     @pytest.mark.asyncio
     async def test_embed_default_mock(self, mock_ollama):
-        """Default mock returns zero vectors."""
+        """Default mock returns unit vectors."""
         from penny.ollama.client import OllamaClient
 
         client = OllamaClient(
@@ -159,7 +159,7 @@ class TestOllamaClientEmbed:
         result = await client.embed("test", model="nomic-embed-text")
 
         assert len(result) == 1
-        assert all(v == 0.0 for v in result[0])
+        assert result[0] == [1.0, 0.0, 0.0, 0.0]
 
     @pytest.mark.asyncio
     async def test_embed_404_raises_immediately_without_retry(self, mock_ollama):

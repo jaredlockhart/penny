@@ -95,9 +95,9 @@ class MockOllamaAsyncClient:
         if self._embed_handler:
             embeddings = self._embed_handler(model, input)
         else:
-            # Default: return zero vectors of dimension 4
+            # Default: return unit vectors (non-zero so cosine similarity works)
             texts = [input] if isinstance(input, str) else input
-            embeddings = [[0.0] * 4 for _ in texts]
+            embeddings = [[1.0, 0.0, 0.0, 0.0] for _ in texts]
 
         return MockEmbedResponse(embeddings)
 
@@ -166,4 +166,11 @@ def mock_ollama(monkeypatch: pytest.MonkeyPatch) -> MockOllamaAsyncClient:
     global _mock_client
     _mock_client = MockOllamaAsyncClient()
     monkeypatch.setattr("penny.ollama.client.ollama.AsyncClient", _create_mock_client)
+
+    # Prevent list_models from hitting the real Ollama API (uses httpx, not the SDK)
+    async def _mock_list_models(self: object) -> list[str]:
+        return []
+
+    monkeypatch.setattr("penny.ollama.client.OllamaClient.list_models", _mock_list_models)
+
     return _mock_client
