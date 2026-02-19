@@ -150,14 +150,6 @@ class PennyResponse:
     SCHEDULE_DELETED_PREFIX = "Deleted '{timing} {prompt}' \u2705"
     SCHEDULE_ADDED = "Added {timing}: {prompt} \u2705"
 
-    # ── Personality ──────────────────────────────────────────────────────────
-
-    PERSONALITY_NO_CUSTOM = "No custom personality set \u2014 using the default"
-    PERSONALITY_RESET_SUCCESS = "Ok, personality reset to default \u2705"
-    PERSONALITY_RESET_NOT_SET = "No custom personality to reset"
-    PERSONALITY_UPDATE_SUCCESS = "Ok, personality updated \u2705"
-    PERSONALITY_CURRENT = "Current personality: {prompt_text}"
-
     # ── Email ────────────────────────────────────────────────────────────────
 
     EMAIL_NO_QUERY_TEXT = "Please ask a question about your email. Usage: /email <question>"

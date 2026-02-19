@@ -34,7 +34,7 @@ penny/
   penny.py            — Entry point. Penny class: creates agents, channel, scheduler
   config.py           — Config dataclass loaded from .env, channel auto-detection
   config_params.py    — ConfigParam definitions for runtime-configurable settings
-  constants.py        — System prompt, research prompts, personality prompts, all constants
+  constants.py        — System prompt, research prompts, all constants
   startup.py          — Startup announcement message generation (git commit info)
   datetime_utils.py   — Timezone derivation from location (geopy + timezonefinder)
   agents/
@@ -58,7 +58,6 @@ penny/
     profile.py        — /profile: user info collection (name, location, DOB, timezone)
     learn.py          — /learn: express active research interest in a topic
     preferences.py    — /like, /dislike, /unlike, /undislike: explicit preference management
-    personality.py    — /personality: customize Penny's tone and behavior per user
     schedule.py       — /schedule: create, list, delete recurring background tasks
     test.py           — /test: isolated test mode for development
     draw.py           — /draw: generate images via Ollama image model (optional)
@@ -82,7 +81,7 @@ penny/
       channel.py      — DiscordChannel: discord.py bot integration
       models.py       — DiscordMessage, DiscordUser Pydantic models
   database/
-    database.py       — Database: SQLite via SQLModel, thread walking, preference/personality/entity storage
+    database.py       — Database: SQLite via SQLModel, thread walking, preference/entity storage
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
     migrations/       — Numbered migration files (0001–0018)
@@ -101,7 +100,7 @@ penny/
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py, test_startup_announcement.py
     commands/         — Per-command tests
       test_commands.py, test_debug.py, test_config.py, test_draw.py, test_email.py,
-      test_learn.py, test_preferences.py, test_personality.py,
+      test_learn.py, test_preferences.py,
       test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
@@ -122,9 +121,6 @@ The base `Agent` class implements the core agentic loop:
 - Executes tool calls via `ToolExecutor` with parameter validation
 - Handles duplicate tool call prevention
 - Appends source URLs to responses when model omits them
-- Injects per-user personality prompts from database (if set via `/personality`)
-- Transforms responses through personality prompt before sending
-
 ### Specialized Agents
 
 **MessageAgent** (`agents/message.py`)
@@ -241,7 +237,6 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
 - **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` searches via SearchTool, discovers entities from results via LLM entity identification, creates them with LEARN_COMMAND engagements. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`). Falls back to creating a single entity from topic text if no SearchTool is configured
 - **/like**, **/dislike**, **/unlike**, **/undislike** (`preferences.py`): Explicitly manage preferences
-- **/personality** (`personality.py`): View, set, or reset custom personality prompt per user. Affects Penny's tone and behavior
 - **/schedule** (`schedule.py`): Create, list, and delete recurring cron-based background tasks (uses LLM to parse natural language timing)
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
 
@@ -292,7 +287,6 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **Global idle threshold**: Single configurable idle time (default: 300s) controls when idle-dependent tasks become eligible
 - **Background suspension**: Foreground message processing suspends background tasks to prevent interference
 - **Vision captioning**: When images are present and `OLLAMA_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the foreground model. Search tools are disabled for image messages
-- **Per-user personality**: Users can set custom personality prompts that transform Penny's responses via LLM rewrite
 - **Channel abstraction**: Signal and Discord share the same interface; easy to add more platforms
 - **Async throughout**: asyncio, httpx.AsyncClient, ollama.AsyncClient, discord.py
 - **Host networking**: Docker container uses --network host for simplicity (all services on localhost)
@@ -321,7 +315,6 @@ File-based migration system in `database/migrations/` (currently 0001–0018):
 Notable migrations:
 - 0007: `Schedule` table for user-created recurring tasks
 - 0008: Drop `parent_summary` (removed SummarizeAgent)
-- 0009: `PersonalityPrompt` table for per-user personality customization
 - 0010–0011: `ResearchTask` and `ResearchIteration` tables (deprecated, dropped by 0018)
 - 0012: `Entity` and `entity_extraction_cursor` tables for entity knowledge base
 - 0013: `entity_search_log` join table (replaces cursor; tracks entity-to-search provenance)

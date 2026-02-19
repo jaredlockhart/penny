@@ -17,7 +17,6 @@ from penny.database.models import (
     Fact,
     LearnPrompt,
     MessageLog,
-    PersonalityPrompt,
     Preference,
     PromptLog,
     RuntimeConfig,
@@ -798,74 +797,6 @@ class Database:
                 return True
         except Exception as e:
             logger.error("Failed to move preference: %s", e)
-            return False
-
-    def get_personality_prompt(self, user: str) -> PersonalityPrompt | None:
-        """
-        Get the custom personality prompt for a user.
-
-        Args:
-            user: User identifier (phone number or Discord user ID)
-
-        Returns:
-            PersonalityPrompt object if exists, None otherwise
-        """
-        with self.get_session() as session:
-            return session.exec(
-                select(PersonalityPrompt).where(PersonalityPrompt.user_id == user)
-            ).first()
-
-    def set_personality_prompt(self, user: str, prompt_text: str) -> None:
-        """
-        Set or update the custom personality prompt for a user.
-
-        Args:
-            user: User identifier (phone number or Discord user ID)
-            prompt_text: The custom personality prompt text
-        """
-        try:
-            with self.get_session() as session:
-                existing = session.exec(
-                    select(PersonalityPrompt).where(PersonalityPrompt.user_id == user)
-                ).first()
-
-                if existing:
-                    existing.prompt_text = prompt_text
-                    existing.updated_at = datetime.now(UTC)
-                else:
-                    personality = PersonalityPrompt(user_id=user, prompt_text=prompt_text)
-                    session.add(personality)
-
-                session.commit()
-                logger.debug("Set personality prompt for %s", user)
-        except Exception as e:
-            logger.error("Failed to set personality prompt: %s", e)
-
-    def remove_personality_prompt(self, user: str) -> bool:
-        """
-        Remove the custom personality prompt for a user.
-
-        Args:
-            user: User identifier (phone number or Discord user ID)
-
-        Returns:
-            True if removed, False if not found
-        """
-        try:
-            with self.get_session() as session:
-                personality = session.exec(
-                    select(PersonalityPrompt).where(PersonalityPrompt.user_id == user)
-                ).first()
-
-                if not personality:
-                    return False
-
-                session.delete(personality)
-                session.commit()
-                logger.debug("Removed personality prompt for %s", user)
-                return True
-        except Exception as e:
-            logger.error("Failed to remove personality prompt: %s", e)
             return False
 
     # --- Entity knowledge base methods ---

@@ -131,17 +131,6 @@ class Schedule(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class PersonalityPrompt(SQLModel, table=True):
-    """User custom personality prompts that shape Penny's tone and behavior."""
-
-    __tablename__ = "personalityprompt"
-
-    user_id: str = Field(primary_key=True)  # Signal number or Discord user ID
-    prompt_text: str  # The custom personality prompt
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
 class Entity(SQLModel, table=True):
     """A named entity (product, person, place, concept)."""
 

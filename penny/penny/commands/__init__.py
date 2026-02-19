@@ -11,7 +11,6 @@ from penny.commands.interests import InterestsCommand
 from penny.commands.learn import LearnCommand
 from penny.commands.memory import MemoryCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
-from penny.commands.personality import PersonalityCommand
 from penny.commands.preferences import DislikeCommand, LikeCommand, UndislikeCommand, UnlikeCommand
 from penny.commands.profile import ProfileCommand
 from penny.commands.schedule import ScheduleCommand
@@ -62,7 +61,6 @@ def create_command_registry(
     registry.register(ConfigCommand())
     registry.register(ProfileCommand())
     registry.register(ScheduleCommand())
-    registry.register(PersonalityCommand())
     registry.register(MemoryCommand())
     registry.register(InterestsCommand())
     registry.register(LikeCommand())

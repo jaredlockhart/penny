@@ -14,7 +14,6 @@ from penny.config import Config
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog
 from penny.ollama.embeddings import deserialize_embedding, find_similar
-from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
@@ -151,70 +150,6 @@ class MessageChannel(ABC):
         """
         return text
 
-    async def prepare_outgoing_with_personality(self, text: str, user: str) -> str:
-        """
-        Apply personality transformation to outgoing text.
-
-        If the user has a custom personality prompt set, this method sends the text
-        through an LLM to transform it according to that personality.
-
-        Args:
-            text: The original message text
-            user: User identifier (phone number or Discord user ID)
-
-        Returns:
-            Transformed text if custom personality exists, original text otherwise
-        """
-        # Check if user has a custom personality
-        try:
-            personality = self._db.get_personality_prompt(user)
-        except Exception as e:
-            # Table might not exist yet (e.g., during migration or in test snapshots)
-            logger.debug("Failed to query personality prompt: %s", e)
-            return text
-
-        if not personality:
-            return text
-
-        # Import here to avoid circular dependency
-        from penny.ollama import OllamaClient
-
-        # Create a lightweight Ollama client for the transformation
-        if not self._config:
-            logger.warning("Config not set, skipping personality transform")
-            return text
-
-        ollama_client = OllamaClient(
-            api_url=self._config.ollama_api_url,
-            model=self._config.ollama_foreground_model,
-            db=self._db,
-            max_retries=self._config.ollama_max_retries,
-            retry_delay=self._config.ollama_retry_delay,
-        )
-
-        # Build personality transform prompt
-        system_prompt = Prompt.PERSONALITY_TRANSFORM_PROMPT.format(
-            personality_prompt=personality.prompt_text
-        )
-        messages = [
-            {
-                "role": "system",
-                "content": system_prompt,
-            },
-            {
-                "role": "user",
-                "content": text,
-            },
-        ]
-
-        try:
-            response = await ollama_client.chat(messages=messages)
-            return response.content.strip()
-        except Exception as e:
-            logger.error("Failed to apply personality transform: %s", e)
-            # Fall back to original text if transformation fails
-            return text
-
     @abstractmethod
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """
@@ -278,10 +213,7 @@ class MessageChannel(ABC):
         Returns:
             True if send was successful, False otherwise
         """
-        # Apply personality transformation
-        transformed = await self.prepare_outgoing_with_personality(content, recipient)
-        # Apply channel-specific formatting
-        prepared = self.prepare_outgoing(transformed)
+        prepared = self.prepare_outgoing(content)
         external_id = await self.send_message(
             recipient, prepared, attachments=None, quote_message=None
         )
@@ -308,11 +240,9 @@ class MessageChannel(ABC):
         Returns:
             Database message ID if send was successful, None otherwise
         """
-        # Apply personality transformation
-        transformed = await self.prepare_outgoing_with_personality(content, recipient)
         # Apply channel-specific formatting
         # We log the prepared content so quote matching works correctly
-        prepared = self.prepare_outgoing(transformed)
+        prepared = self.prepare_outgoing(content)
         message_id = self._db.log_message(
             PennyConstants.MessageDirection.OUTGOING,
             self.sender_id,
