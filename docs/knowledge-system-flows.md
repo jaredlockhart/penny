@@ -1,8 +1,8 @@
 # Knowledge System v2 — Sequence Diagrams
 
-## 1. Search Triggers
+## Search Triggers
 
-All paths that create SearchLogs. The `trigger` field determines how extraction processes them.
+### User Message Search
 
 ```mermaid
 sequenceDiagram
@@ -10,90 +10,27 @@ sequenceDiagram
     participant Penny
     participant DB as Database
 
-    Note over User,DB: ── User message ──
-
     User->>Penny: "what's a good bookshelf speaker?"
     Penny->>DB: search + log (trigger=user_message)
     Penny->>User: response
+```
 
-    Note over User,DB: ── /learn command ──
+### /learn Search Sequence
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Penny
+    participant DB as Database
 
     User->>Penny: "/learn ai conferences in europe"
     Penny->>DB: create LearnPrompt(status=active)
     Penny->>User: "Okay, I'll learn more about ai conferences in europe"
     Penny->>DB: generate 3-5 queries, execute each (trigger=learn_command, learn_prompt_id=1)
     Penny->>DB: complete LearnPrompt
-
-    Note over User,DB: ── /like command ──
-
-    User->>Penny: "/like mechanical keyboards"
-    Penny->>DB: create Preference + Entity + LIKE_COMMAND engagement (0.8)
-    Penny->>DB: find similar entities via embedding, boost each
-    Penny->>User: "I added mechanical keyboards to your likes"
 ```
 
-## 2. Extraction Pipeline
-
-Single process. Finds unprocessed SearchLogs, extracts entities and facts, notifies the user.
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant DB as Database
-    participant Extract as Extraction Pipeline
-    participant LLM as Ollama
-
-    Extract->>DB: get unprocessed SearchLogs
-
-    Note over Extract: If user-triggered (user_message, learn_command):
-    Extract->>LLM: identify entities in search results
-    Note over Extract: Validate new candidates (structural + semantic filters)
-    Extract->>DB: create validated entities
-
-    Note over Extract: For all SearchLogs:
-    Extract->>DB: extract + store facts for all present entities
-    Extract->>DB: mark SearchLogs as processed
-    Extract->>User: notify about new entities/facts
-```
-
-## 3. Engagement Signals
-
-All the ways interest is recorded. Positive signals boost entities for enrichment; negative signals suppress them.
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Penny
-    participant DB as Database
-
-    Note over User,DB: ── Conversation signals ──
-
-    User->>Penny: message that triggers search
-    Note over DB: SEARCH_INITIATED (0.6) — user caused a search about this entity
-
-    User->>Penny: follow-up about known entity
-    Note over DB: FOLLOW_UP_QUESTION (0.5) — sustained interest
-
-    Note over User,DB: ── Preference signals ──
-
-    User->>Penny: "/like espresso machines"
-    Note over DB: LIKE_COMMAND (0.8) — strong positive, boosts entity + similar entities
-
-    User->>Penny: "/dislike sports"
-    Note over DB: DISLIKE_COMMAND (-0.8) — strong negative, suppresses entity
-
-    Note over User,DB: ── Reaction signals ──
-
-    User->>Penny: 👍 on proactive message
-    Note over DB: EMOJI_REACTION (0.5) — positive reinforcement
-
-    User->>Penny: 👎 on proactive message
-    Note over DB: EMOJI_REACTION (-0.8) — strong negative, stops enrichment
-```
-
-## 4. Enrichment Loop
-
-Periodic during idle. Picks the highest-priority entity and triggers a search. Extraction picks it up on the next pass.
+### Enrichment Search
 
 ```mermaid
 sequenceDiagram
@@ -104,9 +41,116 @@ sequenceDiagram
     LL->>DB: search top candidate + log (trigger=penny_enrichment)
 ```
 
-## 5. Entity Cleaner
+## Extraction Pipeline
 
-Daily maintenance pass. Deduplicates entities and facts, merges engagement history.
+### Full Mode (user_message, learn_command)
+
+New entities allowed. Validates candidates before creation.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Extract as Extraction Pipeline
+    participant DB as Database
+    participant LLM as Ollama
+
+    Extract->>DB: get unprocessed SearchLogs (user-triggered)
+    Extract->>LLM: identify entities in search results
+    Note over Extract: Validate new candidates (structural + semantic filters)
+    Extract->>DB: create validated entities
+    Extract->>DB: extract + store facts for all present entities
+    Extract->>DB: mark SearchLogs as processed
+    Extract->>User: notify about new entities/facts
+```
+
+### Known-Only Mode (penny_enrichment)
+
+No new entities. Facts only for known entities.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Extract as Extraction Pipeline
+    participant DB as Database
+
+    Extract->>DB: get unprocessed SearchLogs (penny-triggered)
+    Extract->>DB: extract + store facts for known entities only
+    Extract->>DB: mark SearchLogs as processed
+    Extract->>User: notify about new facts
+```
+
+## Engagement Signals
+
+### SEARCH_INITIATED
+
+Recorded by extraction when it finds entities in a user-triggered search.
+
+```mermaid
+sequenceDiagram
+    participant Extract as Extraction Pipeline
+    participant DB as Database
+
+    Note over Extract: Processing user-triggered SearchLog
+    Extract->>DB: found entity "kef ls50 meta" in search results
+    Extract->>DB: add_engagement(SEARCH_INITIATED, strength=0.6, entity=kef_ls50)
+```
+
+### FOLLOW_UP_QUESTION
+
+User asks about an entity Penny already knows.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Penny
+    participant DB as Database
+
+    User->>Penny: "tell me more about the kef ls50 meta"
+    Penny->>DB: entity match found via embedding similarity
+    Penny->>DB: add_engagement(FOLLOW_UP_QUESTION, strength=0.5, entity=kef_ls50)
+```
+
+### LIKE_COMMAND / DISLIKE_COMMAND
+
+Explicit preference. /like also creates the entity if it doesn't exist.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Penny
+    participant DB as Database
+
+    User->>Penny: "/like mechanical keyboards"
+    Penny->>DB: create Preference + Entity
+    Penny->>DB: add_engagement(LIKE_COMMAND, strength=0.8, entity=mechanical_keyboards)
+    Penny->>DB: find similar entities via embedding, boost each
+
+    User->>Penny: "/dislike sports"
+    Penny->>DB: create Preference
+    Penny->>DB: add_engagement(DISLIKE_COMMAND, strength=-0.8, entity=sports)
+```
+
+### EMOJI_REACTION
+
+Reactions on messages. Positive reinforces; negative suppresses.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant DB as Database
+
+    User->>DB: 👍 on message about "obsidian"
+    Note over DB: add_engagement(EMOJI_REACTION, strength=0.5, entity=obsidian)
+
+    User->>DB: 👎 on proactive message about "sourdough"
+    Note over DB: add_engagement(EMOJI_REACTION, strength=-0.8, entity=sourdough)
+```
+
+## Maintenance
+
+### Entity Cleaner
+
+Daily pass. Deduplicates entities and facts, merges engagement history.
 
 ```mermaid
 sequenceDiagram
@@ -122,9 +166,9 @@ sequenceDiagram
     Cleaner->>DB: regenerate embeddings
 ```
 
-## 6. Provenance Chain (/learn status)
+## Views
 
-`/learn` with no args shows what's been discovered, traced through the full chain.
+### /learn Status (Provenance Chain)
 
 ```mermaid
 sequenceDiagram
