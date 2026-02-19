@@ -801,6 +801,18 @@ class Database:
 
     # --- Entity knowledge base methods ---
 
+    def get_entity(self, entity_id: int) -> Entity | None:
+        """Get an entity by ID.
+
+        Args:
+            entity_id: Entity primary key
+
+        Returns:
+            The Entity if found, None otherwise
+        """
+        with self.get_session() as session:
+            return session.get(Entity, entity_id)
+
     def get_or_create_entity(self, user: str, name: str) -> Entity | None:
         """
         Get an existing entity or create a new one.
@@ -1229,6 +1241,103 @@ class Database:
                     )
                     .order_by(LearnPrompt.created_at.desc())  # type: ignore[union-attr]
                 ).all()
+            )
+
+    def get_user_learn_prompts(self, user: str) -> list[LearnPrompt]:
+        """Get all LearnPrompts for a user.
+
+        Args:
+            user: User identifier
+
+        Returns:
+            List of all LearnPrompts ordered by created_at descending (newest first)
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(LearnPrompt)
+                    .where(LearnPrompt.user == user)
+                    .order_by(LearnPrompt.created_at.desc())  # type: ignore[union-attr]
+                ).all()
+            )
+
+    def get_search_logs_by_learn_prompt(self, learn_prompt_id: int) -> list[SearchLog]:
+        """Get all SearchLogs linked to a LearnPrompt.
+
+        Args:
+            learn_prompt_id: LearnPrompt primary key
+
+        Returns:
+            List of SearchLogs ordered by timestamp ascending
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(SearchLog)
+                    .where(SearchLog.learn_prompt_id == learn_prompt_id)
+                    .order_by(SearchLog.timestamp.asc())  # type: ignore[union-attr]
+                ).all()
+            )
+
+    def get_facts_by_search_log_ids(self, search_log_ids: list[int]) -> list[Fact]:
+        """Get all Facts linked to any of the given SearchLog IDs.
+
+        Args:
+            search_log_ids: List of SearchLog primary keys
+
+        Returns:
+            List of Facts with source_search_log_id in the given list
+        """
+        if not search_log_ids:
+            return []
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Fact).where(
+                        Fact.source_search_log_id.in_(search_log_ids)  # type: ignore[union-attr]
+                    )
+                ).all()
+            )
+
+    def decrement_learn_prompt_searches(self, learn_prompt_id: int) -> None:
+        """Decrement searches_remaining by 1 on a LearnPrompt.
+
+        Args:
+            learn_prompt_id: LearnPrompt primary key
+        """
+        try:
+            with self.get_session() as session:
+                learn_prompt = session.get(LearnPrompt, learn_prompt_id)
+                if learn_prompt and learn_prompt.searches_remaining > 0:
+                    learn_prompt.searches_remaining -= 1
+                    learn_prompt.updated_at = datetime.now(UTC)
+                    session.add(learn_prompt)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to decrement LearnPrompt %d searches: %s", learn_prompt_id, e)
+
+    def update_learn_prompt_searches_remaining(
+        self, learn_prompt_id: int, searches_remaining: int
+    ) -> None:
+        """Set the searches_remaining count on a LearnPrompt.
+
+        Args:
+            learn_prompt_id: LearnPrompt primary key
+            searches_remaining: New count of remaining searches
+        """
+        try:
+            with self.get_session() as session:
+                learn_prompt = session.get(LearnPrompt, learn_prompt_id)
+                if learn_prompt:
+                    learn_prompt.searches_remaining = searches_remaining
+                    learn_prompt.updated_at = datetime.now(UTC)
+                    session.add(learn_prompt)
+                    session.commit()
+        except Exception as e:
+            logger.error(
+                "Failed to update LearnPrompt %d searches_remaining: %s",
+                learn_prompt_id,
+                e,
             )
 
     # --- Embedding methods ---

@@ -134,3 +134,4 @@ class PennyConstants:
 
     # LearnPrompt defaults
     LEARN_PROMPT_DEFAULT_SEARCHES = 5
+    LEARN_STATUS_DISPLAY_LIMIT = 10

@@ -1,4 +1,4 @@
-"""/learn command — express interest in a topic for background research."""
+"""/learn command — research a topic with full provenance tracking."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from penny.agents.extraction import IdentifiedEntities
+from pydantic import BaseModel, Field
+
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.constants import PennyConstants
-from penny.database.models import Engagement
-from penny.interest import compute_interest_score
+from penny.database.models import Entity
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.models import SearchResult
@@ -23,15 +23,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class GeneratedQuery(BaseModel):
+    """Schema for LLM response: a single search query."""
+
+    query: str = Field(
+        default="",
+        description="Search query to execute, or empty string if research is complete",
+    )
+
+
 class LearnCommand(Command):
-    """Express interest in a topic and discover entities via background search."""
+    """Research a topic via multi-query search with provenance tracking."""
 
     name = "learn"
     description = "Start learning about a topic"
     help_text = (
         "Express interest in a topic so Penny researches it in the background.\n\n"
         "**Usage**:\n"
-        "- `/learn` — List what's being actively tracked\n"
+        "- `/learn` — Show learning status and discoveries\n"
         "- `/learn <topic>` — Start learning about a topic\n\n"
         "**Examples**:\n"
         "- `/learn kef ls50 meta`\n"
@@ -46,59 +55,121 @@ class LearnCommand(Command):
         topic = args.strip()
 
         if not topic:
-            return self._list_tracked(context)
+            return self._show_status(context)
 
         return await self._learn_topic(topic, context)
 
-    def _list_tracked(self, context: CommandContext) -> CommandResult:
-        """List entities currently being tracked (positive interest score)."""
-        entities = context.db.get_user_entities(context.user)
-        if not entities:
+    def _show_status(self, context: CommandContext) -> CommandResult:
+        """Show LearnPrompt status with provenance chain."""
+        learn_prompts = context.db.get_user_learn_prompts(context.user)
+        if not learn_prompts:
             return CommandResult(text=PennyResponse.LEARN_EMPTY)
 
-        all_engagements = context.db.get_user_engagements(context.user)
-        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
-        for eng in all_engagements:
-            if eng.entity_id is not None:
-                engagements_by_entity[eng.entity_id].append(eng)
+        # Limit display
+        display_prompts = learn_prompts[: PennyConstants.LEARN_STATUS_DISPLAY_LIMIT]
 
-        scored: list[tuple[str, float, int]] = []
-        for entity in entities:
-            assert entity.id is not None
-            entity_engagements = engagements_by_entity.get(entity.id, [])
-            score = compute_interest_score(entity_engagements)
-            if score <= 0:
+        lines = [PennyResponse.LEARN_STATUS_HEADER, ""]
+        for i, lp in enumerate(display_prompts, 1):
+            assert lp.id is not None
+            if lp.status == PennyConstants.LearnPromptStatus.COMPLETED:
+                status_text = "\u2713"
+            elif lp.searches_remaining > 0:
+                status_text = f"({lp.searches_remaining} searches left)"
+            else:
+                status_text = "..."
+            lines.append(f"{i}) '{lp.prompt_text}' {status_text}")
+
+            # Follow provenance chain: LearnPrompt → SearchLogs → Facts → Entities
+            search_logs = context.db.get_search_logs_by_learn_prompt(lp.id)
+            if not search_logs:
                 continue
-            fact_count = len(context.db.get_entity_facts(entity.id))
-            scored.append((entity.name, score, fact_count))
 
-        if not scored:
-            return CommandResult(text=PennyResponse.LEARN_EMPTY)
+            search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
+            facts = context.db.get_facts_by_search_log_ids(search_log_ids)
+            if not facts:
+                continue
 
-        scored.sort(key=lambda x: x[1], reverse=True)
+            # Group facts by entity
+            entity_fact_counts: dict[int, int] = defaultdict(int)
+            for fact in facts:
+                entity_fact_counts[fact.entity_id] += 1
 
-        lines = [PennyResponse.LEARN_LIST_HEADER, ""]
-        for i, (name, score, fact_count) in enumerate(scored, 1):
-            facts_label = f"{fact_count} fact{'s' if fact_count != 1 else ''}"
-            lines.append(f"{i}. **{name}** (+{score:.2f}) — {facts_label}")
+            # Resolve entity names
+            entity_lines = _build_entity_lines(entity_fact_counts, context)
+            for entity_line in entity_lines:
+                lines.append(f"   {entity_line}")
 
         return CommandResult(text="\n".join(lines))
 
     async def _learn_topic(self, topic: str, context: CommandContext) -> CommandResult:
-        """Acknowledge topic immediately, discover entities via search in background."""
-        if self._search_tool:
-            asyncio.create_task(self._discover_entities_background(topic, context))
+        """Create LearnPrompt, acknowledge, and start background research."""
+        # Create LearnPrompt record
+        learn_prompt = context.db.create_learn_prompt(
+            user=context.user,
+            prompt_text=topic,
+            searches_remaining=PennyConstants.LEARN_PROMPT_DEFAULT_SEARCHES,
+        )
+
+        if self._search_tool and learn_prompt and learn_prompt.id is not None:
+            asyncio.create_task(self._research_background(topic, learn_prompt.id, context))
 
         return CommandResult(text=PennyResponse.LEARN_ACKNOWLEDGED.format(topic=topic))
 
-    async def _search(self, query: str) -> str | None:
-        """Execute search via SearchTool. Returns text or None."""
+    async def _generate_initial_query(self, topic: str, context: CommandContext) -> str:
+        """Generate the first search query for a topic via LLM."""
+        prompt = f"{Prompt.LEARN_INITIAL_QUERY_PROMPT}\n\nTopic: {topic}"
+
+        try:
+            response = await context.ollama_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=GeneratedQuery.model_json_schema(),
+            )
+            result = GeneratedQuery.model_validate_json(response.content)
+            if result.query.strip():
+                return result.query.strip()
+        except Exception as e:
+            logger.error("Failed to generate initial query for '%s': %s", topic, e)
+
+        # Fallback: use the topic as-is
+        return topic
+
+    async def _generate_followup_query(
+        self, topic: str, previous_results: list[str], context: CommandContext
+    ) -> str | None:
+        """Generate the next search query based on previous results.
+
+        Returns the query string, or None if research is complete.
+        """
+        results_text = "\n\n---\n\n".join(
+            f"Search {i + 1}:\n{text[:1000]}" for i, text in enumerate(previous_results)
+        )
+        prompt = Prompt.LEARN_FOLLOWUP_QUERY_PROMPT.format(
+            topic=topic, previous_results=results_text
+        )
+
+        try:
+            response = await context.ollama_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=GeneratedQuery.model_json_schema(),
+            )
+            result = GeneratedQuery.model_validate_json(response.content)
+            query = result.query.strip()
+            return query if query else None
+        except Exception as e:
+            logger.error("Failed to generate followup query for '%s': %s", topic, e)
+            return None
+
+    async def _search(self, query: str, learn_prompt_id: int) -> str | None:
+        """Execute search via SearchTool with provenance. Returns text or None."""
         assert self._search_tool is not None
         try:
             result = await self._search_tool.execute(
                 query=query,
                 skip_images=True,
                 trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
+                learn_prompt_id=learn_prompt_id,
             )
             if isinstance(result, SearchResult):
                 return result.text
@@ -107,80 +178,61 @@ class LearnCommand(Command):
             logger.error("Learn command search failed: %s", e)
             return None
 
-    async def _identify_entities(
-        self, search_text: str, topic: str, context: CommandContext
-    ) -> list[str]:
-        """Extract entity names from search results via LLM."""
-        existing_entities = context.db.get_user_entities(context.user)
-        known_names = [e.name for e in existing_entities]
-        known_context = ""
-        if known_names:
-            known_context = (
-                "\n\nKnown entities (return any that appear in the text):\n"
-                + "\n".join(f"- {name}" for name in known_names)
-            )
-
-        prompt = (
-            f"{Prompt.ENTITY_IDENTIFICATION_PROMPT}\n\n"
-            f"Search query: {topic}\n\n"
-            f"Content:\n{search_text}"
-            f"{known_context}"
-        )
-
+    async def _research_background(
+        self, topic: str, learn_prompt_id: int, context: CommandContext
+    ) -> None:
+        """Iteratively research a topic: each query builds on previous results."""
         try:
-            response = await context.ollama_client.generate(
-                prompt=prompt,
-                tools=None,
-                format=IdentifiedEntities.model_json_schema(),
+            max_searches = PennyConstants.LEARN_PROMPT_DEFAULT_SEARCHES
+            previous_results: list[str] = []
+            search_count = 0
+
+            # First query: broad overview
+            query = await self._generate_initial_query(topic, context)
+            result = await self._search(query, learn_prompt_id)
+            search_count += 1
+            context.db.decrement_learn_prompt_searches(learn_prompt_id)
+
+            if result:
+                previous_results.append(result)
+
+            # Followup queries: each informed by previous results
+            while search_count < max_searches and previous_results:
+                query = await self._generate_followup_query(topic, previous_results, context)
+                if query is None:
+                    # LLM decided research is complete
+                    break
+
+                result = await self._search(query, learn_prompt_id)
+                search_count += 1
+                context.db.decrement_learn_prompt_searches(learn_prompt_id)
+
+                if result:
+                    previous_results.append(result)
+
+            # Mark as completed
+            context.db.update_learn_prompt_status(
+                learn_prompt_id, PennyConstants.LearnPromptStatus.COMPLETED
             )
-            result = IdentifiedEntities.model_validate_json(response.content)
-
-            names: list[str] = []
-            for name in result.known:
-                if name not in names:
-                    names.append(name)
-            for new_entity in result.new:
-                if new_entity.name not in names:
-                    names.append(new_entity.name)
-            return names
-        except Exception as e:
-            logger.error("Failed to identify entities for learn '%s': %s", topic, e)
-            return []
-
-    def _create_entities_with_engagements(
-        self, entity_names: list[str], context: CommandContext
-    ) -> list[str]:
-        """Create entities and record LEARN_COMMAND engagements. Returns created names."""
-        created: list[str] = []
-        for name in entity_names:
-            entity = context.db.get_or_create_entity(context.user, name)
-            if entity is None or entity.id is None:
-                continue
-
-            context.db.add_engagement(
-                user=context.user,
-                engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
-                valence=PennyConstants.EngagementValence.POSITIVE,
-                strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
-                entity_id=entity.id,
-            )
-            created.append(entity.name)
-
-        return created
-
-    async def _discover_entities_background(self, topic: str, context: CommandContext) -> None:
-        """Search for topic and discover entities in the background."""
-        try:
-            search_text = await self._search(topic)
-            if not search_text:
-                return
-
-            entity_names = await self._identify_entities(search_text, topic, context)
-            if not entity_names:
-                return
-
-            created = self._create_entities_with_engagements(entity_names, context)
-            if created:
-                logger.info("Background discovery for '%s' found: %s", topic, created)
+            logger.info("Learn command completed for '%s': %d searches", topic, search_count)
         except Exception:
-            logger.exception("Background entity discovery failed for '%s'", topic)
+            logger.exception("Background research failed for '%s'", topic)
+
+
+def _build_entity_lines(entity_fact_counts: dict[int, int], context: CommandContext) -> list[str]:
+    """Build display lines for entities with fact counts."""
+    lines: list[str] = []
+    # Sort by fact count descending
+    sorted_entities = sorted(entity_fact_counts.items(), key=lambda x: x[1], reverse=True)
+    for entity_id, fact_count in sorted_entities:
+        entity = _get_entity_cached(entity_id, context)
+        if entity is None:
+            continue
+        facts_label = f"{fact_count} fact{'s' if fact_count != 1 else ''}"
+        lines.append(f"- {entity.name} ({facts_label})")
+    return lines
+
+
+def _get_entity_cached(entity_id: int, context: CommandContext) -> Entity | None:
+    """Get an entity by ID. Uses the database directly."""
+    return context.db.get_entity(entity_id)
