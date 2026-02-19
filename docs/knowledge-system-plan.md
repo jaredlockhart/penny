@@ -60,7 +60,7 @@ The extraction pipeline processes unprocessed SearchLogs and MessageLogs periodi
 |---|---|---|---|---|
 | `user_message` | Yes | Yes | Yes | Yes |
 | `learn_command` | Yes | Yes | Yes | Yes |
-| `penny_enrichment` | **No** | Yes | No | No (learn loop sends its own) |
+| `penny_enrichment` | **No** | Yes | No | Yes |
 
 For messages, the pipeline always allows new entity creation (messages are user-triggered by definition).
 
@@ -331,7 +331,7 @@ When the extraction pipeline discovers new facts from user-triggered searches, i
 
 Notifications include an image when available.
 
-**Batching**: One notification per extraction cycle per user, summarizing all discoveries. Notifications are skipped for `penny_enrichment` searches (the learn loop sends its own proactive messages).
+**Batching**: One notification per extraction cycle per user, summarizing all discoveries.
 
 ---
 
@@ -430,7 +430,7 @@ Phase 6 — Documentation
 1. **User-gated entity creation** — The single most impactful change. Prevents garbage entities, irrelevant research targets, and engagement inflation. All three overnight issues (#317, #319, #320) are solved at the architectural level.
 2. **Trigger tracking on SearchLog** — Simple string column, extensible. The extraction pipeline switches behavior based on a single field check. No complex state management.
 3. **LearnPrompt as first-class object** — Enables the provenance chain (prompt → searches → facts → entities) and the `/learn` status view. Replaces the old pattern of "create entity + engagement and hope the research loop finds it."
-4. **Learn loop keeps inline extraction** — It needs immediate facts for proactive messages. Delegating to the extraction pipeline would add a full cycle of latency. The SearchLog still gets processed later in known-only mode.
+4. **Enrichment loop is search-only** — The learn loop just scores entities and triggers searches. The extraction pipeline handles all fact extraction and user notification, keeping each process focused on one responsibility.
 5. **Batch notifications** — One notification per extraction cycle per user prevents spamming. Skip penny_enrichment notifications to avoid duplicating learn loop messages.
 6. **Known-only prompt variant** — Rather than filtering LLM output after the fact, give it a different prompt that only asks for known entity matches. Cheaper and more accurate.
 7. **Default trigger is user_message** — All existing SearchLogs and the normal message flow get entity-creating behavior. Only the learn loop explicitly opts out.
