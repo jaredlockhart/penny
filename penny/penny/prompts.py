@@ -104,6 +104,24 @@ Examples:
         "as if giving a friend a quick update. Keep it under 150 words."
     )
 
+    # /learn command: iterative search query generation
+    LEARN_INITIAL_QUERY_PROMPT = (
+        "Generate a good search query to start researching the given topic.\n"
+        "Return a single, broad search query that will give a good overview.\n"
+        "Return only the search query, no explanations."
+    )
+
+    LEARN_FOLLOWUP_QUERY_PROMPT = (
+        "You are researching the topic: {topic}\n\n"
+        "Here is what you've found so far from previous searches:\n{previous_results}\n\n"
+        "Generate the next search query to deepen this research.\n"
+        "Look for gaps in what's been found — target specific details, "
+        "recent developments, comparisons, or angles not yet covered.\n"
+        "If you've learned enough and further searching would be redundant, "
+        "return an empty string.\n\n"
+        "Return only the search query (or empty string to stop), no explanations."
+    )
+
     # Entity extraction prompts (two-pass)
     ENTITY_IDENTIFICATION_PROMPT = (
         "Identify named entities in the following search results.\n"

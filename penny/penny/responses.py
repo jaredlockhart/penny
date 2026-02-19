@@ -72,7 +72,7 @@ class PennyResponse:
         "Nothing being actively researched right now. "
         "Use `/learn <topic>` to start learning about something."
     )
-    LEARN_LIST_HEADER = "Here's what I'm tracking:"
+    LEARN_STATUS_HEADER = "Queued learning"
 
     # ── Memory ───────────────────────────────────────────────────────────────
 
