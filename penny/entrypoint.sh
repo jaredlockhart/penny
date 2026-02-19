@@ -3,8 +3,8 @@ set -e
 
 PROD_DB="/penny/data/penny.db"
 
-if [ -f "$PROD_DB" ]; then
-    # Create timestamped backup of production database
+# Create production backup only when SNAPSHOT=1 (set by make up / make prod)
+if [ "${SNAPSHOT:-0}" = "1" ] && [ -f "$PROD_DB" ]; then
     BACKUP_DIR="/penny/data/backups"
     mkdir -p "$BACKUP_DIR"
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -14,13 +14,13 @@ if [ -f "$PROD_DB" ]; then
 
     # Keep only last 5 backups
     ls -t "$BACKUP_DIR"/penny.db.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null
+fi
 
-    # Create test database snapshot from production database
+# Always create test database snapshot (needed by pytest)
+if [ -f "$PROD_DB" ]; then
     TEST_DB="/penny/data/penny-test.db"
     echo "Creating test database snapshot: $TEST_DB"
     cp "$PROD_DB" "$TEST_DB"
-else
-    echo "Production database does not exist yet, skipping snapshots"
 fi
 
 # Execute the main command
