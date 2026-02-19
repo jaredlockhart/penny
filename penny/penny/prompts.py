@@ -92,9 +92,9 @@ Examples:
 
     # Fact discovery notification prompt (extraction pipeline)
     SEARCH_DISCOVERY_PROMPT = (
-        "you just searched for something and learned new things. "
-        "rephrase the following into a casual, natural message to the user. "
-        "keep the structure (one section per topic with its facts) but make it conversational.\n\n"
+        "You just searched for something and learned new things. "
+        "Rephrase the following into a casual, natural message to the user. "
+        "Keep the structure (one section per topic with its facts) but make it conversational.\n\n"
         "{summary}"
     )
 
