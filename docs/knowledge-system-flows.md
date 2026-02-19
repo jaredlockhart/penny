@@ -60,7 +60,7 @@ sequenceDiagram
     Extract->>DB: create validated entities
     Extract->>DB: extract + store facts for all present entities
     Extract->>DB: mark SearchLogs as processed
-    Extract->>User: notify about new entities/facts
+    Extract->>User: one proactive message per (entity, new facts)
 ```
 
 ### Known-Only Mode (penny_enrichment)
@@ -76,7 +76,7 @@ sequenceDiagram
     Extract->>DB: get unprocessed SearchLogs (penny-triggered)
     Extract->>DB: extract + store facts for known entities only
     Extract->>DB: mark SearchLogs as processed
-    Extract->>User: notify about new facts
+    Extract->>User: one proactive message per (entity, new facts)
 ```
 
 ## Engagement Signals

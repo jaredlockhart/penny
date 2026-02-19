@@ -323,15 +323,12 @@ The extraction pipeline picks up the SearchLog on its next pass (known-only mode
 
 ## Fact Discovery Notifications
 
-When the extraction pipeline discovers new facts from user-triggered searches, it notifies the user:
+When the extraction pipeline discovers new facts, it sends one proactive message per entity:
 
-- **Single fact**: "Hey, I just learned {fact} about {entity}"
-- **Multiple facts**: "I just learned a bunch of stuff about {entity}..."
+- **Known entity, new facts**: "I just learned some new stuff about {entity}..."
 - **New entity**: "I just discovered {entity} and learned {count} facts about it"
 
-Notifications include an image when available.
-
-**Batching**: One notification per extraction cycle per user, summarizing all discoveries.
+Each message covers one entity and its new facts. If extraction finds facts about 3 entities, that's 3 messages. Notifications include an image when available.
 
 ---
 
@@ -431,6 +428,6 @@ Phase 6 — Documentation
 2. **Trigger tracking on SearchLog** — Simple string column, extensible. The extraction pipeline switches behavior based on a single field check. No complex state management.
 3. **LearnPrompt as first-class object** — Enables the provenance chain (prompt → searches → facts → entities) and the `/learn` status view. Replaces the old pattern of "create entity + engagement and hope the research loop finds it."
 4. **Enrichment loop is search-only** — The learn loop just scores entities and triggers searches. The extraction pipeline handles all fact extraction and user notification, keeping each process focused on one responsibility.
-5. **Batch notifications** — One notification per extraction cycle per user prevents spamming. Skip penny_enrichment notifications to avoid duplicating learn loop messages.
+5. **Per-entity notifications** — One proactive message per (entity, new facts) pair. Gives the user clear, focused updates rather than a wall of discoveries.
 6. **Known-only prompt variant** — Rather than filtering LLM output after the fact, give it a different prompt that only asks for known entity matches. Cheaper and more accurate.
 7. **Default trigger is user_message** — All existing SearchLogs and the normal message flow get entity-creating behavior. Only the learn loop explicitly opts out.
