@@ -22,24 +22,35 @@ async def test_like_list_empty(signal_server, test_config, mock_ollama, running_
 
 @pytest.mark.asyncio
 async def test_like_add_and_list(signal_server, test_config, mock_ollama, running_penny):
-    """Test /like <topic> adds a like, records engagement, and /like lists it."""
+    """Test /like <topic> adds a like, creates entity, records engagements, and /like lists it."""
     async with running_penny(test_config) as penny:
         # Add a like
         await signal_server.push_message(sender=TEST_SENDER, content="/like cats")
         response1 = await signal_server.wait_for_message(timeout=5.0)
         assert "I added cats to your likes" in response1["message"]
 
-        # Verify engagement was recorded
+        # Verify entity was created
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        assert len(entities) == 1
+        assert entities[0].name == "cats"
+
+        # Verify engagements were recorded (preference-level + entity-level)
         engagements = penny.db.get_user_engagements(TEST_SENDER)
         like_engagements = [
             e
             for e in engagements
             if e.engagement_type == PennyConstants.EngagementType.LIKE_COMMAND
         ]
-        assert len(like_engagements) == 1
-        assert like_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert like_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_LIKE_COMMAND
-        assert like_engagements[0].preference_id is not None
+        assert len(like_engagements) == 2
+        pref_engagement = [e for e in like_engagements if e.entity_id is None]
+        entity_engagement = [e for e in like_engagements if e.entity_id is not None]
+        assert len(pref_engagement) == 1
+        assert len(entity_engagement) == 1
+        assert pref_engagement[0].preference_id is not None
+        assert entity_engagement[0].entity_id == entities[0].id
+        for e in like_engagements:
+            assert e.valence == PennyConstants.EngagementValence.POSITIVE
+            assert e.strength == PennyConstants.ENGAGEMENT_STRENGTH_LIKE_COMMAND
 
         # List likes
         await signal_server.push_message(sender=TEST_SENDER, content="/like")
@@ -86,6 +97,11 @@ async def test_like_conflict_with_dislike(signal_server, test_config, mock_ollam
             in response2["message"]
         )
 
+        # Verify entity was created by /like (not by /dislike)
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        assert len(entities) == 1
+        assert entities[0].name == "bananas"
+
         # Verify both dislike and like engagements exist (historical signals preserved)
         engagements = penny.db.get_user_engagements(TEST_SENDER)
         dislike_engagements = [
@@ -99,7 +115,8 @@ async def test_like_conflict_with_dislike(signal_server, test_config, mock_ollam
             if e.engagement_type == PennyConstants.EngagementType.LIKE_COMMAND
         ]
         assert len(dislike_engagements) == 1
-        assert len(like_engagements) == 1
+        # /like records preference-level + entity-level engagements
+        assert len(like_engagements) == 2
 
         # Verify it's in likes
         await signal_server.push_message(sender=TEST_SENDER, content="/like")
@@ -317,11 +334,11 @@ async def test_like_duplicate_no_extra_engagement(
         response = await signal_server.wait_for_message(timeout=5.0)
         assert "cats is already in your likes" in response["message"]
 
-        # Should still only have one engagement
+        # Should still only have engagements from the first /like (pref + entity)
         engagements = penny.db.get_user_engagements(TEST_SENDER)
         like_engagements = [
             e
             for e in engagements
             if e.engagement_type == PennyConstants.EngagementType.LIKE_COMMAND
         ]
-        assert len(like_engagements) == 1
+        assert len(like_engagements) == 2

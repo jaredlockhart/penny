@@ -24,6 +24,8 @@ async def _record_preference_engagements(
     engagement_type: str,
     valence: str,
     strength: float,
+    *,
+    entity_id: int | None = None,
 ) -> None:
     """Record engagements for a preference command (like or dislike).
 
@@ -31,6 +33,10 @@ async def _record_preference_engagements(
     entities via embedding similarity and records entity-level engagements
     for each match. Entity matching is best-effort — fails silently if
     no embedding model is configured or Ollama is unavailable.
+
+    If entity_id is provided (e.g. from /like creating an entity), a direct
+    entity-level engagement is recorded and that entity is excluded from
+    similarity matches to avoid double-engaging.
     """
     assert preference.id is not None
 
@@ -42,6 +48,17 @@ async def _record_preference_engagements(
         strength=strength,
         preference_id=preference.id,
     )
+
+    # Record direct entity engagement if an entity was created/matched
+    if entity_id is not None:
+        context.db.add_engagement(
+            user=context.user,
+            engagement_type=engagement_type,
+            valence=valence,
+            strength=strength,
+            entity_id=entity_id,
+            preference_id=preference.id,
+        )
 
     # Try to find matching entities via embedding similarity
     embedding_model = context.config.ollama_embedding_model
@@ -71,13 +88,15 @@ async def _record_preference_engagements(
             threshold=_ENTITY_MATCH_THRESHOLD,
         )
 
-        for entity_id, _score in matches:
+        for matched_entity_id, _score in matches:
+            if matched_entity_id == entity_id:
+                continue  # Already engaged directly above
             context.db.add_engagement(
                 user=context.user,
                 engagement_type=engagement_type,
                 valence=valence,
                 strength=strength,
-                entity_id=entity_id,
+                entity_id=matched_entity_id,
                 preference_id=preference.id,
             )
     except Exception:
@@ -131,12 +150,15 @@ class LikeCommand(Command):
                 context.user, topic, PennyConstants.PreferenceType.LIKE
             )
             if pref:
+                # /like is a user-triggered entity creation path
+                entity = context.db.get_or_create_entity(context.user, topic)
                 await _record_preference_engagements(
                     context,
                     pref,
                     PennyConstants.EngagementType.LIKE_COMMAND,
                     PennyConstants.EngagementValence.POSITIVE,
                     PennyConstants.ENGAGEMENT_STRENGTH_LIKE_COMMAND,
+                    entity_id=entity.id if entity else None,
                 )
             return CommandResult(text=PennyResponse.LIKE_ADDED_CONFLICT.format(topic=topic))
         else:
@@ -145,12 +167,15 @@ class LikeCommand(Command):
                 context.user, topic, PennyConstants.PreferenceType.LIKE
             )
             if pref:
+                # /like is a user-triggered entity creation path
+                entity = context.db.get_or_create_entity(context.user, topic)
                 await _record_preference_engagements(
                     context,
                     pref,
                     PennyConstants.EngagementType.LIKE_COMMAND,
                     PennyConstants.EngagementValence.POSITIVE,
                     PennyConstants.ENGAGEMENT_STRENGTH_LIKE_COMMAND,
+                    entity_id=entity.id if entity else None,
                 )
                 return CommandResult(text=PennyResponse.LIKE_ADDED.format(topic=topic))
             else:
