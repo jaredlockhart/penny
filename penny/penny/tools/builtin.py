@@ -45,8 +45,6 @@ class SearchTool(Tool):
         self.db = db
         self.redact_terms: list[str] = []
         self.skip_images = skip_images
-        self.trigger: str = "user_message"  # SearchTrigger enum value
-        self.learn_prompt_id: int | None = None  # LearnPrompt FK for /learn searches
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -65,19 +63,28 @@ class SearchTool(Tool):
         return text.strip()
 
     async def execute(self, **kwargs) -> Any:
-        """Run Perplexity text search and optionally DuckDuckGo image search in parallel."""
+        """Run Perplexity text search and optionally DuckDuckGo image search in parallel.
+
+        Accepts optional kwargs beyond the tool schema (not exposed to the model):
+            skip_images: Override instance default for this call
+            trigger: SearchTrigger value for log_search (default: user_message)
+            learn_prompt_id: LearnPrompt FK for /learn searches (default: None)
+        """
         query: str = kwargs["query"]
+        skip_images: bool = kwargs.get("skip_images", self.skip_images)
+        trigger: str = kwargs.get("trigger", PennyConstants.SearchTrigger.USER_MESSAGE)
+        learn_prompt_id: int | None = kwargs.get("learn_prompt_id")
         redacted_query = self._redact_query(query)
 
-        if self.skip_images:
-            text_result = await self._search_text(redacted_query)
+        if skip_images:
+            text_result = await self._search_text(redacted_query, trigger, learn_prompt_id)
             if isinstance(text_result, Exception):
                 return SearchResult(text=PennyResponse.SEARCH_ERROR.format(error=text_result))
             text, urls = text_result
             return SearchResult(text=text, urls=urls)
 
         text_result, image_result = await asyncio.gather(
-            self._search_text(redacted_query),
+            self._search_text(redacted_query, trigger, learn_prompt_id),
             self._search_image(redacted_query),
             return_exceptions=True,
         )
@@ -105,7 +112,12 @@ class SearchTool(Tool):
         # Collapse extra whitespace left by redaction
         return re.sub(r"\s{2,}", " ", redacted).strip()
 
-    async def _search_text(self, query: str) -> tuple[str, list[str]]:
+    async def _search_text(
+        self,
+        query: str,
+        trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
+        learn_prompt_id: int | None = None,
+    ) -> tuple[str, list[str]]:
         """Search via Perplexity. Returns (text, urls)."""
         start = time.time()
 
@@ -153,8 +165,8 @@ class SearchTool(Tool):
                 query=query,
                 response=result,
                 duration_ms=duration_ms,
-                trigger=self.trigger,
-                learn_prompt_id=self.learn_prompt_id,
+                trigger=trigger,
+                learn_prompt_id=learn_prompt_id,
             )
 
         return result, urls

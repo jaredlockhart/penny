@@ -248,14 +248,11 @@ class LearnLoopAgent(Agent):
         """Execute a search via SearchTool. Returns the text result or None."""
         assert self._search_tool is not None
         try:
-            # Force skip_images for background research
-            original_skip = getattr(self._search_tool, "skip_images", False)
-            self._search_tool.skip_images = True  # type: ignore[attr-defined]
-            try:
-                result = await self._search_tool.execute(query=query)
-            finally:
-                self._search_tool.skip_images = original_skip  # type: ignore[attr-defined]
-
+            result = await self._search_tool.execute(
+                query=query,
+                skip_images=True,
+                trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
+            )
             if isinstance(result, SearchResult):
                 return result.text
             return str(result) if result else None
