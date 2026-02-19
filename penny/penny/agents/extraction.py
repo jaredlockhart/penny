@@ -213,8 +213,6 @@ class ExtractionPipeline(Agent):
                 continue
 
             allow_new = search_log.trigger != PennyConstants.SearchTrigger.PENNY_ENRICHMENT
-            # Only notify for user-triggered searches, respecting backoff
-            should_notify = allow_new and self._should_send_proactive(user)
             id_prompt = (
                 Prompt.ENTITY_IDENTIFICATION_PROMPT
                 if allow_new
@@ -235,7 +233,6 @@ class ExtractionPipeline(Agent):
                 content=search_log.response,
                 source_search_log_id=search_log.id,
                 allow_new_entities=allow_new,
-                notify_user=user if should_notify else None,
             )
             if result.entities:
                 work_done = True
@@ -252,9 +249,12 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                         )
 
-                # Mark backoff after sending notifications for this search log
-                if should_notify and result.discoveries:
-                    self._mark_proactive_sent(user)
+            # Send a combined discovery message for this search (respecting backoff)
+            if allow_new and result.discoveries and self._should_send_proactive(user):
+                await self._send_search_discovery_notification(
+                    user, search_log.query, result.discoveries
+                )
+                self._mark_proactive_sent(user)
 
             self.db.mark_search_extracted(search_log.id)
 
@@ -384,7 +384,6 @@ class ExtractionPipeline(Agent):
         source_search_log_id: int | None = None,
         source_message_id: int | None = None,
         allow_new_entities: bool = True,
-        notify_user: str | None = None,
     ) -> _ExtractionResult:
         """Two-pass extraction for a single piece of content.
 
@@ -392,9 +391,6 @@ class ExtractionPipeline(Agent):
           - Full mode (allow_new_entities=True): known + new entities
           - Known-only mode (allow_new_entities=False): only known entities
         Pass 2: For each entity, extract new facts as individual Fact rows.
-
-        When notify_user is set, sends a message to the user per-entity as facts
-        are discovered (rather than batching notifications at the end).
 
         Returns _ExtractionResult with all identified entities and per-entity discoveries.
         """
@@ -531,11 +527,6 @@ class ExtractionPipeline(Agent):
                 is_new_entity=entity.name in newly_created_names,
             )
             discoveries.append(discovery)
-
-            # Send notification immediately per-entity so the user sees
-            # discoveries as they happen rather than in a batch at the end.
-            if notify_user:
-                await self._send_fact_notification(notify_user, discovery)
 
         # Regenerate entity embeddings for entities that got new facts
         if self.embedding_model and entities_with_new_facts:
@@ -1098,23 +1089,27 @@ class ExtractionPipeline(Agent):
                 PennyConstants.FACT_NOTIFICATION_MAX_BACKOFF,
             )
 
-    async def _send_fact_notification(self, user: str, discovery: _EntityFactDiscovery) -> None:
-        """Compose and send a notification for a single entity's newly discovered facts."""
+    async def _send_search_discovery_notification(
+        self, user: str, query: str, discoveries: list[_EntityFactDiscovery]
+    ) -> None:
+        """Send a single message summarising all entities/facts from a search."""
         if not self._channel:
             return
 
-        facts_text = "\n".join(f"- {fact}" for fact in discovery.new_facts)
-        if discovery.is_new_entity:
-            prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
-        else:
-            prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
+        sections: list[str] = []
+        for discovery in discoveries:
+            label = (
+                f"{discovery.entity.name} (new)"
+                if discovery.is_new_entity
+                else discovery.entity.name
+            )
+            facts_text = "\n".join(f"  {fact}" for fact in discovery.new_facts)
+            sections.append(f"* {label}\n{facts_text}")
 
-        prompt = (
-            f"{prompt_template.format(entity_name=discovery.entity.name)}"
-            f"\n\nNew facts:\n{facts_text}"
-        )
+        summary = f"I found some stuff about {query}\n\n" + "\n\n".join(sections)
+        prompt = Prompt.SEARCH_DISCOVERY_PROMPT.format(summary=summary)
 
-        result = await self._compose_user_facing(prompt, image_query=discovery.entity.name)
+        result = await self._compose_user_facing(prompt)
         if not result.answer:
             return
 
