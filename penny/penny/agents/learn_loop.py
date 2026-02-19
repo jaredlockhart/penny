@@ -432,11 +432,11 @@ class LearnLoopAgent(Agent):
         prompt = f"{prompt_template.format(entity_name=entity_name)}\n\nNew facts:\n{facts_text}"
 
         try:
-            message, image = await asyncio.gather(
+            result, image = await asyncio.gather(
                 self._compose_user_facing(prompt),
                 search_image(entity_name),
             )
-            if not message:
+            if not result.answer:
                 return
         except Exception as e:
             logger.error("Failed to compose learn loop message: %s", e)
@@ -447,7 +447,7 @@ class LearnLoopAgent(Agent):
         try:
             await self._channel.send_response(
                 user,
-                message,
+                result.answer,
                 parent_id=None,  # Unsolicited, not threaded
                 attachments=attachments,
             )

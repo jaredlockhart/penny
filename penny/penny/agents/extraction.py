@@ -974,11 +974,11 @@ class ExtractionPipeline(Agent):
                 f"\n\nNew facts:\n{facts_text}"
             )
 
-            message = await self._compose_user_facing(prompt)
-            if not message:
+            result = await self._compose_user_facing(prompt)
+            if not result.answer:
                 continue
 
-            await self._send_notification(user, message, image_query=discovery.entity.name)
+            await self._send_notification(user, result.answer, image_query=discovery.entity.name)
 
         self._mark_proactive_sent(user)
 
