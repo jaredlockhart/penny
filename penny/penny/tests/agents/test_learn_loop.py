@@ -6,6 +6,7 @@ import pytest
 
 from penny.agents.learn_loop import LearnLoopAgent
 from penny.constants import PennyConstants
+from penny.database.models import LearnPrompt, SearchLog
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -283,3 +284,144 @@ async def test_learn_loop_dedup_facts(
         fact_texts = [f.content for f in facts]
         assert "Costs $1,599 per pair" in fact_texts
         assert "Won What Hi-Fi award in 2023" in fact_texts
+
+
+@pytest.mark.asyncio
+async def test_learn_loop_semantic_interest_priority(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Entity with higher semantic relevance to its source prompt is prioritized.
+
+    Two entities with identical behavioral interest — entity A has facts from a
+    learn prompt whose text closely matches entity A's name, entity B's name is
+    unrelated to its source. Semantic boost should make entity A win.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    selected_entity = [None]
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        last_content = messages[-1].get("content", "") if messages else ""
+
+        if "Extract specific" in last_content:
+            return mock_ollama._make_text_response(
+                request, json.dumps({"facts": ["Some new fact"]})
+            )
+        else:
+            # Message composition — capture which entity was selected
+            if "aamas" in last_content.lower():
+                selected_entity[0] = "aamas"
+            elif "coral beach hotel" in last_content.lower():
+                selected_entity[0] = "coral beach hotel"
+            return mock_ollama._make_text_response(request, "Found some cool stuff!")
+
+    mock_ollama.set_response_handler(handler)
+
+    # Embed handler: "aamas" is similar to "ai conferences" (high),
+    # "coral beach hotel" is dissimilar (low)
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        vecs = []
+        for text in texts:
+            t = text.lower()
+            if "aamas" in t or "ai" in t or "conference" in t or "agent" in t:
+                vecs.append([0.9, 0.1, 0.0, 0.0])
+            elif "coral" in t or "hotel" in t or "beach" in t:
+                vecs.append([0.1, 0.9, 0.0, 0.0])
+            else:
+                vecs.append([0.5, 0.5, 0.0, 0.0])
+        return vecs
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    async with running_penny(config) as penny:
+        # Create sender
+        await signal_server.push_message(sender=TEST_SENDER, content="hello")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Create a learn prompt as the source of both entities
+        with penny.db.get_session() as session:
+            lp = LearnPrompt(
+                user=TEST_SENDER,
+                prompt_text="ai agent conferences in europe 2026",
+                status="completed",
+                searches_remaining=0,
+            )
+            session.add(lp)
+            session.commit()
+            session.refresh(lp)
+            learn_prompt_id = lp.id
+
+            # Create a search log linked to the learn prompt
+            sl = SearchLog(
+                query="2026 European AI conferences autonomous agents",
+                response="AAMAS 2026 at Coral Beach Hotel in Cyprus",
+                trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
+                learn_prompt_id=learn_prompt_id,
+                extracted=True,
+            )
+            session.add(sl)
+            session.commit()
+            session.refresh(sl)
+            search_log_id = sl.id
+
+        # Create two entities with identical behavioral interest
+        entity_a = penny.db.get_or_create_entity(TEST_SENDER, "aamas")
+        entity_b = penny.db.get_or_create_entity(TEST_SENDER, "coral beach hotel")
+        assert entity_a is not None and entity_a.id is not None
+        assert entity_b is not None and entity_b.id is not None
+
+        # Both get the same engagement strength
+        for eid in (entity_a.id, entity_b.id):
+            penny.db.add_engagement(
+                user=TEST_SENDER,
+                engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
+                valence=PennyConstants.EngagementValence.POSITIVE,
+                strength=PennyConstants.ENGAGEMENT_STRENGTH_SEARCH_INITIATED,
+                entity_id=eid,
+            )
+
+        # Both get facts sourced from the same search log
+        penny.db.add_fact(
+            entity_id=entity_a.id,
+            content="AAMAS 2026 is held in Cyprus",
+            source_search_log_id=search_log_id,
+        )
+        penny.db.add_fact(
+            entity_id=entity_b.id,
+            content="Coral Beach Hotel hosts AAMAS 2026",
+            source_search_log_id=search_log_id,
+        )
+
+        mock_ollama.requests.clear()
+
+        agent = LearnLoopAgent(
+            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
+            system_prompt="",
+            model=config.ollama_background_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=[],
+            db=penny.db,
+            max_steps=1,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
+            embedding_model=config.ollama_embedding_model,
+        )
+        agent.set_channel(penny.channel)
+
+        result = await agent.execute()
+        assert result is True
+
+        # Entity A (aamas) should be selected because its name is semantically
+        # closer to the learn prompt "ai agent conferences in europe 2026"
+        assert selected_entity[0] == "aamas", (
+            f"Expected 'aamas' to be prioritized by semantic interest, "
+            f"but got '{selected_entity[0]}'"
+        )

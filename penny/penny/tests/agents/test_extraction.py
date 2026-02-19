@@ -1288,8 +1288,8 @@ async def test_extraction_fact_notification_backoff(
         elif "topics" in prompt.lower():
             # Preference extraction — return nothing
             return mock_ollama._make_text_response(request, '{"topics": []}')
-        elif "I found some stuff about" in prompt:
-            # Search discovery notification composition
+        elif "discovered a new topic" in prompt or "learned some new things" in prompt:
+            # Per-entity fact notification composition
             return mock_ollama._make_text_response(request, "backoff-notification-composed")
         else:
             # Entity identification — return a unique new entity each time
@@ -1378,8 +1378,8 @@ async def test_extraction_fact_notification_new_vs_known_entity(
     running_penny,
 ):
     """
-    A single combined discovery message is sent per search, containing both
-    known and new entities with their facts. New entities are labelled "(new)".
+    Per-entity discovery notifications are sent for each entity. New entities use
+    the new-entity prompt, known entities use the known-entity prompt.
     """
     config = make_config()
 
@@ -1406,8 +1406,11 @@ async def test_extraction_fact_notification_new_vs_known_entity(
         elif "topics" in prompt.lower():
             # Preference extraction — return nothing
             return mock_ollama._make_text_response(request, '{"topics": []}')
-        elif "I found some stuff about" in prompt:
-            # Search discovery notification — echo the summary for assertion
+        elif "discovered a new topic" in prompt:
+            # Per-entity notification for NEW entity — echo prompt for assertion
+            return mock_ollama._make_text_response(request, prompt)
+        elif "learned some new things" in prompt:
+            # Per-entity notification for KNOWN entity — echo prompt for assertion
             return mock_ollama._make_text_response(request, prompt)
         else:
             # Entity identification — return known + new
@@ -1444,19 +1447,27 @@ async def test_extraction_fact_notification_new_vs_known_entity(
         signal_server.outgoing_messages.clear()
         await penny.extraction_pipeline.execute()
 
-        # Should have one combined notification with both entities
-        notifications = [
+        # Should have two per-entity notifications (one new, one known)
+        new_notifications = [
             msg
             for msg in signal_server.outgoing_messages
-            if "I found some stuff about" in msg["message"]
+            if "discovered a new topic" in msg["message"]
         ]
-        assert len(notifications) == 1, (
-            "Should send exactly one combined notification per search, "
+        known_notifications = [
+            msg
+            for msg in signal_server.outgoing_messages
+            if "learned some new things" in msg["message"]
+        ]
+        assert len(new_notifications) == 1, (
+            "Should send one new-entity notification, "
+            f"got messages: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
+        )
+        assert len(known_notifications) == 1, (
+            "Should send one known-entity notification, "
             f"got messages: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
         )
 
-        notification_text = notifications[0]["message"]
-        # Known entity listed without "(new)" label
-        assert "kef ls50 meta" in notification_text
-        # New entity listed with "(new)" label (name stored lowercase)
-        assert "wharfedale denton 85 (new)" in notification_text
+        # New entity notification mentions the entity name
+        assert "wharfedale denton 85" in new_notifications[0]["message"]
+        # Known entity notification mentions the entity name
+        assert "kef ls50 meta" in known_notifications[0]["message"]

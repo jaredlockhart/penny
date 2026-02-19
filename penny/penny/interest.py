@@ -80,3 +80,21 @@ def compute_interest_score(
         score += sign * engagement.strength * decay
 
     return score
+
+
+def compute_semantic_interest(similarities: list[float]) -> float:
+    """Compute semantic interest base score from entity-to-source-prompt similarities.
+
+    Uses RMS (root mean square) to aggregate cosine similarities between an
+    entity name and the user prompts that produced it. Higher values indicate
+    the entity was central to what the user asked about.
+
+    Args:
+        similarities: Cosine similarity values (entity name vs source prompt).
+
+    Returns:
+        RMS of the similarities, or 0.0 if empty.
+    """
+    if not similarities:
+        return 0.0
+    return math.sqrt(sum(s * s for s in similarities) / len(similarities))

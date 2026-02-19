@@ -128,7 +128,7 @@ class PennyConstants:
     LEARN_RECENT_DAYS = 1.0  # Skip entity if verified within this window
 
     # Entity name validation
-    ENTITY_NAME_SEMANTIC_THRESHOLD = 0.35
+    ENTITY_NAME_SEMANTIC_THRESHOLD = 0.58
 
     # Entity pre-filter for extraction pipeline
     ENTITY_PREFILTER_SIMILARITY_THRESHOLD = 0.2

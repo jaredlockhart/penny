@@ -14,9 +14,10 @@ from pydantic import BaseModel, Field
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Fact
-from penny.interest import compute_interest_score
+from penny.interest import compute_interest_score, compute_semantic_interest
 from penny.ollama.embeddings import (
     build_entity_embed_text,
+    cosine_similarity,
     deserialize_embedding,
     find_similar,
     serialize_embedding,
@@ -137,11 +138,14 @@ class LearnLoopAgent(Agent):
             logger.debug("LearnLoopAgent: no search tool configured")
             return False
 
-        # Pick the highest-priority entity across all users
-        candidate = self._pick_candidate()
-        if candidate is None:
+        # Score all entities and pick the highest-priority one
+        candidates = self._score_candidates()
+        if not candidates:
             logger.debug("LearnLoopAgent: no candidates to research")
             return False
+
+        await self._apply_semantic_scores(candidates)
+        candidate = max(candidates, key=lambda c: c.priority)
 
         entity = candidate.entity
         user = candidate.user
@@ -199,13 +203,17 @@ class LearnLoopAgent(Agent):
 
         return True
 
-    def _pick_candidate(self) -> _ScoredEntity | None:
-        """Score all entities across all users and return the highest-priority one."""
+    def _score_candidates(self) -> list[_ScoredEntity]:
+        """Score all entities across all users by behavioral interest.
+
+        Returns candidates above the minimum interest threshold, sorted by priority.
+        Semantic interest scores are applied separately in _apply_semantic_scores().
+        """
         users = self.db.get_all_senders()
         if not users:
-            return None
+            return []
 
-        best: _ScoredEntity | None = None
+        candidates: list[_ScoredEntity] = []
 
         for user in users:
             entities = self.db.get_user_entities(user)
@@ -232,8 +240,8 @@ class LearnLoopAgent(Agent):
 
                 priority = interest * (1.0 / max(fact_count, 1)) * staleness
 
-                if best is None or priority > best.priority:
-                    best = _ScoredEntity(
+                candidates.append(
+                    _ScoredEntity(
                         entity=entity,
                         user=user,
                         interest=interest,
@@ -241,8 +249,98 @@ class LearnLoopAgent(Agent):
                         facts=facts,
                         priority=priority,
                     )
+                )
 
-        return best
+        return candidates
+
+    async def _apply_semantic_scores(self, candidates: list[_ScoredEntity]) -> None:
+        """Augment candidates with semantic interest scores from source prompts.
+
+        For each candidate, resolves the provenance chain:
+        - facts → source_search_log_id → learn_prompt_id → learnprompt.prompt_text
+        - facts → source_search_log_id → searchlog.query (for non-learn searches)
+        - facts → source_message_id → messagelog.content
+
+        Skips PENNY_ENRICHMENT sources (background enrichment, not user intent).
+        Batch-embeds entity names and source prompts, computes cosine similarities,
+        and updates each candidate's priority with:
+            effective_interest = semantic_base + behavioral_interest
+        """
+        if not self.embedding_model or not candidates:
+            return
+
+        # Step 1: collect unique source prompt texts per entity
+        entity_source_texts: dict[int, set[str]] = {}
+        for candidate in candidates:
+            assert candidate.entity.id is not None
+            source_texts: set[str] = set()
+
+            for fact in candidate.facts:
+                if fact.source_search_log_id is not None:
+                    search_log = self.db.get_search_log(fact.source_search_log_id)
+                    if search_log is None:
+                        continue
+                    if search_log.trigger == PennyConstants.SearchTrigger.PENNY_ENRICHMENT:
+                        continue
+                    # Prefer learn prompt text over intermediate search query
+                    if search_log.learn_prompt_id is not None:
+                        learn_prompt = self.db.get_learn_prompt(search_log.learn_prompt_id)
+                        if learn_prompt:
+                            source_texts.add(learn_prompt.prompt_text)
+                            continue
+                    source_texts.add(search_log.query)
+                elif fact.source_message_id is not None:
+                    msg = self.db.get_message_by_id(fact.source_message_id)
+                    if msg:
+                        source_texts.add(msg.content)
+
+            entity_source_texts[candidate.entity.id] = source_texts
+
+        # Step 2: collect all texts to embed
+        all_entity_names = [c.entity.name for c in candidates]
+        all_source_texts_set: set[str] = set()
+        for texts in entity_source_texts.values():
+            all_source_texts_set.update(texts)
+        all_source_texts = list(all_source_texts_set)
+
+        if not all_source_texts:
+            return
+
+        # Step 3: batch embed
+        try:
+            name_vecs = await self._ollama_client.embed(
+                all_entity_names, model=self.embedding_model
+            )
+            source_vecs = await self._ollama_client.embed(
+                all_source_texts, model=self.embedding_model
+            )
+        except Exception as e:
+            logger.warning("Failed to compute semantic interest scores: %s", e)
+            return
+
+        source_text_to_vec = dict(zip(all_source_texts, source_vecs, strict=True))
+
+        # Step 4: compute semantic scores and update priorities
+        for candidate, name_vec in zip(candidates, name_vecs, strict=True):
+            assert candidate.entity.id is not None
+            source_texts = entity_source_texts.get(candidate.entity.id, set())
+            if not source_texts:
+                continue
+
+            sims = [
+                cosine_similarity(name_vec, source_text_to_vec[text])
+                for text in source_texts
+                if text in source_text_to_vec
+            ]
+
+            semantic_base = compute_semantic_interest(sims)
+            effective_interest = semantic_base + candidate.interest
+
+            staleness = _staleness_factor(candidate.facts)
+            candidate.interest = effective_interest
+            candidate.priority = (
+                effective_interest * (1.0 / max(candidate.fact_count, 1)) * staleness
+            )
 
     def _build_query(self, entity_name: str, is_enrichment: bool) -> str:
         """Build a search query based on mode."""
