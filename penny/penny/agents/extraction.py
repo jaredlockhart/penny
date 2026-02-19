@@ -14,6 +14,7 @@ from penny.constants import PennyConstants
 from penny.database.models import Entity, Fact, Preference
 from penny.ollama.embeddings import (
     build_entity_embed_text,
+    cosine_similarity,
     deserialize_embedding,
     find_similar,
     serialize_embedding,
@@ -30,6 +31,19 @@ logger = logging.getLogger(__name__)
 # Pattern to collapse whitespace and strip bullet prefixes for fact comparison
 _WHITESPACE_RE = re.compile(r"\s+")
 
+# --- Entity name validation patterns ---
+_LLM_ARTIFACT_PATTERNS = (
+    "{topic}",
+    "{description}",
+    "{desccription}",
+    "confidence score:",
+    "-brief:",
+)
+_NUMBERED_LIST_RE = re.compile(r"^\d+\.")
+_URL_RE = re.compile(r"https?://")
+_MARKDOWN_BOLD_RE = re.compile(r"\*\*")
+_ENTITY_NAME_MAX_WORDS = 8
+
 
 def _normalize_fact(fact: str) -> str:
     """Normalize a fact string for dedup comparison.
@@ -39,6 +53,22 @@ def _normalize_fact(fact: str) -> str:
     """
     text = fact.strip().lstrip("-").strip()
     return _WHITESPACE_RE.sub(" ", text).lower()
+
+
+def _is_valid_entity_name(name: str) -> bool:
+    """Structural validation for entity name candidates.
+
+    Rejects names that are clearly not entity names: too long, contain LLM
+    output artifacts, numbered list items, URLs, markdown, or newlines.
+    """
+    if len(name.split()) > _ENTITY_NAME_MAX_WORDS:
+        return False
+    name_lower = name.lower()
+    if any(artifact in name_lower for artifact in _LLM_ARTIFACT_PATTERNS):
+        return False
+    if _NUMBERED_LIST_RE.match(name.strip()):
+        return False
+    return not (_URL_RE.search(name) or _MARKDOWN_BOLD_RE.search(name) or "\n" in name)
 
 
 # --- Pydantic schemas for LLM responses ---
@@ -60,6 +90,15 @@ class IdentifiedEntities(BaseModel):
     new: list[IdentifiedNewEntity] = Field(
         default_factory=list,
         description="New entities found in this text (not in the known list)",
+    )
+
+
+class IdentifiedKnownEntities(BaseModel):
+    """Schema for known-only mode: which known entities appear in the text."""
+
+    known: list[str] = Field(
+        default_factory=list,
+        description="Names of already-known entities that appear in this text",
     )
 
 
@@ -142,29 +181,42 @@ class ExtractionPipeline(Agent):
                 self.db.mark_search_extracted(search_log.id)
                 continue
 
-            logger.info("Extracting entities from search: %s", search_log.query)
+            allow_new = search_log.trigger != PennyConstants.SearchTrigger.PENNY_ENRICHMENT
+            id_prompt = (
+                Prompt.ENTITY_IDENTIFICATION_PROMPT
+                if allow_new
+                else Prompt.KNOWN_ENTITY_IDENTIFICATION_PROMPT
+            )
+
+            logger.info(
+                "Extracting entities from search: %s (mode=%s)",
+                search_log.query,
+                "full" if allow_new else "known-only",
+            )
             result = await self._extract_and_store_entities(
                 user=user,
-                identification_prompt=Prompt.ENTITY_IDENTIFICATION_PROMPT,
+                identification_prompt=id_prompt,
                 fact_prompt=Prompt.ENTITY_FACT_EXTRACTION_PROMPT,
                 context_label="Search query",
                 context_value=search_log.query,
                 content=search_log.response,
                 source_search_log_id=search_log.id,
+                allow_new_entities=allow_new,
             )
             if result:
                 work_done = True
 
-                # Create SEARCH_INITIATED engagements for entities found in search
-                for entity in result:
-                    assert entity.id is not None
-                    self.db.add_engagement(
-                        user=user,
-                        engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
-                        valence=PennyConstants.EngagementValence.POSITIVE,
-                        strength=PennyConstants.ENGAGEMENT_STRENGTH_SEARCH_INITIATED,
-                        entity_id=entity.id,
-                    )
+                # Create SEARCH_INITIATED engagements only for user-triggered searches
+                if allow_new:
+                    for entity in result:
+                        assert entity.id is not None
+                        self.db.add_engagement(
+                            user=user,
+                            engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
+                            valence=PennyConstants.EngagementValence.POSITIVE,
+                            strength=PennyConstants.ENGAGEMENT_STRENGTH_SEARCH_INITIATED,
+                            entity_id=entity.id,
+                        )
 
             self.db.mark_search_extracted(search_log.id)
 
@@ -284,43 +336,65 @@ class ExtractionPipeline(Agent):
         content: str,
         source_search_log_id: int | None = None,
         source_message_id: int | None = None,
+        allow_new_entities: bool = True,
     ) -> list[Entity]:
         """Two-pass extraction for a single piece of content.
 
-        Pass 1: Identify known + new entities in the text.
+        Pass 1: Identify entities in the text.
+          - Full mode (allow_new_entities=True): known + new entities
+          - Known-only mode (allow_new_entities=False): only known entities
         Pass 2: For each entity, extract new facts as individual Fact rows.
 
         Returns list of entities that were created or updated (empty if none).
         """
         existing_entities = self.db.get_user_entities(user)
 
-        # Pass 1: identify entities
-        identified = await self._identify_entities(
-            existing_entities, identification_prompt, context_label, context_value, content
-        )
-        if not identified:
-            return []
-
         # Collect all entities to process facts for
         entities_to_process: list[Entity] = []
-
-        # Store new entities
-        for new_entity in identified.new:
-            name = new_entity.name.lower().strip()
-            if not name:
-                continue
-            entity = self.db.get_or_create_entity(user, name)
-            if entity and entity.id is not None:
-                entities_to_process.append(entity)
-                logger.info("New entity discovered: '%s'", name)
-
-        # Look up known entities that were identified
         existing_by_name = {e.name: e for e in existing_entities}
-        for known_name in identified.known:
-            normalized = known_name.lower().strip()
-            if normalized in existing_by_name:
-                entities_to_process.append(existing_by_name[normalized])
-                logger.info("Known entity referenced: '%s'", normalized)
+
+        if allow_new_entities:
+            # Full mode: identify known + new entities
+            identified = await self._identify_entities(
+                existing_entities, identification_prompt, context_label, context_value, content
+            )
+            if not identified:
+                return []
+
+            # Validate and store new entities
+            for new_entity in identified.new:
+                name = new_entity.name.lower().strip()
+                if not name:
+                    continue
+                if not _is_valid_entity_name(name):
+                    logger.info("Rejected entity '%s' (structural filter)", name)
+                    continue
+                if not await self._is_semantically_relevant(name, context_value):
+                    continue
+                entity = self.db.get_or_create_entity(user, name)
+                if entity and entity.id is not None:
+                    entities_to_process.append(entity)
+                    logger.info("New entity discovered: '%s'", name)
+
+            # Look up known entities that were identified
+            for known_name in identified.known:
+                normalized = known_name.lower().strip()
+                if normalized in existing_by_name:
+                    entities_to_process.append(existing_by_name[normalized])
+                    logger.info("Known entity referenced: '%s'", normalized)
+        else:
+            # Known-only mode: only match against existing entities
+            known_result = await self._identify_known_entities(
+                existing_entities, identification_prompt, context_label, context_value, content
+            )
+            if not known_result:
+                return []
+
+            for known_name in known_result.known:
+                normalized = known_name.lower().strip()
+                if normalized in existing_by_name:
+                    entities_to_process.append(existing_by_name[normalized])
+                    logger.info("Known entity referenced: '%s'", normalized)
 
         # Pass 2: extract facts for each identified entity
         entities_with_new_facts: list[int] = []
@@ -408,6 +482,66 @@ class ExtractionPipeline(Agent):
         except Exception as e:
             logger.error("Failed to identify entities: %s", e)
             return None
+
+    async def _identify_known_entities(
+        self,
+        existing_entities: list[Entity],
+        identification_prompt: str,
+        context_label: str,
+        context_value: str,
+        content: str,
+    ) -> IdentifiedKnownEntities | None:
+        """Known-only identification: only match against existing entities, never create new."""
+        known_names = [e.name for e in existing_entities]
+        if not known_names:
+            return None
+
+        known_context = "\n\nKnown entities (return any that appear in the text):\n" + "\n".join(
+            f"- {name}" for name in known_names
+        )
+
+        prompt = (
+            f"{identification_prompt}\n\n"
+            f"{context_label}: {context_value}\n\n"
+            f"Content:\n{content}"
+            f"{known_context}"
+        )
+
+        try:
+            response = await self._ollama_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=IdentifiedKnownEntities.model_json_schema(),
+            )
+            result = IdentifiedKnownEntities.model_validate_json(response.content)
+            if not result.known:
+                return None
+            return result
+        except Exception as e:
+            logger.error("Failed to identify known entities: %s", e)
+            return None
+
+    async def _is_semantically_relevant(self, candidate_name: str, trigger_text: str) -> bool:
+        """Semantic validation: reject entity candidates unrelated to the triggering content."""
+        if not self.embedding_model:
+            return True
+        try:
+            vecs = await self._ollama_client.embed(
+                [candidate_name, trigger_text], model=self.embedding_model
+            )
+            score = cosine_similarity(vecs[0], vecs[1])
+            if score < PennyConstants.ENTITY_NAME_SEMANTIC_THRESHOLD:
+                logger.info(
+                    "Rejected entity '%s' (similarity %.2f < %.2f)",
+                    candidate_name,
+                    score,
+                    PennyConstants.ENTITY_NAME_SEMANTIC_THRESHOLD,
+                )
+                return False
+            return True
+        except Exception:
+            logger.debug("Semantic validation failed, accepting candidate", exc_info=True)
+            return True
 
     async def _extract_facts(
         self,

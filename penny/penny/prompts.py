@@ -141,6 +141,14 @@ Examples:
         "- If no genuinely new facts are found, return an empty list"
     )
 
+    # Known-only entity identification prompt (for penny_enrichment searches)
+    KNOWN_ENTITY_IDENTIFICATION_PROMPT = (
+        "Identify which of the known entities appear in the following search results.\n"
+        "ONLY return entities from the known list below. "
+        "Do NOT identify new entities — only match against the known list.\n\n"
+        "Return the names exactly as they appear in the known list."
+    )
+
     # Message entity extraction prompts (two-pass, adapted for user messages)
     MESSAGE_ENTITY_IDENTIFICATION_PROMPT = (
         "Identify named entities in the following user message.\n"

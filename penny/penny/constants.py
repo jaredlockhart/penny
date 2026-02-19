@@ -129,5 +129,8 @@ class PennyConstants:
     LEARN_MIN_INTEREST_SCORE = 0.1  # Minimum interest to consider
     LEARN_RECENT_DAYS = 1.0  # Skip entity if verified within this window
 
+    # Entity name validation
+    ENTITY_NAME_SEMANTIC_THRESHOLD = 0.35
+
     # LearnPrompt defaults
     LEARN_PROMPT_DEFAULT_SEARCHES = 5

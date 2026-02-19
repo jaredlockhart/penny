@@ -5,6 +5,7 @@ import json
 import pytest
 from sqlmodel import select
 
+from penny.agents.extraction import _is_valid_entity_name
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog, SearchLog
 from penny.ollama.embeddings import deserialize_embedding, serialize_embedding
@@ -1112,3 +1113,211 @@ async def test_extraction_unknown_emoji(
             TEST_SENDER, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
         )
         assert len(reactions) == 0, "Reaction should be marked as processed even for unknown emoji"
+
+
+# --- Two-mode extraction + entity validation ---
+
+
+@pytest.mark.asyncio
+async def test_extraction_penny_enrichment_known_only(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    penny_enrichment searches only produce facts for known entities:
+    1. Pre-seed a known entity
+    2. Create a SearchLog with trigger=penny_enrichment
+    3. Mock LLM to return the known entity + facts
+    4. Verify: known entity gets new facts, NO new entities created,
+       NO SEARCH_INITIATED engagements
+    """
+    config = make_config()
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            # Known-only identification: return the known entity
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"known": ["kef ls50 meta"]}),
+            )
+        else:
+            # Fact extraction for the known entity
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"facts": ["Won What Hi-Fi 2024 award"]}),
+            )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Pre-seed known entity with a fact
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
+
+        # Seed a recent incoming message so find_sender_for_timestamp works
+        penny.db.log_message(
+            direction="incoming", sender=TEST_SENDER, content="tell me more about speakers"
+        )
+
+        # Create a SearchLog with penny_enrichment trigger
+        penny.db.log_search(
+            query="kef ls50 meta latest",
+            response="The KEF LS50 Meta won the What Hi-Fi 2024 award.",
+            trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
+        )
+
+        work_done = await penny.extraction_pipeline.execute()
+        assert work_done, "Should have extracted facts for the known entity"
+
+        # Verify known entity got new facts
+        facts = penny.db.get_entity_facts(entity.id)
+        fact_contents = [f.content for f in facts]
+        assert "Won What Hi-Fi 2024 award" in fact_contents
+
+        # Verify NO new entities were created
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        assert len(entities) == 1, (
+            f"Expected only 1 entity, got {len(entities)}: {[e.name for e in entities]}"
+        )
+
+        # Verify NO SEARCH_INITIATED engagements
+        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        search_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.SEARCH_INITIATED
+        ]
+        assert len(search_engagements) == 0, (
+            "penny_enrichment should not create SEARCH_INITIATED engagements"
+        )
+
+        # Verify SearchLog is marked as extracted
+        with penny.db.get_session() as session:
+            search_logs = list(session.exec(select(SearchLog)).all())
+            assert all(sl.extracted for sl in search_logs)
+
+
+def test_structural_entity_name_validation():
+    """_is_valid_entity_name rejects garbage names and accepts valid ones."""
+    # Valid entity names
+    assert _is_valid_entity_name("KEF LS50 Meta") is True
+    assert _is_valid_entity_name("Leonard Susskind") is True
+    assert _is_valid_entity_name("ROCm") is True
+    assert _is_valid_entity_name("SYK model") is True
+    assert _is_valid_entity_name("a") is True
+
+    # Too many words (> 8)
+    assert (
+        _is_valid_entity_name("this is a very long entity name that exceeds eight words total")
+        is False
+    )
+
+    # Numbered list items
+    assert _is_valid_entity_name("1. Some Entity") is False
+    assert _is_valid_entity_name("23. Another Item") is False
+
+    # URLs
+    assert _is_valid_entity_name("check out https://example.com") is False
+
+    # Markdown bold
+    assert _is_valid_entity_name("**bold name**") is False
+
+    # Newlines
+    assert _is_valid_entity_name("name with\nnewline") is False
+
+    # LLM output artifacts
+    assert _is_valid_entity_name("{topic} description") is False
+    assert _is_valid_entity_name("some confidence score: high entity") is False
+    assert _is_valid_entity_name("result-brief: something") is False
+    assert _is_valid_entity_name("{description} of thing") is False
+
+
+@pytest.mark.asyncio
+async def test_semantic_entity_name_validation(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Semantically unrelated entity candidates are rejected via embedding similarity.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            # Entity identification: return a related and an unrelated entity
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {
+                        "known": [],
+                        "new": [
+                            {"name": "KEF LS50 Meta"},
+                            {"name": "Random Conference Sponsor"},
+                        ],
+                    }
+                ),
+            )
+        else:
+            # Fact extraction
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"facts": ["A well-known product"]}),
+            )
+
+    mock_ollama.set_response_handler(handler)
+
+    # Embed handler: return high similarity for KEF (related to speakers query),
+    # low similarity for the unrelated entity
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        vecs = []
+        for text in texts:
+            if "kef" in text.lower() or "speaker" in text.lower():
+                vecs.append([1.0, 0.0, 0.0, 0.0])
+            else:
+                # Orthogonal vector — cosine similarity = 0.0
+                vecs.append([0.0, 1.0, 0.0, 0.0])
+        return vecs
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    async with running_penny(config) as penny:
+        # Seed a recent incoming message so find_sender_for_timestamp works
+        penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="best speakers?")
+
+        # Create a SearchLog about speakers
+        penny.db.log_search(
+            query="best bookshelf speakers",
+            response="The KEF LS50 Meta is excellent. "
+            "Also, Random Conference Sponsor attended CES.",
+            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+        )
+
+        work_done = await penny.extraction_pipeline.execute()
+        assert work_done
+
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        entity_names = [e.name for e in entities]
+
+        # KEF should be created (semantically related to "best bookshelf speakers")
+        assert "kef ls50 meta" in entity_names
+
+        # Random Conference Sponsor should be rejected (semantically unrelated)
+        assert "random conference sponsor" not in entity_names, (
+            f"Unrelated entity should be rejected by semantic filter, got: {entity_names}"
+        )
