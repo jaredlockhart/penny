@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import struct
+import unicodedata
 
 
 def serialize_embedding(embedding: list[float]) -> bytes:
@@ -53,6 +54,53 @@ def find_similar(
 
     scored.sort(key=lambda x: x[1], reverse=True)
     return scored[:top_k]
+
+
+# Unicode punctuation that NFKD doesn't normalize to ASCII
+_UNICODE_REPLACEMENTS = (
+    ("\u2010", "-"),  # HYPHEN
+    ("\u2011", "-"),  # NON-BREAKING HYPHEN
+    ("\u2013", "-"),  # EN DASH
+    ("\u2014", "-"),  # EM DASH
+    ("\u2018", "'"),  # LEFT SINGLE QUOTATION MARK
+    ("\u2019", "'"),  # RIGHT SINGLE QUOTATION MARK
+    ("\u201c", '"'),  # LEFT DOUBLE QUOTATION MARK
+    ("\u201d", '"'),  # RIGHT DOUBLE QUOTATION MARK
+)
+
+
+def normalize_unicode(text: str) -> str:
+    """Normalize unicode variants to ASCII equivalents for token comparison.
+
+    Applies NFKD decomposition, strips combining marks (accents), and replaces
+    common unicode punctuation with ASCII equivalents.
+    """
+    normalized = unicodedata.normalize("NFKD", text)
+    stripped = "".join(c for c in normalized if not unicodedata.combining(c))
+    for old, new in _UNICODE_REPLACEMENTS:
+        stripped = stripped.replace(old, new)
+    return stripped
+
+
+def tokenize_entity_name(text: str) -> list[str]:
+    """Tokenize an entity name for dedup comparison (unicode-normalized, lowercased)."""
+    return normalize_unicode(text).lower().split()
+
+
+def token_containment_ratio(name_a: str, name_b: str) -> float:
+    """Fraction of the shorter name's tokens found in the longer name.
+
+    Returns 1.0 when the shorter name is a complete token-subset of the longer.
+    Used as a fast lexical signal for entity deduplication.
+    """
+    tokens_a = set(tokenize_entity_name(name_a))
+    tokens_b = set(tokenize_entity_name(name_b))
+    shorter, longer = (
+        (tokens_a, tokens_b) if len(tokens_a) <= len(tokens_b) else (tokens_b, tokens_a)
+    )
+    if not shorter:
+        return 0.0
+    return len(shorter & longer) / len(shorter)
 
 
 def build_entity_embed_text(name: str, facts: list[str]) -> str:

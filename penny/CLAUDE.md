@@ -16,7 +16,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nExtraction · EntityCleaner · LearnLoop"]
+    Penny -.->|"schedule"| BG["Background Agents\nExtraction · LearnLoop"]
 ```
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
@@ -36,7 +36,7 @@ penny/
   config_params.py    — ConfigParam definitions for runtime-configurable settings
   constants.py        — System prompt, research prompts, all constants
   interest.py         — Interest score computation (pure function, half-life decay)
-  prompts.py          — LLM prompt templates (extraction, entity merge, learn queries)
+  prompts.py          — LLM prompt templates (extraction, learn queries)
   responses.py        — All user-facing response strings (PennyResponse class)
   startup.py          — Startup announcement message generation (git commit info)
   datetime_utils.py   — Timezone derivation from location (geopy + timezonefinder)
@@ -45,7 +45,6 @@ penny/
     models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
     message.py        — MessageAgent: handles incoming user messages
     extraction.py     — ExtractionPipeline: unified entity/fact/preference extraction from search results and messages
-    entity_cleaner.py — EntityCleaner: periodic merge of duplicate entities
     learn_loop.py     — LearnLoopAgent: adaptive background research driven by interest scores
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
@@ -94,7 +93,7 @@ penny/
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client
     models.py         — ChatResponse, ChatResponseMessage
-    embeddings.py     — Embedding utilities (serialize, deserialize, find_similar, build_entity_embed_text)
+    embeddings.py     — Embedding utilities (serialize, deserialize, find_similar, build_entity_embed_text, token_containment_ratio)
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
     test_interest.py, test_embeddings.py, test_periodic_schedule.py
@@ -103,7 +102,7 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_extraction.py, test_entity_cleaner.py, test_learn_loop.py
+      test_message.py, test_extraction.py, test_learn_loop.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py,
       test_signal_formatting.py, test_startup_announcement.py
@@ -144,6 +143,7 @@ The base `Agent` class implements the core agentic loop:
 - Three phases per execution: search log extraction → message extraction → embedding backfill
 - **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results. Checks `trigger` field to determine mode — full extraction (user-triggered, creates entities with validation) vs known-only (penny-triggered, facts only)
 - **Entity validation**: New entity candidates pass structural filter (word count, LLM artifacts, URLs) then semantic filter (embedding similarity to query, threshold ~0.35)
+- **Insertion-time dedup**: Before creating a new entity, checks all existing entities using dual-threshold detection — token containment ratio (TCR >= 0.75) as fast lexical pre-filter, then embedding cosine similarity (>= 0.85) for confirmation. Both must pass. Routes to existing entity instead of creating a duplicate
 - **Message extraction**: Extracts entities/facts from user messages AND preferences from messages+reactions
 - Pre-filters messages before LLM calls: skips short messages (< 20 chars) and slash commands
 - Creates MESSAGE_MENTION engagements when entities are found in user messages
@@ -153,13 +153,6 @@ The base `Agent` class implements the core agentic loop:
 - Facts track provenance via `source_search_log_id` or `source_message_id`
 - Sends fact discovery notifications: one proactive message per entity with new facts, exponential backoff on silence
 - All content processed newest-first (ORDER BY timestamp DESC)
-
-**EntityCleaner** (`agents/entity_cleaner.py`)
-- Background task: periodically merges duplicate entities in the knowledge base
-- Enforces minimum interval between runs (default 24h) via DB-stored timestamp in RuntimeConfig
-- Sends entity name list to LLM, which identifies groups of duplicates and picks canonical names
-- Merge executed in Python-space: combines deduplicated facts, reassigns entity_search_log refs, deletes duplicates
-- Uses Ollama structured output with Pydantic schemas (`MergeGroups`, `MergeGroup`)
 
 **LearnLoopAgent** (`agents/learn_loop.py`)
 - Background task: adaptive research driven by entity interest scores
@@ -186,7 +179,7 @@ The base `Agent` class implements the core agentic loop:
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule → extraction → entity_cleaner → learn_loop)
+- Runs tasks in priority order (schedule → extraction → learn_loop)
 - Tracks global idle threshold (default: 300s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
@@ -202,7 +195,7 @@ The `scheduler/` module manages background tasks:
 
 **PeriodicSchedule**
 - Runs periodically while system is idle at a configurable interval
-- Used for extraction pipeline, entity cleaner, and learn loop (default: 300s)
+- Used for extraction pipeline and learn loop (default: 300s)
 - Tracks last run time and fires again after interval elapses
 - Resets when a message arrives
 
@@ -343,8 +336,8 @@ When extraction discovers new facts, one proactive message per entity is sent. U
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
-- **Specialized agents**: Each task type (message, extraction, entity cleaning, learn loop) has its own agent subclass
-- **Priority scheduling**: Schedule → extraction → entity_cleaner → learn_loop
+- **Specialized agents**: Each task type (message, extraction, learn loop) has its own agent subclass
+- **Priority scheduling**: Schedule → extraction → learn_loop
 - **Always-run schedules**: User-created schedules run regardless of idle state; extraction/learn wait for idle
 - **Global idle threshold**: Single configurable idle time (default: 300s) controls when idle-dependent tasks become eligible
 - **Background suspension**: Foreground message processing suspends background tasks to prevent interference

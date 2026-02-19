@@ -19,7 +19,6 @@ from penny.database.models import (
     MessageLog,
     Preference,
     PromptLog,
-    RuntimeConfig,
     SearchLog,
     UserInfo,
 )
@@ -1090,93 +1089,6 @@ class Database:
             return msg
 
     # --- Entity merge ---
-
-    def merge_entities(
-        self, primary_id: int, duplicate_ids: list[int], keep_fact_ids: list[int]
-    ) -> None:
-        """
-        Merge duplicate entities into a primary entity.
-
-        Reassigns kept facts to the primary, deletes duplicate facts,
-        and deletes the duplicate entity rows. All in a single transaction.
-
-        Args:
-            primary_id: Entity ID to keep
-            duplicate_ids: Entity IDs to merge into primary and delete
-            keep_fact_ids: Fact IDs to preserve (reassigned to primary);
-                           all other facts on duplicates are deleted
-        """
-        try:
-            keep_set = set(keep_fact_ids)
-            with self.get_session() as session:
-                primary = session.get(Entity, primary_id)
-                if not primary:
-                    logger.error("Primary entity %d not found for merge", primary_id)
-                    return
-
-                primary.updated_at = datetime.now(UTC)
-                session.add(primary)
-
-                for dup_id in duplicate_ids:
-                    # Reassign kept facts, delete the rest
-                    facts = list(session.exec(select(Fact).where(Fact.entity_id == dup_id)).all())
-                    for fact in facts:
-                        if fact.id in keep_set:
-                            fact.entity_id = primary_id
-                            session.add(fact)
-                        else:
-                            session.delete(fact)
-
-                    # Reassign engagements from duplicate to primary
-                    engagements = list(
-                        session.exec(select(Engagement).where(Engagement.entity_id == dup_id)).all()
-                    )
-                    for engagement in engagements:
-                        engagement.entity_id = primary_id
-                        session.add(engagement)
-
-                    # Delete the duplicate entity
-                    dup = session.get(Entity, dup_id)
-                    if dup:
-                        session.delete(dup)
-
-                session.commit()
-                logger.info("Merged entities %s into %d", duplicate_ids, primary_id)
-        except Exception as e:
-            logger.error("Failed to merge entities: %s", e)
-
-    # --- Entity cleaning timestamp ---
-
-    def get_entity_cleaning_timestamp(self) -> datetime | None:
-        """Get the timestamp of the last entity cleaning run."""
-        key = "LAST_ENTITY_CLEANING"
-        with self.get_session() as session:
-            row = session.exec(select(RuntimeConfig).where(RuntimeConfig.key == key)).first()
-            if row:
-                return datetime.fromisoformat(row.value)
-            return None
-
-    def set_entity_cleaning_timestamp(self, timestamp: datetime) -> None:
-        """Store the timestamp of the last entity cleaning run."""
-        key = "LAST_ENTITY_CLEANING"
-        try:
-            with self.get_session() as session:
-                row = session.exec(select(RuntimeConfig).where(RuntimeConfig.key == key)).first()
-                if row:
-                    row.value = timestamp.isoformat()
-                    row.updated_at = datetime.now(UTC)
-                    session.add(row)
-                else:
-                    session.add(
-                        RuntimeConfig(
-                            key=key,
-                            value=timestamp.isoformat(),
-                            description="Last entity cleaning run timestamp",
-                        )
-                    )
-                session.commit()
-        except Exception as e:
-            logger.error("Failed to set entity cleaning timestamp: %s", e)
 
     # --- LearnPrompt methods ---
 

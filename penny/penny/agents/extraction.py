@@ -20,6 +20,8 @@ from penny.ollama.embeddings import (
     deserialize_embedding,
     find_similar,
     serialize_embedding,
+    token_containment_ratio,
+    tokenize_entity_name,
 )
 from penny.prompts import Prompt
 
@@ -403,6 +405,21 @@ class ExtractionPipeline(Agent):
             if not identified:
                 return _ExtractionResult()
 
+            # Filter out fragment entities that are token-subsets of another
+            # candidate in the same batch (e.g., "totem" when "totem loon" is also present)
+            candidate_names = [e.name.lower().strip() for e in identified.new if e.name.strip()]
+            candidate_token_sets = {n: set(tokenize_entity_name(n)) for n in candidate_names}
+            subset_names: set[str] = set()
+            for name_a, tokens_a in candidate_token_sets.items():
+                if not tokens_a:
+                    continue
+                for name_b, tokens_b in candidate_token_sets.items():
+                    if name_a == name_b:
+                        continue
+                    if tokens_a < tokens_b:  # strict subset
+                        subset_names.add(name_a)
+                        break
+
             # Validate and store new entities
             for new_entity in identified.new:
                 name = new_entity.name.lower().strip()
@@ -411,8 +428,23 @@ class ExtractionPipeline(Agent):
                 if not _is_valid_entity_name(name):
                     logger.info("Rejected entity '%s' (structural filter)", name)
                     continue
-                if not await self._is_semantically_relevant(name, context_value):
+                if name in subset_names:
+                    logger.info("Rejected entity '%s' (token-subset of another candidate)", name)
                     continue
+                relevant, candidate_embedding = await self._check_semantic_relevance(
+                    name, context_value
+                )
+                if not relevant:
+                    continue
+
+                # Check for duplicate before creating
+                duplicate = self._find_duplicate_entity(
+                    name, candidate_embedding, existing_entities
+                )
+                if duplicate:
+                    entities_to_process.append(duplicate)
+                    continue
+
                 is_new = name not in existing_by_name
                 entity = self.db.get_or_create_entity(user, name)
                 if entity and entity.id is not None:
@@ -631,15 +663,22 @@ class ExtractionPipeline(Agent):
             logger.warning("Entity pre-filter failed, using full list: %s", e)
             return entities
 
-    async def _is_semantically_relevant(self, candidate_name: str, trigger_text: str) -> bool:
-        """Semantic validation: reject entity candidates unrelated to the triggering content."""
+    async def _check_semantic_relevance(
+        self, candidate_name: str, trigger_text: str
+    ) -> tuple[bool, list[float] | None]:
+        """Semantic validation: reject entity candidates unrelated to the triggering content.
+
+        Returns (is_relevant, candidate_embedding). The candidate embedding is returned
+        so callers can reuse it for dedup without a second embed call.
+        """
         if not self.embedding_model:
-            return True
+            return True, None
         try:
             vecs = await self._ollama_client.embed(
                 [candidate_name, trigger_text], model=self.embedding_model
             )
-            score = cosine_similarity(vecs[0], vecs[1])
+            candidate_embedding = vecs[0]
+            score = cosine_similarity(candidate_embedding, vecs[1])
             if score < PennyConstants.ENTITY_NAME_SEMANTIC_THRESHOLD:
                 logger.info(
                     "Rejected entity '%s' (similarity %.2f < %.2f)",
@@ -647,11 +686,45 @@ class ExtractionPipeline(Agent):
                     score,
                     PennyConstants.ENTITY_NAME_SEMANTIC_THRESHOLD,
                 )
-                return False
-            return True
+                return False, None
+            return True, candidate_embedding
         except Exception:
             logger.debug("Semantic validation failed, accepting candidate", exc_info=True)
-            return True
+            return True, None
+
+    def _find_duplicate_entity(
+        self,
+        candidate_name: str,
+        candidate_embedding: list[float] | None,
+        existing_entities: list[Entity],
+    ) -> Entity | None:
+        """Check if a candidate entity name is a duplicate of an existing entity.
+
+        Uses dual-threshold detection: token containment ratio (TCR) as a fast
+        lexical pre-filter, then embedding cosine similarity for confirmation.
+        Both signals must pass for a match.
+        """
+        if candidate_embedding is None:
+            return None
+
+        for entity in existing_entities:
+            if entity.embedding is None:
+                continue
+            tcr = token_containment_ratio(candidate_name, entity.name)
+            if tcr < PennyConstants.ENTITY_DEDUP_TCR_THRESHOLD:
+                continue
+            entity_vec = deserialize_embedding(entity.embedding)
+            sim = cosine_similarity(candidate_embedding, entity_vec)
+            if sim >= PennyConstants.ENTITY_DEDUP_EMBEDDING_THRESHOLD:
+                logger.info(
+                    "Dedup: '%s' matches existing '%s' (TCR=%.2f, sim=%.2f)",
+                    candidate_name,
+                    entity.name,
+                    tcr,
+                    sim,
+                )
+                return entity
+        return None
 
     async def _extract_facts(
         self,
