@@ -89,7 +89,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 18  # 0001 through 0018
+        assert count == 19  # 0001 through 0019
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("PRAGMA table_info(messagelog)")
@@ -98,6 +98,12 @@ class TestMigrate:
         assert "external_id" in columns
         assert "processed" in columns
         assert "parent_summary" not in columns  # Should be removed by migration 0008
+
+        # Verify learnprompt table created by 0019
+        has_learnprompt = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='learnprompt'"
+        ).fetchone()
+        assert has_learnprompt is not None
         conn.close()
 
     def test_idempotent(self, tmp_path):
@@ -148,7 +154,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 17  # 0002 through 0018 are applied
+        assert count == 18  # 0002 through 0019 are applied
 
     def test_bootstrap_with_columns_already_present(self, tmp_path):
         """If columns already exist (from old migration system), 0001 should succeed."""
@@ -165,7 +171,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 18  # All migrations (0001 through 0018) recorded as applied
+        assert count == 19  # All migrations (0001 through 0019) recorded as applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")

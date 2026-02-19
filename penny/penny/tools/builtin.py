@@ -45,6 +45,8 @@ class SearchTool(Tool):
         self.db = db
         self.redact_terms: list[str] = []
         self.skip_images = skip_images
+        self.trigger: str = "user_message"  # SearchTrigger enum value
+        self.learn_prompt_id: int | None = None  # LearnPrompt FK for /learn searches
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -147,7 +149,13 @@ class SearchTool(Tool):
             urls = sorted(filtered, key=filtered.get, reverse=True)[:5]  # type: ignore[arg-type]
 
         if self.db:
-            self.db.log_search(query=query, response=result, duration_ms=duration_ms)
+            self.db.log_search(
+                query=query,
+                response=result,
+                duration_ms=duration_ms,
+                trigger=self.trigger,
+                learn_prompt_id=self.learn_prompt_id,
+            )
 
         return result, urls
 

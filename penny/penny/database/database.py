@@ -15,6 +15,7 @@ from penny.database.models import (
     Engagement,
     Entity,
     Fact,
+    LearnPrompt,
     MessageLog,
     PersonalityPrompt,
     Preference,
@@ -115,6 +116,8 @@ class Database:
         query: str,
         response: str,
         duration_ms: int | None = None,
+        trigger: str = "user_message",
+        learn_prompt_id: int | None = None,
     ) -> None:
         """
         Log a Perplexity search call.
@@ -123,6 +126,8 @@ class Database:
             query: The search query
             response: The search response text
             duration_ms: Optional call duration in milliseconds
+            trigger: What triggered this search (SearchTrigger enum value)
+            learn_prompt_id: Optional LearnPrompt FK for /learn command searches
         """
         try:
             with self.get_session() as session:
@@ -130,6 +135,8 @@ class Database:
                     query=query,
                     response=response,
                     duration_ms=duration_ms,
+                    trigger=trigger,
+                    learn_prompt_id=learn_prompt_id,
                 )
                 session.add(log)
                 session.commit()
@@ -1206,6 +1213,92 @@ class Database:
                 session.commit()
         except Exception as e:
             logger.error("Failed to set entity cleaning timestamp: %s", e)
+
+    # --- LearnPrompt methods ---
+
+    def create_learn_prompt(
+        self,
+        user: str,
+        prompt_text: str,
+        searches_remaining: int = 0,
+    ) -> LearnPrompt | None:
+        """Create a new LearnPrompt.
+
+        Args:
+            user: User identifier
+            prompt_text: Original user text
+            searches_remaining: Number of searches to execute
+
+        Returns:
+            The created LearnPrompt, or None on failure
+        """
+        try:
+            with self.get_session() as session:
+                learn_prompt = LearnPrompt(
+                    user=user,
+                    prompt_text=prompt_text,
+                    searches_remaining=searches_remaining,
+                )
+                session.add(learn_prompt)
+                session.commit()
+                session.refresh(learn_prompt)
+                logger.debug("Created LearnPrompt %d for user %s", learn_prompt.id, user)
+                return learn_prompt
+        except Exception as e:
+            logger.error("Failed to create LearnPrompt: %s", e)
+            return None
+
+    def get_learn_prompt(self, learn_prompt_id: int) -> LearnPrompt | None:
+        """Get a LearnPrompt by ID.
+
+        Args:
+            learn_prompt_id: LearnPrompt primary key
+
+        Returns:
+            The LearnPrompt if found, None otherwise
+        """
+        with self.get_session() as session:
+            return session.get(LearnPrompt, learn_prompt_id)
+
+    def update_learn_prompt_status(self, learn_prompt_id: int, status: str) -> None:
+        """Update the status of a LearnPrompt.
+
+        Args:
+            learn_prompt_id: LearnPrompt primary key
+            status: New status (LearnPromptStatus enum value)
+        """
+        try:
+            with self.get_session() as session:
+                learn_prompt = session.get(LearnPrompt, learn_prompt_id)
+                if learn_prompt:
+                    learn_prompt.status = status
+                    learn_prompt.updated_at = datetime.now(UTC)
+                    session.add(learn_prompt)
+                    session.commit()
+                    logger.debug("Updated LearnPrompt %d status to %s", learn_prompt_id, status)
+        except Exception as e:
+            logger.error("Failed to update LearnPrompt %d status: %s", learn_prompt_id, e)
+
+    def get_active_learn_prompts(self, user: str) -> list[LearnPrompt]:
+        """Get all active LearnPrompts for a user.
+
+        Args:
+            user: User identifier
+
+        Returns:
+            List of active LearnPrompts ordered by created_at descending (newest first)
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(LearnPrompt)
+                    .where(
+                        LearnPrompt.user == user,
+                        LearnPrompt.status == "active",
+                    )
+                    .order_by(LearnPrompt.created_at.desc())  # type: ignore[union-attr]
+                ).all()
+            )
 
     # --- Embedding methods ---
 

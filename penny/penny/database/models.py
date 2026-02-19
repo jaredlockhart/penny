@@ -34,6 +34,20 @@ class SearchLog(SQLModel, table=True):
     response: str
     duration_ms: int | None = None
     extracted: bool = Field(default=False)  # True after entity extraction processing
+    trigger: str = Field(default="user_message", index=True)  # SearchTrigger enum value
+    learn_prompt_id: int | None = Field(default=None, foreign_key="learnprompt.id", index=True)
+
+
+class LearnPrompt(SQLModel, table=True):
+    """A user-initiated learning prompt with lifecycle tracking."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)  # Signal number or Discord user ID
+    prompt_text: str  # Original user text (e.g., "find me stuff about speakers")
+    status: str = Field(default="active", index=True)  # LearnPromptStatus enum value
+    searches_remaining: int = Field(default=0)  # Searches left to execute
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class MessageLog(SQLModel, table=True):
