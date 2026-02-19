@@ -115,6 +115,16 @@ class OllamaClient:
 
                 return response
 
+            except ollama.ResponseError as e:
+                last_error = e
+                if e.status_code == 404:
+                    logger.error("Ollama chat failed (model not found, no retry): %s", e)
+                    raise
+                logger.warning(
+                    "Ollama chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, e
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
             except Exception as e:
                 last_error = e
                 logger.warning(
@@ -184,6 +194,21 @@ class OllamaClient:
                 logger.info("Image generated successfully with model %s", model)
                 return image_data
 
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code == 404:
+                    logger.error(
+                        "Ollama image generation failed (model not found, no retry): %s", e
+                    )
+                    raise
+                logger.warning(
+                    "Ollama image generation error (attempt %d/%d): %s",
+                    attempt + 1,
+                    self.max_retries,
+                    e,
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
             except Exception as e:
                 last_error = e
                 logger.warning(
@@ -227,6 +252,16 @@ class OllamaClient:
                 )
                 return embeddings
 
+            except ollama.ResponseError as e:
+                last_error = e
+                if e.status_code == 404:
+                    logger.error("Ollama embed failed (model not found, no retry): %s", e)
+                    raise
+                logger.warning(
+                    "Ollama embed error (attempt %d/%d): %s", attempt + 1, self.max_retries, e
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
             except Exception as e:
                 last_error = e
                 logger.warning(
@@ -237,6 +272,23 @@ class OllamaClient:
 
         logger.error("Ollama embed failed after %d attempts: %s", self.max_retries, last_error)
         raise last_error  # type: ignore[misc]
+
+    async def list_models(self) -> list[str]:
+        """
+        List all locally available Ollama models.
+
+        Returns:
+            List of model names available on the Ollama host
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10) as http_client:
+                resp = await http_client.get(f"{self.api_url}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+            return [m["name"] for m in data.get("models", []) if m.get("name")]
+        except Exception as e:
+            logger.warning("Failed to list Ollama models: %s", e)
+            return []
 
     async def close(self) -> None:
         """Close the client (SDK handles cleanup automatically)."""

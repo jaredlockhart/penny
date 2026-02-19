@@ -2,6 +2,7 @@
 
 import math
 
+import ollama
 import pytest
 
 from penny.ollama.embeddings import (
@@ -159,6 +160,60 @@ class TestOllamaClientEmbed:
 
         assert len(result) == 1
         assert all(v == 0.0 for v in result[0])
+
+    @pytest.mark.asyncio
+    async def test_embed_404_raises_immediately_without_retry(self, mock_ollama):
+        """A 404 (model not found) must raise immediately — no retries."""
+        from penny.ollama.client import OllamaClient
+
+        error_404 = ollama.ResponseError("model not found", status_code=404)
+        call_count = 0
+
+        def raising_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            raise error_404
+
+        mock_ollama.set_embed_handler(raising_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ollama.ResponseError) as exc_info:
+            await client.embed("hello", model="missing-model")
+
+        assert exc_info.value.status_code == 404
+        # Must have called embed exactly once — no retries on 404
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_embed_transient_error_retries(self, mock_ollama):
+        """Non-404 errors should still be retried up to max_retries."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def flaky_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            raise ollama.ResponseError("server error", status_code=500)
+
+        mock_ollama.set_embed_handler(flaky_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ollama.ResponseError):
+            await client.embed("hello", model="some-model")
+
+        # Should have retried all 3 times
+        assert call_count == 3
 
 
 class TestBuildEntityEmbedText:
