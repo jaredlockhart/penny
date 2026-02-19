@@ -120,6 +120,12 @@ async def test_basic_message_flow(
             )
         assert len(outgoing) >= 1, "Outgoing message should be logged"
 
+        # Verify search logs have default trigger
+        with penny.db.get_session() as session:
+            search_logs = list(session.exec(select(SearchLog)).all())
+        if search_logs:
+            assert search_logs[0].trigger == "user_message"
+
 
 @pytest.mark.asyncio
 async def test_message_without_tool_call(

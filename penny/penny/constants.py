@@ -38,6 +38,19 @@ class PennyConstants:
         NEGATIVE = "negative"
         NEUTRAL = "neutral"
 
+    class SearchTrigger(StrEnum):
+        """What triggered a search."""
+
+        USER_MESSAGE = "user_message"
+        LEARN_COMMAND = "learn_command"
+        PENNY_ENRICHMENT = "penny_enrichment"
+
+    class LearnPromptStatus(StrEnum):
+        """Status of a LearnPrompt lifecycle."""
+
+        ACTIVE = "active"
+        COMPLETED = "completed"
+
     # Reaction emoji mappings for sentiment analysis
     LIKE_REACTIONS = ("❤️", "👍", "😆")
     DISLIKE_REACTIONS = ("😠", "👎", "😢")
@@ -115,3 +128,6 @@ class PennyConstants:
     LEARN_STALENESS_DAYS = 7.0  # Days until facts are considered stale
     LEARN_MIN_INTEREST_SCORE = 0.1  # Minimum interest to consider
     LEARN_RECENT_DAYS = 1.0  # Skip entity if verified within this window
+
+    # LearnPrompt defaults
+    LEARN_PROMPT_DEFAULT_SEARCHES = 5

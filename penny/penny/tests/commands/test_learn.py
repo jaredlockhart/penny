@@ -159,3 +159,40 @@ async def test_learn_no_args_empty(signal_server, test_config, mock_ollama, runn
         response = await signal_server.wait_for_message(timeout=5.0)
 
         assert "Nothing being actively researched" in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_learn_prompt_crud(signal_server, test_config, mock_ollama, running_penny):
+    """LearnPrompt CRUD operations work correctly."""
+    async with running_penny(test_config) as penny:
+        # Create
+        lp = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="find me stuff about speakers",
+            searches_remaining=3,
+        )
+        assert lp is not None
+        assert lp.id is not None
+        assert lp.status == "active"
+        assert lp.searches_remaining == 3
+
+        # Read
+        fetched = penny.db.get_learn_prompt(lp.id)
+        assert fetched is not None
+        assert fetched.prompt_text == "find me stuff about speakers"
+
+        # Update status
+        penny.db.update_learn_prompt_status(lp.id, "completed")
+        updated = penny.db.get_learn_prompt(lp.id)
+        assert updated is not None
+        assert updated.status == "completed"
+
+        # Active list
+        lp2 = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="ai conferences in europe",
+            searches_remaining=3,
+        )
+        active = penny.db.get_active_learn_prompts(TEST_SENDER)
+        assert len(active) == 1  # Only lp2 is active; lp is completed
+        assert active[0].id == lp2.id
