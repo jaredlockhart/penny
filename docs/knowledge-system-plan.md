@@ -330,6 +330,16 @@ When the extraction pipeline discovers new facts, it sends one proactive message
 
 Each message covers one entity and its new facts. If extraction finds facts about 3 entities, that's 3 messages. Notifications include an image when available.
 
+### Proactive messaging cadence
+
+Penny uses exponential backoff for proactive messages, reset by user engagement:
+
+- **Start eager**: when the user is actively chatting, Penny messages discoveries immediately as they're found
+- **Back off on silence**: each proactive message sent without a user reply doubles the delay before the next one (e.g. 0 → 1min → 2min → 4min → 8min → ...)
+- **Reset on engagement**: any user action (message, reaction, command) resets the backoff to zero — Penny becomes proactive again immediately
+
+This matches the user's energy: when they're engaged, Penny is chatty and shares everything. When they go quiet, Penny gradually quiets down too. No fixed idle threshold — the backoff is purely driven by whether the user is responding.
+
 ---
 
 ## Engagements Reference
