@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ from penny.ollama import OllamaClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
+from penny.tools.image_search import search_image
 from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -140,6 +142,43 @@ class Agent:
 
         return messages
 
+    async def _compose_user_facing(
+        self,
+        prompt: str,
+        history: list[tuple[str, str]] | None = None,
+        system_prompt: str | None = None,
+        image_query: str | None = None,
+    ) -> ControllerResponse:
+        """Compose a user-facing message with system prompt for consistent tone.
+
+        This is the shared primitive for all user-facing model calls.
+        Builds messages with the identity prompt and timestamp, calls the model,
+        and returns a ControllerResponse with optional image attachment.
+
+        Used directly by proactive notifications (learn loop, extraction),
+        and by run() for the no-tool path (e.g. image messages).
+        """
+        messages = self._build_messages(prompt, history, system_prompt)
+
+        # Run model call and image search concurrently
+        try:
+            if image_query:
+                response, image = await asyncio.gather(
+                    self._ollama_client.chat(messages=messages),
+                    search_image(image_query),
+                )
+            else:
+                response = await self._ollama_client.chat(messages=messages)
+                image = None
+        except Exception as e:
+            logger.error("Failed to compose user-facing message: %s", e)
+            return ControllerResponse(answer="")
+
+        content = response.content.strip()
+        thinking = response.thinking or response.message.thinking
+        attachments = [image] if image else []
+        return ControllerResponse(answer=content, thinking=thinking, attachments=attachments)
+
     async def caption_image(self, image_b64: str) -> str:
         """Caption an image using the vision model.
 
@@ -166,6 +205,9 @@ class Agent:
         """
         Run the agent with a prompt.
 
+        For the no-tool path, delegates to _compose_user_facing.
+        For the tool path, runs the full agentic loop.
+
         Args:
             prompt: The user message/prompt to respond to
             history: Optional conversation history as (role, content) tuples
@@ -176,9 +218,13 @@ class Agent:
         Returns:
             ControllerResponse with answer, thinking, and attachments
         """
-        messages = self._build_messages(prompt, history, system_prompt)
         tools = self._tool_registry.get_ollama_tools() if use_tools else None
         logger.debug("Using %d tools", len(tools) if tools else 0)
+
+        if not tools:
+            return await self._compose_user_facing(prompt, history, system_prompt)
+
+        messages = self._build_messages(prompt, history, system_prompt)
 
         attachments: list[str] = []
         source_urls: list[str] = []

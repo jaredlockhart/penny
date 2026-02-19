@@ -132,6 +132,10 @@ class PennyConstants:
     # Entity name validation
     ENTITY_NAME_SEMANTIC_THRESHOLD = 0.35
 
+    # Fact discovery notification backoff
+    FACT_NOTIFICATION_INITIAL_BACKOFF = 60.0  # seconds; first backoff after unanswered cycle
+    FACT_NOTIFICATION_MAX_BACKOFF = 3600.0  # seconds; cap at 1 hour
+
     # LearnPrompt defaults
     LEARN_PROMPT_DEFAULT_SEARCHES = 5
     LEARN_STATUS_DISPLAY_LIMIT = 10

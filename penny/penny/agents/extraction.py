@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
@@ -20,7 +22,6 @@ from penny.ollama.embeddings import (
     serialize_embedding,
 )
 from penny.prompts import Prompt
-from penny.tools.image_search import search_image
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -120,6 +121,33 @@ class ExtractedTopics(BaseModel):
     )
 
 
+@dataclass
+class _EntityFactDiscovery:
+    """Facts discovered for a single entity during extraction."""
+
+    entity: Entity
+    new_facts: list[str]
+    is_new_entity: bool
+
+
+@dataclass
+class _ExtractionResult:
+    """Result of _extract_and_store_entities with discovery info for notifications."""
+
+    entities: list[Entity] = field(default_factory=list)
+    discoveries: list[_EntityFactDiscovery] = field(default_factory=list)
+
+
+class _UserBackoff:
+    """Per-user backoff state for proactive fact notifications."""
+
+    __slots__ = ("last_proactive_send", "backoff_seconds")
+
+    def __init__(self) -> None:
+        self.last_proactive_send: datetime | None = None
+        self.backoff_seconds: float = 0.0
+
+
 class ExtractionPipeline(Agent):
     """Unified background agent that extracts entities, facts, preferences, and engagements.
 
@@ -130,6 +158,7 @@ class ExtractionPipeline(Agent):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._channel: MessageChannel | None = None
+        self._backoff_state: dict[str, _UserBackoff] = {}
 
     @property
     def name(self) -> str:
@@ -171,6 +200,7 @@ class ExtractionPipeline(Agent):
             return False
 
         work_done = False
+        user_discoveries: dict[str, list[_EntityFactDiscovery]] = {}
         logger.info("Processing %d unprocessed search logs", len(search_logs))
 
         for search_log in search_logs:
@@ -203,12 +233,12 @@ class ExtractionPipeline(Agent):
                 source_search_log_id=search_log.id,
                 allow_new_entities=allow_new,
             )
-            if result:
+            if result.entities:
                 work_done = True
 
                 # Create SEARCH_INITIATED engagements only for user-triggered searches
                 if allow_new:
-                    for entity in result:
+                    for entity in result.entities:
                         assert entity.id is not None
                         self.db.add_engagement(
                             user=user,
@@ -218,7 +248,15 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                         )
 
+                    # Collect discoveries for notification (skip penny_enrichment)
+                    if result.discoveries:
+                        user_discoveries.setdefault(user, []).extend(result.discoveries)
+
             self.db.mark_search_extracted(search_log.id)
+
+        # Send fact discovery notifications (respecting backoff)
+        for user, discoveries in user_discoveries.items():
+            await self._send_fact_notifications(user, discoveries)
 
         return work_done
 
@@ -249,7 +287,7 @@ class ExtractionPipeline(Agent):
                     continue
 
                 assert message.id is not None
-                entities = await self._extract_and_store_entities(
+                result = await self._extract_and_store_entities(
                     user=sender,
                     identification_prompt=Prompt.MESSAGE_ENTITY_IDENTIFICATION_PROMPT,
                     fact_prompt=Prompt.MESSAGE_FACT_EXTRACTION_PROMPT,
@@ -258,11 +296,11 @@ class ExtractionPipeline(Agent):
                     content=message.content,
                     source_message_id=message.id,
                 )
-                if entities:
+                if result.entities:
                     work_done = True
 
                     # Create MESSAGE_MENTION engagements for identified entities
-                    for entity in entities:
+                    for entity in result.entities:
                         assert entity.id is not None
                         self.db.add_engagement(
                             user=sender,
@@ -337,7 +375,7 @@ class ExtractionPipeline(Agent):
         source_search_log_id: int | None = None,
         source_message_id: int | None = None,
         allow_new_entities: bool = True,
-    ) -> list[Entity]:
+    ) -> _ExtractionResult:
         """Two-pass extraction for a single piece of content.
 
         Pass 1: Identify entities in the text.
@@ -345,12 +383,13 @@ class ExtractionPipeline(Agent):
           - Known-only mode (allow_new_entities=False): only known entities
         Pass 2: For each entity, extract new facts as individual Fact rows.
 
-        Returns list of entities that were created or updated (empty if none).
+        Returns _ExtractionResult with all identified entities and per-entity discoveries.
         """
         existing_entities = self.db.get_user_entities(user)
 
         # Collect all entities to process facts for
         entities_to_process: list[Entity] = []
+        newly_created_names: set[str] = set()
         existing_by_name = {e.name: e for e in existing_entities}
 
         if allow_new_entities:
@@ -359,7 +398,7 @@ class ExtractionPipeline(Agent):
                 existing_entities, identification_prompt, context_label, context_value, content
             )
             if not identified:
-                return []
+                return _ExtractionResult()
 
             # Validate and store new entities
             for new_entity in identified.new:
@@ -371,9 +410,12 @@ class ExtractionPipeline(Agent):
                     continue
                 if not await self._is_semantically_relevant(name, context_value):
                     continue
+                is_new = name not in existing_by_name
                 entity = self.db.get_or_create_entity(user, name)
                 if entity and entity.id is not None:
                     entities_to_process.append(entity)
+                    if is_new:
+                        newly_created_names.add(entity.name)
                     logger.info("New entity discovered: '%s'", name)
 
             # Look up known entities that were identified
@@ -388,7 +430,7 @@ class ExtractionPipeline(Agent):
                 existing_entities, identification_prompt, context_label, context_value, content
             )
             if not known_result:
-                return []
+                return _ExtractionResult()
 
             for known_name in known_result.known:
                 normalized = known_name.lower().strip()
@@ -398,6 +440,7 @@ class ExtractionPipeline(Agent):
 
         # Pass 2: extract facts for each identified entity
         entities_with_new_facts: list[int] = []
+        discoveries: list[_EntityFactDiscovery] = []
         for entity in entities_to_process:
             assert entity.id is not None
             new_facts = await self._extract_facts(
@@ -436,6 +479,13 @@ class ExtractionPipeline(Agent):
                 logger.info("  '%s' +fact: %s", entity.name, fact_text)
 
             entities_with_new_facts.append(entity.id)
+            discoveries.append(
+                _EntityFactDiscovery(
+                    entity=entity,
+                    new_facts=new_fact_texts,
+                    is_new_entity=entity.name in newly_created_names,
+                )
+            )
 
         # Regenerate entity embeddings for entities that got new facts
         if self.embedding_model and entities_with_new_facts:
@@ -443,7 +493,7 @@ class ExtractionPipeline(Agent):
                 [e for e in entities_to_process if e.id in entities_with_new_facts]
             )
 
-        return entities_to_process
+        return _ExtractionResult(entities=entities_to_process, discoveries=discoveries)
 
     async def _identify_entities(
         self,
@@ -730,7 +780,7 @@ class ExtractionPipeline(Agent):
                 else:
                     bullet_list = "\n".join(f"• {topic}" for topic in topics)
                     message = f"I added these to your {pref_type}s:\n{bullet_list}"
-                await self._send_notification(sender, message, image_query=topics[0])
+                await self._send_notification(sender, message)
 
             return len(added_preferences) > 0
 
@@ -850,17 +900,95 @@ class ExtractionPipeline(Agent):
             logger.debug("Follow-up engagement extraction failed", exc_info=True)
             return False
 
-    # --- Notifications ---
+    # --- Fact discovery notifications ---
 
-    async def _send_notification(
-        self, recipient: str, message: str, image_query: str | None = None
+    def _should_send_proactive(self, user: str) -> bool:
+        """Check if we should send proactive notifications to this user (backoff check)."""
+        state = self._backoff_state.get(user)
+        if state is None:
+            return True
+
+        # Check if user has sent a message since our last proactive send
+        if state.last_proactive_send is not None:
+            latest_incoming = self.db.get_latest_incoming_message_time(user)
+            if latest_incoming is not None:
+                incoming_time = latest_incoming
+                if incoming_time.tzinfo is None:
+                    incoming_time = incoming_time.replace(tzinfo=UTC)
+                last_send = state.last_proactive_send
+                if last_send.tzinfo is None:
+                    last_send = last_send.replace(tzinfo=UTC)
+                if incoming_time > last_send:
+                    state.backoff_seconds = 0.0
+
+        if state.backoff_seconds <= 0:
+            return True
+
+        if state.last_proactive_send is None:
+            return True
+
+        now = datetime.now(UTC)
+        last_send = state.last_proactive_send
+        if last_send.tzinfo is None:
+            last_send = last_send.replace(tzinfo=UTC)
+        elapsed = (now - last_send).total_seconds()
+        return elapsed >= state.backoff_seconds
+
+    def _mark_proactive_sent(self, user: str) -> None:
+        """Record that we sent proactive notifications and increase backoff."""
+        state = self._backoff_state.get(user)
+        if state is None:
+            state = _UserBackoff()
+            self._backoff_state[user] = state
+
+        state.last_proactive_send = datetime.now(UTC)
+        if state.backoff_seconds <= 0:
+            state.backoff_seconds = PennyConstants.FACT_NOTIFICATION_INITIAL_BACKOFF
+        else:
+            state.backoff_seconds = min(
+                state.backoff_seconds * 2,
+                PennyConstants.FACT_NOTIFICATION_MAX_BACKOFF,
+            )
+
+    async def _send_fact_notifications(
+        self, user: str, discoveries: list[_EntityFactDiscovery]
     ) -> None:
-        """Send a notification message to the user with an optional image."""
-        if not self._channel:
+        """Send per-entity notifications for newly discovered facts."""
+        if not discoveries or not self._channel:
             return
 
-        image = await search_image(image_query) if image_query else None
-        attachments = [image] if image else None
+        if not self._should_send_proactive(user):
+            logger.info("Skipping fact notifications for %s (backoff)", user)
+            return
+
+        for discovery in discoveries:
+            facts_text = "\n".join(f"- {fact}" for fact in discovery.new_facts)
+            if discovery.is_new_entity:
+                prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
+            else:
+                prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
+
+            prompt = (
+                f"{prompt_template.format(entity_name=discovery.entity.name)}"
+                f"\n\nNew facts:\n{facts_text}"
+            )
+
+            result = await self._compose_user_facing(prompt, image_query=discovery.entity.name)
+            if not result.answer:
+                continue
+
+            await self._send_notification(user, result.answer, attachments=result.attachments)
+
+        self._mark_proactive_sent(user)
+
+    # --- General notifications ---
+
+    async def _send_notification(
+        self, recipient: str, message: str, attachments: list[str] | None = None
+    ) -> None:
+        """Send a notification message to the user."""
+        if not self._channel:
+            return
 
         typing_task = asyncio.create_task(self._channel._typing_loop(recipient))
         try:
