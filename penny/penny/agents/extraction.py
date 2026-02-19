@@ -392,10 +392,13 @@ class ExtractionPipeline(Agent):
         newly_created_names: set[str] = set()
         existing_by_name = {e.name: e for e in existing_entities}
 
+        # Pre-filter entities by embedding similarity to reduce LLM prompt size
+        filtered_entities = await self._prefilter_entities_by_similarity(existing_entities, content)
+
         if allow_new_entities:
             # Full mode: identify known + new entities
             identified = await self._identify_entities(
-                existing_entities, identification_prompt, context_label, context_value, content
+                filtered_entities, identification_prompt, context_label, context_value, content
             )
             if not identified:
                 return _ExtractionResult()
@@ -427,7 +430,7 @@ class ExtractionPipeline(Agent):
         else:
             # Known-only mode: only match against existing entities
             known_result = await self._identify_known_entities(
-                existing_entities, identification_prompt, context_label, context_value, content
+                filtered_entities, identification_prompt, context_label, context_value, content
             )
             if not known_result:
                 return _ExtractionResult()
@@ -570,6 +573,63 @@ class ExtractionPipeline(Agent):
         except Exception as e:
             logger.error("Failed to identify known entities: %s", e)
             return None
+
+    async def _prefilter_entities_by_similarity(
+        self,
+        entities: list[Entity],
+        content: str,
+    ) -> list[Entity]:
+        """Pre-filter entities by embedding similarity to content.
+
+        Reduces the entity list sent to the LLM prompt by keeping only entities
+        whose embeddings are similar to the content being analyzed. Skips
+        filtering when the entity count is below ENTITY_PREFILTER_MIN_COUNT
+        or when no embedding model is configured.
+        """
+        if not self.embedding_model:
+            return entities
+        if len(entities) < PennyConstants.ENTITY_PREFILTER_MIN_COUNT:
+            return entities
+
+        entities_with_embeddings = [e for e in entities if e.embedding is not None]
+        entities_without_embeddings = [e for e in entities if e.embedding is None]
+
+        if not entities_with_embeddings:
+            return entities
+
+        try:
+            content_vecs = await self._ollama_client.embed(content, model=self.embedding_model)
+            content_vec = content_vecs[0]
+
+            candidates = [
+                (i, deserialize_embedding(e.embedding))
+                for i, e in enumerate(entities_with_embeddings)
+                if e.embedding is not None
+            ]
+
+            matches = find_similar(
+                content_vec,
+                candidates,
+                top_k=len(candidates),
+                threshold=PennyConstants.ENTITY_PREFILTER_SIMILARITY_THRESHOLD,
+            )
+
+            matched_indices = {idx for idx, _score in matches}
+            filtered = [entities_with_embeddings[i] for i in matched_indices]
+            filtered.extend(entities_without_embeddings)
+
+            logger.info(
+                "Pre-filtered entities: %d -> %d (from %d with embeddings, %d without)",
+                len(entities),
+                len(filtered),
+                len(entities_with_embeddings),
+                len(entities_without_embeddings),
+            )
+
+            return filtered
+        except Exception as e:
+            logger.warning("Entity pre-filter failed, using full list: %s", e)
+            return entities
 
     async def _is_semantically_relevant(self, candidate_name: str, trigger_text: str) -> bool:
         """Semantic validation: reject entity candidates unrelated to the triggering content."""

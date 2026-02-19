@@ -1351,6 +1351,115 @@ async def test_semantic_entity_name_validation(
         )
 
 
+# --- Entity pre-filter ---
+
+
+@pytest.mark.asyncio
+async def test_extraction_prefilters_entities_by_embedding(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    When entity count exceeds ENTITY_PREFILTER_MIN_COUNT, the extraction pipeline
+    pre-filters entities by embedding similarity before sending to the LLM.
+    Only semantically relevant entities should appear in the identification prompt.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    # Embed handler: speaker-related text gets [1,0,0,0], everything else [0,1,0,0]
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        vecs = []
+        for text in texts:
+            if "speaker" in text.lower() or "kef" in text.lower() or "sonos" in text.lower():
+                vecs.append([1.0, 0.0, 0.0, 0.0])
+            else:
+                vecs.append([0.0, 1.0, 0.0, 0.0])
+        return vecs
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    # Track which entity names the LLM sees in the identification prompt
+    seen_entity_names: list[str] = []
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else request.get("prompt", "")
+
+        if "Known entities" in prompt:
+            for line in prompt.split("\n"):
+                if line.strip().startswith("- "):
+                    seen_entity_names.append(line.strip()[2:])
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"known": ["kef ls50 meta"], "new": []}),
+            )
+        elif "Entity:" in prompt:
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"facts": ["Great bookshelf speaker"]}),
+            )
+        else:
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"known": [], "new": []}),
+            )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Create 2 speaker-related entities with similar embeddings
+        kef = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert kef is not None and kef.id is not None
+        penny.db.update_entity_embedding(kef.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.add_fact(kef.id, "Costs $1,599")
+
+        sonos = penny.db.get_or_create_entity(TEST_SENDER, "sonos era 300")
+        assert sonos is not None and sonos.id is not None
+        penny.db.update_entity_embedding(sonos.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.add_fact(sonos.id, "Spatial audio speaker")
+
+        # Create 23 unrelated entities with orthogonal embeddings (total 25 > threshold 20)
+        for i in range(23):
+            entity = penny.db.get_or_create_entity(TEST_SENDER, f"unrelated entity {i}")
+            assert entity is not None and entity.id is not None
+            penny.db.update_entity_embedding(entity.id, serialize_embedding([0.0, 1.0, 0.0, 0.0]))
+
+        assert len(penny.db.get_user_entities(TEST_SENDER)) == 25
+
+        # Seed message and search log about speakers
+        penny.db.log_message(
+            direction="incoming", sender=TEST_SENDER, content="tell me about speakers"
+        )
+        penny.db.log_search(
+            query="best bookshelf speakers 2025",
+            response="The KEF LS50 Meta remains a top pick for bookshelf speakers.",
+            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+        )
+
+        await penny.extraction_pipeline.execute()
+
+        # Only speaker-related entities should appear in the LLM prompt
+        assert "kef ls50 meta" in seen_entity_names
+        assert "sonos era 300" in seen_entity_names
+        assert not any("unrelated" in name for name in seen_entity_names), (
+            f"Unrelated entities should be filtered out, but LLM saw: {seen_entity_names}"
+        )
+
+        # Dedup still works: kef ls50 meta not duplicated
+        kef_entities = [
+            e for e in penny.db.get_user_entities(TEST_SENDER) if e.name == "kef ls50 meta"
+        ]
+        assert len(kef_entities) == 1
+
+
 # --- Fact discovery notifications ---
 
 
