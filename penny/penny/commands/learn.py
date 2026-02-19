@@ -95,13 +95,11 @@ class LearnCommand(Command):
         """Execute search via SearchTool. Returns text or None."""
         assert self._search_tool is not None
         try:
-            original_skip = getattr(self._search_tool, "skip_images", False)
-            self._search_tool.skip_images = True  # type: ignore[attr-defined]
-            try:
-                result = await self._search_tool.execute(query=query)
-            finally:
-                self._search_tool.skip_images = original_skip  # type: ignore[attr-defined]
-
+            result = await self._search_tool.execute(
+                query=query,
+                skip_images=True,
+                trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
+            )
             if isinstance(result, SearchResult):
                 return result.text
             return str(result) if result else None

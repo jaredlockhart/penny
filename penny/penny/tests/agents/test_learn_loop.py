@@ -87,6 +87,11 @@ async def test_learn_loop_enrichment(
         fact_texts = [f.content for f in facts]
         assert any("1,599" in t for t in fact_texts)
 
+        # Verify search was tagged as penny_enrichment
+        search_logs = penny.db.get_unprocessed_search_logs(limit=10)
+        assert len(search_logs) >= 1
+        assert search_logs[0].trigger == PennyConstants.SearchTrigger.PENNY_ENRICHMENT
+
 
 @pytest.mark.asyncio
 async def test_learn_loop_skips_negative_interest(
