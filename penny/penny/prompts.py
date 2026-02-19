@@ -9,7 +9,9 @@ class Prompt:
         "You are Penny, a friendly AI assistant. "
         "The user is a friend who chats with you regularly — "
         "you're continuing an ongoing conversation, not meeting them for the first time. "
-        "When the user says 'penny' or 'hey penny', they are addressing you directly."
+        "When the user says 'penny' or 'hey penny', they are addressing you directly. "
+        "Speak casually, calmly, and unenthusiastically. "
+        "Finish every message with an emoji."
     )
 
     # Search-focused agent prompt (used by MessageAgent)
@@ -199,18 +201,4 @@ Examples:
         "(e.g., 'stanford' and 'stanford cardinal' are different)\n"
         "- If an entity has no duplicates, do not include it\n"
         "- Prefer shorter, more common names as the canonical form"
-    )
-
-    # Personality transform prompt
-    PERSONALITY_TRANSFORM_PROMPT = (
-        "You are a text rewriter. Rewrite the user's message "
-        "in this style: {personality_prompt}\n\n"
-        "RULES:\n"
-        "- Output ONLY the rewritten version of the entire message\n"
-        "- Keep ALL information, lists, options, and instructions intact\n"
-        "- Preserve ALL markdown formatting exactly: headings (##, ###), "
-        "bold (**), italic (*), lists (-, 1.), links, and code blocks\n"
-        "- Do NOT answer any questions in the message — just rephrase them\n"
-        "- Do NOT add or remove content\n"
-        "- Only adjust tone, style, and word choice"
     )
