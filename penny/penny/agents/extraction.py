@@ -22,7 +22,6 @@ from penny.ollama.embeddings import (
     serialize_embedding,
 )
 from penny.prompts import Prompt
-from penny.responses import PennyResponse
 from penny.tools.image_search import search_image
 
 if TYPE_CHECKING:
@@ -964,18 +963,21 @@ class ExtractionPipeline(Agent):
             return
 
         for discovery in discoveries:
-            fact_list = "\n".join(f"- {fact}" for fact in discovery.new_facts)
+            facts_text = "\n".join(f"- {fact}" for fact in discovery.new_facts)
             if discovery.is_new_entity:
-                message = PennyResponse.FACT_DISCOVERY_NEW_ENTITY.format(
-                    entity_name=discovery.entity.name,
-                    fact_count=len(discovery.new_facts),
-                    fact_list=fact_list,
-                )
+                prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
             else:
-                message = PennyResponse.FACT_DISCOVERY_KNOWN_ENTITY.format(
-                    entity_name=discovery.entity.name,
-                    fact_list=fact_list,
-                )
+                prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
+
+            prompt = (
+                f"{prompt_template.format(entity_name=discovery.entity.name)}"
+                f"\n\nNew facts:\n{facts_text}"
+            )
+
+            message = await self._compose_user_facing(prompt)
+            if not message:
+                continue
+
             await self._send_notification(user, message, image_query=discovery.entity.name)
 
         self._mark_proactive_sent(user)

@@ -118,7 +118,7 @@ class Penny:
         )
 
         self.extraction_pipeline = ExtractionPipeline(
-            system_prompt="",  # ExtractionPipeline uses ollama_client.generate() directly
+            system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
@@ -146,7 +146,7 @@ class Penny:
         # Learn loop uses SearchTool directly (not the agentic loop)
         self.learn_loop = LearnLoopAgent(
             search_tool=shared_search_tool,
-            system_prompt="",  # LearnLoopAgent uses ollama_client.generate() directly
+            system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],

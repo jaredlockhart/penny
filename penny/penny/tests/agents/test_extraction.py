@@ -56,7 +56,7 @@ async def test_extraction_processes_search_log(
                     }
                 ),
             )
-        else:
+        elif request_count[0] == 4:
             # Pass 2: facts for KEF LS50 Meta
             return mock_ollama._make_text_response(
                 request,
@@ -68,6 +68,11 @@ async def test_extraction_processes_search_log(
                         ]
                     }
                 ),
+            )
+        else:
+            # Notification composition call
+            return mock_ollama._make_text_response(
+                request, "Hey! I just found out about KEF LS50 Meta — pretty cool speaker!"
             )
 
     mock_ollama.set_response_handler(handler)
@@ -118,17 +123,17 @@ async def test_extraction_processes_search_log(
             assert sl is not None
             assert sl.extracted is True
 
-        # Verify fact discovery notification was sent (new entity template)
-        fact_notifications = [
-            msg for msg in signal_server.outgoing_messages if "I just discovered" in msg["message"]
+        # Verify fact discovery notification was sent (model-composed)
+        notification_messages = [
+            msg
+            for msg in signal_server.outgoing_messages
+            if "KEF LS50 Meta" in msg["message"]
+            and msg["message"] != "check out the KEF LS50 Meta! 🎵"
         ]
-        assert len(fact_notifications) >= 1, (
-            "Expected fact discovery notification for new entity, "
+        assert len(notification_messages) >= 1, (
+            "Expected model-composed fact discovery notification, "
             f"got messages: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
         )
-        notification = fact_notifications[0]["message"]
-        assert "kef ls50 meta" in notification
-        assert "Costs $1,599 per pair" in notification or "Metamaterial" in notification
 
 
 @pytest.mark.asyncio
@@ -1383,6 +1388,9 @@ async def test_extraction_fact_notification_backoff(
         elif "topics" in prompt.lower():
             # Preference extraction — return nothing
             return mock_ollama._make_text_response(request, '{"topics": []}')
+        elif "New facts:" in prompt:
+            # Notification composition
+            return mock_ollama._make_text_response(request, "backoff-notification-composed")
         else:
             # Entity identification — return a unique new entity each time
             n = call_count[0]
@@ -1411,7 +1419,9 @@ async def test_extraction_fact_notification_backoff(
         await penny.extraction_pipeline.execute()
 
         cycle1_notifications = [
-            msg for msg in signal_server.outgoing_messages if "I just discovered" in msg["message"]
+            msg
+            for msg in signal_server.outgoing_messages
+            if "backoff-notification-composed" in msg["message"]
         ]
         assert len(cycle1_notifications) >= 1, "First cycle should send notification"
 
@@ -1426,7 +1436,9 @@ async def test_extraction_fact_notification_backoff(
         await penny.extraction_pipeline.execute()
 
         cycle2_notifications = [
-            msg for msg in signal_server.outgoing_messages if "I just discovered" in msg["message"]
+            msg
+            for msg in signal_server.outgoing_messages
+            if "backoff-notification-composed" in msg["message"]
         ]
         assert len(cycle2_notifications) == 0, "Second cycle should suppress notification (backoff)"
 
@@ -1447,7 +1459,9 @@ async def test_extraction_fact_notification_backoff(
         await penny.extraction_pipeline.execute()
 
         cycle3_notifications = [
-            msg for msg in signal_server.outgoing_messages if "I just discovered" in msg["message"]
+            msg
+            for msg in signal_server.outgoing_messages
+            if "backoff-notification-composed" in msg["message"]
         ]
         assert len(cycle3_notifications) >= 1, (
             "Third cycle should send notification (backoff reset by user message)"
@@ -1464,8 +1478,8 @@ async def test_extraction_fact_notification_new_vs_known_entity(
     running_penny,
 ):
     """
-    Known entities get 'I just learned some new stuff about...' notification,
-    new entities get 'I just discovered...' notification.
+    Known entities get a notification composed with the known-entity prompt,
+    new entities get a notification composed with the new-entity prompt.
     """
     config = make_config()
 
@@ -1492,6 +1506,16 @@ async def test_extraction_fact_notification_new_vs_known_entity(
         elif "topics" in prompt.lower():
             # Preference extraction — return nothing
             return mock_ollama._make_text_response(request, '{"topics": []}')
+        elif "New facts:" in prompt:
+            # Notification composition — return different text per prompt type
+            if "discovered a new topic" in prompt:
+                return mock_ollama._make_text_response(
+                    request, "new-entity-notification: wharfedale denton 85"
+                )
+            else:
+                return mock_ollama._make_text_response(
+                    request, "known-entity-notification: kef ls50 meta"
+                )
         else:
             # Entity identification — return known + new
             return mock_ollama._make_text_response(
@@ -1527,26 +1551,26 @@ async def test_extraction_fact_notification_new_vs_known_entity(
         signal_server.outgoing_messages.clear()
         await penny.extraction_pipeline.execute()
 
-        # Should have two notifications: one "learned" (known) and one "discovered" (new)
+        # Should have two notifications: one for known entity, one for new entity
         known_notifications = [
             msg
             for msg in signal_server.outgoing_messages
-            if "I just learned some new stuff about" in msg["message"]
+            if "known-entity-notification" in msg["message"]
         ]
         new_notifications = [
-            msg for msg in signal_server.outgoing_messages if "I just discovered" in msg["message"]
+            msg
+            for msg in signal_server.outgoing_messages
+            if "new-entity-notification" in msg["message"]
         ]
 
         assert len(known_notifications) >= 1, (
-            "Known entity should get 'learned new stuff' notification, "
+            "Known entity should get model-composed notification, "
             f"got messages: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
         )
         assert "kef ls50 meta" in known_notifications[0]["message"]
-        assert "Won What Hi-Fi 2024 award" in known_notifications[0]["message"]
 
         assert len(new_notifications) >= 1, (
-            "New entity should get 'discovered' notification, "
+            "New entity should get model-composed notification, "
             f"got messages: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
         )
         assert "wharfedale denton 85" in new_notifications[0]["message"]
-        assert "Heritage cabinet design" in new_notifications[0]["message"]

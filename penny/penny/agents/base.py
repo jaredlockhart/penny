@@ -140,6 +140,22 @@ class Agent:
 
         return messages
 
+    async def _compose_user_facing(self, prompt: str) -> str:
+        """Compose a user-facing message with system prompt for consistent tone.
+
+        Uses _build_messages to include the identity prompt and timestamp,
+        ensuring proactive messages have the same context as normal responses.
+
+        Returns the model's response text, or empty string on failure.
+        """
+        messages = self._build_messages(prompt)
+        try:
+            response = await self._ollama_client.chat(messages=messages)
+            return response.content.strip()
+        except Exception as e:
+            logger.error("Failed to compose user-facing message: %s", e)
+            return ""
+
     async def caption_image(self, image_b64: str) -> str:
         """Caption an image using the vision model.
 

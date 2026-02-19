@@ -90,6 +90,17 @@ Examples:
         "The user sent an image. Respond naturally to the image description provided."
     )
 
+    # Fact discovery notification prompts (extraction pipeline)
+    FACT_DISCOVERY_NEW_ENTITY_PROMPT = (
+        "You just discovered a new topic called {entity_name} and learned some facts about it. "
+        "Write a message telling the user what you found."
+    )
+
+    FACT_DISCOVERY_KNOWN_ENTITY_PROMPT = (
+        "You just learned some new things about {entity_name}. "
+        "Write a message sharing the new info with the user."
+    )
+
     # Learn loop message composition prompts
     LEARN_ENRICHMENT_MESSAGE_PROMPT = (
         "You just learned new facts about {entity_name}. "

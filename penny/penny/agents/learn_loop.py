@@ -432,11 +432,10 @@ class LearnLoopAgent(Agent):
         prompt = f"{prompt_template.format(entity_name=entity_name)}\n\nNew facts:\n{facts_text}"
 
         try:
-            response, image = await asyncio.gather(
-                self._ollama_client.generate(prompt=prompt, tools=None),
+            message, image = await asyncio.gather(
+                self._compose_user_facing(prompt),
                 search_image(entity_name),
             )
-            message = response.content.strip()
             if not message:
                 return
         except Exception as e:
