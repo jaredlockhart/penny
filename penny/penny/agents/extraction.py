@@ -1,4 +1,4 @@
-"""Unified extraction pipeline for entities, facts, preferences, and engagements."""
+"""Unified extraction pipeline for entities, facts, and engagements."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
-from penny.database.models import Entity, Fact, Preference
+from penny.database.models import Entity, Fact
 from penny.ollama.embeddings import (
     build_entity_embed_text,
     cosine_similarity,
@@ -114,15 +114,6 @@ class ExtractedFacts(BaseModel):
     )
 
 
-class ExtractedTopics(BaseModel):
-    """Schema for LLM response: list of newly discovered preference topics."""
-
-    topics: list[str] = Field(
-        default_factory=list,
-        description="List of new topics found (short phrases, 1-4 words each)",
-    )
-
-
 @dataclass
 class _EntityFactDiscovery:
     """Facts discovered for a single entity during extraction."""
@@ -213,8 +204,6 @@ class ExtractionPipeline(Agent):
                 continue
 
             allow_new = search_log.trigger != PennyConstants.SearchTrigger.PENNY_ENRICHMENT
-            # Only notify for user-triggered searches, respecting backoff
-            should_notify = allow_new and self._should_send_proactive(user)
             id_prompt = (
                 Prompt.ENTITY_IDENTIFICATION_PROMPT
                 if allow_new
@@ -235,7 +224,6 @@ class ExtractionPipeline(Agent):
                 content=search_log.response,
                 source_search_log_id=search_log.id,
                 allow_new_entities=allow_new,
-                notify_user=user if should_notify else None,
             )
             if result.entities:
                 work_done = True
@@ -252,9 +240,12 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                         )
 
-                # Mark backoff after sending notifications for this search log
-                if should_notify and result.discoveries:
-                    self._mark_proactive_sent(user)
+            # Send a combined discovery message for this search (respecting backoff)
+            if allow_new and result.discoveries and self._should_send_proactive(user):
+                await self._send_search_discovery_notification(
+                    user, search_log.query, result.discoveries
+                )
+                self._mark_proactive_sent(user)
 
             self.db.mark_search_extracted(search_log.id)
 
@@ -263,7 +254,7 @@ class ExtractionPipeline(Agent):
     # --- Phase 2: Message processing ---
 
     async def _process_messages(self) -> bool:
-        """Process unprocessed messages for entity/fact/preference extraction."""
+        """Process unprocessed messages for entity/fact extraction."""
         senders = self.db.get_all_senders()
         if not senders:
             return False
@@ -271,21 +262,17 @@ class ExtractionPipeline(Agent):
         work_done = False
 
         for sender in senders:
-            reactions = self.db.get_user_reactions(
-                sender, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
-            )
             messages = self.db.get_unprocessed_messages(
                 sender, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
             )
 
-            if not reactions and not messages:
+            if not messages:
                 continue
 
             logger.info(
-                "Processing messages for %s: %d messages, %d reactions",
+                "Processing messages for %s: %d messages",
                 sender,
                 len(messages),
-                len(reactions),
             )
 
             # --- Entity/fact extraction from messages ---
@@ -324,46 +311,8 @@ class ExtractionPipeline(Agent):
                 if created:
                     work_done = True
 
-            # --- Preference extraction from reactions + messages ---
-            like_reaction_texts: list[str] = []
-            dislike_reaction_texts: list[str] = []
-            for reaction in reactions:
-                emoji = reaction.content
-                if (
-                    emoji not in PennyConstants.LIKE_REACTIONS
-                    and emoji not in PennyConstants.DISLIKE_REACTIONS
-                ):
-                    continue
-                if not reaction.parent_id:
-                    continue
-                parent_msg = self.db.get_message_by_id(reaction.parent_id)
-                if not parent_msg:
-                    continue
-                if emoji in PennyConstants.LIKE_REACTIONS:
-                    like_reaction_texts.append(parent_msg.content)
-                else:
-                    dislike_reaction_texts.append(parent_msg.content)
-
-            user_message_texts = [msg.content for msg in messages]
-
-            for pref_type, reaction_texts in [
-                (PennyConstants.PreferenceType.LIKE, like_reaction_texts),
-                (PennyConstants.PreferenceType.DISLIKE, dislike_reaction_texts),
-            ]:
-                if not reaction_texts and not user_message_texts:
-                    continue
-
-                updated = await self._extract_and_store_preferences(
-                    sender, pref_type, reaction_texts, user_message_texts
-                )
-                if updated:
-                    work_done = True
-
-            # Mark all reactions and messages as processed
-            reaction_ids = [r.id for r in reactions if r.id is not None]
+            # Mark messages as processed
             message_ids = [m.id for m in messages if m.id is not None]
-            if reaction_ids:
-                self.db.mark_messages_processed(reaction_ids)
             if message_ids:
                 self.db.mark_messages_processed(message_ids)
 
@@ -384,7 +333,6 @@ class ExtractionPipeline(Agent):
         source_search_log_id: int | None = None,
         source_message_id: int | None = None,
         allow_new_entities: bool = True,
-        notify_user: str | None = None,
     ) -> _ExtractionResult:
         """Two-pass extraction for a single piece of content.
 
@@ -392,9 +340,6 @@ class ExtractionPipeline(Agent):
           - Full mode (allow_new_entities=True): known + new entities
           - Known-only mode (allow_new_entities=False): only known entities
         Pass 2: For each entity, extract new facts as individual Fact rows.
-
-        When notify_user is set, sends a message to the user per-entity as facts
-        are discovered (rather than batching notifications at the end).
 
         Returns _ExtractionResult with all identified entities and per-entity discoveries.
         """
@@ -531,11 +476,6 @@ class ExtractionPipeline(Agent):
                 is_new_entity=entity.name in newly_created_names,
             )
             discoveries.append(discovery)
-
-            # Send notification immediately per-entity so the user sees
-            # discoveries as they happen rather than in a batch at the end.
-            if notify_user:
-                await self._send_fact_notification(notify_user, discovery)
 
         # Regenerate entity embeddings for entities that got new facts
         if self.embedding_model and entities_with_new_facts:
@@ -836,153 +776,6 @@ class ExtractionPipeline(Agent):
             logger.warning("Embedding dedup failed, keeping all candidates: %s", e)
             return candidates
 
-    # --- Preference extraction ---
-
-    async def _extract_and_store_preferences(
-        self,
-        sender: str,
-        pref_type: str,
-        reaction_texts: list[str],
-        user_message_texts: list[str],
-    ) -> bool:
-        """Run a single LLM pass for one preference type (like or dislike).
-
-        Returns True if any new preferences were added.
-        """
-        existing = self.db.get_preferences(sender, pref_type)
-        existing_topics = [p.topic for p in existing]
-
-        sentiment_desc = (
-            "enjoys or is enthusiastic about"
-            if pref_type == PennyConstants.PreferenceType.LIKE
-            else "dislikes or expresses negativity toward"
-        )
-
-        prompt_parts = [
-            f"Find any NEW topics the user {pref_type}s from the messages below.",
-            f"Only extract clear {pref_type}s — things the user explicitly {sentiment_desc}.",
-            "Do NOT extract every noun — only genuine preferences.",
-            "Return short phrases (1-4 words each).\n",
-        ]
-
-        if existing_topics:
-            prompt_parts.append(f"Already known {pref_type}s: {', '.join(existing_topics)}")
-            prompt_parts.append("Do NOT include topics already known above.\n")
-
-        if reaction_texts:
-            prompt_parts.append(f"Messages the user reacted to with a {pref_type} emoji:")
-            for text in reaction_texts:
-                prompt_parts.append(f'- "{text}"')
-            prompt_parts.append("")
-
-        if user_message_texts:
-            prompt_parts.append("Messages from the user:")
-            for text in user_message_texts:
-                prompt_parts.append(f'- "{text}"')
-
-        prompt = "\n".join(prompt_parts)
-
-        try:
-            response = await self._ollama_client.generate(
-                prompt=prompt,
-                tools=None,
-                format=ExtractedTopics.model_json_schema(),
-            )
-            result = ExtractedTopics.model_validate_json(response.content)
-
-            # Collect new topics (deduped against existing)
-            new_topics: list[str] = []
-            for raw_topic in result.topics:
-                topic = raw_topic.lower().strip()
-                if not topic:
-                    continue
-                if any(p.topic == topic for p in existing):
-                    continue
-                new_topics.append(topic)
-
-            # Batch-embed all new topics at once
-            topic_embeddings: list[bytes | None] = [None] * len(new_topics)
-            if new_topics and self.embedding_model:
-                try:
-                    vecs = await self._ollama_client.embed(new_topics, model=self.embedding_model)
-                    topic_embeddings = [serialize_embedding(v) for v in vecs]
-                except Exception as e:
-                    logger.warning("Failed to embed preference topics: %s", e)
-
-            added_preferences: list[Preference] = []
-            for topic, emb in zip(new_topics, topic_embeddings, strict=True):
-                pref = self.db.add_preference(sender, topic, pref_type, embedding=emb)
-                logger.info("Added %s preference for %s: %s", pref_type, sender, topic)
-                if pref:
-                    added_preferences.append(pref)
-
-            # Link new preferences to existing entities via embedding similarity
-            for pref in added_preferences:
-                await self._link_preference_to_entities(sender, pref)
-
-            # Send a single batched notification for all new preferences
-            if added_preferences:
-                topics = [p.topic for p in added_preferences]
-                if len(topics) == 1:
-                    message = f"I added {topics[0]} to your {pref_type}s"
-                else:
-                    bullet_list = "\n".join(f"• {topic}" for topic in topics)
-                    message = f"I added these to your {pref_type}s:\n{bullet_list}"
-                await self._send_notification(sender, message)
-
-            return len(added_preferences) > 0
-
-        except Exception as e:
-            logger.error("Failed to extract %s preferences for %s: %s", pref_type, sender, e)
-            return False
-
-    async def _link_preference_to_entities(self, sender: str, preference: Preference) -> None:
-        """Find entities similar to a new preference and create engagements."""
-        if not self.embedding_model or not preference.embedding:
-            return
-
-        entities = self.db.get_user_entities_with_embeddings(sender)
-        if not entities:
-            return
-
-        query_vec = deserialize_embedding(preference.embedding)
-        candidates = [
-            (e.id, deserialize_embedding(e.embedding))
-            for e in entities
-            if e.id is not None and e.embedding is not None
-        ]
-        if not candidates:
-            return
-
-        matches = find_similar(
-            query_vec,
-            candidates,
-            top_k=PennyConstants.ENTITY_CONTEXT_TOP_K,
-            threshold=PennyConstants.PREFERENCE_ENTITY_LINK_THRESHOLD,
-        )
-
-        valence = (
-            PennyConstants.EngagementValence.POSITIVE
-            if preference.type == PennyConstants.PreferenceType.LIKE
-            else PennyConstants.EngagementValence.NEGATIVE
-        )
-
-        for entity_id, _score in matches:
-            self.db.add_engagement(
-                user=sender,
-                engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
-                valence=valence,
-                strength=PennyConstants.ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT,
-                entity_id=entity_id,
-                preference_id=preference.id,
-            )
-            logger.info(
-                "Linked preference '%s' to entity %d (valence=%s)",
-                preference.topic,
-                entity_id,
-                valence,
-            )
-
     # --- Message filtering ---
 
     @staticmethod
@@ -1098,23 +891,27 @@ class ExtractionPipeline(Agent):
                 PennyConstants.FACT_NOTIFICATION_MAX_BACKOFF,
             )
 
-    async def _send_fact_notification(self, user: str, discovery: _EntityFactDiscovery) -> None:
-        """Compose and send a notification for a single entity's newly discovered facts."""
+    async def _send_search_discovery_notification(
+        self, user: str, query: str, discoveries: list[_EntityFactDiscovery]
+    ) -> None:
+        """Send a single message summarising all entities/facts from a search."""
         if not self._channel:
             return
 
-        facts_text = "\n".join(f"- {fact}" for fact in discovery.new_facts)
-        if discovery.is_new_entity:
-            prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
-        else:
-            prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
+        sections: list[str] = []
+        for discovery in discoveries:
+            label = (
+                f"{discovery.entity.name} (new)"
+                if discovery.is_new_entity
+                else discovery.entity.name
+            )
+            facts_text = "\n".join(f"  {fact}" for fact in discovery.new_facts)
+            sections.append(f"* {label}\n{facts_text}")
 
-        prompt = (
-            f"{prompt_template.format(entity_name=discovery.entity.name)}"
-            f"\n\nNew facts:\n{facts_text}"
-        )
+        summary = f"I found some stuff about {query}\n\n" + "\n\n".join(sections)
+        prompt = Prompt.SEARCH_DISCOVERY_PROMPT.format(summary=summary)
 
-        result = await self._compose_user_facing(prompt, image_query=discovery.entity.name)
+        result = await self._compose_user_facing(prompt)
         if not result.answer:
             return
 
