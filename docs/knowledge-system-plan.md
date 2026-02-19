@@ -1,5 +1,7 @@
 # Knowledge System v2: Design
 
+> **Status**: Fully implemented. All phases (1–5) plus /memory, /interests, /like entity creation, and entity cleaner are complete. See #325 for the tracking issue.
+
 ## Goal
 
 Penny learns what the user likes and is interested in, finds information about those things, proactively grows that knowledge over time, and uses it to have better conversations and surface relevant new information.
