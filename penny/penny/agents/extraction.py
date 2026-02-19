@@ -21,6 +21,7 @@ from penny.ollama.embeddings import (
     find_similar,
     serialize_embedding,
     token_containment_ratio,
+    tokenize_entity_name,
 )
 from penny.prompts import Prompt
 
@@ -404,6 +405,21 @@ class ExtractionPipeline(Agent):
             if not identified:
                 return _ExtractionResult()
 
+            # Filter out fragment entities that are token-subsets of another
+            # candidate in the same batch (e.g., "totem" when "totem loon" is also present)
+            candidate_names = [e.name.lower().strip() for e in identified.new if e.name.strip()]
+            candidate_token_sets = {n: set(tokenize_entity_name(n)) for n in candidate_names}
+            subset_names: set[str] = set()
+            for name_a, tokens_a in candidate_token_sets.items():
+                if not tokens_a:
+                    continue
+                for name_b, tokens_b in candidate_token_sets.items():
+                    if name_a == name_b:
+                        continue
+                    if tokens_a < tokens_b:  # strict subset
+                        subset_names.add(name_a)
+                        break
+
             # Validate and store new entities
             for new_entity in identified.new:
                 name = new_entity.name.lower().strip()
@@ -411,6 +427,9 @@ class ExtractionPipeline(Agent):
                     continue
                 if not _is_valid_entity_name(name):
                     logger.info("Rejected entity '%s' (structural filter)", name)
+                    continue
+                if name in subset_names:
+                    logger.info("Rejected entity '%s' (token-subset of another candidate)", name)
                     continue
                 relevant, candidate_embedding = await self._check_semantic_relevance(
                     name, context_value

@@ -1556,6 +1556,81 @@ async def test_extraction_deduplicates_entities_at_insertion_time(
         assert "Located in California" in fact_contents
 
 
+@pytest.mark.asyncio
+async def test_extraction_discards_fragment_entities(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    When the LLM returns both a multi-word entity and its single-word fragments
+    in the same batch (e.g., "totem loon", "totem", "loon"), the fragments are
+    discarded as token-subsets of the full entity name.
+    """
+    config = make_config()
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+        if "Entity:" in prompt:
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"facts": ["A bookshelf speaker"]}),
+            )
+        elif "topics" in prompt.lower():
+            return mock_ollama._make_text_response(request, '{"topics": []}')
+        else:
+            # LLM returns both full name and fragments
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {
+                        "known": [],
+                        "new": [
+                            {"name": "Totem Loon"},
+                            {"name": "Totem"},
+                            {"name": "Loon"},
+                        ],
+                    }
+                ),
+            )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="tell me about totem loon speakers",
+        )
+        penny.db.mark_messages_processed([msg_id])
+
+        penny.db.log_search(
+            query="totem loon speakers",
+            response="The Totem Loon is an excellent bookshelf speaker.",
+            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+        )
+
+        await penny.extraction_pipeline.execute()
+
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        entity_names = [e.name for e in entities]
+        assert "totem loon" in entity_names
+        assert "totem" not in entity_names, (
+            f"Fragment 'totem' should be discarded, got: {entity_names}"
+        )
+        assert "loon" not in entity_names, (
+            f"Fragment 'loon' should be discarded, got: {entity_names}"
+        )
+        assert len(entities) == 1
+
+
 # --- Fact discovery notifications ---
 
 
