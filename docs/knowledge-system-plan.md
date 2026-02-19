@@ -307,9 +307,8 @@ The structural filter does the heavy lifting — in testing against production d
 2. Pick the top candidate
 3. Search for it (enrichment or briefing mode)
 4. Tag the SearchLog as `trigger=penny_enrichment`
-5. Extraction pipeline processes the SearchLog (known-only mode — no new entities)
-6. Compose and send a proactive message with findings
-7. Update embeddings
+
+The extraction pipeline picks up the SearchLog on its next pass (known-only mode — no new entities, just facts). Notification to the user comes from the extraction pipeline, same as all other searches.
 
 ### Loop 3: Entity Cleaner
 

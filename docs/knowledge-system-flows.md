@@ -34,31 +34,26 @@ sequenceDiagram
 
 ## 2. Extraction Pipeline
 
-Processes unprocessed SearchLogs. Mode depends on `trigger`.
+Single process. Finds unprocessed SearchLogs, extracts entities and facts, notifies the user.
 
 ```mermaid
 sequenceDiagram
+    actor User
     participant DB as Database
     participant Extract as Extraction Pipeline
     participant LLM as Ollama
 
     Extract->>DB: get unprocessed SearchLogs
 
-    Note over Extract: ── Full mode (user_message, learn_command) ──
-
+    Note over Extract: If user-triggered (user_message, learn_command):
     Extract->>LLM: identify entities in search results
-    LLM-->>Extract: known + new candidates
     Note over Extract: Validate new candidates (structural + semantic filters)
     Extract->>DB: create validated entities
-    Extract->>DB: extract + store facts
-    Extract->>DB: record SEARCH_INITIATED engagements
 
-    Note over Extract: ── Known-only mode (penny_enrichment) ──
-
-    Extract->>LLM: match against known entities only
-    Extract->>DB: extract + store facts (no new entities)
-
+    Note over Extract: For all SearchLogs:
+    Extract->>DB: extract + store facts for all present entities
     Extract->>DB: mark SearchLogs as processed
+    Extract->>User: notify about new entities/facts
 ```
 
 ## 3. Engagement Signals
@@ -98,23 +93,15 @@ sequenceDiagram
 
 ## 4. Enrichment Loop
 
-Periodic during idle. Picks the highest-priority entity, searches, extracts via known-only mode, then sends a proactive message.
+Periodic during idle. Picks the highest-priority entity and triggers a search. Extraction picks it up on the next pass.
 
 ```mermaid
 sequenceDiagram
-    actor User
     participant LL as Learn Loop
     participant DB as Database
-    participant Extract as Extraction Pipeline
 
     LL->>DB: score entities (interest x 1/fact_count x staleness)
     LL->>DB: search top candidate + log (trigger=penny_enrichment)
-
-    Extract->>DB: get unprocessed SearchLogs
-    Note over Extract: trigger=penny_enrichment → known-only mode
-    Extract->>DB: extract facts for known entities only
-
-    LL->>User: proactive message about findings
 ```
 
 ## 5. Entity Cleaner
