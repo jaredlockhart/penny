@@ -1,60 +1,143 @@
 # Knowledge System v2 — Sequence Diagrams
 
-## Flow 1: User Message → Search → Entity + Fact Discovery
+## 1. Search Triggers
 
-User sends a message that triggers a search. The extraction pipeline processes it later, creating new entities and facts.
+All paths that create SearchLogs. The `trigger` field determines how extraction processes them.
 
 ```mermaid
 sequenceDiagram
     actor User
     participant Penny
     participant DB as Database
-    participant Extract as Extraction Pipeline
+
+    Note over User,DB: ── User message ──
 
     User->>Penny: "what's a good bookshelf speaker?"
     Penny->>DB: search + log (trigger=user_message)
     Penny->>User: response
 
-    Note over Extract: ── Next idle tick ──
+    Note over User,DB: ── /learn command ──
 
-    Extract->>DB: get unprocessed SearchLogs
-    Note over Extract: trigger=user_message → full mode (new entities allowed)
-    Extract->>DB: create entities, extract facts, record engagements
-    Extract->>User: "I just discovered kef ls50 meta and wharfedale denton 85"
+    User->>Penny: "/learn ai conferences in europe"
+    Penny->>DB: create LearnPrompt(status=active)
+    Penny->>User: "Okay, I'll learn more about ai conferences in europe"
+    Penny->>DB: generate 3-5 queries, execute each (trigger=learn_command, learn_prompt_id=1)
+    Penny->>DB: complete LearnPrompt
+
+    Note over User,DB: ── /like command ──
+
+    User->>Penny: "/like mechanical keyboards"
+    Penny->>DB: create Preference + Entity + LIKE_COMMAND engagement (0.8)
+    Penny->>DB: find similar entities via embedding, boost each
+    Penny->>User: "I added mechanical keyboards to your likes"
 ```
 
-## Flow 2: /learn → Search Sequence → Entity + Fact Discovery
+## 2. Extraction Pipeline
 
-User uses `/learn` to express interest. Penny generates multiple search queries, executes them, and the extraction pipeline processes the results.
+Processes unprocessed SearchLogs. Mode depends on `trigger`.
+
+```mermaid
+sequenceDiagram
+    participant DB as Database
+    participant Extract as Extraction Pipeline
+    participant LLM as Ollama
+
+    Extract->>DB: get unprocessed SearchLogs
+
+    Note over Extract: ── Full mode (user_message, learn_command) ──
+
+    Extract->>LLM: identify entities in search results
+    LLM-->>Extract: known + new candidates
+    Note over Extract: Validate new candidates (structural + semantic filters)
+    Extract->>DB: create validated entities
+    Extract->>DB: extract + store facts
+    Extract->>DB: record SEARCH_INITIATED engagements
+
+    Note over Extract: ── Known-only mode (penny_enrichment) ──
+
+    Extract->>LLM: match against known entities only
+    Extract->>DB: extract + store facts (no new entities)
+
+    Extract->>DB: mark SearchLogs as processed
+```
+
+## 3. Engagement Signals
+
+All the ways interest is recorded. Positive signals boost entities for enrichment; negative signals suppress them.
 
 ```mermaid
 sequenceDiagram
     actor User
     participant Penny
     participant DB as Database
-    participant Extract as Extraction Pipeline
 
-    User->>Penny: "/learn ai conferences in europe"
-    Penny->>DB: create LearnPrompt(status=active)
-    Penny->>User: "Okay, I'll learn more about ai conferences in europe"
+    Note over User,DB: ── Conversation signals ──
 
-    Note over Penny: ── Background ──
+    User->>Penny: message that triggers search
+    Note over DB: SEARCH_INITIATED (0.6) — user caused a search about this entity
 
-    Penny->>DB: generate 3-5 search queries, execute each
-    Note over DB: SearchLogs created (trigger=learn_command, learn_prompt_id=1)
-    Penny->>DB: complete LearnPrompt
+    User->>Penny: follow-up about known entity
+    Note over DB: FOLLOW_UP_QUESTION (0.5) — sustained interest
 
-    Note over Extract: ── Next idle tick ──
+    Note over User,DB: ── Preference signals ──
 
-    Extract->>DB: get unprocessed SearchLogs
-    Note over Extract: trigger=learn_command → full mode (new entities allowed)
-    Extract->>DB: create entities, extract facts, record engagements
-    Extract->>User: "I just learned a bunch about ml prague 2026, neurips..."
+    User->>Penny: "/like espresso machines"
+    Note over DB: LIKE_COMMAND (0.8) — strong positive, boosts entity + similar entities
+
+    User->>Penny: "/dislike sports"
+    Note over DB: DISLIKE_COMMAND (-0.8) — strong negative, suppresses entity
+
+    Note over User,DB: ── Reaction signals ──
+
+    User->>Penny: 👍 on proactive message
+    Note over DB: EMOJI_REACTION (0.5) — positive reinforcement
+
+    User->>Penny: 👎 on proactive message
+    Note over DB: EMOJI_REACTION (-0.8) — strong negative, stops enrichment
 ```
 
-## Flow 3: /learn Status View (Provenance Chain)
+## 4. Enrichment Loop
 
-User queries `/learn` with no args to see what's been discovered.
+Periodic during idle. Picks the highest-priority entity, searches, extracts via known-only mode, then sends a proactive message.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant LL as Learn Loop
+    participant DB as Database
+    participant Extract as Extraction Pipeline
+
+    LL->>DB: score entities (interest x 1/fact_count x staleness)
+    LL->>DB: search top candidate + log (trigger=penny_enrichment)
+
+    Extract->>DB: get unprocessed SearchLogs
+    Note over Extract: trigger=penny_enrichment → known-only mode
+    Extract->>DB: extract facts for known entities only
+
+    LL->>User: proactive message about findings
+```
+
+## 5. Entity Cleaner
+
+Daily maintenance pass. Deduplicates entities and facts, merges engagement history.
+
+```mermaid
+sequenceDiagram
+    participant Cleaner as Entity Cleaner
+    participant DB as Database
+    participant LLM as Ollama
+
+    Cleaner->>DB: get all entities
+    Cleaner->>LLM: identify duplicates (e.g. "kef ls50" vs "kef ls50 meta")
+    LLM-->>Cleaner: duplicate groups + canonical names
+    Cleaner->>DB: merge facts + engagements to canonical entity
+    Cleaner->>DB: deduplicate facts
+    Cleaner->>DB: regenerate embeddings
+```
+
+## 6. Provenance Chain (/learn status)
+
+`/learn` with no args shows what's been discovered, traced through the full chain.
 
 ```mermaid
 sequenceDiagram
@@ -63,116 +146,7 @@ sequenceDiagram
     participant DB as Database
 
     User->>Penny: "/learn"
-    Penny->>DB: get LearnPrompts → linked SearchLogs → linked Facts → Entities
-    DB-->>Penny: entities + fact counts per LearnPrompt
+    Penny->>DB: LearnPrompt → SearchLogs → Facts → Entities
 
     Penny->>User: 1) 'speakers' ✓ — wharfedale (17), kef (8)<br/>2) 'ai conferences' ... — ml prague (3)
-```
-
-## Flow 4: Penny Enrichment → Fact-Only Extraction (No New Entities)
-
-Learn loop picks a known entity, searches for more facts, and sends a proactive message. The SearchLog is tagged `penny_enrichment` so extraction won't create new entities.
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant LL as Learn Loop
-    participant DB as Database
-    participant Extract as Extraction Pipeline
-
-    LL->>DB: score entities, pick top candidate
-    LL->>DB: search + log (trigger=penny_enrichment)
-
-    Extract->>DB: get unprocessed SearchLogs
-    Note over Extract: trigger=penny_enrichment → known-only mode (no new entities)
-    Extract->>DB: extract facts for known entities only, deduplicate
-
-    LL->>User: proactive message about findings
-```
-
-## Flow 5: Passive Learning Across Conversations
-
-Knowledge builds purely from conversation patterns — no `/learn`, no `/like`.
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Penny
-    participant DB as Database
-    participant LL as Learn Loop
-
-    User->>Penny: "search for obsidian markdown plugins"
-    Note over DB: Entity("obsidian") created, 3 facts, SEARCH_INITIATED engagement
-
-    User->>Penny: "best way to do daily notes in obsidian?"
-    Note over DB: 4 more facts, FOLLOW_UP_QUESTION engagement
-
-    User->>Penny: "compare notion vs obsidian?"
-    Note over DB: Entity("notion") created, SEARCH_INITIATED for both
-
-    Note over DB: Obsidian interest=1.7, Notion interest=0.6
-
-    LL->>DB: score entities → obsidian is top candidate
-    LL->>User: "By the way — Obsidian released a new plugin..."
-
-    User->>Penny: 👍
-    Note over DB: EMOJI_REACTION engagement → interest reinforced
-```
-
-## Flow 6: /like and /dislike Shape Research Priorities
-
-User preferences steer enrichment toward interesting topics and away from uninteresting ones.
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Penny
-    participant DB as Database
-    participant LL as Learn Loop
-
-    User->>Penny: "/like mechanical keyboards"
-    Penny->>DB: create Preference + Entity + LIKE_COMMAND engagement (0.8)
-    Penny->>DB: find similar entities, boost each
-    Penny->>User: "I added mechanical keyboards to your likes"
-
-    User->>Penny: "/dislike sports"
-    Penny->>DB: create Preference + DISLIKE_COMMAND engagement (negative)
-
-    LL->>DB: score entities
-    Note over LL: keyboards boosted, sports suppressed
-    LL->>DB: enrich "keychron q1" (not sports)
-```
-
-## Flow 7: Thumbs-Down Stops Proactive Messages
-
-User reacts negatively to a proactive message, suppressing that entity from research.
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant LL as Learn Loop
-    participant DB as Database
-
-    LL->>User: "Found something about sourdough starters..."
-    User->>DB: 👎
-    Note over DB: Strong negative engagement → interest drops below zero
-    LL->>DB: score entities → sourdough skipped
-```
-
-## Flow 8: Entity Creation Boundary — What Gets Blocked
-
-Penny-triggered searches cannot create entities even when results mention new topics.
-
-```mermaid
-sequenceDiagram
-    participant LL as Learn Loop
-    participant DB as Database
-    participant Extract as Extraction Pipeline
-
-    LL->>DB: search for "ML Prague 2026" (trigger=penny_enrichment)
-    Note over DB: Results mention: ML Prague (known), Sanofi (unknown), NVIDIA (known)
-
-    Extract->>DB: get SearchLog (trigger=penny_enrichment)
-    Note over Extract: Known-only mode → discard Sanofi
-    Extract->>DB: extract facts for ML Prague + NVIDIA only
 ```
