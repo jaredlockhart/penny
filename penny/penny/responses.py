@@ -65,6 +65,13 @@ class PennyResponse:
     )
     INTERESTS_HEADER = "Here's what I think you're interested in:"
 
+    # ── Fact Discovery ────────────────────────────────────────────────────────
+
+    FACT_DISCOVERY_NEW_ENTITY = (
+        "I just discovered {entity_name} and learned {fact_count} thing(s) about it:\n{fact_list}"
+    )
+    FACT_DISCOVERY_KNOWN_ENTITY = "I just learned some new stuff about {entity_name}:\n{fact_list}"
+
     # ── Learn ────────────────────────────────────────────────────────────────
 
     LEARN_ACKNOWLEDGED = "Okay, I'll learn more about {topic}"

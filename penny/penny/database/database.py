@@ -498,6 +498,27 @@ class Database:
             ).all()
             return list(senders)
 
+    def get_latest_incoming_message_time(self, sender: str) -> datetime | None:
+        """Get the timestamp of the most recent incoming message from a user.
+
+        Args:
+            sender: The user's identifier
+
+        Returns:
+            Timestamp of the most recent incoming message, or None if no messages
+        """
+        with self.get_session() as session:
+            return session.exec(
+                select(MessageLog.timestamp)
+                .where(
+                    MessageLog.sender == sender,
+                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                    MessageLog.is_reaction == False,  # noqa: E712
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+
     def get_user_info(self, sender: str) -> UserInfo | None:
         """
         Get the basic user info for a user.
