@@ -210,6 +210,13 @@ class ExtractionPipeline(Agent):
                 else Prompt.KNOWN_ENTITY_IDENTIFICATION_PROMPT
             )
 
+            # Resolve learn prompt text for semantic relevance gate
+            relevance_ref: str | None = None
+            if search_log.learn_prompt_id is not None:
+                learn_prompt = self.db.get_learn_prompt(search_log.learn_prompt_id)
+                if learn_prompt:
+                    relevance_ref = learn_prompt.prompt_text
+
             logger.info(
                 "Extracting entities from search: %s (mode=%s)",
                 search_log.query,
@@ -224,6 +231,8 @@ class ExtractionPipeline(Agent):
                 content=search_log.response,
                 source_search_log_id=search_log.id,
                 allow_new_entities=allow_new,
+                relevance_reference=relevance_ref,
+                record_discovery_score=True,
             )
             if result.entities:
                 work_done = True
@@ -240,11 +249,10 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                         )
 
-            # Send a combined discovery message for this search (respecting backoff)
+            # Send per-entity discovery notifications (respecting backoff)
             if allow_new and result.discoveries and self._should_send_proactive(user):
-                await self._send_search_discovery_notification(
-                    user, search_log.query, result.discoveries
-                )
+                for discovery in result.discoveries:
+                    await self._send_fact_notification(user, discovery)
                 self._mark_proactive_sent(user)
 
             self.db.mark_search_extracted(search_log.id)
@@ -333,6 +341,8 @@ class ExtractionPipeline(Agent):
         source_search_log_id: int | None = None,
         source_message_id: int | None = None,
         allow_new_entities: bool = True,
+        relevance_reference: str | None = None,
+        record_discovery_score: bool = False,
     ) -> _ExtractionResult:
         """Two-pass extraction for a single piece of content.
 
@@ -340,6 +350,12 @@ class ExtractionPipeline(Agent):
           - Full mode (allow_new_entities=True): known + new entities
           - Known-only mode (allow_new_entities=False): only known entities
         Pass 2: For each entity, extract new facts as individual Fact rows.
+
+        Args:
+            relevance_reference: Text to compare entity names against for semantic
+                relevance gating. Defaults to context_value when not provided.
+                For /learn searches, this should be the original learn prompt text
+                rather than the intermediate search query.
 
         Returns _ExtractionResult with all identified entities and per-entity discoveries.
         """
@@ -387,9 +403,11 @@ class ExtractionPipeline(Agent):
                 if name in subset_names:
                     logger.info("Rejected entity '%s' (token-subset of another candidate)", name)
                     continue
-                relevant, candidate_embedding = await self._check_semantic_relevance(
-                    name, context_value
-                )
+                (
+                    relevant,
+                    candidate_embedding,
+                    similarity_score,
+                ) = await self._check_semantic_relevance(name, relevance_reference or context_value)
                 if not relevant:
                     continue
 
@@ -398,16 +416,27 @@ class ExtractionPipeline(Agent):
                     name, candidate_embedding, existing_entities
                 )
                 if duplicate:
-                    entities_to_process.append(duplicate)
-                    continue
-
-                is_new = name not in existing_by_name
-                entity = self.db.get_or_create_entity(user, name)
-                if entity and entity.id is not None:
-                    entities_to_process.append(entity)
+                    resolved_entity = duplicate
+                else:
+                    is_new = name not in existing_by_name
+                    resolved_entity = self.db.get_or_create_entity(user, name)
+                    if not resolved_entity or resolved_entity.id is None:
+                        continue
                     if is_new:
-                        newly_created_names.add(entity.name)
+                        newly_created_names.add(resolved_entity.name)
                     logger.info("New entity discovered: '%s'", name)
+
+                entities_to_process.append(resolved_entity)
+
+                if record_discovery_score and similarity_score > 0.0:
+                    assert resolved_entity.id is not None
+                    self.db.add_engagement(
+                        user=user,
+                        engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
+                        valence=PennyConstants.EngagementValence.POSITIVE,
+                        strength=similarity_score,
+                        entity_id=resolved_entity.id,
+                    )
 
             # Look up known entities that were identified
             for known_name in identified.known:
@@ -620,14 +649,16 @@ class ExtractionPipeline(Agent):
 
     async def _check_semantic_relevance(
         self, candidate_name: str, trigger_text: str
-    ) -> tuple[bool, list[float] | None]:
+    ) -> tuple[bool, list[float] | None, float]:
         """Semantic validation: reject entity candidates unrelated to the triggering content.
 
-        Returns (is_relevant, candidate_embedding). The candidate embedding is returned
-        so callers can reuse it for dedup without a second embed call.
+        Returns (is_relevant, candidate_embedding, similarity_score). The candidate
+        embedding is returned so callers can reuse it for dedup without a second embed
+        call. The similarity score is returned so callers can record it as engagement
+        strength.
         """
         if not self.embedding_model:
-            return True, None
+            return True, None, 0.0
         try:
             vecs = await self._ollama_client.embed(
                 [candidate_name, trigger_text], model=self.embedding_model
@@ -641,11 +672,11 @@ class ExtractionPipeline(Agent):
                     score,
                     PennyConstants.ENTITY_NAME_SEMANTIC_THRESHOLD,
                 )
-                return False, None
-            return True, candidate_embedding
+                return False, None, 0.0
+            return True, candidate_embedding, score
         except Exception:
             logger.debug("Semantic validation failed, accepting candidate", exc_info=True)
-            return True, None
+            return True, None, 0.0
 
     def _find_duplicate_entity(
         self,
@@ -891,27 +922,23 @@ class ExtractionPipeline(Agent):
                 PennyConstants.FACT_NOTIFICATION_MAX_BACKOFF,
             )
 
-    async def _send_search_discovery_notification(
-        self, user: str, query: str, discoveries: list[_EntityFactDiscovery]
-    ) -> None:
-        """Send a single message summarising all entities/facts from a search."""
+    async def _send_fact_notification(self, user: str, discovery: _EntityFactDiscovery) -> None:
+        """Compose and send a notification for a single entity's newly discovered facts."""
         if not self._channel:
             return
 
-        sections: list[str] = []
-        for discovery in discoveries:
-            label = (
-                f"{discovery.entity.name} (new)"
-                if discovery.is_new_entity
-                else discovery.entity.name
-            )
-            facts_text = "\n".join(f"  {fact}" for fact in discovery.new_facts)
-            sections.append(f"* {label}\n{facts_text}")
+        facts_text = "\n".join(f"- {fact}" for fact in discovery.new_facts)
+        if discovery.is_new_entity:
+            prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
+        else:
+            prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
 
-        summary = f"I found some stuff about {query}\n\n" + "\n\n".join(sections)
-        prompt = Prompt.SEARCH_DISCOVERY_PROMPT.format(summary=summary)
+        prompt = (
+            f"{prompt_template.format(entity_name=discovery.entity.name)}"
+            f"\n\nNew facts:\n{facts_text}"
+        )
 
-        result = await self._compose_user_facing(prompt)
+        result = await self._compose_user_facing(prompt, image_query=discovery.entity.name)
         if not result.answer:
             return
 

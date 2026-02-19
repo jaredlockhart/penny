@@ -6,7 +6,11 @@ import pytest
 
 from penny.constants import PennyConstants
 from penny.database.models import Engagement
-from penny.interest import _recency_weight, _valence_sign, compute_interest_score
+from penny.interest import (
+    _recency_weight,
+    _valence_sign,
+    compute_interest_score,
+)
 
 _DEFAULT_USER = "+1234"
 _DEFAULT_TYPE = PennyConstants.EngagementType.MESSAGE_MENTION

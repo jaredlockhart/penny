@@ -1124,6 +1124,18 @@ class Database:
             logger.error("Failed to create LearnPrompt: %s", e)
             return None
 
+    def get_search_log(self, search_log_id: int) -> SearchLog | None:
+        """Get a SearchLog by ID.
+
+        Args:
+            search_log_id: SearchLog primary key
+
+        Returns:
+            The SearchLog if found, None otherwise
+        """
+        with self.get_session() as session:
+            return session.get(SearchLog, search_log_id)
+
     def get_learn_prompt(self, learn_prompt_id: int) -> LearnPrompt | None:
         """Get a LearnPrompt by ID.
 

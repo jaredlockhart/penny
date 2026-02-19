@@ -137,11 +137,13 @@ class LearnLoopAgent(Agent):
             logger.debug("LearnLoopAgent: no search tool configured")
             return False
 
-        # Pick the highest-priority entity across all users
-        candidate = self._pick_candidate()
-        if candidate is None:
+        # Score all entities and pick the highest-priority one
+        candidates = self._score_candidates()
+        if not candidates:
             logger.debug("LearnLoopAgent: no candidates to research")
             return False
+
+        candidate = max(candidates, key=lambda c: c.priority)
 
         entity = candidate.entity
         user = candidate.user
@@ -199,13 +201,17 @@ class LearnLoopAgent(Agent):
 
         return True
 
-    def _pick_candidate(self) -> _ScoredEntity | None:
-        """Score all entities across all users and return the highest-priority one."""
+    def _score_candidates(self) -> list[_ScoredEntity]:
+        """Score all entities across all users by behavioral interest.
+
+        Returns candidates above the minimum interest threshold, sorted by priority.
+        Semantic interest scores are applied separately in _apply_semantic_scores().
+        """
         users = self.db.get_all_senders()
         if not users:
-            return None
+            return []
 
-        best: _ScoredEntity | None = None
+        candidates: list[_ScoredEntity] = []
 
         for user in users:
             entities = self.db.get_user_entities(user)
@@ -232,8 +238,8 @@ class LearnLoopAgent(Agent):
 
                 priority = interest * (1.0 / max(fact_count, 1)) * staleness
 
-                if best is None or priority > best.priority:
-                    best = _ScoredEntity(
+                candidates.append(
+                    _ScoredEntity(
                         entity=entity,
                         user=user,
                         interest=interest,
@@ -241,8 +247,9 @@ class LearnLoopAgent(Agent):
                         facts=facts,
                         priority=priority,
                     )
+                )
 
-        return best
+        return candidates
 
     def _build_query(self, entity_name: str, is_enrichment: bool) -> str:
         """Build a search query based on mode."""
