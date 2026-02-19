@@ -82,14 +82,12 @@ sequenceDiagram
 
     LL->>DB: score entities, pick top candidate
     LL->>DB: search + log (trigger=penny_enrichment)
-    LL->>DB: extract + store new facts
-    LL->>User: proactive message about findings
-
-    Note over Extract: ── Later ──
 
     Extract->>DB: get unprocessed SearchLogs
     Note over Extract: trigger=penny_enrichment → known-only mode (no new entities)
     Extract->>DB: extract facts for known entities only, deduplicate
+
+    LL->>User: proactive message about findings
 ```
 
 ## Flow 5: Passive Learning Across Conversations

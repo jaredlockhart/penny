@@ -307,11 +307,9 @@ The structural filter does the heavy lifting — in testing against production d
 2. Pick the top candidate
 3. Search for it (enrichment or briefing mode)
 4. Tag the SearchLog as `trigger=penny_enrichment`
-5. Extract facts inline (for the single entity it searched for)
+5. Extraction pipeline processes the SearchLog (known-only mode — no new entities)
 6. Compose and send a proactive message with findings
 7. Update embeddings
-
-**Why inline extraction?** The learn loop needs immediate facts to compose its proactive message. The SearchLog will also be processed later by the extraction pipeline, but in known-only mode — it won't create new entities, just potentially find additional facts for known entities.
 
 ### Loop 3: Entity Cleaner
 
