@@ -10,7 +10,6 @@ from penny.interest import (
     _recency_weight,
     _valence_sign,
     compute_interest_score,
-    compute_semantic_interest,
 )
 
 _DEFAULT_USER = "+1234"
@@ -174,22 +173,3 @@ class TestComputeInterestScore:
         ]
         score = compute_interest_score(engagements, now=now)
         assert score == pytest.approx(-0.6)
-
-
-class TestComputeSemanticInterest:
-    """Tests for RMS-based semantic interest aggregation."""
-
-    def test_empty_returns_zero(self):
-        assert compute_semantic_interest([]) == 0.0
-
-    def test_single_similarity(self):
-        assert compute_semantic_interest([0.8]) == pytest.approx(0.8)
-
-    def test_multiple_similarities_rms(self):
-        # RMS of [0.6, 0.8] = sqrt((0.36 + 0.64) / 2) = sqrt(0.5)
-        import math
-
-        assert compute_semantic_interest([0.6, 0.8]) == pytest.approx(math.sqrt(0.5))
-
-    def test_all_zeros(self):
-        assert compute_semantic_interest([0.0, 0.0]) == 0.0

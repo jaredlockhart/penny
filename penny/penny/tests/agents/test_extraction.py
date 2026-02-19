@@ -970,6 +970,20 @@ async def test_semantic_entity_name_validation(
             f"Unrelated entity should be rejected by semantic filter, got: {entity_names}"
         )
 
+        # SEARCH_DISCOVERY engagement should be created with the similarity score
+        kef_entity = next(e for e in entities if e.name == "kef ls50 meta")
+        assert kef_entity.id is not None
+        engagements = penny.db.get_entity_engagements(TEST_SENDER, kef_entity.id)
+        discovery_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.SEARCH_DISCOVERY
+        ]
+        assert len(discovery_engagements) == 1
+        assert discovery_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
+        # Similarity should be 1.0 (both "kef" and "speaker" map to [1,0,0,0])
+        assert discovery_engagements[0].strength == pytest.approx(1.0)
+
 
 # --- Entity pre-filter ---
 

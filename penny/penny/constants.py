@@ -30,6 +30,7 @@ class PennyConstants:
         MESSAGE_MENTION = "message_mention"
         LIKE_COMMAND = "like_command"
         DISLIKE_COMMAND = "dislike_command"
+        SEARCH_DISCOVERY = "search_discovery"
 
     class EngagementValence(StrEnum):
         """Sentiment direction of an engagement."""
