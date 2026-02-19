@@ -22,7 +22,6 @@ from penny.ollama.embeddings import (
     serialize_embedding,
 )
 from penny.prompts import Prompt
-from penny.tools.image_search import search_image
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -781,7 +780,7 @@ class ExtractionPipeline(Agent):
                 else:
                     bullet_list = "\n".join(f"• {topic}" for topic in topics)
                     message = f"I added these to your {pref_type}s:\n{bullet_list}"
-                await self._send_notification(sender, message, image_query=topics[0])
+                await self._send_notification(sender, message)
 
             return len(added_preferences) > 0
 
@@ -974,25 +973,22 @@ class ExtractionPipeline(Agent):
                 f"\n\nNew facts:\n{facts_text}"
             )
 
-            result = await self._compose_user_facing(prompt)
+            result = await self._compose_user_facing(prompt, image_query=discovery.entity.name)
             if not result.answer:
                 continue
 
-            await self._send_notification(user, result.answer, image_query=discovery.entity.name)
+            await self._send_notification(user, result.answer, attachments=result.attachments)
 
         self._mark_proactive_sent(user)
 
     # --- General notifications ---
 
     async def _send_notification(
-        self, recipient: str, message: str, image_query: str | None = None
+        self, recipient: str, message: str, attachments: list[str] | None = None
     ) -> None:
-        """Send a notification message to the user with an optional image."""
+        """Send a notification message to the user."""
         if not self._channel:
             return
-
-        image = await search_image(image_query) if image_query else None
-        attachments = [image] if image else None
 
         typing_task = asyncio.create_task(self._channel._typing_loop(recipient))
         try:

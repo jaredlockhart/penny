@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ from penny.ollama import OllamaClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
+from penny.tools.image_search import search_image
 from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -145,26 +147,37 @@ class Agent:
         prompt: str,
         history: list[tuple[str, str]] | None = None,
         system_prompt: str | None = None,
+        image_query: str | None = None,
     ) -> ControllerResponse:
         """Compose a user-facing message with system prompt for consistent tone.
 
         This is the shared primitive for all user-facing model calls.
         Builds messages with the identity prompt and timestamp, calls the model,
-        and returns a ControllerResponse.
+        and returns a ControllerResponse with optional image attachment.
 
         Used directly by proactive notifications (learn loop, extraction),
         and by run() for the no-tool path (e.g. image messages).
         """
         messages = self._build_messages(prompt, history, system_prompt)
+
+        # Run model call and image search concurrently
         try:
-            response = await self._ollama_client.chat(messages=messages)
+            if image_query:
+                response, image = await asyncio.gather(
+                    self._ollama_client.chat(messages=messages),
+                    search_image(image_query),
+                )
+            else:
+                response = await self._ollama_client.chat(messages=messages)
+                image = None
         except Exception as e:
             logger.error("Failed to compose user-facing message: %s", e)
             return ControllerResponse(answer="")
 
         content = response.content.strip()
         thinking = response.thinking or response.message.thinking
-        return ControllerResponse(answer=content, thinking=thinking)
+        attachments = [image] if image else []
+        return ControllerResponse(answer=content, thinking=thinking, attachments=attachments)
 
     async def caption_image(self, image_b64: str) -> str:
         """Caption an image using the vision model.

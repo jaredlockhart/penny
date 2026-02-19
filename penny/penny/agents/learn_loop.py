@@ -22,7 +22,6 @@ from penny.ollama.embeddings import (
     serialize_embedding,
 )
 from penny.prompts import Prompt
-from penny.tools.image_search import search_image
 from penny.tools.models import SearchResult
 
 if TYPE_CHECKING:
@@ -431,18 +430,11 @@ class LearnLoopAgent(Agent):
 
         prompt = f"{prompt_template.format(entity_name=entity_name)}\n\nNew facts:\n{facts_text}"
 
-        try:
-            result, image = await asyncio.gather(
-                self._compose_user_facing(prompt),
-                search_image(entity_name),
-            )
-            if not result.answer:
-                return
-        except Exception as e:
-            logger.error("Failed to compose learn loop message: %s", e)
+        result = await self._compose_user_facing(prompt, image_query=entity_name)
+        if not result.answer:
             return
 
-        attachments = [image] if image else None
+        attachments = result.attachments or None
         typing_task = asyncio.create_task(self._channel._typing_loop(user))
         try:
             await self._channel.send_response(
