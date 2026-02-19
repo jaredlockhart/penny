@@ -253,6 +253,7 @@ class MessageChannel(ABC):
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
             self._db.set_external_id(message_id, str(external_id))
+        logger.info("Sent response to %s (%d chars)", recipient, len(content))
         return message_id if external_id is not None else None
 
     async def handle_message(self, envelope_data: dict) -> None:
@@ -294,6 +295,7 @@ class MessageChannel(ABC):
                 # Most commands don't support quote-replies, but some do (e.g., /bug)
                 # Extract command name to check if it supports quote-replies
                 command_name = message.content.strip()[1:].split(maxsplit=1)[0].lower()
+                logger.info("Command detected: /%s from %s", command_name, message.sender)
                 commands_supporting_quotes = {"bug"}  # Commands that can use quote-reply metadata
 
                 if message.quoted_text and command_name not in commands_supporting_quotes:
@@ -329,6 +331,7 @@ class MessageChannel(ABC):
                     self._scheduler.notify_foreground_start()
 
                 # Agent handles context preparation internally
+                logger.info("Dispatching to message agent for %s", message.sender)
                 parent_id, response = await self._message_agent.handle(
                     content=message.content,
                     sender=message.sender,

@@ -163,6 +163,7 @@ class LearnLoopAgent(Agent):
 
         # Build search query
         query = self._build_query(entity.name, is_enrichment)
+        logger.info("Learn loop search query: '%s'", query)
 
         # Execute search
         search_result = await self._search(query)
@@ -172,6 +173,12 @@ class LearnLoopAgent(Agent):
         # Extract and deduplicate facts
         new_facts, confirmed_fact_ids = await self._extract_and_dedup_facts(
             entity, candidate.facts, search_result
+        )
+        logger.info(
+            "Learn loop extracted %d new facts, %d confirmed existing for '%s'",
+            len(new_facts),
+            len(confirmed_fact_ids),
+            entity.name,
         )
 
         # Update last_verified on confirmed existing facts
@@ -184,6 +191,7 @@ class LearnLoopAgent(Agent):
         # Update entity embedding if we added facts
         if stored_facts and self.embedding_model:
             await self._update_entity_embedding(entity)
+            logger.info("Updated entity embedding for '%s'", entity.name)
 
         # Send message if we found novel info
         if stored_facts:

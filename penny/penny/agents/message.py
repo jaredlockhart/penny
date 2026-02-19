@@ -100,6 +100,11 @@ class MessageAgent(Agent):
         else:
             system_prompt = Prompt.SEARCH_PROMPT
 
+        prompt_label = (
+            "vision" if has_images else ("knowledge" if knowledge_sufficient else "search")
+        )
+        logger.info("Handling message from %s (prompt=%s)", sender, prompt_label)
+
         # Run agent (for image messages: disable tools, single pass)
         response = await self.run(
             prompt=content,
