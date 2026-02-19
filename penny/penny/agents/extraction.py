@@ -202,7 +202,6 @@ class ExtractionPipeline(Agent):
             return False
 
         work_done = False
-        user_discoveries: dict[str, list[_EntityFactDiscovery]] = {}
         logger.info("Processing %d unprocessed search logs", len(search_logs))
 
         for search_log in search_logs:
@@ -214,6 +213,8 @@ class ExtractionPipeline(Agent):
                 continue
 
             allow_new = search_log.trigger != PennyConstants.SearchTrigger.PENNY_ENRICHMENT
+            # Only notify for user-triggered searches, respecting backoff
+            should_notify = allow_new and self._should_send_proactive(user)
             id_prompt = (
                 Prompt.ENTITY_IDENTIFICATION_PROMPT
                 if allow_new
@@ -234,6 +235,7 @@ class ExtractionPipeline(Agent):
                 content=search_log.response,
                 source_search_log_id=search_log.id,
                 allow_new_entities=allow_new,
+                notify_user=user if should_notify else None,
             )
             if result.entities:
                 work_done = True
@@ -250,15 +252,11 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                         )
 
-                    # Collect discoveries for notification (skip penny_enrichment)
-                    if result.discoveries:
-                        user_discoveries.setdefault(user, []).extend(result.discoveries)
+                # Mark backoff after sending notifications for this search log
+                if should_notify and result.discoveries:
+                    self._mark_proactive_sent(user)
 
             self.db.mark_search_extracted(search_log.id)
-
-        # Send fact discovery notifications (respecting backoff)
-        for user, discoveries in user_discoveries.items():
-            await self._send_fact_notifications(user, discoveries)
 
         return work_done
 
@@ -386,6 +384,7 @@ class ExtractionPipeline(Agent):
         source_search_log_id: int | None = None,
         source_message_id: int | None = None,
         allow_new_entities: bool = True,
+        notify_user: str | None = None,
     ) -> _ExtractionResult:
         """Two-pass extraction for a single piece of content.
 
@@ -393,6 +392,9 @@ class ExtractionPipeline(Agent):
           - Full mode (allow_new_entities=True): known + new entities
           - Known-only mode (allow_new_entities=False): only known entities
         Pass 2: For each entity, extract new facts as individual Fact rows.
+
+        When notify_user is set, sends a message to the user per-entity as facts
+        are discovered (rather than batching notifications at the end).
 
         Returns _ExtractionResult with all identified entities and per-entity discoveries.
         """
@@ -523,13 +525,17 @@ class ExtractionPipeline(Agent):
                 logger.info("  '%s' +fact: %s", entity.name, fact_text)
 
             entities_with_new_facts.append(entity.id)
-            discoveries.append(
-                _EntityFactDiscovery(
-                    entity=entity,
-                    new_facts=new_fact_texts,
-                    is_new_entity=entity.name in newly_created_names,
-                )
+            discovery = _EntityFactDiscovery(
+                entity=entity,
+                new_facts=new_fact_texts,
+                is_new_entity=entity.name in newly_created_names,
             )
+            discoveries.append(discovery)
+
+            # Send notification immediately per-entity so the user sees
+            # discoveries as they happen rather than in a batch at the end.
+            if notify_user:
+                await self._send_fact_notification(notify_user, discovery)
 
         # Regenerate entity embeddings for entities that got new facts
         if self.embedding_model and entities_with_new_facts:
@@ -1092,36 +1098,27 @@ class ExtractionPipeline(Agent):
                 PennyConstants.FACT_NOTIFICATION_MAX_BACKOFF,
             )
 
-    async def _send_fact_notifications(
-        self, user: str, discoveries: list[_EntityFactDiscovery]
-    ) -> None:
-        """Send per-entity notifications for newly discovered facts."""
-        if not discoveries or not self._channel:
+    async def _send_fact_notification(self, user: str, discovery: _EntityFactDiscovery) -> None:
+        """Compose and send a notification for a single entity's newly discovered facts."""
+        if not self._channel:
             return
 
-        if not self._should_send_proactive(user):
-            logger.info("Skipping fact notifications for %s (backoff)", user)
+        facts_text = "\n".join(f"- {fact}" for fact in discovery.new_facts)
+        if discovery.is_new_entity:
+            prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
+        else:
+            prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
+
+        prompt = (
+            f"{prompt_template.format(entity_name=discovery.entity.name)}"
+            f"\n\nNew facts:\n{facts_text}"
+        )
+
+        result = await self._compose_user_facing(prompt, image_query=discovery.entity.name)
+        if not result.answer:
             return
 
-        for discovery in discoveries:
-            facts_text = "\n".join(f"- {fact}" for fact in discovery.new_facts)
-            if discovery.is_new_entity:
-                prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
-            else:
-                prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
-
-            prompt = (
-                f"{prompt_template.format(entity_name=discovery.entity.name)}"
-                f"\n\nNew facts:\n{facts_text}"
-            )
-
-            result = await self._compose_user_facing(prompt, image_query=discovery.entity.name)
-            if not result.answer:
-                continue
-
-            await self._send_notification(user, result.answer, attachments=result.attachments)
-
-        self._mark_proactive_sent(user)
+        await self._send_notification(user, result.answer, attachments=result.attachments)
 
     # --- General notifications ---
 
