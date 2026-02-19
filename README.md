@@ -43,7 +43,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nExtraction · EntityCleaner · LearnLoop"]
+    Penny -.->|"schedule"| BG["Background Agents\nExtraction · LearnLoop"]
 ```
 
 ### Agent Architecture
@@ -51,8 +51,7 @@ flowchart TD
 Penny uses specialized agent subclasses for different tasks:
 
 - **MessageAgent**: Handles incoming user messages, prepares context, runs agentic loop
-- **ExtractionPipeline**: Unified background task that extracts entities, facts, and preferences from search results and messages
-- **EntityCleaner**: Periodically merges duplicate entities in the knowledge base
+- **ExtractionPipeline**: Unified background task that extracts entities, facts, and preferences from search results and messages. Deduplicates entities at insertion time using dual-threshold detection (token containment ratio + embedding cosine similarity)
 - **LearnLoopAgent**: Adaptive background research driven by interest scores — picks the most interesting entity and searches for new facts
 - **ScheduleExecutor**: Runs user-created cron-based scheduled tasks
 
@@ -64,14 +63,13 @@ Background tasks are managed by a priority-based scheduler with a global idle th
 
 1. **Schedule** (AlwaysRunSchedule) — runs user-created cron-based tasks every 60s
 2. **Extraction** (PeriodicSchedule) — extracts entities, facts, and preferences from search results and messages
-3. **EntityCleaner** (PeriodicSchedule) — merges duplicate entities
-4. **LearnLoop** (PeriodicSchedule) — adaptive background research on interesting entities
+3. **LearnLoop** (PeriodicSchedule) — adaptive background research on interesting entities
 
 **Global idle threshold** (default: 300s): Idle-dependent background tasks wait for the system to become idle before they can run. Background tasks are suspended during foreground message processing.
 
 Schedule types:
 - **AlwaysRunSchedule**: Runs regardless of idle state at a configurable interval (used for user-created schedules)
-- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for extraction, entity cleaner, learn loop; default: 300s)
+- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for extraction, learn loop; default: 300s)
 
 The scheduler resets all timers when a new message arrives.
 

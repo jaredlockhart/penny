@@ -85,8 +85,6 @@ class PennyConstants:
 
     # Entity knowledge base constants
     ENTITY_EXTRACTION_BATCH_LIMIT = 10
-    ENTITY_CLEANING_BATCH_LIMIT = 200
-    ENTITY_CLEANING_INTERVAL_SECONDS = 86400.0
     EMBEDDING_BACKFILL_BATCH_LIMIT = 50
 
     # Message pre-filter constants for extraction pipeline
@@ -135,6 +133,10 @@ class PennyConstants:
     # Entity pre-filter for extraction pipeline
     ENTITY_PREFILTER_SIMILARITY_THRESHOLD = 0.2
     ENTITY_PREFILTER_MIN_COUNT = 20
+
+    # Entity dedup at insertion time (TCR + embedding dual threshold)
+    ENTITY_DEDUP_TCR_THRESHOLD = 0.75
+    ENTITY_DEDUP_EMBEDDING_THRESHOLD = 0.85
 
     # Fact discovery notification backoff
     FACT_NOTIFICATION_INITIAL_BACKOFF = 60.0  # seconds; first backoff after unanswered cycle

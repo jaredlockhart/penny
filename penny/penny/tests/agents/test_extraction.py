@@ -1460,6 +1460,102 @@ async def test_extraction_prefilters_entities_by_embedding(
         assert len(kef_entities) == 1
 
 
+# --- Insertion-time entity dedup ---
+
+
+@pytest.mark.asyncio
+async def test_extraction_deduplicates_entities_at_insertion_time(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    When the LLM returns an entity name that is a duplicate of an existing entity
+    (by TCR + embedding similarity), the extraction pipeline routes facts to the
+    existing entity instead of creating a new one.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    # Embed handler: "stanford" and "stanford university" get identical vectors,
+    # and are also similar to the search content about stanford
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        vecs = []
+        for text in texts:
+            if "stanford" in text.lower():
+                vecs.append([1.0, 0.0, 0.0, 0.0])
+            else:
+                vecs.append([0.0, 1.0, 0.0, 0.0])
+        return vecs
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+        if "Entity:" in prompt:
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"facts": ["Located in California"]}),
+            )
+        elif "topics" in prompt.lower():
+            return mock_ollama._make_text_response(request, '{"topics": []}')
+        elif "New facts:" in prompt:
+            return mock_ollama._make_text_response(request, "dedup-notification")
+        else:
+            # LLM returns "stanford university" as a new entity
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"known": [], "new": [{"name": "Stanford University"}]}),
+            )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Pre-seed "stanford" with embedding
+        stanford = penny.db.get_or_create_entity(TEST_SENDER, "stanford")
+        assert stanford is not None and stanford.id is not None
+        penny.db.add_fact(stanford.id, "Founded in 1885")
+        penny.db.update_entity_embedding(stanford.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+
+        # Seed message and search log
+        msg_id = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="tell me about stanford physics",
+        )
+        penny.db.mark_messages_processed([msg_id])
+
+        penny.db.log_search(
+            query="stanford physics department",
+            response="Stanford University has a renowned physics department.",
+            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+        )
+
+        await penny.extraction_pipeline.execute()
+
+        # Verify NO new entity was created — "stanford university" should be deduped
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        entity_names = [e.name for e in entities]
+        assert "stanford" in entity_names
+        assert "stanford university" not in entity_names, (
+            f"Duplicate entity should not be created, got: {entity_names}"
+        )
+        assert len(entities) == 1
+
+        # Verify the new fact was attached to the existing "stanford" entity
+        facts = penny.db.get_entity_facts(stanford.id)
+        fact_contents = [f.content for f in facts]
+        assert "Founded in 1885" in fact_contents
+        assert "Located in California" in fact_contents
+
+
 # --- Fact discovery notifications ---
 
 

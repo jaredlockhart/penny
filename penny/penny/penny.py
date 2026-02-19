@@ -13,7 +13,6 @@ from penny.agents import (
     LearnLoopAgent,
     MessageAgent,
 )
-from penny.agents.entity_cleaner import EntityCleaner
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
@@ -130,19 +129,6 @@ class Penny:
             embedding_model=config.ollama_embedding_model,
         )
 
-        self.entity_cleaner = EntityCleaner(
-            system_prompt="",  # EntityCleaner uses ollama_client.generate() directly
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
-            tools=[],
-            db=self.db,
-            max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-            tool_timeout=config.tool_timeout,
-            embedding_model=config.ollama_embedding_model,
-        )
-
         # Learn loop uses SearchTool directly (not the agentic loop)
         self.learn_loop = LearnLoopAgent(
             search_tool=shared_search_tool,
@@ -183,7 +169,7 @@ class Penny:
         self.learn_loop.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Schedules (priority: schedule, extract, clean, learn)
+        # Schedules (priority: schedule, extract, learn)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
         # LearnLoopAgent runs periodically while idle to research entities by interest score
         schedules = [
@@ -193,10 +179,6 @@ class Penny:
             ),
             PeriodicSchedule(
                 agent=self.extraction_pipeline,
-                interval=config.maintenance_interval_seconds,
-            ),
-            PeriodicSchedule(
-                agent=self.entity_cleaner,
                 interval=config.maintenance_interval_seconds,
             ),
             PeriodicSchedule(

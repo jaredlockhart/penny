@@ -216,18 +216,3 @@ Examples:
         "- Keep each fact concise (one sentence)\n"
         "- If no genuinely new facts are found, return an empty list"
     )
-
-    # Entity cleaning prompt (merge duplicates)
-    ENTITY_MERGE_PROMPT = (
-        "You are given a list of entity names from a knowledge base.\n"
-        "Identify groups of entities that refer to the same thing and should be merged.\n"
-        "For each group, pick the best canonical name "
-        "(short, clear, widely recognized form).\n\n"
-        "RULES:\n"
-        "- Only group entities that are genuinely the same thing "
-        "(e.g., 'stanford' and 'stanford university')\n"
-        "- Do NOT group related but distinct entities "
-        "(e.g., 'stanford' and 'stanford cardinal' are different)\n"
-        "- If an entity has no duplicates, do not include it\n"
-        "- Prefer shorter, more common names as the canonical form"
-    )
