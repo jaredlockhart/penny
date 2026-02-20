@@ -139,9 +139,10 @@ class PennyConstants:
     ENTITY_DEDUP_TCR_THRESHOLD = 0.75
     ENTITY_DEDUP_EMBEDDING_THRESHOLD = 0.85
 
-    # Fact discovery notification backoff
+    # Fact discovery notification backoff and quality gate
     FACT_NOTIFICATION_INITIAL_BACKOFF = 60.0  # seconds; first backoff after unanswered cycle
     FACT_NOTIFICATION_MAX_BACKOFF = 3600.0  # seconds; cap at 1 hour
+    FACT_NOTIFICATION_MIN_LENGTH = 75  # skip near-empty model outputs
 
     # LearnPrompt defaults
     LEARN_PROMPT_DEFAULT_SEARCHES = 5
