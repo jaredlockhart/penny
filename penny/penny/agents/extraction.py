@@ -41,10 +41,15 @@ _LLM_ARTIFACT_PATTERNS = (
     "{desccription}",
     "confidence score:",
     "-brief:",
+    "fill_me_in",
+    "placeholder",
+    "<example>",
+    "todo",
 )
 _NUMBERED_LIST_RE = re.compile(r"^\d+\.")
 _URL_RE = re.compile(r"https?://")
 _MARKDOWN_BOLD_RE = re.compile(r"\*\*")
+_ANGLE_BRACKET_RE = re.compile(r"<[^>]+>")
 _ENTITY_NAME_MAX_WORDS = 8
 
 
@@ -71,7 +76,12 @@ def _is_valid_entity_name(name: str) -> bool:
         return False
     if _NUMBERED_LIST_RE.match(name.strip()):
         return False
-    return not (_URL_RE.search(name) or _MARKDOWN_BOLD_RE.search(name) or "\n" in name)
+    return not (
+        _URL_RE.search(name)
+        or _MARKDOWN_BOLD_RE.search(name)
+        or _ANGLE_BRACKET_RE.search(name)
+        or "\n" in name
+    )
 
 
 # --- Pydantic schemas for LLM responses ---
