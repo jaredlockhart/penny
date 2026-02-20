@@ -67,9 +67,11 @@ class Agent:
         vision_model: str | None = None,
         embedding_model: str | None = None,
         allow_repeat_tools: bool = False,
+        user_facing_model: str | None = None,
     ):
         self.system_prompt = system_prompt
         self.model = model
+        self.user_facing_model = user_facing_model or model
         self.tools = tools
         self.db = db
         self.max_steps = max_steps
@@ -164,11 +166,13 @@ class Agent:
         try:
             if image_query:
                 response, image = await asyncio.gather(
-                    self._ollama_client.chat(messages=messages),
+                    self._ollama_client.chat(messages=messages, model=self.user_facing_model),
                     search_image(image_query),
                 )
             else:
-                response = await self._ollama_client.chat(messages=messages)
+                response = await self._ollama_client.chat(
+                    messages=messages, model=self.user_facing_model
+                )
                 image = None
         except Exception as e:
             logger.error("Failed to compose user-facing message: %s", e)

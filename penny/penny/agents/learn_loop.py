@@ -445,7 +445,10 @@ class LearnLoopAgent(Agent):
 
         prompt = f"{prompt_template.format(entity_name=entity_name)}\n\nNew facts:\n{facts_text}"
 
-        result = await self._compose_user_facing(prompt, image_query=entity_name)
+        # Inject a fake user turn so the model understands it's responding to the
+        # user's interest rather than composing a message into the void.
+        history = [("user", f"what's new with {entity_name}?")]
+        result = await self._compose_user_facing(prompt, history=history, image_query=entity_name)
         if not result.answer:
             return
 

@@ -1302,7 +1302,7 @@ async def test_extraction_fact_notification_backoff(
         elif "topics" in prompt.lower():
             # Preference extraction — return nothing
             return mock_ollama._make_text_response(request, '{"topics": []}')
-        elif "discovered a new topic" in prompt or "learned some new things" in prompt:
+        elif "came across a new topic" in prompt or "came across some new information" in prompt:
             # Per-entity fact notification composition
             return mock_ollama._make_text_response(request, "backoff-notification-composed")
         else:
@@ -1420,10 +1420,10 @@ async def test_extraction_fact_notification_new_vs_known_entity(
         elif "topics" in prompt.lower():
             # Preference extraction — return nothing
             return mock_ollama._make_text_response(request, '{"topics": []}')
-        elif "discovered a new topic" in prompt:
+        elif "came across a new topic" in prompt:
             # Per-entity notification for NEW entity — echo prompt for assertion
             return mock_ollama._make_text_response(request, prompt)
-        elif "learned some new things" in prompt:
+        elif "came across some new information" in prompt:
             # Per-entity notification for KNOWN entity — echo prompt for assertion
             return mock_ollama._make_text_response(request, prompt)
         else:
@@ -1465,12 +1465,12 @@ async def test_extraction_fact_notification_new_vs_known_entity(
         new_notifications = [
             msg
             for msg in signal_server.outgoing_messages
-            if "discovered a new topic" in msg["message"]
+            if "came across a new topic" in msg["message"]
         ]
         known_notifications = [
             msg
             for msg in signal_server.outgoing_messages
-            if "learned some new things" in msg["message"]
+            if "came across some new information" in msg["message"]
         ]
         assert len(new_notifications) == 1, (
             "Should send one new-entity notification, "

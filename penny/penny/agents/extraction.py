@@ -252,7 +252,7 @@ class ExtractionPipeline(Agent):
             # Send per-entity discovery notifications (respecting backoff)
             if allow_new and result.discoveries and self._should_send_proactive(user):
                 for discovery in result.discoveries:
-                    await self._send_fact_notification(user, discovery)
+                    await self._send_fact_notification(user, discovery, relevance_ref)
                 self._mark_proactive_sent(user)
 
             self.db.mark_search_extracted(search_log.id)
@@ -922,7 +922,12 @@ class ExtractionPipeline(Agent):
                 PennyConstants.FACT_NOTIFICATION_MAX_BACKOFF,
             )
 
-    async def _send_fact_notification(self, user: str, discovery: _EntityFactDiscovery) -> None:
+    async def _send_fact_notification(
+        self,
+        user: str,
+        discovery: _EntityFactDiscovery,
+        learn_prompt_text: str | None = None,
+    ) -> None:
         """Compose and send a notification for a single entity's newly discovered facts."""
         if not self._channel:
             return
@@ -938,7 +943,12 @@ class ExtractionPipeline(Agent):
             f"\n\nNew facts:\n{facts_text}"
         )
 
-        result = await self._compose_user_facing(prompt, image_query=discovery.entity.name)
+        # Inject the learn prompt as a prior user turn so the model understands
+        # it's responding to the user's request rather than writing into the void.
+        history = [("user", learn_prompt_text)] if learn_prompt_text else None
+        result = await self._compose_user_facing(
+            prompt, history=history, image_query=discovery.entity.name
+        )
         if not result.answer:
             return
 

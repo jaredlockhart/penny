@@ -92,27 +92,25 @@ Examples:
 
     # Fact discovery notification prompts (extraction pipeline)
     FACT_DISCOVERY_NEW_ENTITY_PROMPT = (
-        "You just discovered a new topic called {entity_name} and learned some facts about it. "
-        "Write a message telling the user what you found."
+        "You just came across a new topic: {entity_name}. "
+        "Write a short, casual message sharing what you found."
     )
 
     FACT_DISCOVERY_KNOWN_ENTITY_PROMPT = (
-        "You just learned some new things about {entity_name}. "
-        "Write a message sharing the new info with the user."
+        "You just came across some new information about {entity_name}. "
+        "Write a short, casual message sharing what's new."
     )
 
     # Learn loop message composition prompts
     LEARN_ENRICHMENT_MESSAGE_PROMPT = (
         "You just learned new facts about {entity_name}. "
-        "Write a short, casual message sharing what you discovered, "
-        "as if telling a friend something interesting you just found out. "
+        "Write a short, casual message sharing what you discovered. "
         "Include the most interesting 2-3 findings. Keep it under 200 words."
     )
 
     LEARN_BRIEFING_MESSAGE_PROMPT = (
         "You just found new developments about {entity_name}. "
-        "Write a brief heads-up message sharing what's new, "
-        "as if giving a friend a quick update. Keep it under 150 words."
+        "Write a brief, casual message sharing what's new. Keep it under 150 words."
     )
 
     # /learn command: iterative search query generation
