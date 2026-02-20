@@ -889,6 +889,16 @@ def test_structural_entity_name_validation():
     assert _is_valid_entity_name("result-brief: something") is False
     assert _is_valid_entity_name("{description} of thing") is False
 
+    # Angle bracket placeholders
+    assert _is_valid_entity_name("<fill_me_in>") is False
+    assert _is_valid_entity_name("<placeholder>") is False
+    assert _is_valid_entity_name("<entity_name>") is False
+
+    # Generic placeholder words
+    assert _is_valid_entity_name("fill_me_in") is False
+    assert _is_valid_entity_name("placeholder entity") is False
+    assert _is_valid_entity_name("TODO") is False
+
 
 @pytest.mark.asyncio
 async def test_semantic_entity_name_validation(
