@@ -119,6 +119,7 @@ class Penny:
         self.extraction_pipeline = ExtractionPipeline(
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             model=config.ollama_background_model,
+            user_facing_model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
             db=self.db,
@@ -134,6 +135,7 @@ class Penny:
             search_tool=shared_search_tool,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             model=config.ollama_background_model,
+            user_facing_model=config.ollama_foreground_model,
             ollama_api_url=config.ollama_api_url,
             tools=[],
             db=self.db,
