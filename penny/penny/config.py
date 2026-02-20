@@ -306,5 +306,8 @@ def setup_logging(log_level: str, log_file: str | None = None) -> None:
         "duckduckgo_search",
         "primp",
         "rquest",
+        "rustls",
+        "reqwest",
+        "hyper_util",
     ):
         logging.getLogger(name).setLevel(logging.WARNING)
