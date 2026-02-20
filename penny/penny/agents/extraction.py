@@ -961,6 +961,13 @@ class ExtractionPipeline(Agent):
         )
         if not result.answer:
             return
+        if len(result.answer) < PennyConstants.FACT_NOTIFICATION_MIN_LENGTH:
+            logger.debug(
+                "Skipping near-empty notification (%d chars): %r",
+                len(result.answer),
+                result.answer,
+            )
+            return
 
         await self._send_notification(user, result.answer, attachments=result.attachments)
 

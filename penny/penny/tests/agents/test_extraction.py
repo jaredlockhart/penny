@@ -72,7 +72,9 @@ async def test_extraction_processes_search_log(
         else:
             # Notification composition call
             return mock_ollama._make_text_response(
-                request, "Hey! I just found out about KEF LS50 Meta — pretty cool speaker!"
+                request,
+                "Hey! I just found out about KEF LS50 Meta — it uses "
+                "Metamaterial Absorption Technology, pretty cool!",
             )
 
     mock_ollama.set_response_handler(handler)
@@ -1314,7 +1316,10 @@ async def test_extraction_fact_notification_backoff(
             return mock_ollama._make_text_response(request, '{"topics": []}')
         elif "came across a new topic" in prompt or "came across some new information" in prompt:
             # Per-entity fact notification composition
-            return mock_ollama._make_text_response(request, "backoff-notification-composed")
+            return mock_ollama._make_text_response(
+                request,
+                "backoff-notification-composed — here are some interesting facts I came across!",
+            )
         else:
             # Entity identification — return a unique new entity each time
             n = call_count[0]
