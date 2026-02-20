@@ -434,6 +434,50 @@ Phase 6 — Documentation
 
 ---
 
+## System Diagram
+
+Bird's eye view of how information moves through the system:
+
+```mermaid
+flowchart TD
+    USER((User))
+
+    USER -->|sends| MSG[User Message]
+    USER -->|runs| LEARN[/learn]
+    USER -->|reacts| RXN[Reaction]
+
+    MSG -->|triggers| REPLY[Penny Reply]
+    MSG -->|may trigger| MSRCH[Message Search]
+    LEARN -->|triggers| LSRCH[Learn Search]
+
+    MSG -->|extracted by| EXT[Extraction Pipeline]
+    MSRCH -->|extracted by| EXT
+    LSRCH -->|extracted by| EXT
+    ESRCH -->|extracted by| EXT
+
+    EXT -->|produces| ENT[Entity]
+    EXT -->|produces| FACT[Fact]
+    EXT -->|produces| ENG[Engagement]
+
+    ENT --- FACT
+
+    RXN -->|produces| ENG
+    REPLY -->|can receive| RXN
+    NOTIF -->|can receive| RXN
+
+    ENG -->|computes| SCORE[Interest Score]
+
+    SCORE -->|prioritizes| ESRCH[Enrichment Search]
+    SCORE -->|selects| NOTIF[Notification]
+
+    NOTIF -->|surfaces| ENT
+    NOTIF -->|sends to| USER
+
+    REPLY -->|sends to| USER
+```
+
+---
+
 ## Design Decisions
 
 1. **User-gated entity creation** — The single most impactful change. Prevents garbage entities, irrelevant research targets, and engagement inflation. All three overnight issues (#317, #319, #320) are solved at the architectural level.
