@@ -124,9 +124,7 @@ class PennyConstants:
 
     # Learn loop constants
     LEARN_ENRICHMENT_FACT_THRESHOLD = 5  # Below this → enrichment mode
-    LEARN_STALENESS_DAYS = 7.0  # Days until facts are considered stale
     LEARN_MIN_INTEREST_SCORE = 0.1  # Minimum interest to consider
-    LEARN_RECENT_DAYS = 1.0  # Skip entity if verified within this window
 
     # Entity name validation
     ENTITY_NAME_SEMANTIC_THRESHOLD = 0.58

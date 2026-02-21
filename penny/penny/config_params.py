@@ -170,25 +170,11 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {
         default=5,
         validator=_validate_positive_int,
     ),
-    "LEARN_STALENESS_DAYS": ConfigParam(
-        key="LEARN_STALENESS_DAYS",
-        description="Days since last verification before an entity is considered stale",
-        type=float,
-        default=7.0,
-        validator=_validate_positive_float,
-    ),
     "LEARN_MIN_INTEREST_SCORE": ConfigParam(
         key="LEARN_MIN_INTEREST_SCORE",
         description="Minimum interest score for an entity to be considered for enrichment",
         type=float,
         default=0.1,
-        validator=_validate_positive_float,
-    ),
-    "LEARN_RECENT_DAYS": ConfigParam(
-        key="LEARN_RECENT_DAYS",
-        description="Skip enrichment if entity was verified within this many days",
-        type=float,
-        default=1.0,
         validator=_validate_positive_float,
     ),
 }

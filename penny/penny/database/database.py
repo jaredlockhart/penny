@@ -1398,23 +1398,6 @@ class Database:
                 ).all()
             )
 
-    def update_fact_last_verified(self, fact_id: int) -> None:
-        """Update last_verified timestamp on a fact.
-
-        Args:
-            fact_id: Fact primary key
-        """
-        try:
-            with self.get_session() as session:
-                fact = session.get(Fact, fact_id)
-                if fact:
-                    fact.last_verified = datetime.now(UTC)
-                    session.add(fact)
-                    session.commit()
-                    logger.debug("Updated last_verified on fact %d", fact_id)
-        except Exception as e:
-            logger.error("Failed to update fact %d last_verified: %s", fact_id, e)
-
     def get_unnotified_facts(self, user: str) -> list[Fact]:
         """Get facts that haven't been communicated to a user yet.
 
