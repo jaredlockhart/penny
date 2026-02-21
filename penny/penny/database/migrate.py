@@ -188,10 +188,10 @@ if __name__ == "__main__":
 
     if "--test" in args:
         args.remove("--test")
-        db_path = args[0] if args else "/penny/data/penny.db"
+        db_path = args[0] if args else "/penny/data/penny/penny.db"
         success = migrate_test(db_path)
         sys.exit(0 if success else 1)
 
-    db_path = args[0] if args else "/penny/data/penny.db"
+    db_path = args[0] if args else "/penny/data/penny/penny.db"
     count = migrate(db_path)
     logger.info("Done. %d migration(s) applied.", count)

@@ -21,8 +21,8 @@ from penny_team.constants import TeamConstants
 
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent.parent
-DATA_DIR = PROJECT_ROOT / "data" / "penny-team"
-LOG_DIR = PROJECT_ROOT / "data" / "logs"
+DATA_DIR = PROJECT_ROOT / TeamConstants.TEAM_STATE_DIR
+LOG_DIR = PROJECT_ROOT / TeamConstants.TEAM_LOG_DIR
 
 logger = logging.getLogger(__name__)
 

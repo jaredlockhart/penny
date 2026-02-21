@@ -355,7 +355,7 @@ class Penny:
 async def main() -> None:
     """Main entry point."""
     config = Config.load()
-    setup_logging(config.log_level, config.log_file)
+    setup_logging(config.log_level, config.log_file, config.log_max_bytes, config.log_backup_count)
 
     logger.info("Starting Penny with config:")
     logger.info("  channel_type: %s", config.channel_type)

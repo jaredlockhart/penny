@@ -39,7 +39,8 @@ ENV PYTHONPATH=/shared:/repo/penny-team
 
 # Snapshot the entire repo into the image (build context is project root)
 COPY . /repo
-RUN mkdir -p /repo/data
+RUN mkdir -p /repo/data/penny-team/state /repo/data/penny-team/logs \
+    /repo/data/penny/logs /repo/data/penny/backups /repo/data/private
 
 # Install Python deps from baked-in source
 RUN cd /repo/penny && uv pip install --system . --group dev --quiet

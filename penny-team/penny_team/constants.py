@@ -167,5 +167,8 @@ class TeamConstants:
     ENV_OLLAMA_URL = "OLLAMA_API_URL"
     ENV_OLLAMA_MODEL = "OLLAMA_BACKGROUND_MODEL"
 
-    # Penny database path (relative to project root)
-    PENNY_DB_RELATIVE_PATH = "data/penny.db"
+    # Data directory layout (relative to project root)
+    PENNY_DB_RELATIVE_PATH = "data/penny/penny.db"
+    PENNY_LOG_RELATIVE_PATH = "data/penny/logs/penny.log"
+    TEAM_STATE_DIR = "data/penny-team/state"
+    TEAM_LOG_DIR = "data/penny-team/logs"

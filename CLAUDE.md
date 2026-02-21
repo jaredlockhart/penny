@@ -8,7 +8,7 @@ Penny also has an autonomous development team (`penny-team/`) — Claude CLI age
 
 ## Environment Notes
 
-- **Logs**: Runtime logs are written to `data/penny.log`; agent logs are in `data/logs/` (not docker compose logs)
+- **Logs**: Runtime logs are written to `data/penny/logs/penny.log`; agent logs are in `data/penny-team/logs/` (not docker compose logs)
 
 ## Git Workflow
 
@@ -64,6 +64,14 @@ docs/                           — Design documents
   knowledge-system-plan.md      — Knowledge System v2 design
   knowledge-system-flows.md     — Knowledge System v2 sequence diagrams
 data/                           — Runtime data (gitignored)
+  penny/                        — Penny runtime data
+    penny.db                    — Production database
+    backups/                    — DB backups (max 5)
+    logs/                       — Penny runtime logs (penny.log)
+  penny-team/                   — Agent team runtime
+    logs/                       — Agent logs + prompts
+    state/                      — Agent state files
+  private/                      — Credentials (not in repo)
 ```
 
 ## Running
@@ -139,7 +147,9 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 **Logging**:
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)
 - `LOG_FILE`: Optional path to log file
-- `DB_PATH`: SQLite database location (default: /penny/data/penny.db)
+- `LOG_MAX_BYTES`: Maximum log file size before rotation (default: 10485760 / 10 MB)
+- `LOG_BACKUP_COUNT`: Number of rotated backup files to keep (default: 5)
+- `DB_PATH`: SQLite database location (default: /penny/data/penny/penny.db)
 
 ## Testing Philosophy
 
