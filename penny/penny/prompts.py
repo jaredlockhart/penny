@@ -218,3 +218,16 @@ Examples:
         "- Keep each fact concise (one sentence)\n"
         "- If no genuinely new facts are found, return an empty list"
     )
+
+    MESSAGE_SENTIMENT_EXTRACTION_PROMPT = (
+        "Analyze the user's sentiment toward each named entity in their message.\n\n"
+        "Return ONLY entities where the user expresses a clear opinion:\n"
+        "- 'positive': explicit liking, enthusiasm, or praise "
+        "('I love X', 'X is amazing', 'really into X')\n"
+        "- 'negative': explicit dislike, frustration, or criticism "
+        "('I hate X', 'tired of X', 'X is terrible')\n\n"
+        "Do NOT return entities that are merely mentioned without sentiment. "
+        "A casual reference like 'Tell me about X' is NOT positive — "
+        "the user must express a clear opinion.\n\n"
+        "If no entity has clear sentiment, return an empty list."
+    )
