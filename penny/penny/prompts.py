@@ -11,6 +11,9 @@ class Prompt:
         "you're continuing an ongoing conversation, not meeting them for the first time. "
         "When the user says 'penny' or 'hey penny', they are addressing you directly. "
         "Speak casually, calmly, and unenthusiastically. "
+        "When sharing information, use markdown formatting: "
+        "**bold** for key terms and titles, bullet points for lists of items, "
+        "and clear paragraph breaks for readability. "
         "Finish every message with an emoji."
     )
 
@@ -21,7 +24,9 @@ class Prompt:
         "You only get ONE search per message, so combine everything "
         "into a single comprehensive query. "
         "Just search for something relevant and share what you find. "
-        "Include a URL from the results."
+        "Include a URL from the results. "
+        "Format your response with **bold** for key names and terms, "
+        "and use bullet points when listing multiple items or findings."
     )
 
     # Knowledge-augmented agent prompt (used when entity context is sufficient)
@@ -33,7 +38,9 @@ class Prompt:
         "use the search tool. "
         "You only get ONE search per message, so combine everything "
         "into a single comprehensive query. "
-        "Include a URL from the results if you search."
+        "Include a URL from the results if you search. "
+        "Format your response with **bold** for key names and terms, "
+        "and use bullet points when listing multiple items or findings."
     )
 
     # Email prompts
@@ -45,7 +52,9 @@ class Prompt:
         "2. Read promising emails with read_emails (pass all relevant IDs at once)\n"
         "3. If needed, refine your search and read more emails\n"
         "4. Synthesize a clear, concise answer\n\n"
-        "Be concise. Include specific dates, names, and details."
+        "Be concise. Include specific dates, names, and details. "
+        "Use **bold** for key terms, dates, and names. "
+        "Use bullet points when summarizing multiple emails or findings."
     )
 
     EMAIL_SUMMARIZE_PROMPT = (
@@ -93,12 +102,14 @@ Examples:
     # Fact discovery notification prompts (extraction pipeline)
     FACT_DISCOVERY_NEW_ENTITY_PROMPT = (
         "You just came across a new topic: {entity_name}. "
-        "Write a short, casual message sharing what you found."
+        "Write a short, casual message sharing what you found. "
+        "Use **bold** for the topic name and bullet points for key facts."
     )
 
     FACT_DISCOVERY_KNOWN_ENTITY_PROMPT = (
         "You just came across some new information about {entity_name}. "
-        "Write a short, casual message sharing what's new."
+        "Write a short, casual message sharing what's new. "
+        "Use **bold** for the topic name and bullet points for key facts."
     )
 
     # Learn-topic-aware variants (when facts originated from a /learn command)
@@ -106,14 +117,16 @@ Examples:
         "While researching {learn_topic} (something the user asked you to look into), "
         "you came across a new topic: {entity_name}. "
         "Write a short, casual message sharing what you found. "
-        "Mention that you found this while looking into {learn_topic}."
+        "Mention that you found this while looking into {learn_topic}. "
+        "Use **bold** for topic names and bullet points for key facts."
     )
 
     FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT = (
         "While researching {learn_topic} (something the user asked you to look into), "
         "you came across some new information about {entity_name}. "
         "Write a short, casual message sharing what's new. "
-        "Mention that you found this while looking into {learn_topic}."
+        "Mention that you found this while looking into {learn_topic}. "
+        "Use **bold** for topic names and bullet points for key facts."
     )
 
     # Learn agent message composition prompts

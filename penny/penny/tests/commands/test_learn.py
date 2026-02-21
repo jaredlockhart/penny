@@ -135,7 +135,7 @@ async def test_learn_no_args_shows_status(signal_server, test_config, mock_ollam
         await signal_server.push_message(sender=TEST_SENDER, content="/learn")
         response = await signal_server.wait_for_message(timeout=5.0)
 
-        assert "Queued learning" in response["message"]
+        assert "Learning Status" in response["message"]
         assert "find me stuff about speakers" in response["message"]
         # Search log not yet extracted — should show "reading" stage
         assert "reading, 0 of 1 processed" in response["message"]
@@ -173,7 +173,7 @@ async def test_learn_status_shows_active(signal_server, test_config, mock_ollama
         await signal_server.push_message(sender=TEST_SENDER, content="/learn")
         response = await signal_server.wait_for_message(timeout=5.0)
 
-        assert "Queued learning" in response["message"]
+        assert "Learning Status" in response["message"]
         assert "ai conferences in europe" in response["message"]
         assert "searching, 3 left" in response["message"]
 

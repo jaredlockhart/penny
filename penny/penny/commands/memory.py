@@ -48,7 +48,7 @@ class MemoryCommand(Command):
                 facts = context.db.get_entity_facts(entity.id)
                 sign = "+" if score > 0 else ""
                 facts_label = f"{len(facts)} fact{'s' if len(facts) != 1 else ''}"
-                lines.append(f"{i}. {entity.name} ({facts_label}, interest: {sign}{score:.2f})")
+                lines.append(f"{i}. **{entity.name}** ({facts_label}, interest: {sign}{score:.2f})")
             return CommandResult(text="\n".join(lines))
 
         # First arg must be a number
@@ -81,7 +81,7 @@ class MemoryCommand(Command):
         facts_text = "\n".join(f"- {f.content}" for f in facts)
         lines = [
             f"**{entity.name}**",
-            f"Updated: {updated}",
+            f"**Updated**: {updated}",
             "",
             facts_text,
         ]

@@ -41,15 +41,15 @@ class PennyResponse:
         "Nothing being actively researched right now. "
         "Use `/learn <topic>` to start learning about something."
     )
-    LEARN_STATUS_HEADER = "Queued learning"
-    LEARN_COMPLETE_HEADER = "I finished learning about {topic}"
-    LEARN_COMPLETE_ENTITY_LINE = "- {name} ({fact_count} facts, interest: {score})"
+    LEARN_STATUS_HEADER = "**Learning Status**"
+    LEARN_COMPLETE_HEADER = "I finished learning about **{topic}**"
+    LEARN_COMPLETE_ENTITY_LINE = "- **{name}** ({fact_count} facts, interest: {score})"
     LEARN_COMPLETE_NO_ENTITIES = "I didn't find any specific topics to track from that."
 
     # ── Memory ───────────────────────────────────────────────────────────────
 
     MEMORY_EMPTY = "You don't have any stored memories yet."
-    MEMORY_LIST_HEADER = "Here's what I remember:"
+    MEMORY_LIST_HEADER = "**Your Memory**"
     MEMORY_ENTITY_NOT_FOUND = "#{number} doesn't match any memory. Use /memory to see the list."
     MEMORY_NO_FACTS = "I know about {name}, but I don't have any specific facts stored yet."
     MEMORY_DELETED = "Deleted '{name}' and {count} fact(s)."
@@ -115,8 +115,8 @@ class PennyResponse:
         "Sorry, I couldn't figure out the timing. "
         "Try something like: /schedule daily 9am what's the news?"
     )
-    SCHEDULE_DELETED_NO_REMAINING = "No more scheduled tasks"
-    SCHEDULE_STILL_SCHEDULED = "Still scheduled:"
+    SCHEDULE_DELETED_NO_REMAINING = "No more scheduled tasks."
+    SCHEDULE_STILL_SCHEDULED = "**Still scheduled:**"
     SCHEDULE_INVALID_NUMBER = "Invalid schedule number: {number}"
     SCHEDULE_NO_SCHEDULE_WITH_NUMBER = "No schedule with number {number}"
     SCHEDULE_DELETED_PREFIX = "Deleted '{timing} {prompt}' \u2705"
@@ -161,15 +161,17 @@ class PennyResponse:
 **Channel**: {channel}
 **Database**: {messages:,} messages, {threads} active threads
 **Models**: {fg_model} (foreground), {bg_model} (background)
-**Background Tasks**: {task_status}
 **Memory**: {memory}
+
+**Background Tasks**:
+{task_status}
 """
     DEBUG_UPTIME = "{days} days, {hours} hours, {minutes} minutes"
     DEBUG_NO_SCHEDULER = "Unknown (no scheduler)"
-    DEBUG_TASK_NEVER = "{name}: never run"
-    DEBUG_TASK_SECONDS = "{name}: {seconds}s ago"
-    DEBUG_TASK_MINUTES = "{name}: {minutes}m ago"
-    DEBUG_TASK_HOURS = "{name}: {hours}h ago"
+    DEBUG_TASK_NEVER = "- **{name}**: never run"
+    DEBUG_TASK_SECONDS = "- **{name}**: {seconds}s ago"
+    DEBUG_TASK_MINUTES = "- **{name}**: {minutes}m ago"
+    DEBUG_TASK_HOURS = "- **{name}**: {hours}h ago"
 
     # ── Commands Index ───────────────────────────────────────────────────────
 

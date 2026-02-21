@@ -51,10 +51,10 @@ async def test_memory_list_ranked_by_interest(
         response = await signal_server.wait_for_message(timeout=5.0)
 
         msg = response["message"]
-        assert "Here's what I remember:" in msg
+        assert "Your Memory" in msg
         # Entity2 (score ~1.0) should be ranked above entity1 (score ~0.2)
-        assert "1. kef ls50 meta (2 facts, interest: +1.00)" in msg
-        assert "2. nvidia jetson (1 fact, interest: +0.20)" in msg
+        assert "1. **kef ls50 meta** (2 facts, interest: +1.00)" in msg
+        assert "2. **nvidia jetson** (1 fact, interest: +0.20)" in msg
 
         # Show entity details — #1 is kef (highest interest)
         await signal_server.push_message(sender=TEST_SENDER, content="/memory 1")
