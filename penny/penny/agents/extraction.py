@@ -50,6 +50,41 @@ _URL_RE = re.compile(r"https?://")
 _MARKDOWN_BOLD_RE = re.compile(r"\*\*")
 _ANGLE_BRACKET_RE = re.compile(r"<[^>]+>")
 _BARE_NUMBER_RE = re.compile(r"\d[\d.,]*")
+_DATE_RE = re.compile(
+    r"(?:"
+    r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"  # 2024-01-15, 2024/1/15
+    r"|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}"  # 01/15/2024, 1-15-24
+    r"|Q[1-4]\s*\d{4}"  # Q1 2025
+    r")$",
+    re.IGNORECASE,
+)
+_MONTH_NAMES = frozenset(
+    {
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "oct",
+        "nov",
+        "dec",
+    }
+)
 _ENTITY_NAME_MAX_WORDS = 8
 
 
@@ -73,7 +108,13 @@ def _is_valid_entity_name(name: str) -> bool:
         return False
     if _BARE_NUMBER_RE.fullmatch(name.strip()):
         return False
+    stripped = name.strip()
+    if _DATE_RE.fullmatch(stripped):
+        return False
     name_lower = name.lower()
+    # Standalone month names (e.g. "January", "Feb")
+    if name_lower.strip() in _MONTH_NAMES:
+        return False
     if any(artifact in name_lower for artifact in _LLM_ARTIFACT_PATTERNS):
         return False
     if _NUMBERED_LIST_RE.match(name.strip()):

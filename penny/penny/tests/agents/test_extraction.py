@@ -916,6 +916,21 @@ def test_structural_entity_name_validation():
     assert _is_valid_entity_name("Boeing 747") is True
     assert _is_valid_entity_name("3M") is True
 
+    # Date patterns
+    assert _is_valid_entity_name("2024-01-15") is False
+    assert _is_valid_entity_name("01/15/2024") is False
+    assert _is_valid_entity_name("1-15-24") is False
+    assert _is_valid_entity_name("Q1 2025") is False
+    assert _is_valid_entity_name("Q4 2026") is False
+
+    # Standalone month names
+    assert _is_valid_entity_name("January") is False
+    assert _is_valid_entity_name("feb") is False
+    assert _is_valid_entity_name("MARCH") is False
+
+    # Month in a real entity name is fine
+    assert _is_valid_entity_name("March for Our Lives") is True
+
 
 @pytest.mark.asyncio
 async def test_semantic_entity_name_validation(
