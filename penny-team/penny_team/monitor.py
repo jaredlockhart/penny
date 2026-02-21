@@ -152,7 +152,7 @@ class MonitorAgent(Agent):
         if log_path is not None:
             self.log_path = Path(log_path)
         else:
-            self.log_path = PROJECT_ROOT / "data" / "penny.log"
+            self.log_path = PROJECT_ROOT / TeamConstants.PENNY_LOG_RELATIVE_PATH
 
     def _load_offset(self) -> int:
         """Load saved byte offset from state file."""

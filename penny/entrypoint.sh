@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-PROD_DB="/penny/data/penny.db"
+PROD_DB="/penny/data/penny/penny.db"
 
 # Create production backup only when SNAPSHOT=1 (set by make up / make prod)
 if [ "${SNAPSHOT:-0}" = "1" ] && [ -f "$PROD_DB" ]; then
-    BACKUP_DIR="/penny/data/backups"
+    BACKUP_DIR="/penny/data/penny/backups"
     mkdir -p "$BACKUP_DIR"
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
     BACKUP_FILE="$BACKUP_DIR/penny.db.$TIMESTAMP"
@@ -18,7 +18,7 @@ fi
 
 # Always create test database snapshot (needed by pytest)
 if [ -f "$PROD_DB" ]; then
-    TEST_DB="/penny/data/penny-test.db"
+    TEST_DB="/penny/data/penny/penny-test.db"
     echo "Creating test database snapshot: $TEST_DB"
     cp "$PROD_DB" "$TEST_DB"
 fi

@@ -24,7 +24,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - SIGNAL_API_URL=http://signal-api:8080
-      - LOG_FILE=/penny/data/penny.log
+      - LOG_FILE=/penny/data/penny/logs/penny.log
       - SNAPSHOT=${SNAPSHOT:-0}
 
   pm:

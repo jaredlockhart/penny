@@ -75,7 +75,7 @@ bug → in-review → closed                                                    
 - `--agent <name>` flag: Run a single agent instead of the full orchestrator loop
 - `--once` flag: Run a single tick (all due agents) then exit
 - `--list` flag: List registered agents and their configurations
-- `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `GitHubAPI.list_issues()`, compares to saved state in `data/penny-team/<name>.state.json` — skips Claude CLI if no issues changed since last run
+- `has_work()` pre-check: Fetches issue `updatedAt` timestamps via `GitHubAPI.list_issues()`, compares to saved state in `data/penny-team/state/<name>.state.json` — skips Claude CLI if no issues changed since last run
 - For labels with external state (e.g., `in-review`), performs full actionability check even when timestamps unchanged (CI failures, merge conflicts, review feedback can happen without issue updates)
 - Per-agent processed tracking (`AgentState.processed`): allows agents sharing the same bot identity to independently track which issues they've processed
 - CI fix attempt capping: Worker pauses after `MAX_CI_FIX_ATTEMPTS` (3) failed CI fix attempts without human feedback, posts comment asking for help
@@ -120,8 +120,8 @@ All orchestrator GitHub interactions use the shared `github_api/` package (at re
 ## Log Monitoring
 
 Monitor agent automatically detects errors in penny's production logs and files bug issues:
-- `penny_team/monitor.py`: `MonitorAgent` subclass that reads `data/penny.log` instead of GitHub issues
-- Tracks byte offset in `data/penny-team/monitor.state.json` to only process new log content
+- `penny_team/monitor.py`: `MonitorAgent` subclass that reads `data/penny/logs/penny.log` instead of GitHub issues
+- Tracks byte offset in `data/penny-team/state/monitor.state.json` to only process new log content
 - Python code extracts ERROR/CRITICAL lines and tracebacks from new content
 - Claude CLI analyzes errors, deduplicates against existing bug issues, and creates new issues
 - First run reads last 100KB of log to avoid processing entire history
@@ -131,8 +131,8 @@ Monitor agent automatically detects errors in penny's production logs and files 
 ## Quality Review
 
 Quality agent evaluates Penny's response quality and files bug issues for low-quality output:
-- `penny_team/quality.py`: `QualityAgent` subclass that reads `data/penny.db` instead of GitHub issues
-- Tracks last processed message timestamp in `data/penny-team/quality.state.json`
+- `penny_team/quality.py`: `QualityAgent` subclass that reads `data/penny/penny.db` instead of GitHub issues
+- Tracks last processed message timestamp in `data/penny-team/state/quality.state.json`
 - Python code reads message pairs (incoming user message + outgoing response) via SQLite
 - Calls Ollama `OLLAMA_BACKGROUND_MODEL` directly (not Claude CLI) for quality evaluation
 - Two-step LLM flow per pair: (1) single-pair quality evaluation, (2) privacy-safe bug description if bad
@@ -144,7 +144,7 @@ Quality agent evaluates Penny's response quality and files bug issues for low-qu
 
 - Agents run in Docker containers (pm, architect, worker, monitor, and quality services in `docker-compose.yml`) with `profiles: [team]` — only started with `make up`
 - Repo is snapshotted into the Docker image at build time (not volume-mounted) — agent edits don't bleed into the host working tree
-- Only `data/` is volume-mounted for shared state files and logs (`data/logs/`)
+- Only `data/` is volume-mounted for shared state files (`data/penny-team/state/`) and logs (`data/penny-team/logs/`)
 - `PYTHONDONTWRITEBYTECODE=1` prevents `__pycache__` generation in containers
 
 ## Streaming Output

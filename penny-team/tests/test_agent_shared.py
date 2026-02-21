@@ -299,7 +299,7 @@ class TestBuildCommand:
 
 class TestPromptLogging:
     def test_prompt_written_to_log_file(self, tmp_path, capture_popen, monkeypatch):
-        """run() writes the full prompt to data/logs/{name}.prompt.md."""
+        """run() writes the full prompt to penny-team/logs/{name}.prompt.md."""
         log_dir = tmp_path / "data" / "logs"
         monkeypatch.setattr("penny_team.base.LOG_DIR", log_dir)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import logging.handlers
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +49,8 @@ class Config:
 
     # Optional fields with defaults
     log_file: str | None = None
+    log_max_bytes: int = 10 * 1024 * 1024  # 10 MB
+    log_backup_count: int = 5
     ollama_vision_model: str | None = None  # Vision model for image understanding
     ollama_image_model: str | None = None  # Image generation model (e.g., x/z-image-turbo)
     ollama_embedding_model: str | None = None  # Embedding model (e.g., nomic-embed-text)
@@ -137,8 +140,10 @@ class Config:
         ollama_embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL")  # Optional
         perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")  # Optional
         log_level = os.getenv("LOG_LEVEL", "INFO")
-        db_path = os.getenv("DB_PATH", "/penny/data/penny.db")
+        db_path = os.getenv("DB_PATH", "/penny/data/penny/penny.db")
         log_file = os.getenv("LOG_FILE")  # Optional, defaults to None
+        log_max_bytes = int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024)))
+        log_backup_count = int(os.getenv("LOG_BACKUP_COUNT", "5"))
 
         # GitHub App configuration (optional, needed for /bug command)
         github_app_id = os.getenv("GITHUB_APP_ID")  # Optional
@@ -178,19 +183,28 @@ class Config:
             log_level=log_level,
             db_path=db_path,
             log_file=log_file,
+            log_max_bytes=log_max_bytes,
+            log_backup_count=log_backup_count,
             tool_timeout=tool_timeout,
             fastmail_api_token=fastmail_api_token,
             runtime=RuntimeParams(db=db, env_overrides=env_overrides),
         )
 
 
-def setup_logging(log_level: str, log_file: str | None = None) -> None:
+def setup_logging(
+    log_level: str,
+    log_file: str | None = None,
+    max_bytes: int = 10 * 1024 * 1024,
+    backup_count: int = 5,
+) -> None:
     """
     Configure logging for the application.
 
     Args:
         log_level: Log level (DEBUG, INFO, WARNING, ERROR)
         log_file: Optional path to log file. If provided, logs to both file and console.
+        max_bytes: Maximum log file size in bytes before rotation (default 10 MB).
+        backup_count: Number of rotated backup files to keep (default 5).
     """
     # Create formatter
     formatter = logging.Formatter(
@@ -210,13 +224,17 @@ def setup_logging(log_level: str, log_file: str | None = None) -> None:
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 
-    # File handler (if log_file specified)
+    # Rotating file handler (if log_file specified)
     if log_file:
         # Ensure log directory exists
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        file_handler = logging.FileHandler(log_file, mode="a")
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+        )
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 

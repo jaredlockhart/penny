@@ -75,7 +75,7 @@ class PennyConstants:
     EMAIL_BODY_MAX_LENGTH = 4000
 
     # Test mode constants
-    TEST_DB_PATH = Path("data/penny-test.db")
+    TEST_DB_PATH = Path("data/penny/penny-test.db")
 
     # GitHub constants
     GITHUB_REPO_OWNER = "jaredlockhart"

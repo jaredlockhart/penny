@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import logging.handlers
 import os
 import signal
 import sys
@@ -36,7 +37,7 @@ from penny_team.utils.codeowners import parse_codeowners
 
 AGENTS_DIR = Path(__file__).parent
 PROJECT_ROOT = AGENTS_DIR.parent.parent
-LOG_DIR = PROJECT_ROOT / "data" / "logs"
+LOG_DIR = PROJECT_ROOT / TeamConstants.TEAM_LOG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -164,14 +165,40 @@ def get_agents(github_app=None) -> list[Agent]:
     return agents
 
 
+LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+LOG_BACKUP_COUNT = 5
+
+
 def setup_logging(log_file: Path | None = None) -> None:
     fmt = "%(asctime)s [%(levelname)s] %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_file))
+        handlers.append(
+            logging.handlers.RotatingFileHandler(
+                log_file,
+                maxBytes=LOG_MAX_BYTES,
+                backupCount=LOG_BACKUP_COUNT,
+            )
+        )
     logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt, handlers=handlers)
+
+
+def _rotate_file(path: Path) -> None:
+    """Rotate a file if it exceeds LOG_MAX_BYTES, keeping LOG_BACKUP_COUNT backups."""
+    if not path.exists() or path.stat().st_size < LOG_MAX_BYTES:
+        return
+    # Shift existing backups: .log.4 -> .log.5, .log.3 -> .log.4, etc.
+    for i in range(LOG_BACKUP_COUNT, 0, -1):
+        src = path.with_suffix(f".log.{i}")
+        dst = path.with_suffix(f".log.{i + 1}")
+        if i == LOG_BACKUP_COUNT and src.exists():
+            src.unlink()  # Delete oldest backup
+        elif src.exists():
+            src.rename(dst)
+    # Rotate current file to .log.1
+    path.rename(path.with_suffix(".log.1"))
 
 
 def save_agent_log(
@@ -185,6 +212,7 @@ def save_agent_log(
     """Save raw agent output to a per-agent log file."""
     log_path = LOG_DIR / f"{agent_name}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    _rotate_file(log_path)
     with open(log_path, "a") as f:
         f.write(f"\n{'=' * 60}\n")
         f.write(f"Run #{run_number} at {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n")
