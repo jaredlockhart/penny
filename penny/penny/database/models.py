@@ -48,6 +48,7 @@ class LearnPrompt(SQLModel, table=True):
     searches_remaining: int = Field(default=0)  # Searches left to execute
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    announced_at: datetime | None = Field(default=None)  # When completion announcement was sent
 
 
 class MessageLog(SQLModel, table=True):

@@ -1116,6 +1116,49 @@ class Database:
                 e,
             )
 
+    def get_unannounced_completed_learn_prompts(self, user: str) -> list[LearnPrompt]:
+        """Get completed LearnPrompts that haven't had a completion announcement sent.
+
+        Args:
+            user: User identifier
+
+        Returns:
+            List of completed, unannounced LearnPrompts ordered by
+            created_at ascending (oldest first)
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(LearnPrompt)
+                    .where(
+                        LearnPrompt.user == user,
+                        LearnPrompt.status == "completed",
+                        LearnPrompt.announced_at.is_(None),  # type: ignore[union-attr]
+                    )
+                    .order_by(LearnPrompt.created_at.asc())  # type: ignore[union-attr]
+                ).all()
+            )
+
+    def mark_learn_prompt_announced(self, learn_prompt_id: int) -> None:
+        """Mark a LearnPrompt as announced by setting announced_at.
+
+        Args:
+            learn_prompt_id: LearnPrompt primary key
+        """
+        try:
+            with self.get_session() as session:
+                learn_prompt = session.get(LearnPrompt, learn_prompt_id)
+                if learn_prompt:
+                    learn_prompt.announced_at = datetime.now(UTC)
+                    session.add(learn_prompt)
+                    session.commit()
+        except Exception as e:
+            logger.error(
+                "Failed to mark LearnPrompt %d as announced: %s",
+                learn_prompt_id,
+                e,
+            )
+
     # --- Embedding methods ---
 
     def update_entity_embedding(self, entity_id: int, embedding: bytes) -> None:
