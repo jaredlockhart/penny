@@ -34,6 +34,7 @@ async def test_extraction_processes_search_log(
     config = make_config()
 
     request_count = [0]
+    identification_prompts: list[str] = []
 
     def handler(request: dict, count: int) -> dict:
         request_count[0] += 1
@@ -45,6 +46,8 @@ async def test_extraction_processes_search_log(
             return mock_ollama._make_text_response(request, "check out the KEF LS50 Meta! 🎵")
         elif request_count[0] == 3:
             # Pass 1: identify entities (no known entities yet)
+            messages = request.get("messages", [])
+            identification_prompts.append(messages[-1]["content"] if messages else "")
             return mock_ollama._make_text_response(
                 request,
                 json.dumps(
@@ -142,6 +145,13 @@ async def test_extraction_processes_search_log(
         assert len(notification_messages) == 0, (
             "user_message searches should not send fact discovery notifications, "
             f"got: {[m['message'][:80] for m in notification_messages]}"
+        )
+
+        # Verify the identification prompt explicitly states no known entities,
+        # so the LLM puts everything in "new" rather than "known"
+        assert len(identification_prompts) == 1
+        assert "Known entities: none" in identification_prompts[0], (
+            "When no entities exist, prompt must tell the LLM the known list is empty"
         )
 
 

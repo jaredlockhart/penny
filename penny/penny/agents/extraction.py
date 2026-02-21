@@ -601,11 +601,14 @@ class ExtractionPipeline(Agent):
     ) -> IdentifiedEntities | None:
         """Pass 1: Identify which known entities appear in the text and any new entities."""
         known_names = [e.name for e in existing_entities]
-        known_context = ""
         if known_names:
             known_context = (
                 "\n\nKnown entities (return any that appear in the text):\n"
                 + "\n".join(f"- {name}" for name in known_names)
+            )
+        else:
+            known_context = (
+                "\n\nKnown entities: none. Put all discovered entities in the 'new' list."
             )
 
         prompt = (
