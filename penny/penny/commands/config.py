@@ -36,11 +36,10 @@ class ConfigCommand(Command):
         if not args.strip():
             lines = [PennyResponse.CONFIG_HEADER, ""]
 
-            # List all parameters with current values (from config object)
+            # List all parameters with current values
             for key in sorted(RUNTIME_CONFIG_PARAMS.keys()):
                 param = RUNTIME_CONFIG_PARAMS[key]
-                field_name = key.lower()
-                current_value = getattr(context.config, field_name, param.default_value)
+                current_value = getattr(context.config.runtime, key)
                 lines.append(
                     PennyResponse.CONFIG_PARAM_DISPLAY.format(
                         key=key, value=current_value, description=param.description
@@ -58,8 +57,7 @@ class ConfigCommand(Command):
                 return CommandResult(text=PennyResponse.CONFIG_UNKNOWN_PARAM.format(key=key))
 
             param = RUNTIME_CONFIG_PARAMS[key]
-            field_name = key.lower()
-            current_value = getattr(context.config, field_name, param.default_value)
+            current_value = getattr(context.config.runtime, key)
             return CommandResult(text=f"**{key}**: {current_value} ({param.description})")
 
         # Case 3: Set config value
@@ -96,5 +94,5 @@ class ConfigCommand(Command):
 
             session.commit()
 
-        # Config changes take effect immediately via __getattribute__
+        # Config changes take effect immediately via RuntimeParams DB lookup
         return CommandResult(text=PennyResponse.CONFIG_UPDATED.format(key=key, value=parsed_value))

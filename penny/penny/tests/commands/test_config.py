@@ -54,7 +54,7 @@ async def test_config_set_valid(signal_server, test_config, mock_ollama, running
         assert "Ok, updated IDLE_SECONDS to 600" in response["message"]
 
         # Verify config was updated
-        assert penny.config.idle_seconds == 600.0
+        assert penny.config.runtime.IDLE_SECONDS == 600.0
 
         # Verify database was updated
         from penny.database.models import RuntimeConfig
@@ -128,7 +128,7 @@ async def test_config_case_insensitive(signal_server, test_config, mock_ollama, 
 
         # Should work (key gets uppercased internally)
         assert "Ok, updated IDLE_SECONDS to 450" in response["message"]
-        assert penny.config.idle_seconds == 450.0
+        assert penny.config.runtime.IDLE_SECONDS == 450.0
 
 
 @pytest.mark.asyncio
@@ -143,4 +143,4 @@ async def test_config_persistence(signal_server, test_config, mock_ollama, runni
     # Second run: verify the value persists
     async with running_penny(test_config) as penny:
         # Config should load the value from database
-        assert penny.config.idle_seconds == 800.0
+        assert penny.config.runtime.IDLE_SECONDS == 800.0

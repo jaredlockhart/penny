@@ -9,6 +9,7 @@ from typing import Any, cast
 import pytest
 
 from penny.config import Config
+from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.penny import Penny
 
 # Re-export mock fixtures so they can be used directly in tests
@@ -38,13 +39,16 @@ DEFAULT_TEST_CONFIG = {
     "perplexity_api_key": "test-api-key",
     "log_level": "DEBUG",
     "tool_timeout": 60.0,
-    # Disable background tasks by default
-    "idle_seconds": 99999.0,
     # Fast scheduler ticks for tests
     "scheduler_tick_interval": 0.05,
     # Fast retries for tests
     "ollama_max_retries": 1,
     "ollama_retry_delay": 0.1,
+}
+
+# Default runtime param overrides for tests (disable background tasks)
+DEFAULT_TEST_RUNTIME_OVERRIDES: dict[str, int | float] = {
+    "IDLE_SECONDS": 99999.0,
 }
 
 
@@ -98,11 +102,21 @@ def make_config(signal_server, test_db) -> Callable[..., Config]:
     """
 
     def _make_config(**overrides: Any) -> Config:
+        # Separate runtime param overrides from Config kwargs
+        runtime_overrides = dict(DEFAULT_TEST_RUNTIME_OVERRIDES)
+        config_overrides: dict[str, Any] = {}
+        for key, value in overrides.items():
+            if key.upper() in RUNTIME_CONFIG_PARAMS:
+                runtime_overrides[key.upper()] = value
+            else:
+                config_overrides[key] = value
+
         config_kwargs: dict[str, Any] = {
             **DEFAULT_TEST_CONFIG,
             "signal_api_url": f"http://localhost:{signal_server.port}",
             "db_path": test_db,
-            **overrides,
+            "runtime": RuntimeParams(env_overrides=runtime_overrides),
+            **config_overrides,
         }
         return Config(**cast(Any, config_kwargs))
 

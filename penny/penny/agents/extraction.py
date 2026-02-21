@@ -614,7 +614,7 @@ class ExtractionPipeline(Agent):
         """
         if not self.embedding_model:
             return entities
-        if len(entities) < self.config.extraction_prefilter_min_count:
+        if len(entities) < self.config.runtime.EXTRACTION_PREFILTER_MIN_COUNT:
             return entities
 
         entities_with_embeddings = [e for e in entities if e.embedding is not None]
@@ -637,7 +637,7 @@ class ExtractionPipeline(Agent):
                 content_vec,
                 candidates,
                 top_k=len(candidates),
-                threshold=self.config.extraction_prefilter_similarity_threshold,
+                threshold=self.config.runtime.EXTRACTION_PREFILTER_SIMILARITY_THRESHOLD,
             )
 
             matched_indices = {idx for idx, _score in matches}
@@ -675,7 +675,7 @@ class ExtractionPipeline(Agent):
             )
             candidate_embedding = vecs[0]
             score = cosine_similarity(candidate_embedding, vecs[1])
-            threshold = self.config.extraction_entity_semantic_threshold
+            threshold = self.config.runtime.EXTRACTION_ENTITY_SEMANTIC_THRESHOLD
             if score < threshold:
                 logger.info(
                     "Rejected entity '%s' (similarity %.2f < %.2f)",
@@ -708,11 +708,11 @@ class ExtractionPipeline(Agent):
             if entity.embedding is None:
                 continue
             tcr = token_containment_ratio(candidate_name, entity.name)
-            if tcr < self.config.extraction_entity_dedup_tcr_threshold:
+            if tcr < self.config.runtime.EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD:
                 continue
             entity_vec = deserialize_embedding(entity.embedding)
             sim = cosine_similarity(candidate_embedding, entity_vec)
-            if sim >= self.config.extraction_entity_dedup_embedding_threshold:
+            if sim >= self.config.runtime.EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD:
                 logger.info(
                     "Dedup: '%s' matches existing '%s' (TCR=%.2f, sim=%.2f)",
                     candidate_name,
@@ -806,7 +806,7 @@ class ExtractionPipeline(Agent):
                     query_vec,
                     existing_candidates,
                     top_k=1,
-                    threshold=self.config.extraction_fact_dedup_similarity_threshold,
+                    threshold=self.config.runtime.EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD,
                 )
                 if matches:
                     logger.debug("Skipping duplicate fact (embedding match): %s", fact_text[:50])
@@ -823,7 +823,7 @@ class ExtractionPipeline(Agent):
     def _should_process_message(self, message: MessageLog) -> bool:
         """Lightweight pre-filter to skip low-signal messages before LLM calls."""
         content = message.content.strip()
-        if len(content) < self.config.extraction_min_message_length:
+        if len(content) < self.config.runtime.EXTRACTION_MIN_MESSAGE_LENGTH:
             return False
         return not content.startswith("/")
 
@@ -925,11 +925,11 @@ class ExtractionPipeline(Agent):
 
         state.last_proactive_send = datetime.now(UTC)
         if state.backoff_seconds <= 0:
-            state.backoff_seconds = self.config.notification_initial_backoff
+            state.backoff_seconds = self.config.runtime.NOTIFICATION_INITIAL_BACKOFF
         else:
             state.backoff_seconds = min(
                 state.backoff_seconds * 2,
-                self.config.notification_max_backoff,
+                self.config.runtime.NOTIFICATION_MAX_BACKOFF,
             )
 
     async def _send_fact_notification(
@@ -961,7 +961,7 @@ class ExtractionPipeline(Agent):
         )
         if not result.answer:
             return
-        if len(result.answer) < self.config.notification_min_length:
+        if len(result.answer) < self.config.runtime.NOTIFICATION_MIN_LENGTH:
             logger.debug(
                 "Skipping near-empty notification (%d chars): %r",
                 len(result.answer),
