@@ -22,7 +22,7 @@ Any search result or message can produce facts about known entities, regardless 
 
 ### 3. Penny's autonomous enrichment is fact-only
 
-When Penny has exhausted all processable messages and searches, she can trigger new searches — but only to discover facts about known entities. No new entities can be discovered by Penny autonomously. This keeps the learn loop focused on deepening knowledge the user actually cares about.
+When Penny has exhausted all processable messages and searches, she can trigger new searches — but only to discover facts about known entities. No new entities can be discovered by Penny autonomously. This keeps the learn agent focused on deepening knowledge the user actually cares about.
 
 ---
 
@@ -129,7 +129,7 @@ Explicit preference manipulation:
 - `/unlike espresso machines` — removes the like
 - `/undislike sports` — removes the dislike
 
-`/like` is a user-triggered entity creation path — the entity gets a `LIKE_COMMAND` engagement (strength 0.8), making it an immediate candidate for enrichment by the learn loop.
+`/like` is a user-triggered entity creation path — the entity gets a `LIKE_COMMAND` engagement (strength 0.8), making it an immediate candidate for enrichment by the learn agent.
 
 ### 4. /memory (knowledge browsing)
 
@@ -298,7 +298,7 @@ When the LLM identifies new entity candidates, they pass through a two-layer val
 
 The structural filter does the heavy lifting — in testing against production data, it correctly rejected 31% of entities (verbose descriptions, metadata artifacts, web boilerplate) with zero false positives. The semantic filter provides a secondary defense against topically unrelated entities that pass structural checks, though it has a precision/recall trade-off at the margins (some legitimate proper nouns with low query similarity may be rejected).
 
-### Loop 2: Penny Enrichment (Learn Loop)
+### Loop 2: Penny Enrichment (Learn Agent)
 
 **Trigger**: Periodic during idle. Picks the highest-priority known entity.
 
@@ -374,11 +374,11 @@ Add `allow_new_entities` parameter to extraction. Check `search_log.trigger` to 
 **Files**: `extraction.py`, `prompts.py`, `constants.py`, `tests/agents/test_extraction.py`
 **Blocked by**: Phase 1
 
-### Phase 3 — Learn Loop Trigger Tagging
+### Phase 3 — Learn Agent Trigger Tagging
 
-Set `trigger=penny_enrichment` on SearchTool before learn loop searches. Ensures extraction pipeline processes these in known-only mode.
+Set `trigger=penny_enrichment` on SearchTool before learn agent searches. Ensures extraction pipeline processes these in known-only mode.
 
-**Files**: `learn_loop.py`, `tests/agents/test_learn_loop.py`
+**Files**: `learn.py`, `tests/agents/test_learn.py`
 **Blocked by**: Phase 1
 
 ### Phase 4 — /learn Command Rewrite
@@ -411,7 +411,7 @@ Phase 1 — Search Trigger Tracking + LearnPrompt Model
          │
          ├──────────────────┐
          ↓                  ↓
-Phase 2 — Two-Mode       Phase 3 — Learn Loop
+Phase 2 — Two-Mode       Phase 3 — Learn Agent
   Extraction Pipeline       Trigger Tagging
          │
          ├──────────────────┐
@@ -481,7 +481,7 @@ flowchart TD
 1. **User-gated entity creation** — The single most impactful change. Prevents garbage entities, irrelevant research targets, and engagement inflation. All three overnight issues (#317, #319, #320) are solved at the architectural level.
 2. **Trigger tracking on SearchLog** — Simple string column, extensible. The extraction pipeline switches behavior based on a single field check. No complex state management.
 3. **LearnPrompt as first-class object** — Enables the provenance chain (prompt → searches → facts → entities) and the `/learn` status view. Replaces the old pattern of "create entity + engagement and hope the research loop finds it."
-4. **Enrichment loop is search-only** — The learn loop just scores entities and triggers searches. The extraction pipeline handles all fact extraction and user notification, keeping each process focused on one responsibility.
+4. **Enrichment loop is search-only** — The learn agent just scores entities and triggers searches. The extraction pipeline handles all fact extraction and user notification, keeping each process focused on one responsibility.
 5. **Per-entity notifications** — One proactive message per (entity, new facts) pair. Gives the user clear, focused updates rather than a wall of discoveries.
 6. **Known-only prompt variant** — Rather than filtering LLM output after the fact, give it a different prompt that only asks for known entity matches. Cheaper and more accurate.
-7. **Default trigger is user_message** — All existing SearchLogs and the normal message flow get entity-creating behavior. Only the learn loop explicitly opts out.
+7. **Default trigger is user_message** — All existing SearchLogs and the normal message flow get entity-creating behavior. Only the learn agent explicitly opts out.

@@ -101,7 +101,7 @@ Examples:
         "Write a short, casual message sharing what's new."
     )
 
-    # Learn loop message composition prompts
+    # Learn agent message composition prompts
     LEARN_ENRICHMENT_MESSAGE_PROMPT = (
         "You just learned new facts about {entity_name}. "
         "Write a short, casual message sharing what you discovered. "

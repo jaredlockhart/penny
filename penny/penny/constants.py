@@ -109,7 +109,7 @@ class PennyConstants:
     # Maximum entities shown by /interests command
     INTERESTS_DISPLAY_LIMIT = 20
 
-    # Learn loop constants
+    # Learn agent constants
     LEARN_ENRICHMENT_FACT_THRESHOLD = 5  # Below this → enrichment mode
     LEARN_MIN_INTEREST_SCORE = 0.1  # Minimum interest to consider
 

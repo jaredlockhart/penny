@@ -146,7 +146,7 @@ Penny is a local-first AI agent communicating via Signal/Discord. Key components
 - **Ollama**: Local LLM inference
 - **Perplexity**: Web search
 - **SQLite**: Message and thread storage
-- **Scheduler**: Background agents (extraction, learn_loop)
+- **Scheduler**: Background agents (extraction, learn)
 
 Common error sources:
 - Ollama connection failures (model not running)

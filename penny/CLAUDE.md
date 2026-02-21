@@ -45,7 +45,7 @@ penny/
     models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
     message.py        — MessageAgent: handles incoming user messages
     extraction.py     — ExtractionPipeline: unified entity/fact extraction from search results and messages (no notifications)
-    learn_loop.py     — LearnLoopAgent: adaptive background research driven by interest scores (no notifications)
+    learn.py          — LearnAgent: adaptive background research driven by interest scores (no notifications)
     notification.py   — NotificationAgent: interest-ranked fact discovery notifications with backoff
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
@@ -102,7 +102,7 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_extraction.py, test_learn_loop.py
+      test_message.py, test_extraction.py, test_learn.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py,
       test_signal_formatting.py, test_startup_announcement.py
@@ -142,7 +142,7 @@ The base `Agent` class implements the core agentic loop:
 - Processes in strict priority order (four phases per execution):
   1. **User messages** (highest priority): freshest signals, processed first
   2. **Search logs** (drain backlog): entity/fact extraction from search results
-  3. **Enrichment** (gated): only runs when phases 1 & 2 are fully drained — delegates to LearnLoopAgent
+  3. **Enrichment** (gated): only runs when phases 1 & 2 are fully drained — delegates to LearnAgent
   4. **Embedding backfill**: backfills missing embeddings for facts and entities
 - Enrichment creates new SearchLog entries (trigger=penny_enrichment) that feed back into phase 2 on the next cycle
 - **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results. Checks `trigger` field to determine mode — full extraction (user-triggered, creates entities with validation) vs known-only (penny-triggered, facts only)
@@ -158,7 +158,7 @@ The base `Agent` class implements the core agentic loop:
 - Does NOT send notifications — the NotificationAgent handles all proactive messaging
 - All content processed newest-first (ORDER BY timestamp DESC)
 
-**LearnLoopAgent** (`agents/learn_loop.py`)
+**LearnAgent** (`agents/learn.py`)
 - Adaptive research agent driven by entity interest scores
 - Composed into ExtractionPipeline as the enrichment phase (not scheduled independently)
 - Picks the highest-priority entity across all users each cycle
@@ -290,7 +290,7 @@ Penny learns what the user likes, finds information about those things, and proa
 
 Pure function: `compute_interest_score(engagements) → float`
 
-Formula: `sum(valence_sign × strength × recency_decay)` with 30-day half-life. Drives research priority in the learn loop and ranking in `/interests`.
+Formula: `sum(valence_sign × strength × recency_decay)` with 30-day half-life. Drives research priority in the learn agent and ranking in `/interests`.
 
 ### Search Trigger Tracking
 
@@ -348,7 +348,7 @@ Notifications are decoupled from extraction. The ExtractionPipeline stores facts
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
-- **Specialized agents**: Each task type (message, extraction, learn loop) has its own agent subclass
+- **Specialized agents**: Each task type (message, extraction, learn) has its own agent subclass
 - **Priority scheduling**: Schedule executor → knowledge pipeline (extraction + enrichment in strict phase order)
 - **Always-run schedules**: User-created schedules run regardless of idle state; knowledge pipeline waits for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
@@ -387,7 +387,7 @@ Notable migrations:
 - 0013: `entity_search_log` join table (replaces cursor; tracks entity-to-search provenance)
 - 0014–0016: Facts restructure, embedding columns, engagement table (knowledge system phases 1–3)
 - 0017: `source_message_id` on `fact` table (message-sourced fact provenance)
-- 0018: Drop `research_tasks` and `research_iterations` tables (replaced by learn loop)
+- 0018: Drop `research_tasks` and `research_iterations` tables (replaced by learn agent)
 - 0019: `LearnPrompt` table + `trigger`/`learn_prompt_id` columns on `SearchLog` (knowledge system v2)
 
 ## Extending
