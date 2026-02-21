@@ -22,6 +22,7 @@ async def test_validate_connectivity_success(signal_server, test_config, mock_ol
         ollama_api_url=test_config.ollama_api_url,
         tools=[],
         db=db,
+        config=test_config,
         max_steps=1,
     )
 
@@ -68,6 +69,7 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
         ollama_api_url=config.ollama_api_url,
         tools=[],
         db=db,
+        config=config,
         max_steps=1,
     )
 
@@ -120,6 +122,7 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
         ollama_api_url=config.ollama_api_url,
         tools=[],
         db=db,
+        config=config,
         max_steps=1,
     )
 
@@ -157,6 +160,7 @@ async def test_send_message_rejects_empty_without_attachments(
         ollama_api_url=test_config.ollama_api_url,
         tools=[],
         db=db,
+        config=test_config,
         max_steps=1,
     )
 
@@ -190,6 +194,7 @@ async def test_send_message_allows_empty_text_with_attachments(
         ollama_api_url=test_config.ollama_api_url,
         tools=[],
         db=db,
+        config=test_config,
         max_steps=1,
     )
 

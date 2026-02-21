@@ -3,6 +3,7 @@
 import pytest
 
 from penny.agents.base import Agent
+from penny.config import Config
 from penny.database import Database
 from penny.tools.builtin import SearchTool
 
@@ -16,6 +17,19 @@ class TestToolNotFound:
         db = Database(test_db)
         db.create_tables()
 
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            ollama_api_url="http://localhost:11434",
+            ollama_foreground_model="test-model",
+            ollama_background_model="test-model",
+            perplexity_api_key=None,
+            log_level="DEBUG",
+            db_path=test_db,
+        )
         search_tool = SearchTool(perplexity_api_key="test-key", db=db)
 
         agent = Agent(
@@ -24,6 +38,7 @@ class TestToolNotFound:
             ollama_api_url="http://localhost:11434",
             tools=[search_tool],
             db=db,
+            config=config,
             max_steps=3,
         )
 

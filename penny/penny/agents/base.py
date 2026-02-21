@@ -8,6 +8,7 @@ import re
 from datetime import UTC, datetime
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
+from penny.config import Config
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.prompts import Prompt
@@ -60,6 +61,7 @@ class Agent:
         ollama_api_url: str,
         tools: list[Tool],
         db: Database,
+        config: Config,
         max_steps: int = 5,
         max_retries: int = 3,
         retry_delay: float = 0.5,
@@ -69,6 +71,7 @@ class Agent:
         allow_repeat_tools: bool = False,
         user_facing_model: str | None = None,
     ):
+        self.config = config
         self.system_prompt = system_prompt
         self.model = model
         self.user_facing_model = user_facing_model or model

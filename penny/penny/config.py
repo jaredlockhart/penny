@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 
-from penny.config_params import RUNTIME_CONFIG_PARAMS
+from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 
 if TYPE_CHECKING:
     from penny.database import Database
@@ -56,9 +57,6 @@ class Config:
     github_app_private_key_path: str | None = None
     github_app_installation_id: str | None = None
 
-    # Agent runtime configuration
-    message_max_steps: int = 5
-
     # Ollama retry configuration
     ollama_max_retries: int = 3
     ollama_retry_delay: float = 0.5
@@ -66,23 +64,15 @@ class Config:
     # Tool execution timeout (seconds)
     tool_timeout: float = 60.0
 
-    # Scheduler tick interval (seconds) — how often the background scheduler checks
+    # Scheduler tick interval (seconds)
     scheduler_tick_interval: float = 1.0
-
-    # Global idle threshold for background tasks
-    idle_seconds: float = 300.0
-
-    # Periodic maintenance interval while idle
-    maintenance_interval_seconds: float = 300.0
-
-    # Learn loop configuration
-    learn_loop_interval: float = 300.0
 
     # Fastmail JMAP configuration (optional, enables /email command)
     fastmail_api_token: str | None = None
     email_max_steps: int = 5
 
-    _db: Database | None = None
+    # Runtime-configurable params (DB override → env override → default)
+    runtime: RuntimeParams = field(default_factory=RuntimeParams)
 
     @classmethod
     def load(cls, db: Database | None = None) -> Config:
@@ -158,16 +148,18 @@ class Config:
         # Fastmail JMAP configuration (optional, needed for /email command)
         fastmail_api_token = os.getenv("FASTMAIL_API_TOKEN")  # Optional
 
-        # Global idle threshold for all background tasks
-        idle_seconds = float(os.getenv("IDLE_SECONDS", "300"))
-
-        # Periodic maintenance interval
-        maintenance_interval_seconds = float(os.getenv("MAINTENANCE_INTERVAL_SECONDS", "300"))
-
         # Tool execution timeout
         tool_timeout = float(os.getenv("TOOL_TIMEOUT", "60.0"))
 
-        config = cls(
+        # Build env overrides for runtime params
+        env_overrides: dict[str, int | float] = {}
+        for key, param in RUNTIME_CONFIG_PARAMS.items():
+            env_val = os.getenv(key)
+            if env_val is not None:
+                with contextlib.suppress(ValueError):
+                    env_overrides[key] = param.validator(env_val)
+
+        return cls(
             channel_type=channel_type,
             signal_number=signal_number,
             signal_api_url=signal_api_url,
@@ -187,76 +179,9 @@ class Config:
             db_path=db_path,
             log_file=log_file,
             tool_timeout=tool_timeout,
-            idle_seconds=idle_seconds,
-            maintenance_interval_seconds=maintenance_interval_seconds,
             fastmail_api_token=fastmail_api_token,
+            runtime=RuntimeParams(db=db, env_overrides=env_overrides),
         )
-
-        # Store database reference for runtime config lookups
-        config._db = db
-
-        return config
-
-    def _get_db_config(self, field_name: str) -> float | int | None:
-        """
-        Get a runtime config value from the database.
-
-        Args:
-            field_name: Field name to look up (lowercase with underscores)
-
-        Returns:
-            Parsed value from database, or None if not found
-        """
-        if self._db is None:
-            return None
-
-        # Map field name to config key (uppercase)
-        key = field_name.upper()
-        if key not in RUNTIME_CONFIG_PARAMS:
-            return None
-
-        from sqlmodel import Session, select
-
-        from penny.database.models import RuntimeConfig
-
-        with Session(self._db.engine) as session:
-            result = session.exec(select(RuntimeConfig).where(RuntimeConfig.key == key)).first()
-
-        if result is None:
-            return None
-
-        param = RUNTIME_CONFIG_PARAMS[key]
-        try:
-            return param.validator(result.value)
-        except ValueError:
-            # Invalid value in database, fall back to .env
-            return None
-
-    def __getattribute__(self, name: str) -> object:
-        """
-        Override attribute access to check database for runtime config overrides.
-
-        For runtime-configurable fields, database values take precedence over .env values.
-        """
-        # Get the base value from the dataclass
-        base_value = super().__getattribute__(name)
-
-        # Don't intercept private attributes or methods
-        if name.startswith("_") or callable(base_value):
-            return base_value
-
-        # Check if this is a runtime-configurable field
-        key = name.upper()
-        if key in RUNTIME_CONFIG_PARAMS:
-            # Try to get value from database
-            db = super().__getattribute__("_db")
-            if db is not None:
-                db_value = self._get_db_config(name)
-                if db_value is not None:
-                    return db_value
-
-        # Fall back to .env value
-        return base_value
 
 
 def setup_logging(log_level: str, log_file: str | None = None) -> None:

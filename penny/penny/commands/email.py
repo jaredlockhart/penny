@@ -54,6 +54,7 @@ class EmailCommand(Command):
                 ollama_api_url=context.config.ollama_api_url,
                 tools=tools,
                 db=context.db,
+                config=context.config,
                 max_steps=context.config.email_max_steps,
                 max_retries=context.config.ollama_max_retries,
                 retry_delay=context.config.ollama_retry_delay,

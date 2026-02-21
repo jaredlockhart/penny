@@ -71,12 +71,12 @@ class _ScoredEntity:
         self.priority = priority
 
 
-def _staleness_factor(facts: list[Fact]) -> float:
+def _staleness_factor(facts: list[Fact], recent_days: float, staleness_days: float) -> float:
     """Compute staleness factor from a list of facts.
 
     Returns a multiplier:
     - 2.0 if no facts (needs enrichment)
-    - 0.1 if most recent verification < 1 day ago
+    - 0.1 if most recent verification < recent_days ago
     - Scales linearly up to 3.0 cap based on days since last verification
     """
     if not facts:
@@ -92,9 +92,9 @@ def _staleness_factor(facts: list[Fact]) -> float:
         latest = latest.replace(tzinfo=UTC)
 
     days_since = (now - latest).total_seconds() / 86400.0
-    if days_since < PennyConstants.LEARN_RECENT_DAYS:
+    if days_since < recent_days:
         return 0.1
-    return min(days_since / PennyConstants.LEARN_STALENESS_DAYS, 3.0)
+    return min(days_since / staleness_days, 3.0)
 
 
 class LearnLoopAgent(Agent):
@@ -150,7 +150,7 @@ class LearnLoopAgent(Agent):
         assert entity.id is not None
 
         # Determine mode
-        is_enrichment = candidate.fact_count < PennyConstants.LEARN_ENRICHMENT_FACT_THRESHOLD
+        is_enrichment = candidate.fact_count < self.config.runtime.LEARN_ENRICHMENT_FACT_THRESHOLD
 
         mode_label = "enrichment" if is_enrichment else "briefing"
         logger.info(
@@ -229,12 +229,16 @@ class LearnLoopAgent(Agent):
                 entity_engagements = engagements_by_entity.get(entity.id, [])
                 interest = compute_interest_score(entity_engagements)
 
-                if interest < PennyConstants.LEARN_MIN_INTEREST_SCORE:
+                if interest < self.config.runtime.LEARN_MIN_INTEREST_SCORE:
                     continue
 
                 facts = self.db.get_entity_facts(entity.id)
                 fact_count = len(facts)
-                staleness = _staleness_factor(facts)
+                staleness = _staleness_factor(
+                    facts,
+                    recent_days=self.config.runtime.LEARN_RECENT_DAYS,
+                    staleness_days=self.config.runtime.LEARN_STALENESS_DAYS,
+                )
 
                 priority = interest * (1.0 / max(fact_count, 1)) * staleness
 
@@ -365,7 +369,7 @@ class LearnLoopAgent(Agent):
                     query_vec,
                     existing_candidates,
                     top_k=1,
-                    threshold=PennyConstants.FACT_DEDUP_SIMILARITY_THRESHOLD,
+                    threshold=self.config.runtime.EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD,
                 )
                 if matches:
                     # Paraphrase match → confirm the existing fact
