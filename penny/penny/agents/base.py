@@ -34,8 +34,9 @@ class Agent:
     """
     AI agent with a specific persona and capabilities.
 
-    Each Agent instance owns its own OllamaClient (for model isolation)
-    and can have optional tools for agentic behavior.
+    Agents receive shared OllamaClient instances — foreground (fast, user-facing)
+    and background (smart, processing). Callers create and own the clients;
+    agents just hold references.
     """
 
     _instances: list[Agent] = []
@@ -57,38 +58,28 @@ class Agent:
     def __init__(
         self,
         system_prompt: str,
-        model: str,
-        ollama_api_url: str,
+        background_model_client: OllamaClient,
+        foreground_model_client: OllamaClient,
         tools: list[Tool],
         db: Database,
         config: Config,
         max_steps: int = 5,
-        max_retries: int = 3,
-        retry_delay: float = 0.5,
         tool_timeout: float = 60.0,
-        vision_model: str | None = None,
-        embedding_model: str | None = None,
+        vision_model_client: OllamaClient | None = None,
+        embedding_model_client: OllamaClient | None = None,
         allow_repeat_tools: bool = False,
-        user_facing_model: str | None = None,
     ):
         self.config = config
         self.system_prompt = system_prompt
-        self.model = model
-        self.user_facing_model = user_facing_model or model
         self.tools = tools
         self.db = db
         self.max_steps = max_steps
-        self.vision_model = vision_model
-        self.embedding_model = embedding_model
         self.allow_repeat_tools = allow_repeat_tools
 
-        self._ollama_client = OllamaClient(
-            api_url=ollama_api_url,
-            model=model,
-            db=db,
-            max_retries=max_retries,
-            retry_delay=retry_delay,
-        )
+        self._background_model_client = background_model_client
+        self._foreground_model_client = foreground_model_client
+        self._vision_model_client = vision_model_client
+        self._embedding_model_client = embedding_model_client
 
         self._tool_registry = ToolRegistry()
         for tool in self.tools:
@@ -100,7 +91,7 @@ class Agent:
 
         logger.info(
             "Initialized agent: model=%s, tools=%d, max_steps=%d",
-            model,
+            self._background_model_client.model,
             len(self.tools),
             max_steps,
         )
@@ -169,13 +160,11 @@ class Agent:
         try:
             if image_query:
                 response, image = await asyncio.gather(
-                    self._ollama_client.chat(messages=messages, model=self.user_facing_model),
+                    self._foreground_model_client.chat(messages=messages),
                     search_image(image_query),
                 )
             else:
-                response = await self._ollama_client.chat(
-                    messages=messages, model=self.user_facing_model
-                )
+                response = await self._foreground_model_client.chat(messages=messages)
                 image = None
         except Exception as e:
             logger.error("Failed to compose user-facing message: %s", e)
@@ -198,7 +187,8 @@ class Agent:
         messages = [
             {"role": "user", "content": Prompt.VISION_AUTO_DESCRIBE_PROMPT, "images": [image_b64]},
         ]
-        response = await self._ollama_client.chat(messages=messages, model=self.vision_model)
+        assert self._vision_model_client is not None
+        response = await self._vision_model_client.chat(messages=messages)
         return response.content.strip()
 
     async def run(
@@ -247,7 +237,9 @@ class Agent:
             # structured tool_calls. This doesn't consume an agentic loop step.
             for xml_attempt in range(max_xml_retries):
                 try:
-                    response = await self._ollama_client.chat(messages=messages, tools=tools)
+                    response = await self._background_model_client.chat(
+                        messages=messages, tools=tools
+                    )
                 except Exception as e:
                     logger.error("Error calling Ollama: %s", e)
                     return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
@@ -345,8 +337,7 @@ class Agent:
         )
 
     async def close(self) -> None:
-        """Clean up this agent's resources."""
-        await self._ollama_client.close()
+        """Remove this agent from the instance registry."""
         if self in Agent._instances:
             Agent._instances.remove(self)
 

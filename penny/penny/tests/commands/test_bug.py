@@ -40,7 +40,7 @@ def bug_context(bug_db):
     return CommandContext(
         db=bug_db,
         config=config,
-        ollama_client=ollama,
+        foreground_model_client=ollama,
         user=TEST_SENDER,
         channel_type="signal",
         start_time=datetime.now(UTC),

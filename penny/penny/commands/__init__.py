@@ -19,6 +19,7 @@ from penny.commands.test import TestCommand
 if TYPE_CHECKING:
     from github_api.api import GitHubAPI
 
+    from penny.ollama import OllamaClient
     from penny.tools import Tool
 
 __all__ = [
@@ -34,7 +35,7 @@ __all__ = [
 def create_command_registry(
     message_agent_factory: Callable | None = None,
     github_api: GitHubAPI | None = None,
-    ollama_image_model: str | None = None,
+    image_model_client: OllamaClient | None = None,
     fastmail_api_token: str | None = None,
     search_tool: Tool | None = None,
 ) -> CommandRegistry:
@@ -45,7 +46,7 @@ def create_command_registry(
         message_agent_factory: Optional factory for creating MessageAgent instances
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
-        ollama_image_model: Optional image generation model name (required for draw command)
+        image_model_client: Optional image generation OllamaClient (required for draw command)
 
     Returns:
         CommandRegistry with all builtin commands registered
@@ -81,11 +82,11 @@ def create_command_registry(
         registry.register(BugCommand(github_api))
         registry.register(FeatureCommand(github_api))
 
-    # Register draw command if image model is configured
-    if ollama_image_model:
+    # Register draw command if image model client is configured
+    if image_model_client:
         from penny.commands.draw import DrawCommand
 
-        registry.register(DrawCommand(ollama_image_model))
+        registry.register(DrawCommand())
 
     # Register email command if Fastmail API token is configured
     if fastmail_api_token:

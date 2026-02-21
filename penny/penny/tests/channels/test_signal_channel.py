@@ -4,6 +4,7 @@ import pytest
 
 from penny.channels.signal import SignalChannel
 from penny.database import Database
+from penny.ollama import OllamaClient
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -16,10 +17,17 @@ async def test_validate_connectivity_success(signal_server, test_config, mock_ol
     db = Database(test_config.db_path)
     db.create_tables()
 
+    client = OllamaClient(
+        api_url=test_config.ollama_api_url,
+        model=test_config.ollama_foreground_model,
+        db=db,
+        max_retries=test_config.ollama_max_retries,
+        retry_delay=test_config.ollama_retry_delay,
+    )
     message_agent = MessageAgent(
         system_prompt=Prompt.SEARCH_PROMPT,
-        model=test_config.ollama_foreground_model,
-        ollama_api_url=test_config.ollama_api_url,
+        background_model_client=client,
+        foreground_model_client=client,
         tools=[],
         db=db,
         config=test_config,
@@ -63,10 +71,17 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
     db = Database(config.db_path)
     db.create_tables()
 
+    client = OllamaClient(
+        api_url=config.ollama_api_url,
+        model=config.ollama_foreground_model,
+        db=db,
+        max_retries=config.ollama_max_retries,
+        retry_delay=config.ollama_retry_delay,
+    )
     message_agent = MessageAgent(
         system_prompt=Prompt.SEARCH_PROMPT,
-        model=config.ollama_foreground_model,
-        ollama_api_url=config.ollama_api_url,
+        background_model_client=client,
+        foreground_model_client=client,
         tools=[],
         db=db,
         config=config,
@@ -116,10 +131,17 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
     db = Database(config.db_path)
     db.create_tables()
 
+    client = OllamaClient(
+        api_url=config.ollama_api_url,
+        model=config.ollama_foreground_model,
+        db=db,
+        max_retries=config.ollama_max_retries,
+        retry_delay=config.ollama_retry_delay,
+    )
     message_agent = MessageAgent(
         system_prompt=Prompt.SEARCH_PROMPT,
-        model=config.ollama_foreground_model,
-        ollama_api_url=config.ollama_api_url,
+        background_model_client=client,
+        foreground_model_client=client,
         tools=[],
         db=db,
         config=config,
@@ -154,10 +176,17 @@ async def test_send_message_rejects_empty_without_attachments(
     db = Database(test_config.db_path)
     db.create_tables()
 
+    client = OllamaClient(
+        api_url=test_config.ollama_api_url,
+        model=test_config.ollama_foreground_model,
+        db=db,
+        max_retries=test_config.ollama_max_retries,
+        retry_delay=test_config.ollama_retry_delay,
+    )
     message_agent = MessageAgent(
         system_prompt=Prompt.SEARCH_PROMPT,
-        model=test_config.ollama_foreground_model,
-        ollama_api_url=test_config.ollama_api_url,
+        background_model_client=client,
+        foreground_model_client=client,
         tools=[],
         db=db,
         config=test_config,
@@ -188,10 +217,17 @@ async def test_send_message_allows_empty_text_with_attachments(
     db = Database(test_config.db_path)
     db.create_tables()
 
+    client = OllamaClient(
+        api_url=test_config.ollama_api_url,
+        model=test_config.ollama_foreground_model,
+        db=db,
+        max_retries=test_config.ollama_max_retries,
+        retry_delay=test_config.ollama_retry_delay,
+    )
     message_agent = MessageAgent(
         system_prompt=Prompt.SEARCH_PROMPT,
-        model=test_config.ollama_foreground_model,
-        ollama_api_url=test_config.ollama_api_url,
+        background_model_client=client,
+        foreground_model_client=client,
         tools=[],
         db=db,
         config=test_config,

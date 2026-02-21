@@ -45,19 +45,17 @@ class EmailCommand(Command):
         try:
             tools = [
                 SearchEmailsTool(jmap_client),
-                ReadEmailsTool(jmap_client, context.ollama_client, prompt),
+                ReadEmailsTool(jmap_client, context.foreground_model_client, prompt),
             ]
 
             agent = Agent(
                 system_prompt=Prompt.EMAIL_SYSTEM_PROMPT,
-                model=context.config.ollama_foreground_model,
-                ollama_api_url=context.config.ollama_api_url,
+                background_model_client=context.foreground_model_client,
+                foreground_model_client=context.foreground_model_client,
                 tools=tools,
                 db=context.db,
                 config=context.config,
                 max_steps=context.config.email_max_steps,
-                max_retries=context.config.ollama_max_retries,
-                retry_delay=context.config.ollama_retry_delay,
                 tool_timeout=context.config.tool_timeout,
                 allow_repeat_tools=True,
             )

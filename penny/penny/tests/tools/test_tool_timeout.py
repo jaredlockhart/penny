@@ -7,6 +7,7 @@ import pytest
 from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
+from penny.ollama import OllamaClient
 from penny.tools import ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.base import Tool
 
@@ -83,10 +84,17 @@ class TestToolTimeout:
             db_path=test_db,
         )
         # Create agent with custom timeout
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
         agent = Agent(
             system_prompt="test",
-            model="test-model",
-            ollama_api_url="http://localhost:11434",
+            background_model_client=client,
+            foreground_model_client=client,
             tools=[],
             db=db,
             config=config,

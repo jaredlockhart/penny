@@ -42,7 +42,6 @@ class OllamaClient:
         messages: list[dict],
         tools: list[dict] | None = None,
         format: dict | str | None = None,
-        model: str | None = None,
     ) -> ChatResponse:
         """
         Generate a chat completion with optional tool calling.
@@ -51,12 +50,10 @@ class OllamaClient:
             messages: List of message dicts with 'role' and 'content'
             tools: Optional list of tool definitions in Ollama format
             format: Optional format specification (JSON schema dict, "json", or None)
-            model: Optional model override for this call (e.g., vision model)
 
         Returns:
             ChatResponse with message, thinking, tool calls, etc.
         """
-        effective_model = model or self.model
         last_error: Exception | None = None
 
         for attempt in range(self.max_retries):
@@ -74,7 +71,7 @@ class OllamaClient:
 
                 # Build kwargs for chat call
                 chat_kwargs: dict = {
-                    "model": effective_model,
+                    "model": self.model,
                     "messages": messages,
                 }
                 if tools is not None:
@@ -105,7 +102,7 @@ class OllamaClient:
                 # Log to database
                 if self.db:
                     self.db.log_prompt(
-                        model=effective_model,
+                        model=self.model,
                         messages=messages_snapshot,
                         response=raw_dict,
                         tools=tools,
@@ -153,13 +150,12 @@ class OllamaClient:
         messages = [{"role": "user", "content": prompt}]
         return await self.chat(messages, tools, format)
 
-    async def generate_image(self, prompt: str, model: str) -> str:
+    async def generate_image(self, prompt: str) -> str:
         """
-        Generate an image from a text prompt using an image generation model.
+        Generate an image from a text prompt using this client's model.
 
         Args:
             prompt: Text description of the image to generate
-            model: Image generation model name (e.g., x/z-image-turbo)
 
         Returns:
             Base64-encoded PNG image data
@@ -182,7 +178,7 @@ class OllamaClient:
                 async with httpx.AsyncClient(timeout=120) as http_client:
                     resp = await http_client.post(
                         f"{self.api_url}/api/generate",
-                        json={"model": model, "prompt": prompt, "stream": False},
+                        json={"model": self.model, "prompt": prompt, "stream": False},
                     )
                     resp.raise_for_status()
                     response = GenerateResponse(**resp.json())
@@ -191,7 +187,7 @@ class OllamaClient:
                 if not image_data:
                     raise RuntimeError("Model did not return image data")
 
-                logger.info("Image generated successfully with model %s", model)
+                logger.info("Image generated successfully with model %s", self.model)
                 return image_data
 
             except httpx.HTTPStatusError as e:
@@ -225,13 +221,12 @@ class OllamaClient:
         )
         raise last_error  # type: ignore[misc]
 
-    async def embed(self, text: str | list[str], model: str) -> list[list[float]]:
+    async def embed(self, text: str | list[str]) -> list[list[float]]:
         """
         Generate embeddings for one or more texts.
 
         Args:
             text: Single text or list of texts to embed
-            model: Embedding model name (e.g., nomic-embed-text)
 
         Returns:
             List of embedding vectors (one per input text)
@@ -244,7 +239,7 @@ class OllamaClient:
                     "Sending embed request to Ollama (attempt %d/%d)", attempt + 1, self.max_retries
                 )
 
-                response = await self.client.embed(model=model, input=text)
+                response = await self.client.embed(model=self.model, input=text)
                 embeddings = [list(e) for e in response.embeddings]
 
                 logger.debug(

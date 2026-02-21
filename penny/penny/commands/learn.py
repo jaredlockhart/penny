@@ -120,7 +120,7 @@ class LearnCommand(Command):
         prompt = f"{Prompt.LEARN_INITIAL_QUERY_PROMPT}\n\nTopic: {topic}"
 
         try:
-            response = await context.ollama_client.generate(
+            response = await context.foreground_model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=GeneratedQuery.model_json_schema(),
@@ -149,7 +149,7 @@ class LearnCommand(Command):
         )
 
         try:
-            response = await context.ollama_client.generate(
+            response = await context.foreground_model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=GeneratedQuery.model_json_schema(),

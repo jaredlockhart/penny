@@ -150,7 +150,7 @@ class LearnLoopAgent(Agent):
         stored_facts = await self._store_new_facts(entity, new_facts, search_result)
 
         # Update entity embedding if we added facts
-        if stored_facts and self.embedding_model:
+        if stored_facts and self._embedding_model_client:
             await self._update_entity_embedding(entity)
             logger.info("Updated entity embedding for '%s'", entity.name)
 
@@ -257,7 +257,7 @@ class LearnLoopAgent(Agent):
         )
 
         try:
-            response = await self._ollama_client.generate(
+            response = await self._background_model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=ExtractedFacts.model_json_schema(),
@@ -298,7 +298,7 @@ class LearnLoopAgent(Agent):
             return [], confirmed_ids
 
         # Slow pass: embedding similarity dedup
-        if not self.embedding_model:
+        if not self._embedding_model_client:
             return new_facts, confirmed_ids
 
         facts_with_embeddings = [f for f in existing_facts if f.embedding is not None]
@@ -306,7 +306,7 @@ class LearnLoopAgent(Agent):
             return new_facts, confirmed_ids
 
         try:
-            vecs = await self._ollama_client.embed(new_facts, model=self.embedding_model)
+            vecs = await self._embedding_model_client.embed(new_facts)
             existing_candidates = [
                 (i, deserialize_embedding(f.embedding))
                 for i, f in enumerate(facts_with_embeddings)
@@ -347,9 +347,9 @@ class LearnLoopAgent(Agent):
 
         # Batch-embed new facts
         fact_embeddings: list[bytes | None] = [None] * len(new_fact_texts)
-        if self.embedding_model:
+        if self._embedding_model_client:
             try:
-                vecs = await self._ollama_client.embed(new_fact_texts, model=self.embedding_model)
+                vecs = await self._embedding_model_client.embed(new_fact_texts)
                 fact_embeddings = [serialize_embedding(v) for v in vecs]
             except Exception as e:
                 logger.warning("Failed to embed new facts for '%s': %s", entity.name, e)
@@ -371,10 +371,10 @@ class LearnLoopAgent(Agent):
         """Regenerate entity embedding after adding new facts."""
         assert entity.id is not None
         try:
-            assert self.embedding_model is not None
+            assert self._embedding_model_client is not None
             facts = self.db.get_entity_facts(entity.id)
             text = build_entity_embed_text(entity.name, [f.content for f in facts])
-            vecs = await self._ollama_client.embed(text, model=self.embedding_model)
+            vecs = await self._embedding_model_client.embed(text)
             self.db.update_entity_embedding(entity.id, serialize_embedding(vecs[0]))
         except Exception as e:
             logger.warning("Failed to update entity embedding for '%s': %s", entity.name, e)
