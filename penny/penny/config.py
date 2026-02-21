@@ -187,36 +187,6 @@ class Config:
         # Tool execution timeout
         tool_timeout = float(os.getenv("TOOL_TIMEOUT", "60.0"))
 
-        # Extraction pipeline thresholds
-        extraction_entity_semantic_threshold = float(
-            os.getenv("EXTRACTION_ENTITY_SEMANTIC_THRESHOLD", "0.58")
-        )
-        extraction_prefilter_similarity_threshold = float(
-            os.getenv("EXTRACTION_PREFILTER_SIMILARITY_THRESHOLD", "0.2")
-        )
-        extraction_prefilter_min_count = int(os.getenv("EXTRACTION_PREFILTER_MIN_COUNT", "20"))
-        extraction_entity_dedup_tcr_threshold = float(
-            os.getenv("EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD", "0.75")
-        )
-        extraction_entity_dedup_embedding_threshold = float(
-            os.getenv("EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD", "0.85")
-        )
-        extraction_fact_dedup_similarity_threshold = float(
-            os.getenv("EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD", "0.85")
-        )
-        extraction_min_message_length = int(os.getenv("EXTRACTION_MIN_MESSAGE_LENGTH", "20"))
-
-        # Fact discovery notification settings
-        notification_initial_backoff = float(os.getenv("NOTIFICATION_INITIAL_BACKOFF", "60.0"))
-        notification_max_backoff = float(os.getenv("NOTIFICATION_MAX_BACKOFF", "3600.0"))
-        notification_min_length = int(os.getenv("NOTIFICATION_MIN_LENGTH", "75"))
-
-        # Learn loop tuning
-        learn_enrichment_fact_threshold = int(os.getenv("LEARN_ENRICHMENT_FACT_THRESHOLD", "5"))
-        learn_staleness_days = float(os.getenv("LEARN_STALENESS_DAYS", "7.0"))
-        learn_min_interest_score = float(os.getenv("LEARN_MIN_INTEREST_SCORE", "0.1"))
-        learn_recent_days = float(os.getenv("LEARN_RECENT_DAYS", "1.0"))
-
         config = cls(
             channel_type=channel_type,
             signal_number=signal_number,
@@ -240,20 +210,6 @@ class Config:
             idle_seconds=idle_seconds,
             maintenance_interval_seconds=maintenance_interval_seconds,
             fastmail_api_token=fastmail_api_token,
-            extraction_entity_semantic_threshold=extraction_entity_semantic_threshold,
-            extraction_prefilter_similarity_threshold=extraction_prefilter_similarity_threshold,
-            extraction_prefilter_min_count=extraction_prefilter_min_count,
-            extraction_entity_dedup_tcr_threshold=extraction_entity_dedup_tcr_threshold,
-            extraction_entity_dedup_embedding_threshold=extraction_entity_dedup_embedding_threshold,
-            extraction_fact_dedup_similarity_threshold=extraction_fact_dedup_similarity_threshold,
-            extraction_min_message_length=extraction_min_message_length,
-            notification_initial_backoff=notification_initial_backoff,
-            notification_max_backoff=notification_max_backoff,
-            notification_min_length=notification_min_length,
-            learn_enrichment_fact_threshold=learn_enrichment_fact_threshold,
-            learn_staleness_days=learn_staleness_days,
-            learn_min_interest_score=learn_min_interest_score,
-            learn_recent_days=learn_recent_days,
         )
 
         # Store database reference for runtime config lookups
