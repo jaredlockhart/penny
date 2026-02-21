@@ -259,8 +259,11 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                         )
 
-            # Send per-entity discovery notifications (respecting backoff)
-            if allow_new and result.discoveries and self._should_send_proactive(user):
+            # Send per-entity discovery notifications (respecting backoff).
+            # Silent for USER_MESSAGE searches — Penny already replied in the
+            # conversation; only announce for learn/enrichment-triggered searches.
+            notify = search_log.trigger != PennyConstants.SearchTrigger.USER_MESSAGE
+            if notify and result.discoveries and self._should_send_proactive(user):
                 for discovery in result.discoveries:
                     await self._send_fact_notification(user, discovery, relevance_ref)
                 self._mark_proactive_sent(user)

@@ -125,16 +125,17 @@ async def test_extraction_processes_search_log(
             assert sl is not None
             assert sl.extracted is True
 
-        # Verify fact discovery notification was sent (model-composed)
+        # Verify NO fact discovery notification was sent — user_message searches
+        # are silent (Penny already replied in the conversation)
         notification_messages = [
             msg
             for msg in signal_server.outgoing_messages
             if "KEF LS50 Meta" in msg["message"]
             and msg["message"] != "check out the KEF LS50 Meta! 🎵"
         ]
-        assert len(notification_messages) >= 1, (
-            "Expected model-composed fact discovery notification, "
-            f"got messages: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
+        assert len(notification_messages) == 0, (
+            "user_message searches should not send fact discovery notifications, "
+            f"got: {[m['message'][:80] for m in notification_messages]}"
         )
 
 
@@ -1341,7 +1342,7 @@ async def test_extraction_fact_notification_backoff(
         penny.db.log_search(
             query="backoff test 1",
             response="Info about backoff entity 1.",
-            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+            trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
         )
 
         signal_server.outgoing_messages.clear()
@@ -1358,7 +1359,7 @@ async def test_extraction_fact_notification_backoff(
         penny.db.log_search(
             query="backoff test 2",
             response="Info about backoff entity 2.",
-            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+            trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
         )
 
         signal_server.outgoing_messages.clear()
@@ -1381,7 +1382,7 @@ async def test_extraction_fact_notification_backoff(
         penny.db.log_search(
             query="backoff test 3",
             response="Info about backoff entity 3.",
-            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+            trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
         )
 
         signal_server.outgoing_messages.clear()
@@ -1470,7 +1471,7 @@ async def test_extraction_fact_notification_new_vs_known_entity(
         penny.db.log_search(
             query="speaker comparison",
             response="KEF LS50 Meta vs Wharfedale Denton 85 comparison.",
-            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+            trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
         )
 
         signal_server.outgoing_messages.clear()
