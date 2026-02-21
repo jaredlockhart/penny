@@ -34,30 +34,6 @@ class PennyResponse:
     VISION_IMAGE_CONTEXT = "User said '{user_text}' and included an image of: {caption}"
     VISION_IMAGE_ONLY_CONTEXT = "User sent an image of: {caption}"
 
-    # ── Preferences ──────────────────────────────────────────────────────────
-
-    LIKES_EMPTY = "You don't have any likes stored yet"
-    LIKES_HEADER = "Here are your stored likes:"
-    LIKE_ADDED_CONFLICT = "I added {topic} to your likes and removed it from your dislikes"
-    LIKE_ADDED = "I added {topic} to your likes"
-    LIKE_DUPLICATE = "{topic} is already in your likes"
-
-    DISLIKES_EMPTY = "You don't have any dislikes stored yet"
-    DISLIKES_HEADER = "Here are your stored dislikes:"
-    DISLIKE_ADDED_CONFLICT = "I added {topic} to your dislikes and removed it from your likes"
-    DISLIKE_ADDED = "I added {topic} to your dislikes"
-    DISLIKE_DUPLICATE = "{topic} is already in your dislikes"
-
-    UNLIKE_USAGE = "Please specify what to remove, like: /unlike video games"
-    UNLIKE_OUT_OF_RANGE = "{position} doesn't match any of your likes"
-    UNLIKE_REMOVED = "I removed {topic} from your likes"
-    UNLIKE_NOT_FOUND = "{topic} wasn't in your likes"
-
-    UNDISLIKE_USAGE = "Please specify what to remove, like: /undislike bananas"
-    UNDISLIKE_OUT_OF_RANGE = "{position} doesn't match any of your dislikes"
-    UNDISLIKE_REMOVED = "I removed {topic} from your dislikes"
-    UNDISLIKE_NOT_FOUND = "{topic} wasn't in your dislikes"
-
     # ── Interests ──────────────────────────────────────────────────────────
 
     INTERESTS_EMPTY = (

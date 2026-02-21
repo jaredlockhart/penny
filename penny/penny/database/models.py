@@ -108,17 +108,6 @@ class RuntimeConfig(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class Preference(SQLModel, table=True):
-    """User preferences (likes/dislikes)."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    user: str = Field(index=True)  # Signal number or Discord user ID
-    topic: str  # Arbitrary natural language phrase
-    type: str  # "like" or "dislike"
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    embedding: bytes | None = None  # Serialized float32 embedding vector
-
-
 class Schedule(SQLModel, table=True):
     """User-created scheduled background tasks."""
 
@@ -143,12 +132,11 @@ class Entity(SQLModel, table=True):
 
 
 class Engagement(SQLModel, table=True):
-    """A user engagement event recording interest in an entity or preference."""
+    """A user engagement event recording interest in an entity."""
 
     id: int | None = Field(default=None, primary_key=True)
     user: str = Field(index=True)  # Signal number or Discord user ID
     entity_id: int | None = Field(default=None, foreign_key="entity.id", index=True)
-    preference_id: int | None = Field(default=None, foreign_key="preference.id", index=True)
     engagement_type: str = Field(index=True)  # EngagementType enum value
     valence: str  # EngagementValence enum value
     strength: float  # Weight 0.0-1.0

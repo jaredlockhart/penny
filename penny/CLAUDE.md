@@ -62,7 +62,6 @@ penny/
     learn.py          — /learn: express active research interest in a topic
     memory.py         — /memory: view/manage knowledge base entities and facts
     interests.py      — /interests: ranked interest graph visibility
-    preferences.py    — /like, /dislike, /unlike, /undislike: explicit preference management
     schedule.py       — /schedule: create, list, delete recurring background tasks
     test.py           — /test: isolated test mode for development
     draw.py           — /draw: generate images via Ollama image model (optional)
@@ -87,10 +86,10 @@ penny/
       channel.py      — DiscordChannel: discord.py bot integration
       models.py       — DiscordMessage, DiscordUser Pydantic models
   database/
-    database.py       — Database: SQLite via SQLModel, thread walking, preference/entity storage
+    database.py       — Database: SQLite via SQLModel, thread walking, entity storage
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0020)
+    migrations/       — Numbered migration files (0001–0022)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client
     models.py         — ChatResponse, ChatResponseMessage
@@ -110,7 +109,7 @@ penny/
     commands/         — Per-command tests
       test_commands.py, test_config.py, test_debug.py, test_draw.py, test_email.py,
       test_feature.py, test_interests.py, test_learn.py, test_memory.py,
-      test_preferences.py, test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
+      test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
     jmap/             — JMAP client tests
@@ -144,16 +143,15 @@ The base `Agent` class implements the core agentic loop:
   1. **User messages** (highest priority): freshest signals, processed first
   2. **Search logs** (drain backlog): entity/fact extraction from search results
   3. **Enrichment** (gated): only runs when phases 1 & 2 are fully drained — delegates to LearnLoopAgent
-  4. **Embedding backfill**: backfills missing embeddings for facts, entities, preferences
+  4. **Embedding backfill**: backfills missing embeddings for facts and entities
 - Enrichment creates new SearchLog entries (trigger=penny_enrichment) that feed back into phase 2 on the next cycle
 - **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results. Checks `trigger` field to determine mode — full extraction (user-triggered, creates entities with validation) vs known-only (penny-triggered, facts only)
 - **Entity validation**: New entity candidates pass structural filter (word count, LLM artifacts, URLs) then semantic filter (embedding similarity to query, threshold ~0.35)
 - **Insertion-time dedup**: Before creating a new entity, checks all existing entities using dual-threshold detection — token containment ratio (TCR >= 0.75) as fast lexical pre-filter, then embedding cosine similarity (>= 0.85) for confirmation. Both must pass. Routes to existing entity instead of creating a duplicate
-- **Message extraction**: Extracts entities/facts from user messages AND preferences from messages+reactions
+- **Message extraction**: Extracts entities/facts from user messages
 - Pre-filters messages before LLM calls: skips short messages (< 20 chars) and slash commands
 - Creates MESSAGE_MENTION engagements when entities are found in user messages
 - Creates SEARCH_INITIATED engagements for entities found in user-triggered searches
-- Links new preferences to existing entities via embedding similarity
 - Fact dedup: normalized string match (fast) then embedding similarity (paraphrase detection, threshold=0.85)
 - Facts track provenance via `source_search_log_id` or `source_message_id`
 - Facts from user messages and USER_MESSAGE searches are pre-marked with `notified_at` (user already knows)
@@ -258,7 +256,6 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` searches via SearchTool, discovers entities from results via LLM entity identification, creates them with LEARN_COMMAND engagements. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`). Falls back to creating a single entity from topic text if no SearchTool is configured
 - **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities with fact counts; `/memory <number>` shows entity details and facts; `/memory <number> delete` removes an entity and its facts
 - **/interests** (`interests.py`): View interest graph ranked by computed score. Displays entity name, score (with sign), fact count, and last activity date. Score = `sum(valence_sign × strength × recency_decay)` with 30-day half-life. Capped at 20 entries
-- **/like**, **/dislike**, **/unlike**, **/undislike** (`preferences.py`): Explicitly manage preferences. `/like` also creates an entity for the topic (user-triggered entity creation path) with a LIKE_COMMAND engagement
 - **/schedule** (`schedule.py`): Create, list, and delete recurring cron-based background tasks (uses LLM to parse natural language timing)
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
 
@@ -278,7 +275,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 Penny learns what the user likes, finds information about those things, and proactively grows that knowledge over time. The system is built on three core principles:
 
-1. **Entity creation is user-gated** — only user-triggered actions (messages, `/learn`, `/like`) create new entities
+1. **Entity creation is user-gated** — only user-triggered actions (messages, `/learn`) create new entities
 2. **Fact extraction is universal** — any search result can produce facts about known entities
 3. **Penny's enrichment is fact-only** — background searches deepen knowledge, never widen it
 
@@ -286,8 +283,7 @@ Penny learns what the user likes, finds information about those things, and proa
 
 - **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search
 - **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at` and `notified_at` timestamps. `notified_at=NULL` means not yet communicated to user
-- **Engagement**: User interest signals (likes, searches, mentions, reactions). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
-- **Preference**: User likes/dislikes with optional embeddings for entity matching
+- **Engagement**: User interest signals (searches, mentions, reactions, learn commands). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
 - **LearnPrompt**: First-class learning prompt with lifecycle tracking — enables provenance chain: prompt → searches → facts → entities
 
 ### Interest Scores (`interest.py`)

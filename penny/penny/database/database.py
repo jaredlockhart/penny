@@ -17,7 +17,6 @@ from penny.database.models import (
     Fact,
     LearnPrompt,
     MessageLog,
-    Preference,
     PromptLog,
     SearchLog,
     UserInfo,
@@ -648,177 +647,6 @@ class Database:
         except Exception as e:
             logger.error("Failed to log command: %s", e)
 
-    def get_preferences(self, user: str, pref_type: str) -> list[Preference]:
-        """
-        Get all preferences of a specific type for a user.
-
-        Args:
-            user: User identifier (phone number or Discord user ID)
-            pref_type: Preference type ("like" or "dislike")
-
-        Returns:
-            List of matching Preference objects
-        """
-        with self.get_session() as session:
-            return list(
-                session.exec(
-                    select(Preference)
-                    .where(
-                        Preference.user == user,
-                        Preference.type == pref_type,
-                    )
-                    .order_by(Preference.created_at.asc())  # type: ignore[unresolved-attribute]
-                ).all()
-            )
-
-    def add_preference(
-        self, user: str, topic: str, pref_type: str, embedding: bytes | None = None
-    ) -> Preference | None:
-        """
-        Add a preference for a user.
-
-        Args:
-            user: User identifier (phone number or Discord user ID)
-            topic: The topic/phrase to add
-            pref_type: Preference type ("like" or "dislike")
-            embedding: Serialized embedding vector (optional)
-
-        Returns:
-            The created Preference if added, None if already exists or on error
-        """
-        try:
-            with self.get_session() as session:
-                # Check if already exists
-                existing = session.exec(
-                    select(Preference).where(
-                        Preference.user == user,
-                        Preference.topic == topic,
-                        Preference.type == pref_type,
-                    )
-                ).first()
-
-                if existing:
-                    return None
-
-                pref = Preference(
-                    user=user,
-                    topic=topic,
-                    type=pref_type,
-                    embedding=embedding,
-                )
-                session.add(pref)
-                session.commit()
-                session.refresh(pref)
-                logger.debug("Added %s preference for %s: %s", pref_type, user, topic)
-                return pref
-        except Exception as e:
-            logger.error("Failed to add preference: %s", e)
-            return None
-
-    def remove_preference(self, user: str, topic: str, pref_type: str) -> bool:
-        """
-        Remove a preference for a user.
-
-        Args:
-            user: User identifier (phone number or Discord user ID)
-            topic: The topic/phrase to remove
-            pref_type: Preference type ("like" or "dislike")
-
-        Returns:
-            True if removed, False if not found
-        """
-        try:
-            with self.get_session() as session:
-                pref = session.exec(
-                    select(Preference).where(
-                        Preference.user == user,
-                        Preference.topic == topic,
-                        Preference.type == pref_type,
-                    )
-                ).first()
-
-                if not pref:
-                    return False
-
-                session.delete(pref)
-                session.commit()
-                logger.debug("Removed %s preference for %s: %s", pref_type, user, topic)
-                return True
-        except Exception as e:
-            logger.error("Failed to remove preference: %s", e)
-            return False
-
-    def find_conflicting_preference(
-        self, user: str, topic: str, pref_type: str
-    ) -> Preference | None:
-        """
-        Find a conflicting preference (opposite type with same topic).
-
-        Args:
-            user: User identifier (phone number or Discord user ID)
-            topic: The topic/phrase to check
-            pref_type: Preference type to check against
-
-        Returns:
-            The conflicting Preference if found, None otherwise
-        """
-        opposite_type = "dislike" if pref_type == "like" else "like"
-        with self.get_session() as session:
-            return session.exec(
-                select(Preference).where(
-                    Preference.user == user,
-                    Preference.topic == topic,
-                    Preference.type == opposite_type,
-                )
-            ).first()
-
-    def move_preference(self, user: str, topic: str, from_type: str, to_type: str) -> bool:
-        """
-        Move a preference from one type to another (e.g., like → dislike).
-
-        Args:
-            user: User identifier (phone number or Discord user ID)
-            topic: The topic/phrase to move
-            from_type: Source preference type
-            to_type: Target preference type
-
-        Returns:
-            True if moved successfully, False otherwise
-        """
-        try:
-            with self.get_session() as session:
-                # Find the existing preference
-                existing = session.exec(
-                    select(Preference).where(
-                        Preference.user == user,
-                        Preference.topic == topic,
-                        Preference.type == from_type,
-                    )
-                ).first()
-
-                if not existing:
-                    return False
-
-                # Remove it
-                session.delete(existing)
-                session.flush()
-
-                # Add new one with opposite type
-                new_pref = Preference(
-                    user=user,
-                    topic=topic,
-                    type=to_type,
-                )
-                session.add(new_pref)
-                session.commit()
-                logger.debug(
-                    "Moved preference for %s: %s from %s to %s", user, topic, from_type, to_type
-                )
-                return True
-        except Exception as e:
-            logger.error("Failed to move preference: %s", e)
-            return False
-
     # --- Entity knowledge base methods ---
 
     def get_entity(self, entity_id: int) -> Entity | None:
@@ -1324,23 +1152,6 @@ class Database:
         except Exception as e:
             logger.error("Failed to update fact %d embedding: %s", fact_id, e)
 
-    def update_preference_embedding(self, preference_id: int, embedding: bytes) -> None:
-        """Update the embedding for a preference.
-
-        Args:
-            preference_id: Preference primary key
-            embedding: Serialized embedding vector
-        """
-        try:
-            with self.get_session() as session:
-                pref = session.get(Preference, preference_id)
-                if pref:
-                    pref.embedding = embedding
-                    session.add(pref)
-                    session.commit()
-        except Exception as e:
-            logger.error("Failed to update preference %d embedding: %s", preference_id, e)
-
     def get_entities_without_embeddings(self, limit: int) -> list[Entity]:
         """Get entities that don't have embeddings yet.
 
@@ -1375,25 +1186,6 @@ class Database:
                     select(Fact)
                     .where(Fact.embedding == None)  # noqa: E711
                     .order_by(Fact.learned_at.desc())  # type: ignore[unresolved-attribute]
-                    .limit(limit)
-                ).all()
-            )
-
-    def get_preferences_without_embeddings(self, limit: int) -> list[Preference]:
-        """Get preferences that don't have embeddings yet.
-
-        Args:
-            limit: Maximum number of preferences to return
-
-        Returns:
-            List of Preference objects without embeddings
-        """
-        with self.get_session() as session:
-            return list(
-                session.exec(
-                    select(Preference)
-                    .where(Preference.embedding == None)  # noqa: E711
-                    .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )
@@ -1444,7 +1236,6 @@ class Database:
         valence: str,
         strength: float,
         entity_id: int | None = None,
-        preference_id: int | None = None,
         source_message_id: int | None = None,
     ) -> Engagement | None:
         """
@@ -1456,7 +1247,6 @@ class Database:
             valence: EngagementValence enum value
             strength: Engagement weight (0.0-1.0)
             entity_id: Optional entity FK
-            preference_id: Optional preference FK
             source_message_id: Optional source message FK
 
         Returns:
@@ -1467,7 +1257,6 @@ class Database:
                 engagement = Engagement(
                     user=user,
                     entity_id=entity_id,
-                    preference_id=preference_id,
                     engagement_type=engagement_type,
                     valence=valence,
                     strength=strength,

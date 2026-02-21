@@ -99,14 +99,14 @@ async def test_learn_loop_skips_negative_interest(
         await signal_server.push_message(sender=TEST_SENDER, content="hello")
         await signal_server.wait_for_message(timeout=10.0)
 
-        # Create entity with negative interest (dislike)
+        # Create entity with negative interest (thumbs down on notification)
         entity = penny.db.get_or_create_entity(TEST_SENDER, "sports")
         assert entity is not None and entity.id is not None
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.DISLIKE_COMMAND,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
             valence=PennyConstants.EngagementValence.NEGATIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_DISLIKE_COMMAND,
+            strength=PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE,
             entity_id=entity.id,
         )
 
