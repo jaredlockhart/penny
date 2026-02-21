@@ -106,9 +106,6 @@ class PennyConstants:
     # Interest score recency decay half-life in days
     INTEREST_SCORE_HALF_LIFE_DAYS = 30.0
 
-    # Maximum entities shown by /interests command
-    INTERESTS_DISPLAY_LIMIT = 20
-
     # Learn agent constants
     LEARN_ENRICHMENT_FACT_THRESHOLD = 5  # Below this → enrichment mode
     LEARN_MIN_INTEREST_SCORE = 0.1  # Minimum interest to consider

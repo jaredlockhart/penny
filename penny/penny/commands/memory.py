@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
+from penny.database.models import Engagement, Entity
+from penny.interest import compute_interest_score
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -19,7 +22,7 @@ class MemoryCommand(Command):
     help_text = (
         "View what Penny has learned from searches, or manage stored knowledge.\n\n"
         "**Usage**:\n"
-        "- `/memory` — List all remembered entities\n"
+        "- `/memory` — List all remembered entities ranked by interest\n"
         "- `/memory <number>` — Show details for an entity\n"
         "- `/memory <number> delete` — Delete an entity and its facts\n\n"
         "**Examples**:\n"
@@ -33,18 +36,19 @@ class MemoryCommand(Command):
         args = args.strip()
         parts = args.split() if args else []
 
-        # No args — list all entities
+        # No args — list all entities ranked by interest score
         if not parts:
-            entities = context.db.get_user_entities(context.user)
-            if not entities:
+            scored = self._scored_entities(context)
+            if not scored:
                 return CommandResult(text=PennyResponse.MEMORY_EMPTY)
 
             lines = [PennyResponse.MEMORY_LIST_HEADER, ""]
-            for i, entity in enumerate(entities, 1):
+            for i, (score, entity) in enumerate(scored, 1):
                 assert entity.id is not None
                 facts = context.db.get_entity_facts(entity.id)
-                count = len(facts)
-                lines.append(f"{i}. {entity.name} ({count} fact{'s' if count != 1 else ''})")
+                sign = "+" if score > 0 else ""
+                facts_label = f"{len(facts)} fact{'s' if len(facts) != 1 else ''}"
+                lines.append(f"{i}. {entity.name} ({facts_label}, interest: {sign}{score:.2f})")
             return CommandResult(text="\n".join(lines))
 
         # First arg must be a number
@@ -52,12 +56,12 @@ class MemoryCommand(Command):
             return CommandResult(text=PennyResponse.MEMORY_ENTITY_NOT_FOUND.format(number=parts[0]))
 
         position = int(parts[0])
-        entities = context.db.get_user_entities(context.user)
+        scored = self._scored_entities(context)
 
-        if position < 1 or position > len(entities):
+        if position < 1 or position > len(scored):
             return CommandResult(text=PennyResponse.MEMORY_ENTITY_NOT_FOUND.format(number=position))
 
-        entity = entities[position - 1]
+        _score, entity = scored[position - 1]
         assert entity.id is not None
 
         # Number + "delete" — delete entity
@@ -82,3 +86,26 @@ class MemoryCommand(Command):
             facts_text,
         ]
         return CommandResult(text="\n".join(lines))
+
+    @staticmethod
+    def _scored_entities(context: CommandContext) -> list[tuple[float, Entity]]:
+        """Return (score, entity) pairs sorted by absolute interest score descending."""
+        entities = context.db.get_user_entities(context.user)
+        if not entities:
+            return []
+
+        all_engagements = context.db.get_user_engagements(context.user)
+        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
+        for eng in all_engagements:
+            if eng.entity_id is not None:
+                engagements_by_entity[eng.entity_id].append(eng)
+
+        scored: list[tuple[float, Entity]] = []
+        for entity in entities:
+            assert entity.id is not None
+            entity_engagements = engagements_by_entity.get(entity.id, [])
+            score = compute_interest_score(entity_engagements)
+            scored.append((score, entity))
+
+        scored.sort(key=lambda x: abs(x[0]), reverse=True)
+        return scored
