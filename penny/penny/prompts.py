@@ -101,6 +101,21 @@ Examples:
         "Write a short, casual message sharing what's new."
     )
 
+    # Learn-topic-aware variants (when facts originated from a /learn command)
+    FACT_DISCOVERY_NEW_ENTITY_LEARN_PROMPT = (
+        "While researching {learn_topic} (something the user asked you to look into), "
+        "you came across a new topic: {entity_name}. "
+        "Write a short, casual message sharing what you found. "
+        "Mention that you found this while looking into {learn_topic}."
+    )
+
+    FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT = (
+        "While researching {learn_topic} (something the user asked you to look into), "
+        "you came across some new information about {entity_name}. "
+        "Write a short, casual message sharing what's new. "
+        "Mention that you found this while looking into {learn_topic}."
+    )
+
     # Learn agent message composition prompts
     LEARN_ENRICHMENT_MESSAGE_PROMPT = (
         "You just learned new facts about {entity_name}. "
