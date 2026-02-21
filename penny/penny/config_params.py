@@ -116,7 +116,7 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {
         key="EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD",
         description="Token containment ratio threshold for entity deduplication",
         type=float,
-        default=0.75,
+        default=0.6,
         validator=_validate_unit_float,
     ),
     "EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD": ConfigParam(

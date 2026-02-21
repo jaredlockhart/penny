@@ -11,6 +11,8 @@ from penny.ollama.embeddings import (
     deserialize_embedding,
     find_similar,
     serialize_embedding,
+    token_containment_ratio,
+    tokenize_entity_name,
 )
 
 
@@ -60,6 +62,74 @@ class TestCosineSimilarity:
 
     def test_zero_vector_returns_zero(self):
         assert cosine_similarity([0.0, 0.0], [1.0, 1.0]) == 0.0
+
+
+class TestTokenizeEntityName:
+    """Tests for entity name tokenization with dedup normalization."""
+
+    def test_basic_split(self):
+        assert tokenize_entity_name("Stanford University") == ["stanford", "university"]
+
+    def test_underscore_to_space(self):
+        assert tokenize_entity_name("agentic_ai_summit") == ["agentic", "ai", "summit"]
+
+    def test_hyphen_to_space(self):
+        assert tokenize_entity_name("kef-ls50-meta") == ["kef", "ls50", "meta"]
+
+    def test_year_token_stripped(self):
+        assert tokenize_entity_name("aamas 2026") == ["aamas"]
+
+    def test_year_suffix_stripped(self):
+        assert tokenize_entity_name("agentica2026") == ["agentica"]
+
+    def test_non_year_number_preserved(self):
+        assert tokenize_entity_name("nvidia gb10") == ["nvidia", "gb10"]
+
+    def test_pure_year_only_returns_empty(self):
+        assert tokenize_entity_name("2025") == []
+
+    def test_mixed_separators(self):
+        assert tokenize_entity_name("etsi_ai-data conference 2026") == [
+            "etsi",
+            "ai",
+            "data",
+            "conference",
+        ]
+
+    def test_19xx_year_not_stripped(self):
+        """Years before 2000 are not stripped (regex is 20xx only)."""
+        assert tokenize_entity_name("event 1999") == ["event", "1999"]
+
+
+class TestTokenContainmentRatio:
+    """Tests for TCR with normalized tokenization."""
+
+    def test_underscore_variant_matches(self):
+        """agentic_ai_summit vs agentic ai summit → TCR = 1.0"""
+        assert token_containment_ratio("agentic_ai_summit", "agentic ai summit") == 1.0
+
+    def test_year_variant_matches(self):
+        """etsi ai data conference 2026 vs etsi ai data conference → TCR = 1.0"""
+        assert (
+            token_containment_ratio("etsi ai data conference 2026", "etsi ai data conference")
+            == 1.0
+        )
+
+    def test_year_suffix_matches(self):
+        """agentica2026 vs agentica → TCR = 1.0"""
+        assert token_containment_ratio("agentica2026", "agentica") == 1.0
+
+    def test_abbreviation_partial_overlap(self):
+        """applied ai conference vs applied ai conf → TCR = 2/3 ≈ 0.67"""
+        tcr = token_containment_ratio("applied ai conference", "applied ai conf")
+        assert tcr == pytest.approx(2 / 3)
+
+    def test_no_overlap(self):
+        assert token_containment_ratio("kef ls50", "nvidia rtx") == 0.0
+
+    def test_empty_returns_zero(self):
+        """Pure year vs pure year → both empty after normalization → 0.0"""
+        assert token_containment_ratio("2026", "2025") == 0.0
 
 
 class TestFindSimilar:

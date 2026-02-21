@@ -1187,10 +1187,10 @@ async def test_extraction_deduplicates_entities_at_insertion_time(
         elif "New facts:" in prompt:
             return mock_ollama._make_text_response(request, "dedup-notification")
         else:
-            # LLM returns "stanford university" as a new entity
+            # LLM returns underscore variant — tests separator normalization in dedup
             return mock_ollama._make_text_response(
                 request,
-                json.dumps({"known": [], "new": [{"name": "Stanford University"}]}),
+                json.dumps({"known": [], "new": [{"name": "Stanford_University"}]}),
             )
 
     mock_ollama.set_response_handler(handler)
@@ -1218,12 +1218,13 @@ async def test_extraction_deduplicates_entities_at_insertion_time(
 
         await penny.extraction_pipeline.execute()
 
-        # Verify NO new entity was created — "stanford university" should be deduped
+        # Verify NO new entity was created — "stanford_university" should be deduped
+        # (underscore normalized to space in tokenization → TCR = 1.0 vs "stanford")
         entities = penny.db.get_user_entities(TEST_SENDER)
         entity_names = [e.name for e in entities]
         assert "stanford" in entity_names
-        assert "stanford university" not in entity_names, (
-            f"Duplicate entity should not be created, got: {entity_names}"
+        assert "stanford_university" not in entity_names, (
+            f"Underscore variant should be deduped, got: {entity_names}"
         )
         assert len(entities) == 1
 

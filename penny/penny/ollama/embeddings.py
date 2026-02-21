@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import struct
 import unicodedata
 
@@ -82,9 +83,23 @@ def normalize_unicode(text: str) -> str:
     return stripped
 
 
+_TRAILING_YEAR_RE = re.compile(r"20\d{2}$")
+
+
 def tokenize_entity_name(text: str) -> list[str]:
-    """Tokenize an entity name for dedup comparison (unicode-normalized, lowercased)."""
-    return normalize_unicode(text).lower().split()
+    """Tokenize an entity name for dedup comparison.
+
+    Applies unicode normalization, lowercasing, separator normalization
+    (underscores/hyphens → spaces), and trailing year stripping (2000-2099).
+    """
+    normalized = normalize_unicode(text).lower()
+    # Normalize separators to spaces
+    normalized = normalized.replace("_", " ").replace("-", " ")
+    tokens = normalized.split()
+    # Strip trailing year suffix (2000-2099): "agentica2026" → "agentica", "2026" → ""
+    tokens = [_TRAILING_YEAR_RE.sub("", t) for t in tokens]
+    # Filter empty tokens (pure year tokens become empty)
+    return [t for t in tokens if t]
 
 
 def token_containment_ratio(name_a: str, name_b: str) -> float:
