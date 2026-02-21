@@ -964,6 +964,7 @@ class Database:
         source_search_log_id: int | None = None,
         source_message_id: int | None = None,
         embedding: bytes | None = None,
+        notified_at: datetime | None = None,
     ) -> Fact | None:
         """
         Add a fact to an entity.
@@ -975,6 +976,7 @@ class Database:
             source_search_log_id: SearchLog ID that produced this fact
             source_message_id: MessageLog ID that produced this fact
             embedding: Serialized embedding vector (optional)
+            notified_at: Pre-mark as notified (e.g. user-sourced facts)
 
         Returns:
             The created Fact, or None on failure
@@ -988,6 +990,7 @@ class Database:
                     source_search_log_id=source_search_log_id,
                     source_message_id=source_message_id,
                     embedding=embedding,
+                    notified_at=notified_at,
                 )
                 session.add(fact)
 
@@ -1411,6 +1414,43 @@ class Database:
                     logger.debug("Updated last_verified on fact %d", fact_id)
         except Exception as e:
             logger.error("Failed to update fact %d last_verified: %s", fact_id, e)
+
+    def get_unnotified_facts(self, user: str) -> list[Fact]:
+        """Get facts that haven't been communicated to a user yet.
+
+        Returns facts where notified_at IS NULL for entities owned by this user,
+        ordered by learned_at descending (newest first).
+        """
+        with self.get_session() as session:
+            return list(
+                session.exec(
+                    select(Fact)
+                    .join(Entity, Fact.entity_id == Entity.id)  # type: ignore[invalid-argument-type]
+                    .where(Entity.user == user, Fact.notified_at == None)  # noqa: E711
+                    .order_by(Fact.learned_at.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
+    def mark_facts_notified(self, fact_ids: list[int]) -> None:
+        """Mark facts as notified (communicated to user).
+
+        Args:
+            fact_ids: List of fact IDs to mark
+        """
+        if not fact_ids:
+            return
+        try:
+            now = datetime.now(UTC)
+            with self.get_session() as session:
+                for fact_id in fact_ids:
+                    fact = session.get(Fact, fact_id)
+                    if fact:
+                        fact.notified_at = now
+                        session.add(fact)
+                session.commit()
+                logger.debug("Marked %d facts as notified", len(fact_ids))
+        except Exception as e:
+            logger.error("Failed to mark facts as notified: %s", e)
 
     # --- Engagement methods ---
 

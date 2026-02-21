@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from collections import defaultdict
@@ -25,7 +24,6 @@ from penny.prompts import Prompt
 from penny.tools.models import SearchResult
 
 if TYPE_CHECKING:
-    from penny.channels import MessageChannel
     from penny.tools import Tool
 
 logger = logging.getLogger(__name__)
@@ -111,7 +109,6 @@ class LearnLoopAgent(Agent):
 
     def __init__(self, search_tool: Tool | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self._channel: MessageChannel | None = None
         self._search_tool = search_tool
 
     @property
@@ -119,20 +116,12 @@ class LearnLoopAgent(Agent):
         """Task name for logging."""
         return "learn_loop"
 
-    def set_channel(self, channel: MessageChannel) -> None:
-        """Set the channel for sending proactive messages."""
-        self._channel = channel
-
     async def execute(self) -> bool:
         """Run one cycle of the learn loop.
 
         Returns:
             True if work was done, False if nothing to research.
         """
-        if not self._channel:
-            logger.error("LearnLoopAgent: no channel set")
-            return False
-
         if not self._search_tool:
             logger.debug("LearnLoopAgent: no search tool configured")
             return False
@@ -194,10 +183,6 @@ class LearnLoopAgent(Agent):
         if stored_facts and self.embedding_model:
             await self._update_entity_embedding(entity)
             logger.info("Updated entity embedding for '%s'", entity.name)
-
-        # Send message if we found novel info
-        if stored_facts:
-            await self._send_findings_message(user, entity.name, stored_facts, is_enrichment)
 
         return True
 
@@ -428,49 +413,3 @@ class LearnLoopAgent(Agent):
             self.db.update_entity_embedding(entity.id, serialize_embedding(vecs[0]))
         except Exception as e:
             logger.warning("Failed to update entity embedding for '%s': %s", entity.name, e)
-
-    async def _send_findings_message(
-        self,
-        user: str,
-        entity_name: str,
-        new_facts: list[str],
-        is_enrichment: bool,
-    ) -> None:
-        """Compose and send a proactive message about findings."""
-        assert self._channel is not None
-
-        # Build prompt for message composition
-        facts_text = "\n".join(f"- {f}" for f in new_facts)
-
-        if is_enrichment:
-            prompt_template = Prompt.LEARN_ENRICHMENT_MESSAGE_PROMPT
-        else:
-            prompt_template = Prompt.LEARN_BRIEFING_MESSAGE_PROMPT
-
-        prompt = f"{prompt_template.format(entity_name=entity_name)}\n\nNew facts:\n{facts_text}"
-
-        # Inject a fake user turn so the model understands it's responding to the
-        # user's interest rather than composing a message into the void.
-        history = [("user", f"what's new with {entity_name}?")]
-        result = await self._compose_user_facing(prompt, history=history, image_query=entity_name)
-        if not result.answer:
-            return
-
-        attachments = result.attachments or None
-        typing_task = asyncio.create_task(self._channel._typing_loop(user))
-        try:
-            await self._channel.send_response(
-                user,
-                result.answer,
-                parent_id=None,  # Unsolicited, not threaded
-                attachments=attachments,
-            )
-            logger.info(
-                "Learn loop sent %s message about '%s' to %s",
-                "enrichment" if is_enrichment else "briefing",
-                entity_name,
-                user,
-            )
-        finally:
-            typing_task.cancel()
-            await self._channel.send_typing(user, False)

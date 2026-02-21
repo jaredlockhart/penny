@@ -1284,11 +1284,11 @@ async def test_extraction_discards_fragment_entities(
         assert len(entities) == 1
 
 
-# --- Fact discovery notifications ---
+# --- Extraction no longer sends notifications ---
 
 
 @pytest.mark.asyncio
-async def test_extraction_fact_notification_backoff(
+async def test_extraction_does_not_send_notifications(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -1296,12 +1296,9 @@ async def test_extraction_fact_notification_backoff(
     test_user_info,
     running_penny,
 ):
-    """
-    Fact notifications respect exponential backoff:
-    1. First cycle: notification sent (no backoff)
-    2. Second cycle: notification suppressed (backoff > 0, no user reply)
-    3. User sends message → backoff resets
-    4. Third cycle: notification sent again
+    """Extraction stores facts silently — no notifications are sent.
+
+    The NotificationAgent (tested separately) owns all proactive messaging.
     """
     config = make_config()
 
@@ -1309,103 +1306,57 @@ async def test_extraction_fact_notification_backoff(
 
     def handler(request: dict, count: int) -> dict:
         call_count[0] += 1
-        # Inspect the prompt from the chat messages
         messages = request.get("messages", [])
         prompt = messages[-1]["content"] if messages else ""
         if "Entity:" in prompt:
-            # Fact extraction
             return mock_ollama._make_text_response(
                 request,
                 json.dumps({"facts": [f"interesting fact {call_count[0]}"]}),
             )
         elif "topics" in prompt.lower():
-            # Preference extraction — return nothing
             return mock_ollama._make_text_response(request, '{"topics": []}')
-        elif "came across a new topic" in prompt or "came across some new information" in prompt:
-            # Per-entity fact notification composition
-            return mock_ollama._make_text_response(
-                request,
-                "backoff-notification-composed — here are some interesting facts I came across!",
-            )
         else:
-            # Entity identification — return a unique new entity each time
             n = call_count[0]
             return mock_ollama._make_text_response(
                 request,
-                json.dumps({"known": [], "new": [{"name": f"backoff entity {n}"}]}),
+                json.dumps({"known": [], "new": [{"name": f"silent entity {n}"}]}),
             )
 
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Seed message for find_sender_for_timestamp and mark as processed
         msg_id = penny.db.log_message(
             direction="incoming", sender=TEST_SENDER, content="hello there friend"
         )
         penny.db.mark_messages_processed([msg_id])
 
-        # --- Cycle 1: notification sent (no backoff) ---
         penny.db.log_search(
-            query="backoff test 1",
-            response="Info about backoff entity 1.",
+            query="test query",
+            response="Info about silent entity 1.",
             trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
         )
 
         signal_server.outgoing_messages.clear()
         await penny.extraction_pipeline.execute()
 
-        cycle1_notifications = [
-            msg
-            for msg in signal_server.outgoing_messages
-            if "backoff-notification-composed" in msg["message"]
-        ]
-        assert len(cycle1_notifications) >= 1, "First cycle should send notification"
-
-        # --- Cycle 2: notification suppressed (backoff, no user reply) ---
-        penny.db.log_search(
-            query="backoff test 2",
-            response="Info about backoff entity 2.",
-            trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
+        # Extraction should NOT send any notifications
+        assert len(signal_server.outgoing_messages) == 0, (
+            "Extraction should not send notifications, "
+            f"got: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
         )
 
-        signal_server.outgoing_messages.clear()
-        await penny.extraction_pipeline.execute()
-
-        cycle2_notifications = [
-            msg
-            for msg in signal_server.outgoing_messages
-            if "backoff-notification-composed" in msg["message"]
-        ]
-        assert len(cycle2_notifications) == 0, "Second cycle should suppress notification (backoff)"
-
-        # --- User sends message → resets backoff ---
-        msg_id2 = penny.db.log_message(
-            direction="incoming", sender=TEST_SENDER, content="thanks for the info!"
-        )
-        penny.db.mark_messages_processed([msg_id2])
-
-        # --- Cycle 3: notification sent (backoff reset) ---
-        penny.db.log_search(
-            query="backoff test 3",
-            response="Info about backoff entity 3.",
-            trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
-        )
-
-        signal_server.outgoing_messages.clear()
-        await penny.extraction_pipeline.execute()
-
-        cycle3_notifications = [
-            msg
-            for msg in signal_server.outgoing_messages
-            if "backoff-notification-composed" in msg["message"]
-        ]
-        assert len(cycle3_notifications) >= 1, (
-            "Third cycle should send notification (backoff reset by user message)"
-        )
+        # But facts should be stored with notified_at=NULL (eligible for notification)
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        assert any(e.name == "silent entity 1" for e in entities)
+        entity = next(e for e in entities if e.name == "silent entity 1")
+        assert entity.id is not None
+        facts = penny.db.get_entity_facts(entity.id)
+        assert len(facts) >= 1
+        assert all(f.notified_at is None for f in facts)
 
 
 @pytest.mark.asyncio
-async def test_extraction_fact_notification_new_vs_known_entity(
+async def test_extraction_user_message_facts_pre_marked_notified(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -1413,10 +1364,7 @@ async def test_extraction_fact_notification_new_vs_known_entity(
     test_user_info,
     running_penny,
 ):
-    """
-    Per-entity discovery notifications are sent for each entity. New entities use
-    the new-entity prompt, known entities use the known-entity prompt.
-    """
+    """Facts from USER_MESSAGE searches are pre-marked as notified."""
     config = make_config()
 
     call_count = [0]
@@ -1426,87 +1374,41 @@ async def test_extraction_fact_notification_new_vs_known_entity(
         messages = request.get("messages", [])
         prompt = messages[-1]["content"] if messages else ""
         if "Entity:" in prompt:
-            # Fact extraction — check entity name in the "Entity: <name>" line
-            entity_line = [line for line in prompt.split("\n") if line.startswith("Entity:")]
-            entity_name = entity_line[0].split(":", 1)[1].strip().lower() if entity_line else ""
-            if "kef" in entity_name:
-                return mock_ollama._make_text_response(
-                    request,
-                    json.dumps({"facts": ["Won What Hi-Fi 2024 award"]}),
-                )
-            else:
-                return mock_ollama._make_text_response(
-                    request,
-                    json.dumps({"facts": ["Heritage cabinet design"]}),
-                )
-        elif "topics" in prompt.lower():
-            # Preference extraction — return nothing
-            return mock_ollama._make_text_response(request, '{"topics": []}')
-        elif "came across a new topic" in prompt:
-            # Per-entity notification for NEW entity — echo prompt for assertion
-            return mock_ollama._make_text_response(request, prompt)
-        elif "came across some new information" in prompt:
-            # Per-entity notification for KNOWN entity — echo prompt for assertion
-            return mock_ollama._make_text_response(request, prompt)
-        else:
-            # Entity identification — return known + new
             return mock_ollama._make_text_response(
                 request,
-                json.dumps(
-                    {
-                        "known": ["kef ls50 meta"],
-                        "new": [{"name": "Wharfedale Denton 85"}],
-                    }
-                ),
+                json.dumps({"facts": ["user-sourced fact"]}),
+            )
+        elif "topics" in prompt.lower():
+            return mock_ollama._make_text_response(request, '{"topics": []}')
+        else:
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"known": [], "new": [{"name": "user entity"}]}),
             )
 
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Pre-seed known entity
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
-        assert entity is not None and entity.id is not None
-        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
-
-        # Seed message for find_sender_for_timestamp and mark as processed
         msg_id = penny.db.log_message(
-            direction="incoming", sender=TEST_SENDER, content="compare speakers please"
+            direction="incoming", sender=TEST_SENDER, content="tell me about speakers"
         )
         penny.db.mark_messages_processed([msg_id])
 
+        # USER_MESSAGE trigger — facts should be pre-marked as notified
         penny.db.log_search(
-            query="speaker comparison",
-            response="KEF LS50 Meta vs Wharfedale Denton 85 comparison.",
-            trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
+            query="speakers",
+            response="Speaker info.",
+            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
         )
 
-        signal_server.outgoing_messages.clear()
         await penny.extraction_pipeline.execute()
 
-        # Should have two per-entity notifications (one new, one known)
-        new_notifications = [
-            msg
-            for msg in signal_server.outgoing_messages
-            if "came across a new topic" in msg["message"]
-        ]
-        known_notifications = [
-            msg
-            for msg in signal_server.outgoing_messages
-            if "came across some new information" in msg["message"]
-        ]
-        assert len(new_notifications) == 1, (
-            "Should send one new-entity notification, "
-            f"got messages: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
-        )
-        assert len(known_notifications) == 1, (
-            "Should send one known-entity notification, "
-            f"got messages: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
-        )
-
-        # New entity notification mentions the entity name
-        assert "wharfedale denton 85" in new_notifications[0]["message"]
-        # Known entity notification mentions the entity name
-        assert "kef ls50 meta" in known_notifications[0]["message"]
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        entity = next((e for e in entities if e.name == "user entity"), None)
+        assert entity is not None and entity.id is not None
+        facts = penny.db.get_entity_facts(entity.id)
+        assert len(facts) >= 1
+        assert all(f.notified_at is not None for f in facts)
 
 
 # --- Enrichment phase gating ---

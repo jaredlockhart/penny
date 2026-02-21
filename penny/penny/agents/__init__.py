@@ -9,6 +9,7 @@ from penny.agents.models import (
     ControllerResponse,
     MessageRole,
 )
+from penny.agents.notification import NotificationAgent
 
 __all__ = [
     "Agent",
@@ -18,4 +19,5 @@ __all__ = [
     "LearnLoopAgent",
     "MessageAgent",
     "MessageRole",
+    "NotificationAgent",
 ]
