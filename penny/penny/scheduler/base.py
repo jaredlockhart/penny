@@ -64,6 +64,7 @@ class BackgroundScheduler:
         self._current_task: str | None = None
         self._last_run_times: dict[str, float] = {}
         self._foreground_active = False
+        self._active_task: asyncio.Task[bool] | None = None
 
     def notify_message(self) -> None:
         """Called when a new message arrives. Resets all schedules."""
@@ -73,9 +74,18 @@ class BackgroundScheduler:
         logger.debug("Scheduler: all schedules reset by incoming message")
 
     def notify_foreground_start(self) -> None:
-        """Called when foreground work (message/command processing) starts."""
+        """Called when foreground work (message/command processing) starts.
+
+        Cancels any running background task so Ollama is immediately free
+        to serve the user's message.
+        """
         self._foreground_active = True
-        logger.debug("Scheduler: foreground work started, background tasks suspended")
+        if self._active_task and not self._active_task.done():
+            self._active_task.cancel()
+            logger.info(
+                "Scheduler: cancelled background task %s for foreground priority",
+                self._current_task,
+            )
 
     def notify_foreground_end(self) -> None:
         """Called when foreground work (message/command processing) ends."""
@@ -126,16 +136,20 @@ class BackgroundScheduler:
                         logger.debug("Running background task: %s", agent.name)
 
                         try:
-                            did_work = await agent.execute()
+                            self._active_task = asyncio.create_task(agent.execute())
+                            did_work = await self._active_task
                             schedule.mark_complete()
                             self._last_run_times[agent.name] = time.monotonic()
 
                             if did_work:
                                 logger.info("Background task completed: %s", agent.name)
 
+                        except asyncio.CancelledError:
+                            logger.info("Background task cancelled: %s", agent.name)
                         except Exception as e:
                             logger.exception("Background task failed: %s - %s", agent.name, e)
                         finally:
+                            self._active_task = None
                             self._current_task = None
 
                         # Only run one task per tick

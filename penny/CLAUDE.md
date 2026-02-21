@@ -188,7 +188,7 @@ The `scheduler/` module manages background tasks:
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
 - Passes `is_idle` boolean to schedules (whether system is past global idle threshold)
-- Suspends background tasks while foreground messages are being processed
+- **Cancels active background task** when a foreground message arrives (`notify_foreground_start()` calls `task.cancel()`), freeing Ollama immediately for the user's message. Cancelled tasks are idempotent — unprocessed items stay in their queues and are re-picked up on the next cycle
 
 ### Schedule Types (`scheduler/schedules.py`)
 
@@ -344,7 +344,7 @@ When extraction discovers new facts, one proactive message per entity is sent. U
 - **Priority scheduling**: Schedule executor → knowledge pipeline (extraction + enrichment in strict phase order)
 - **Always-run schedules**: User-created schedules run regardless of idle state; knowledge pipeline waits for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
-- **Background suspension**: Foreground message processing suspends background tasks to prevent interference
+- **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free Ollama immediately; cancelled work is idempotent and retried next cycle
 - **Vision captioning**: When images are present and `OLLAMA_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the foreground model. Search tools are disabled for image messages
 - **Channel abstraction**: Signal and Discord share the same interface; easy to add more platforms
 - **Async throughout**: asyncio, httpx.AsyncClient, ollama.AsyncClient, discord.py
