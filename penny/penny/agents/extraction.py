@@ -49,6 +49,7 @@ _NUMBERED_LIST_RE = re.compile(r"^\d+\.")
 _URL_RE = re.compile(r"https?://")
 _MARKDOWN_BOLD_RE = re.compile(r"\*\*")
 _ANGLE_BRACKET_RE = re.compile(r"<[^>]+>")
+_BARE_NUMBER_RE = re.compile(r"\d[\d.,]*")
 _ENTITY_NAME_MAX_WORDS = 8
 
 
@@ -69,6 +70,8 @@ def _is_valid_entity_name(name: str) -> bool:
     output artifacts, numbered list items, URLs, markdown, or newlines.
     """
     if len(name.split()) > _ENTITY_NAME_MAX_WORDS:
+        return False
+    if _BARE_NUMBER_RE.fullmatch(name.strip()):
         return False
     name_lower = name.lower()
     if any(artifact in name_lower for artifact in _LLM_ARTIFACT_PATTERNS):

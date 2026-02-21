@@ -906,6 +906,16 @@ def test_structural_entity_name_validation():
     assert _is_valid_entity_name("placeholder entity") is False
     assert _is_valid_entity_name("TODO") is False
 
+    # Bare numbers (years, integers, decimals, formatted)
+    assert _is_valid_entity_name("2026") is False
+    assert _is_valid_entity_name("42") is False
+    assert _is_valid_entity_name("3.14") is False
+    assert _is_valid_entity_name("1,000,000") is False
+
+    # Numbers with letters are valid entities
+    assert _is_valid_entity_name("Boeing 747") is True
+    assert _is_valid_entity_name("3M") is True
+
 
 @pytest.mark.asyncio
 async def test_semantic_entity_name_validation(
