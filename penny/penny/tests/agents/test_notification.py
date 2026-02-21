@@ -201,6 +201,69 @@ async def test_notification_skips_user_message_facts(
 
 
 @pytest.mark.asyncio
+async def test_notification_mentions_learn_topic(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """When facts come from a /learn search, the notification mentions the learn topic."""
+    config = make_config()
+
+    captured_prompts: list[str] = []
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+        captured_prompts.append(prompt)
+        return mock_ollama._make_text_response(
+            request,
+            "While looking into audiophile gear, I found out about KEF LS50 Meta — cool stuff!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        # Create the full chain: LearnPrompt → SearchLog → Fact
+        learn_prompt = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="audiophile gear",
+            searches_remaining=0,
+        )
+        assert learn_prompt is not None and learn_prompt.id is not None
+
+        penny.db.log_search(
+            query="audiophile gear",
+            response="KEF LS50 Meta is a popular bookshelf speaker...",
+            trigger="learn_command",
+            learn_prompt_id=learn_prompt.id,
+        )
+        search_logs = penny.db.get_search_logs_by_learn_prompt(learn_prompt.id)
+        assert len(search_logs) == 1
+
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+        penny.db.add_fact(
+            entity.id,
+            "KEF LS50 Meta uses Metamaterial Absorption Technology",
+            source_search_log_id=search_logs[0].id,
+        )
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is True
+
+        # The prompt sent to the LLM should mention the learn topic
+        assert any("audiophile gear" in p for p in captured_prompts)
+
+
+@pytest.mark.asyncio
 async def test_notification_backoff_and_reset(
     signal_server,
     mock_ollama,

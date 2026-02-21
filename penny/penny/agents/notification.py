@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
+from penny.database.models import Fact
 from penny.interest import compute_interest_score
 from penny.prompts import Prompt
 
@@ -180,22 +181,49 @@ class NotificationAgent(Agent):
 
         return best_id
 
+    def _get_learn_topic(self, facts: list[Fact]) -> str | None:
+        """Trace facts back to a /learn prompt topic, if any.
+
+        Follows: Fact.source_search_log_id → SearchLog.learn_prompt_id → LearnPrompt.prompt_text
+        Returns the prompt_text of the first matching learn prompt, or None.
+        """
+        for fact in facts:
+            if fact.source_search_log_id is None:
+                continue
+            search_log = self.db.get_search_log(fact.source_search_log_id)
+            if search_log is None or search_log.learn_prompt_id is None:
+                continue
+            learn_prompt = self.db.get_learn_prompt(search_log.learn_prompt_id)
+            if learn_prompt is not None:
+                return learn_prompt.prompt_text
+        return None
+
     async def _send_notification(
-        self, user: str, entity: object, facts: list, is_new: bool
+        self, user: str, entity: object, facts: list[Fact], is_new: bool
     ) -> bool:
         """Compose and send a notification for one entity's new facts."""
         assert self._channel is not None
 
         facts_text = "\n".join(f"- {fact.content}" for fact in facts)
-        if is_new:
-            prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
-        else:
-            prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
+        learn_topic = self._get_learn_topic(facts)
 
-        prompt = (
-            f"{prompt_template.format(entity_name=entity.name)}"  # type: ignore[union-attr]
-            f"\n\nNew facts:\n{facts_text}"
-        )
+        if learn_topic:
+            if is_new:
+                prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_LEARN_PROMPT
+            else:
+                prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT
+            prompt_text = prompt_template.format(
+                entity_name=entity.name,  # type: ignore[union-attr]
+                learn_topic=learn_topic,
+            )
+        else:
+            if is_new:
+                prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
+            else:
+                prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
+            prompt_text = prompt_template.format(entity_name=entity.name)  # type: ignore[union-attr]
+
+        prompt = f"{prompt_text}\n\nNew facts:\n{facts_text}"
 
         result = await self._compose_user_facing(
             prompt,
