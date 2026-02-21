@@ -167,6 +167,22 @@ class ExtractedFacts(BaseModel):
     )
 
 
+class EntitySentiment(BaseModel):
+    """A single entity's sentiment from a user message."""
+
+    entity_name: str = Field(description="Name of the entity")
+    sentiment: str = Field(description="'positive' or 'negative'")
+
+
+class MessageSentiments(BaseModel):
+    """Schema for sentiment extraction from user messages."""
+
+    sentiments: list[EntitySentiment] = Field(
+        default_factory=list,
+        description="Entities with non-neutral sentiment expressed by the user",
+    )
+
+
 @dataclass
 class _ExtractionResult:
     """Result of _extract_and_store_entities."""
@@ -293,6 +309,18 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                         )
 
+                    # Create LEARN_COMMAND engagements for /learn-triggered searches
+                    if search_log.trigger == PennyConstants.SearchTrigger.LEARN_COMMAND:
+                        for entity in result.entities:
+                            assert entity.id is not None
+                            self.db.add_engagement(
+                                user=user,
+                                engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
+                                valence=PennyConstants.EngagementValence.POSITIVE,
+                                strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+                                entity_id=entity.id,
+                            )
+
             self.db.mark_search_extracted(search_log.id)
 
         return work_done
@@ -341,14 +369,34 @@ class ExtractionPipeline(Agent):
                     work_done = True
 
                     # Create MESSAGE_MENTION engagements for identified entities
+                    entity_by_name: dict[str, Entity] = {
+                        e.name: e for e in result.entities if e.id is not None
+                    }
                     for entity in result.entities:
                         assert entity.id is not None
                         self.db.add_engagement(
                             user=sender,
                             engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
-                            valence=PennyConstants.EngagementValence.NEUTRAL,
+                            valence=PennyConstants.EngagementValence.POSITIVE,
                             strength=PennyConstants.ENGAGEMENT_STRENGTH_MESSAGE_MENTION,
                             entity_id=entity.id,
+                            source_message_id=message.id,
+                        )
+
+                    # Extract sentiment and create EXPLICIT_STATEMENT engagements
+                    sentiments = await self._extract_message_sentiments(
+                        message.content, list(entity_by_name.keys())
+                    )
+                    for s in sentiments:
+                        matched = entity_by_name.get(s.entity_name)
+                        if not matched or matched.id is None:
+                            continue
+                        self.db.add_engagement(
+                            user=sender,
+                            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
+                            valence=s.sentiment,
+                            strength=PennyConstants.ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT,
+                            entity_id=matched.id,
                             source_message_id=message.id,
                         )
 
@@ -902,6 +950,42 @@ class ExtractionPipeline(Agent):
         except Exception:
             logger.debug("Follow-up engagement extraction failed", exc_info=True)
             return False
+
+    # --- Sentiment extraction ---
+
+    async def _extract_message_sentiments(
+        self, message_content: str, entity_names: list[str]
+    ) -> list[EntitySentiment]:
+        """Extract user sentiment toward entities mentioned in their message.
+
+        Returns only non-neutral sentiments. Gracefully returns empty on failure.
+        """
+        entities_context = "\n".join(f"- {name}" for name in entity_names)
+        prompt = (
+            f"{Prompt.MESSAGE_SENTIMENT_EXTRACTION_PROMPT}\n\n"
+            f"Entities found in this message:\n{entities_context}\n\n"
+            f"User message:\n{message_content}"
+        )
+
+        try:
+            response = await self._ollama_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=MessageSentiments.model_json_schema(),
+            )
+            result = MessageSentiments.model_validate_json(response.content)
+            return [
+                s
+                for s in result.sentiments
+                if s.sentiment
+                in (
+                    PennyConstants.EngagementValence.POSITIVE,
+                    PennyConstants.EngagementValence.NEGATIVE,
+                )
+            ]
+        except Exception:
+            logger.debug("Sentiment extraction failed", exc_info=True)
+            return []
 
     # --- Entity embedding updates ---
 

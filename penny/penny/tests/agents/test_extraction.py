@@ -160,7 +160,7 @@ async def test_extraction_skips_processed_search_logs(
     2. Run execute() again
     3. Verify no additional Ollama calls for extraction
     """
-    config = make_config()
+    config = make_config(learn_min_interest_score=99999.0)
 
     request_count = [0]
     extraction_calls = [0]
@@ -492,6 +492,14 @@ async def test_extraction_processes_messages_for_entities(
                 request,
                 json.dumps({"facts": ["User is interested in this speaker"]}),
             )
+        elif request_count[0] == 5:
+            # Sentiment extraction from message
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {"sentiments": [{"entity_name": "kef ls50 meta", "sentiment": "positive"}]}
+                ),
+            )
         else:
             # Preference extraction passes (likes, dislikes)
             return mock_ollama._make_text_response(request, '{"topics": []}')
@@ -530,8 +538,21 @@ async def test_extraction_processes_messages_for_entities(
             if e.engagement_type == PennyConstants.EngagementType.MESSAGE_MENTION
         ]
         assert len(mention_engagements) >= 1
-        assert mention_engagements[0].valence == PennyConstants.EngagementValence.NEUTRAL
+        assert mention_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
         assert mention_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_MESSAGE_MENTION
+
+        # Verify EXPLICIT_STATEMENT engagement was created from sentiment extraction
+        statement_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.EXPLICIT_STATEMENT
+        ]
+        assert len(statement_engagements) >= 1
+        assert statement_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
+        assert (
+            statement_engagements[0].strength
+            == PennyConstants.ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT
+        )
 
 
 @pytest.mark.asyncio
@@ -1379,6 +1400,17 @@ async def test_extraction_does_not_send_notifications(
         facts = penny.db.get_entity_facts(entity.id)
         assert len(facts) >= 1
         assert all(f.notified_at is None for f in facts)
+
+        # Verify LEARN_COMMAND engagement was created for learn-triggered search
+        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        learn_engagements = [
+            e
+            for e in engagements
+            if e.engagement_type == PennyConstants.EngagementType.LEARN_COMMAND
+        ]
+        assert len(learn_engagements) >= 1
+        assert learn_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
+        assert learn_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND
 
 
 @pytest.mark.asyncio
