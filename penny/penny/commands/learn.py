@@ -62,6 +62,8 @@ class LearnCommand(Command):
     def _show_status(self, context: CommandContext) -> CommandResult:
         """Show LearnPrompt status with provenance chain."""
         learn_prompts = context.db.get_user_learn_prompts(context.user)
+        # Hide announced learn prompts — their completion summary was already sent
+        learn_prompts = [lp for lp in learn_prompts if lp.announced_at is None]
         if not learn_prompts:
             return CommandResult(text=PennyResponse.LEARN_EMPTY)
 

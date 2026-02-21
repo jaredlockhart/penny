@@ -206,3 +206,53 @@ async def test_learn_prompt_crud(signal_server, test_config, mock_ollama, runnin
         active = penny.db.get_active_learn_prompts(TEST_SENDER)
         assert len(active) == 1  # Only lp2 is active; lp is completed
         assert active[0].id == lp2.id
+
+
+@pytest.mark.asyncio
+async def test_learn_status_hides_announced(signal_server, test_config, mock_ollama, running_penny):
+    """Announced learn prompts are hidden from /learn status display."""
+    async with running_penny(test_config) as penny:
+        # Create two learn prompts: one announced, one not
+        lp1 = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="announced topic",
+            searches_remaining=0,
+        )
+        assert lp1 is not None and lp1.id is not None
+        penny.db.update_learn_prompt_status(lp1.id, PennyConstants.LearnPromptStatus.COMPLETED)
+        penny.db.mark_learn_prompt_announced(lp1.id)
+
+        lp2 = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="active topic",
+            searches_remaining=3,
+        )
+        assert lp2 is not None
+
+        await signal_server.push_message(sender=TEST_SENDER, content="/learn")
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        # Only the non-announced prompt should appear
+        assert "active topic" in response["message"]
+        assert "announced topic" not in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_learn_status_empty_when_all_announced(
+    signal_server, test_config, mock_ollama, running_penny
+):
+    """When all learn prompts are announced, show the empty message."""
+    async with running_penny(test_config) as penny:
+        lp = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="finished topic",
+            searches_remaining=0,
+        )
+        assert lp is not None and lp.id is not None
+        penny.db.update_learn_prompt_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
+        penny.db.mark_learn_prompt_announced(lp.id)
+
+        await signal_server.push_message(sender=TEST_SENDER, content="/learn")
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        assert "Nothing being actively researched" in response["message"]

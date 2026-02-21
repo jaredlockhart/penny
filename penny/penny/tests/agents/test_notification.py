@@ -318,3 +318,182 @@ async def test_notification_backoff_and_reset(
         result3 = await agent.execute()
         assert result3 is True
         assert len(signal_server.outgoing_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_learn_completion_announcement(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Completion announcement sent when learn prompt is completed and all search logs extracted."""
+    config = make_config()
+    mock_ollama.set_default_flow(search_query="test", final_response="ok")
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        # Create a completed learn prompt with extracted search logs
+        lp = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="kef speakers",
+            searches_remaining=0,
+        )
+        assert lp is not None and lp.id is not None
+        penny.db.update_learn_prompt_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
+
+        penny.db.log_search(
+            query="kef speakers overview",
+            response="KEF makes great speakers...",
+            trigger="learn_command",
+            learn_prompt_id=lp.id,
+        )
+        search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
+        assert len(search_logs) == 1
+        # Mark as extracted
+        assert search_logs[0].id is not None
+        penny.db.mark_search_extracted(search_logs[0].id)
+
+        # Create entity and fact linked to the search log
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+            entity_id=entity.id,
+        )
+        penny.db.add_fact(
+            entity.id,
+            "KEF LS50 Meta uses Metamaterial Absorption Technology",
+            source_search_log_id=search_logs[0].id,
+        )
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is True
+
+        # Announcement should contain the topic and entity summary
+        msgs = signal_server.outgoing_messages
+        assert len(msgs) == 1
+        message = msgs[0]["message"]
+        assert "kef speakers" in message
+        assert "kef ls50 meta" in message
+        assert "1 fact" in message
+
+        # LearnPrompt should be marked as announced
+        updated_lp = penny.db.get_learn_prompt(lp.id)
+        assert updated_lp is not None
+        assert updated_lp.announced_at is not None
+
+
+@pytest.mark.asyncio
+async def test_learn_completion_not_sent_when_unextracted(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Completion announcement NOT sent when search logs are still unextracted."""
+    config = make_config()
+    mock_ollama.set_default_flow(search_query="test", final_response="ok")
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        # Create a completed learn prompt with UN-extracted search log
+        lp = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="kef speakers",
+            searches_remaining=0,
+        )
+        assert lp is not None and lp.id is not None
+        penny.db.update_learn_prompt_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
+
+        penny.db.log_search(
+            query="kef speakers overview",
+            response="KEF makes great speakers...",
+            trigger="learn_command",
+            learn_prompt_id=lp.id,
+        )
+        # Do NOT mark as extracted
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is False
+        assert len(signal_server.outgoing_messages) == 0
+
+        # LearnPrompt should NOT be announced
+        updated_lp = penny.db.get_learn_prompt(lp.id)
+        assert updated_lp is not None
+        assert updated_lp.announced_at is None
+
+
+@pytest.mark.asyncio
+async def test_learn_completion_marks_facts_notified(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """After learn completion announcement, un-notified facts from the learn prompt are marked."""
+    config = make_config()
+    mock_ollama.set_default_flow(search_query="test", final_response="ok")
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        lp = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="kef speakers",
+            searches_remaining=0,
+        )
+        assert lp is not None and lp.id is not None
+        penny.db.update_learn_prompt_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
+
+        penny.db.log_search(
+            query="kef speakers overview",
+            response="KEF makes great speakers...",
+            trigger="learn_command",
+            learn_prompt_id=lp.id,
+        )
+        search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
+        assert search_logs[0].id is not None
+        penny.db.mark_search_extracted(search_logs[0].id)
+
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+        penny.db.add_fact(
+            entity.id,
+            "KEF LS50 Meta costs $1,599",
+            source_search_log_id=search_logs[0].id,
+        )
+        penny.db.add_fact(
+            entity.id,
+            "KEF LS50 Meta uses MAT technology",
+            source_search_log_id=search_logs[0].id,
+        )
+
+        # Verify facts start un-notified
+        facts_before = penny.db.get_entity_facts(entity.id)
+        assert all(f.notified_at is None for f in facts_before)
+
+        agent = _create_notification_agent(penny, config)
+        await agent.execute()
+
+        # Facts should now be marked as notified
+        facts_after = penny.db.get_entity_facts(entity.id)
+        assert all(f.notified_at is not None for f in facts_after)

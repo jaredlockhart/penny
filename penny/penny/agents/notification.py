@@ -14,9 +14,10 @@ from datetime import UTC, datetime
 
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
-from penny.database.models import Fact
+from penny.database.models import Fact, LearnPrompt
 from penny.interest import compute_interest_score
 from penny.prompts import Prompt
+from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,9 @@ class NotificationAgent(Agent):
 
     Queries for un-notified facts, groups by entity, picks the highest-interest
     entity, composes a message, and sends it — one notification per cycle.
+
+    Also sends learn completion announcements when a /learn topic finishes
+    extraction, summarizing discovered entities with fact counts and interest scores.
     """
 
     def __init__(self, **kwargs: object) -> None:
@@ -61,10 +65,107 @@ class NotificationAgent(Agent):
 
         users = self.db.get_all_senders()
         for user in users:
+            # Learn completion announcements take priority and bypass backoff
+            if await self._try_learn_completion(user):
+                return True
             if await self._try_notify_user(user):
                 return True
 
         return False
+
+    # --- Learn completion announcements ---
+
+    async def _try_learn_completion(self, user: str) -> bool:
+        """Check for completed learn prompts and send a completion announcement.
+
+        Bypasses backoff — the user explicitly requested this research.
+        Returns True if an announcement was sent.
+        """
+        assert self._channel is not None
+
+        learn_prompts = self.db.get_unannounced_completed_learn_prompts(user)
+        if not learn_prompts:
+            return False
+
+        for lp in learn_prompts:
+            assert lp.id is not None
+            search_logs = self.db.get_search_logs_by_learn_prompt(lp.id)
+
+            if not search_logs:
+                # No searches were made (e.g., no search tool) — mark announced, skip
+                self.db.mark_learn_prompt_announced(lp.id)
+                continue
+
+            if not all(sl.extracted for sl in search_logs):
+                continue  # Extraction not finished yet
+
+            message = self._build_learn_completion_message(lp, user)
+            await self._channel.send_response(user, message, parent_id=None)
+            logger.info(
+                "Learn completion announcement sent for '%s' to %s",
+                lp.prompt_text,
+                user,
+            )
+
+            # Mark remaining un-notified facts from this learn prompt as notified
+            search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
+            facts = self.db.get_facts_by_search_log_ids(search_log_ids)
+            unnotified_ids = [f.id for f in facts if f.notified_at is None and f.id is not None]
+            if unnotified_ids:
+                self.db.mark_facts_notified(unnotified_ids)
+
+            self.db.mark_learn_prompt_announced(lp.id)
+            self._mark_proactive_sent(user)
+            return True
+
+        return False
+
+    def _build_learn_completion_message(self, lp: LearnPrompt, user: str) -> str:
+        """Build a structured completion summary for a learn prompt."""
+        assert lp.id is not None
+        header = PennyResponse.LEARN_COMPLETE_HEADER.format(topic=lp.prompt_text)
+
+        search_logs = self.db.get_search_logs_by_learn_prompt(lp.id)
+        search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
+        facts = self.db.get_facts_by_search_log_ids(search_log_ids)
+
+        if not facts:
+            return f"{header}\n\n{PennyResponse.LEARN_COMPLETE_NO_ENTITIES}"
+
+        # Group facts by entity
+        facts_by_entity: dict[int, list[Fact]] = defaultdict(list)
+        for fact in facts:
+            facts_by_entity[fact.entity_id].append(fact)
+
+        # Compute interest scores
+        all_engagements = self.db.get_user_engagements(user)
+        engagements_by_entity: dict[int, list] = defaultdict(list)
+        for eng in all_engagements:
+            if eng.entity_id is not None:
+                engagements_by_entity[eng.entity_id].append(eng)
+
+        # Build entity lines sorted by interest score descending
+        entity_lines: list[tuple[float, str]] = []
+        for entity_id, entity_facts in facts_by_entity.items():
+            entity = self.db.get_entity(entity_id)
+            if entity is None:
+                continue
+            score = compute_interest_score(engagements_by_entity.get(entity_id, []))
+            fact_count = len(entity_facts)
+            line = PennyResponse.LEARN_COMPLETE_ENTITY_LINE.format(
+                name=entity.name,
+                fact_count=fact_count,
+                score=f"{score:.1f}",
+            )
+            entity_lines.append((score, line))
+
+        entity_lines.sort(key=lambda x: x[0], reverse=True)
+
+        lines = [header, ""]
+        lines.extend(line for _, line in entity_lines)
+        return "\n".join(lines)
+
+    # --- Fact discovery notifications ---
 
     async def _try_notify_user(self, user: str) -> bool:
         """Attempt to send one notification to this user.
