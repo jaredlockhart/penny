@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -27,7 +26,6 @@ from penny.prompts import Prompt
 
 if TYPE_CHECKING:
     from penny.agents.learn_loop import LearnLoopAgent
-    from penny.channels import MessageChannel
     from penny.database.models import MessageLog
 
 logger = logging.getLogger(__name__)
@@ -126,55 +124,27 @@ class ExtractedFacts(BaseModel):
 
 
 @dataclass
-class _EntityFactDiscovery:
-    """Facts discovered for a single entity during extraction."""
-
-    entity: Entity
-    new_facts: list[str]
-    is_new_entity: bool
-
-
-@dataclass
 class _ExtractionResult:
-    """Result of _extract_and_store_entities with discovery info for notifications."""
+    """Result of _extract_and_store_entities."""
 
     entities: list[Entity] = field(default_factory=list)
-    discoveries: list[_EntityFactDiscovery] = field(default_factory=list)
-
-
-class _UserBackoff:
-    """Per-user backoff state for proactive fact notifications."""
-
-    __slots__ = ("last_proactive_send", "backoff_seconds")
-
-    def __init__(self) -> None:
-        self.last_proactive_send: datetime | None = None
-        self.backoff_seconds: float = 0.0
 
 
 class ExtractionPipeline(Agent):
-    """Unified background agent that extracts entities, facts, preferences, and engagements.
+    """Unified background agent that extracts entities, facts, and engagements.
 
-    Replaces the separate EntityExtractor and PreferenceAgent with a single pipeline
-    that processes both SearchLog and MessageLog entries.
+    Processes SearchLog and MessageLog entries to discover entities and facts.
+    Does not send notifications — the NotificationAgent handles that separately.
     """
 
     def __init__(self, learn_loop: LearnLoopAgent | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self._channel: MessageChannel | None = None
-        self._backoff_state: dict[str, _UserBackoff] = {}
         self._learn_loop = learn_loop
 
     @property
     def name(self) -> str:
         """Task name for logging."""
         return "extraction"
-
-    def set_channel(self, channel: MessageChannel) -> None:
-        """Set the channel for sending notifications (forwarded to learn loop)."""
-        self._channel = channel
-        if self._learn_loop:
-            self._learn_loop.set_channel(channel)
 
     async def execute(self) -> bool:
         """Run the knowledge pipeline in strict priority order.
@@ -247,6 +217,10 @@ class ExtractionPipeline(Agent):
                 search_log.query,
                 "full" if allow_new else "known-only",
             )
+            # Pre-mark user-sourced facts as notified (user already knows about them)
+            silent = search_log.trigger == PennyConstants.SearchTrigger.USER_MESSAGE
+            notified_at = datetime.now(UTC) if silent else None
+
             result = await self._extract_and_store_entities(
                 user=user,
                 identification_prompt=id_prompt,
@@ -258,6 +232,7 @@ class ExtractionPipeline(Agent):
                 allow_new_entities=allow_new,
                 relevance_reference=relevance_ref,
                 record_discovery_score=True,
+                notified_at=notified_at,
             )
             if result.entities:
                 work_done = True
@@ -273,15 +248,6 @@ class ExtractionPipeline(Agent):
                             strength=PennyConstants.ENGAGEMENT_STRENGTH_SEARCH_INITIATED,
                             entity_id=entity.id,
                         )
-
-            # Send per-entity discovery notifications (respecting backoff).
-            # Silent for USER_MESSAGE searches — Penny already replied in the
-            # conversation; only announce for learn/enrichment-triggered searches.
-            notify = search_log.trigger != PennyConstants.SearchTrigger.USER_MESSAGE
-            if notify and result.discoveries and self._should_send_proactive(user):
-                for discovery in result.discoveries:
-                    await self._send_fact_notification(user, discovery, relevance_ref)
-                self._mark_proactive_sent(user)
 
             self.db.mark_search_extracted(search_log.id)
 
@@ -325,6 +291,7 @@ class ExtractionPipeline(Agent):
                     context_value=message.content,
                     content=message.content,
                     source_message_id=message.id,
+                    notified_at=datetime.now(UTC),  # User-sourced — don't notify
                 )
                 if result.entities:
                     work_done = True
@@ -371,6 +338,7 @@ class ExtractionPipeline(Agent):
         allow_new_entities: bool = True,
         relevance_reference: str | None = None,
         record_discovery_score: bool = False,
+        notified_at: datetime | None = None,
     ) -> _ExtractionResult:
         """Two-pass extraction for a single piece of content.
 
@@ -384,14 +352,14 @@ class ExtractionPipeline(Agent):
                 relevance gating. Defaults to context_value when not provided.
                 For /learn searches, this should be the original learn prompt text
                 rather than the intermediate search query.
+            notified_at: Pre-mark stored facts as notified (e.g. user-sourced facts).
 
-        Returns _ExtractionResult with all identified entities and per-entity discoveries.
+        Returns _ExtractionResult with all identified entities.
         """
         existing_entities = self.db.get_user_entities(user)
 
         # Collect all entities to process facts for
         entities_to_process: list[Entity] = []
-        newly_created_names: set[str] = set()
         existing_by_name = {e.name: e for e in existing_entities}
 
         # Pre-filter entities by embedding similarity to reduce LLM prompt size
@@ -446,12 +414,9 @@ class ExtractionPipeline(Agent):
                 if duplicate:
                     resolved_entity = duplicate
                 else:
-                    is_new = name not in existing_by_name
                     resolved_entity = self.db.get_or_create_entity(user, name)
                     if not resolved_entity or resolved_entity.id is None:
                         continue
-                    if is_new:
-                        newly_created_names.add(resolved_entity.name)
                     logger.info("New entity discovered: '%s'", name)
 
                 entities_to_process.append(resolved_entity)
@@ -488,7 +453,6 @@ class ExtractionPipeline(Agent):
 
         # Pass 2: extract facts for each identified entity
         entities_with_new_facts: list[int] = []
-        discoveries: list[_EntityFactDiscovery] = []
         for entity in entities_to_process:
             assert entity.id is not None
             new_facts = await self._extract_facts(
@@ -523,16 +487,11 @@ class ExtractionPipeline(Agent):
                     source_search_log_id=source_search_log_id,
                     source_message_id=source_message_id,
                     embedding=emb,
+                    notified_at=notified_at,
                 )
                 logger.info("  '%s' +fact: %s", entity.name, fact_text)
 
             entities_with_new_facts.append(entity.id)
-            discovery = _EntityFactDiscovery(
-                entity=entity,
-                new_facts=new_fact_texts,
-                is_new_entity=entity.name in newly_created_names,
-            )
-            discoveries.append(discovery)
 
         # Regenerate entity embeddings for entities that got new facts
         if self.embedding_model and entities_with_new_facts:
@@ -540,7 +499,7 @@ class ExtractionPipeline(Agent):
                 [e for e in entities_to_process if e.id in entities_with_new_facts]
             )
 
-        return _ExtractionResult(entities=entities_to_process, discoveries=discoveries)
+        return _ExtractionResult(entities=entities_to_process)
 
     async def _identify_entities(
         self,
@@ -899,116 +858,6 @@ class ExtractionPipeline(Agent):
         except Exception:
             logger.debug("Follow-up engagement extraction failed", exc_info=True)
             return False
-
-    # --- Fact discovery notifications ---
-
-    def _should_send_proactive(self, user: str) -> bool:
-        """Check if we should send proactive notifications to this user (backoff check)."""
-        state = self._backoff_state.get(user)
-        if state is None:
-            return True
-
-        # Check if user has sent a message since our last proactive send
-        if state.last_proactive_send is not None:
-            latest_incoming = self.db.get_latest_incoming_message_time(user)
-            if latest_incoming is not None:
-                incoming_time = latest_incoming
-                if incoming_time.tzinfo is None:
-                    incoming_time = incoming_time.replace(tzinfo=UTC)
-                last_send = state.last_proactive_send
-                if last_send.tzinfo is None:
-                    last_send = last_send.replace(tzinfo=UTC)
-                if incoming_time > last_send:
-                    state.backoff_seconds = 0.0
-
-        if state.backoff_seconds <= 0:
-            return True
-
-        if state.last_proactive_send is None:
-            return True
-
-        now = datetime.now(UTC)
-        last_send = state.last_proactive_send
-        if last_send.tzinfo is None:
-            last_send = last_send.replace(tzinfo=UTC)
-        elapsed = (now - last_send).total_seconds()
-        return elapsed >= state.backoff_seconds
-
-    def _mark_proactive_sent(self, user: str) -> None:
-        """Record that we sent proactive notifications and increase backoff."""
-        state = self._backoff_state.get(user)
-        if state is None:
-            state = _UserBackoff()
-            self._backoff_state[user] = state
-
-        state.last_proactive_send = datetime.now(UTC)
-        if state.backoff_seconds <= 0:
-            state.backoff_seconds = self.config.runtime.NOTIFICATION_INITIAL_BACKOFF
-        else:
-            state.backoff_seconds = min(
-                state.backoff_seconds * 2,
-                self.config.runtime.NOTIFICATION_MAX_BACKOFF,
-            )
-
-    async def _send_fact_notification(
-        self,
-        user: str,
-        discovery: _EntityFactDiscovery,
-        learn_prompt_text: str | None = None,
-    ) -> None:
-        """Compose and send a notification for a single entity's newly discovered facts."""
-        if not self._channel:
-            return
-
-        facts_text = "\n".join(f"- {fact}" for fact in discovery.new_facts)
-        if discovery.is_new_entity:
-            prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
-        else:
-            prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
-
-        prompt = (
-            f"{prompt_template.format(entity_name=discovery.entity.name)}"
-            f"\n\nNew facts:\n{facts_text}"
-        )
-
-        # Inject the learn prompt as a prior user turn so the model understands
-        # it's responding to the user's request rather than writing into the void.
-        history = [("user", learn_prompt_text)] if learn_prompt_text else None
-        result = await self._compose_user_facing(
-            prompt, history=history, image_query=discovery.entity.name
-        )
-        if not result.answer:
-            return
-        if len(result.answer) < self.config.runtime.NOTIFICATION_MIN_LENGTH:
-            logger.debug(
-                "Skipping near-empty notification (%d chars): %r",
-                len(result.answer),
-                result.answer,
-            )
-            return
-
-        await self._send_notification(user, result.answer, attachments=result.attachments)
-
-    # --- General notifications ---
-
-    async def _send_notification(
-        self, recipient: str, message: str, attachments: list[str] | None = None
-    ) -> None:
-        """Send a notification message to the user."""
-        if not self._channel:
-            return
-
-        typing_task = asyncio.create_task(self._channel._typing_loop(recipient))
-        try:
-            await self._channel.send_response(
-                recipient,
-                message,
-                parent_id=None,
-                attachments=attachments,
-            )
-        finally:
-            typing_task.cancel()
-            await self._channel.send_typing(recipient, False)
 
     # --- Entity embedding updates ---
 

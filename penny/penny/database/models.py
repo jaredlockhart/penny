@@ -167,4 +167,5 @@ class Fact(SQLModel, table=True):
     source_message_id: int | None = Field(default=None, foreign_key="messagelog.id", index=True)
     learned_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_verified: datetime | None = None
+    notified_at: datetime | None = None  # When this fact was communicated to user
     embedding: bytes | None = None  # Serialized float32 embedding vector

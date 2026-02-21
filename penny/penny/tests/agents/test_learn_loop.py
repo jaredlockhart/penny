@@ -21,26 +21,12 @@ async def test_learn_loop_enrichment(
     """Entity with few facts and positive interest → enrichment search."""
     config = make_config()
 
-    # Mock: first call returns extracted facts JSON, second returns composed message
-    call_count = [0]
-
     def handler(request: dict, count: int) -> dict:
-        call_count[0] += 1
-        messages = request.get("messages", [])
-        last_content = messages[-1].get("content", "") if messages else ""
-
-        if "Extract specific" in last_content or "ENTITY_FACT" in last_content:
-            # Fact extraction call — return structured JSON
-            return mock_ollama._make_text_response(
-                request,
-                json.dumps({"facts": ["Costs $1,599 per pair", "Uses MAT driver technology"]}),
-            )
-        else:
-            # Message composition call
-            return mock_ollama._make_text_response(
-                request,
-                "Hey! I just looked into kef ls50 meta — it costs $1,599 and uses MAT driver tech!",
-            )
+        # Fact extraction call — return structured JSON
+        return mock_ollama._make_text_response(
+            request,
+            json.dumps({"facts": ["Costs $1,599 per pair", "Uses MAT driver technology"]}),
+        )
 
     mock_ollama.set_response_handler(handler)
 
@@ -77,16 +63,16 @@ async def test_learn_loop_enrichment(
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
-        agent.set_channel(penny.channel)
 
         result = await agent.execute()
         assert result is True
 
-        # Verify facts were stored
+        # Verify facts were stored with notified_at=NULL (notification agent's job)
         facts = penny.db.get_entity_facts(entity.id)
         assert len(facts) >= 1
         fact_texts = [f.content for f in facts]
         assert any("1,599" in t for t in fact_texts)
+        assert all(f.notified_at is None for f in facts)
 
         # Verify search was tagged as penny_enrichment
         search_logs = penny.db.get_unprocessed_search_logs(limit=10)
@@ -139,7 +125,6 @@ async def test_learn_loop_skips_negative_interest(
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
-        agent.set_channel(penny.channel)
 
         result = await agent.execute()
         assert result is False
@@ -171,14 +156,13 @@ async def test_learn_loop_no_entities(
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
-        agent.set_channel(penny.channel)
 
         result = await agent.execute()
         assert result is False
 
 
 @pytest.mark.asyncio
-async def test_learn_loop_no_channel(
+async def test_learn_loop_no_search_tool(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -186,12 +170,12 @@ async def test_learn_loop_no_channel(
     test_user_info,
     running_penny,
 ):
-    """Returns False when no channel is set."""
+    """Returns False when no search tool is configured."""
     config = make_config()
 
     async with running_penny(config) as penny:
         agent = LearnLoopAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
+            search_tool=None,
             system_prompt="",
             model=config.ollama_background_model,
             ollama_api_url=config.ollama_api_url,
@@ -203,7 +187,6 @@ async def test_learn_loop_no_channel(
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
-        # Don't set channel
 
         result = await agent.execute()
         assert result is False
@@ -277,7 +260,6 @@ async def test_learn_loop_dedup_facts(
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
-        agent.set_channel(penny.channel)
 
         result = await agent.execute()
         assert result is True
@@ -307,23 +289,8 @@ async def test_learn_loop_semantic_interest_priority(
     """
     config = make_config()
 
-    selected_entity = [None]
-
     def handler(request: dict, count: int) -> dict:
-        messages = request.get("messages", [])
-        last_content = messages[-1].get("content", "") if messages else ""
-
-        if "Extract specific" in last_content:
-            return mock_ollama._make_text_response(
-                request, json.dumps({"facts": ["Some new fact"]})
-            )
-        else:
-            # Message composition — capture which entity was selected
-            if "aamas" in last_content.lower():
-                selected_entity[0] = "aamas"
-            elif "coral beach hotel" in last_content.lower():
-                selected_entity[0] = "coral beach hotel"
-            return mock_ollama._make_text_response(request, "Found some cool stuff!")
+        return mock_ollama._make_text_response(request, json.dumps({"facts": ["Some new fact"]}))
 
     mock_ollama.set_response_handler(handler)
 
@@ -382,14 +349,20 @@ async def test_learn_loop_semantic_interest_priority(
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
-        agent.set_channel(penny.channel)
 
         result = await agent.execute()
         assert result is True
 
         # Entity A (aamas) should be selected because its SEARCH_DISCOVERY
-        # engagement has higher strength (0.9 vs 0.6)
-        assert selected_entity[0] == "aamas", (
-            f"Expected 'aamas' to be prioritized by semantic interest, "
-            f"but got '{selected_entity[0]}'"
+        # engagement has higher strength (0.9 vs 0.6).
+        # Verify by checking which entity got new facts stored.
+        facts_a = penny.db.get_entity_facts(entity_a.id)
+        facts_b = penny.db.get_entity_facts(entity_b.id)
+        assert len(facts_a) > 1, (
+            f"Expected entity A (aamas) to receive new facts from enrichment, "
+            f"but it still has {len(facts_a)} fact(s)"
+        )
+        assert len(facts_b) == 1, (
+            f"Expected entity B (coral beach hotel) to remain at 1 fact, "
+            f"but it has {len(facts_b)} fact(s)"
         )

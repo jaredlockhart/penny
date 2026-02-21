@@ -44,8 +44,9 @@ penny/
     base.py           — Agent base class: agentic loop, tool execution, Ollama integration
     models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
     message.py        — MessageAgent: handles incoming user messages
-    extraction.py     — ExtractionPipeline: unified entity/fact/preference extraction from search results and messages
-    learn_loop.py     — LearnLoopAgent: adaptive background research driven by interest scores
+    extraction.py     — ExtractionPipeline: unified entity/fact extraction from search results and messages (no notifications)
+    learn_loop.py     — LearnLoopAgent: adaptive background research driven by interest scores (no notifications)
+    notification.py   — NotificationAgent: interest-ranked fact discovery notifications with backoff
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
     schedules.py      — PeriodicSchedule, AlwaysRunSchedule, DelayedSchedule implementations
@@ -89,7 +90,7 @@ penny/
     database.py       — Database: SQLite via SQLModel, thread walking, preference/entity storage
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0019)
+    migrations/       — Numbered migration files (0001–0020)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client
     models.py         — ChatResponse, ChatResponseMessage
@@ -155,7 +156,8 @@ The base `Agent` class implements the core agentic loop:
 - Links new preferences to existing entities via embedding similarity
 - Fact dedup: normalized string match (fast) then embedding similarity (paraphrase detection, threshold=0.85)
 - Facts track provenance via `source_search_log_id` or `source_message_id`
-- Sends fact discovery notifications: one proactive message per entity with new facts, exponential backoff on silence
+- Facts from user messages and USER_MESSAGE searches are pre-marked with `notified_at` (user already knows)
+- Does NOT send notifications — the NotificationAgent handles all proactive messaging
 - All content processed newest-first (ORDER BY timestamp DESC)
 
 **LearnLoopAgent** (`agents/learn_loop.py`)
@@ -169,8 +171,19 @@ The base `Agent` class implements the core agentic loop:
 - Extracts facts via `ollama_client.generate()` with structured output (Pydantic schema)
 - Two-pass fact dedup: normalized string match (fast) then embedding similarity (threshold 0.85)
 - Confirms existing facts by updating `last_verified` timestamps
-- Composes casual message about novel findings and sends via channel
+- Stores facts with `notified_at=NULL` — the NotificationAgent surfaces them
 - Triggered by `/learn` command (creates LEARN_COMMAND engagement with high strength)
+
+**NotificationAgent** (`agents/notification.py`)
+- Single agent that owns ALL proactive messaging to users
+- Runs on its own PeriodicSchedule (after extraction pipeline in priority order)
+- Queries for un-notified facts (`notified_at IS NULL`), groups by entity
+- Picks the highest-interest entity using `compute_interest_score()`
+- Composes ONE message per cycle via `_compose_user_facing()` with image search
+- Exponential backoff per user (in-memory): 60s initial, doubles up to 3600s max
+- Backoff resets when user sends a message
+- Marks facts as notified (`notified_at = now`) after sending
+- Uses `FACT_DISCOVERY_NEW_ENTITY_PROMPT` for new entities, `FACT_DISCOVERY_KNOWN_ENTITY_PROMPT` for known
 
 **ScheduleExecutor** (`scheduler/schedule_runner.py`)
 - Background task: runs user-created cron-based scheduled tasks
@@ -183,7 +196,7 @@ The base `Agent` class implements the core agentic loop:
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule executor → knowledge pipeline)
+- Runs tasks in priority order (schedule executor → extraction pipeline → notification agent)
 - Tracks global idle threshold (default: 60s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
@@ -199,7 +212,7 @@ The `scheduler/` module manages background tasks:
 
 **PeriodicSchedule**
 - Runs periodically while system is idle at a configurable interval
-- Used for the knowledge pipeline (default: 10s, near-continuous while idle)
+- Used for the knowledge pipeline and notification agent (default: 10s, near-continuous while idle)
 - Tracks last run time and fires again after interval elapses
 - Resets when a message arrives
 
@@ -273,7 +286,7 @@ Penny learns what the user likes, finds information about those things, and proa
 ### Data Model
 
 - **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search
-- **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at` and `last_verified` timestamps
+- **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at`, `last_verified`, and `notified_at` timestamps. `notified_at=NULL` means not yet communicated to user
 - **Engagement**: User interest signals (likes, searches, mentions, reactions). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
 - **Preference**: User likes/dislikes with optional embeddings for entity matching
 - **LearnPrompt**: First-class learning prompt with lifecycle tracking — enables provenance chain: prompt → searches → facts → entities
@@ -308,7 +321,7 @@ New entity candidates pass through two filters before creation:
 
 ### Fact Discovery Notifications
 
-When extraction discovers new facts, one proactive message per entity is sent. Uses exponential backoff: each message without a user reply doubles the delay. User engagement resets backoff to zero.
+Notifications are decoupled from extraction. The ExtractionPipeline stores facts silently (with `notified_at=NULL` for discoverable facts, or `notified_at=now` for user-sourced facts). A separate NotificationAgent runs on its own schedule, queries for un-notified facts, picks the highest-interest entity, composes one message, and marks the facts as notified. Uses per-user exponential backoff: each message without a user reply doubles the delay. User engagement resets backoff to zero.
 
 ## Message Flow
 

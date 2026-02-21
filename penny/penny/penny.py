@@ -12,6 +12,7 @@ from penny.agents import (
     ExtractionPipeline,
     LearnLoopAgent,
     MessageAgent,
+    NotificationAgent,
 )
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
@@ -151,6 +152,20 @@ class Penny:
             config=config,
         )
 
+        self.notification_agent = NotificationAgent(
+            system_prompt="",  # No agent-specific prompt; identity added by _build_messages
+            model=config.ollama_background_model,
+            user_facing_model=config.ollama_foreground_model,
+            ollama_api_url=config.ollama_api_url,
+            tools=[],
+            db=self.db,
+            max_steps=1,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+            tool_timeout=config.tool_timeout,
+            config=config,
+        )
+
         self.schedule_executor = ScheduleExecutor(
             system_prompt="",  # ScheduleExecutor delegates to message_agent.run()
             model=config.ollama_background_model,
@@ -172,16 +187,16 @@ class Penny:
             command_registry=self.command_registry,
         )
 
-        # Connect agents that send messages to channel.
-        # ExtractionPipeline.set_channel() forwards to learn loop automatically.
-        self.extraction_pipeline.set_channel(self.channel)
+        # Connect agents that send proactive messages to channel
+        self.notification_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Schedules (priority: schedule executor, then unified knowledge pipeline)
+        # Schedules (priority: schedule executor → extraction → notification)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
         # ExtractionPipeline runs the unified knowledge pipeline: messages → search logs →
         # enrichment → embedding backfill (enrichment is gated — only runs when phases 1 & 2
         # are fully drained)
+        # NotificationAgent sends interest-ranked fact discovery notifications
         schedules = [
             AlwaysRunSchedule(
                 agent=self.schedule_executor,
@@ -189,6 +204,10 @@ class Penny:
             ),
             PeriodicSchedule(
                 agent=self.extraction_pipeline,
+                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
+            ),
+            PeriodicSchedule(
+                agent=self.notification_agent,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
         ]
