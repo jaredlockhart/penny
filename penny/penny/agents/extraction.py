@@ -1009,7 +1009,7 @@ class ExtractionPipeline(Agent):
     # --- Embedding backfill ---
 
     async def _backfill_embeddings(self) -> bool:
-        """Backfill embeddings for entities, facts, and preferences that don't have them.
+        """Backfill embeddings for entities and facts that don't have them.
 
         Returns:
             True if any embeddings were generated.
@@ -1051,19 +1051,5 @@ class ExtractionPipeline(Agent):
                 work_done = True
             except Exception as e:
                 logger.warning("Failed to backfill entity embeddings: %s", e)
-
-        # Backfill preference embeddings
-        prefs = self.db.get_preferences_without_embeddings(limit=batch_limit)
-        if prefs:
-            topics = [p.topic for p in prefs]
-            try:
-                vecs = await self._embedding_model_client.embed(topics)
-                for pref, vec in zip(prefs, vecs, strict=True):
-                    assert pref.id is not None
-                    self.db.update_preference_embedding(pref.id, serialize_embedding(vec))
-                logger.info("Backfilled embeddings for %d preferences", len(prefs))
-                work_done = True
-            except Exception as e:
-                logger.warning("Failed to backfill preference embeddings: %s", e)
 
         return work_done

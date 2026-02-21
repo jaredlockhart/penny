@@ -27,12 +27,12 @@ async def test_interests_ranked_by_score(signal_server, test_config, mock_ollama
         entity2 = penny.db.get_or_create_entity(TEST_SENDER, "espresso machines")
         penny.db.add_fact(entity2.id, "Brews coffee under pressure")
 
-        # Add strong engagement for entity1 (like_command = 0.8)
+        # Add strong engagement for entity1 (learn_command = 1.0)
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.LIKE_COMMAND,
+            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LIKE_COMMAND,
+            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
             entity_id=entity1.id,
         )
 
@@ -50,7 +50,7 @@ async def test_interests_ranked_by_score(signal_server, test_config, mock_ollama
 
         msg = response["message"]
         assert "Here's what I think you're interested in:" in msg
-        # Entity1 (score ~0.8) should be ranked above entity2 (score ~0.2)
+        # Entity1 (score ~1.0) should be ranked above entity2 (score ~0.2)
         assert "1. **kef ls50 meta**" in msg
         assert "2 facts" in msg
         assert "2. **espresso machines**" in msg
@@ -61,15 +61,15 @@ async def test_interests_ranked_by_score(signal_server, test_config, mock_ollama
 async def test_interests_shows_negative_scores(
     signal_server, test_config, mock_ollama, running_penny
 ):
-    """Test /interests shows entities with negative interest (disliked)."""
+    """Test /interests shows entities with negative interest."""
     async with running_penny(test_config) as penny:
         entity = penny.db.get_or_create_entity(TEST_SENDER, "sports")
 
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.DISLIKE_COMMAND,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
             valence=PennyConstants.EngagementValence.NEGATIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_DISLIKE_COMMAND,
+            strength=PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE,
             entity_id=entity.id,
         )
 
@@ -91,9 +91,9 @@ async def test_interests_skips_entities_without_engagements(
         entity1 = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.LIKE_COMMAND,
+            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LIKE_COMMAND,
+            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
             entity_id=entity1.id,
         )
 

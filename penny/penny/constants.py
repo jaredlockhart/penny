@@ -13,12 +13,6 @@ class PennyConstants:
         INCOMING = "incoming"
         OUTGOING = "outgoing"
 
-    class PreferenceType(StrEnum):
-        """Type of user preference."""
-
-        LIKE = "like"
-        DISLIKE = "dislike"
-
     class EngagementType(StrEnum):
         """Type of user engagement with an entity."""
 
@@ -28,8 +22,6 @@ class PennyConstants:
         FOLLOW_UP_QUESTION = "follow_up_question"
         LEARN_COMMAND = "learn_command"
         MESSAGE_MENTION = "message_mention"
-        LIKE_COMMAND = "like_command"
-        DISLIKE_COMMAND = "dislike_command"
         SEARCH_DISCOVERY = "search_discovery"
 
     class EngagementValence(StrEnum):
@@ -94,9 +86,6 @@ class PennyConstants:
     # Fact deduplication via embedding similarity
     FACT_DEDUP_SIMILARITY_THRESHOLD = 0.85
 
-    # Preference-to-entity linking via embedding similarity
-    PREFERENCE_ENTITY_LINK_THRESHOLD = 0.5
-
     # Entity context injection constants
     ENTITY_CONTEXT_TOP_K = 5
     ENTITY_CONTEXT_THRESHOLD = 0.3
@@ -106,8 +95,6 @@ class PennyConstants:
 
     # Engagement strength weights (0.0-1.0)
     ENGAGEMENT_STRENGTH_LEARN_COMMAND = 1.0
-    ENGAGEMENT_STRENGTH_LIKE_COMMAND = 0.8
-    ENGAGEMENT_STRENGTH_DISLIKE_COMMAND = 0.8
     ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT = 0.7
     ENGAGEMENT_STRENGTH_SEARCH_INITIATED = 0.6
     ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION = 0.5

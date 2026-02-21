@@ -337,16 +337,6 @@ class TestDatabaseEmbeddingMethods:
         assert fact is not None
         assert fact.embedding is None
 
-    def test_add_preference_with_embedding(self, tmp_path):
-        db = self._setup_db(tmp_path)
-        embedding = serialize_embedding([0.4, 0.5, 0.6])
-        added = db.add_preference("+1234", "cats", "like", embedding=embedding)
-        assert added is not None
-
-        prefs = db.get_preferences("+1234", "like")
-        assert len(prefs) == 1
-        assert prefs[0].embedding == embedding
-
     def test_update_entity_embedding(self, tmp_path):
         db = self._setup_db(tmp_path)
         entity = db.get_or_create_entity("+1234", "test entity")
@@ -375,18 +365,6 @@ class TestDatabaseEmbeddingMethods:
         facts = db.get_entity_facts(entity.id)
         assert len(facts) == 1
         assert facts[0].embedding == embedding
-
-    def test_update_preference_embedding(self, tmp_path):
-        db = self._setup_db(tmp_path)
-        db.add_preference("+1234", "dogs", "like")
-        prefs = db.get_preferences("+1234", "like")
-        assert len(prefs) == 1 and prefs[0].id is not None
-
-        embedding = serialize_embedding([0.9, 1.0])
-        db.update_preference_embedding(prefs[0].id, embedding)
-
-        prefs = db.get_preferences("+1234", "like")
-        assert prefs[0].embedding == embedding
 
     def test_get_entities_without_embeddings(self, tmp_path):
         db = self._setup_db(tmp_path)
@@ -420,15 +398,6 @@ class TestDatabaseEmbeddingMethods:
         without = db.get_facts_without_embeddings(limit=10)
         assert len(without) == 1
         assert without[0].content == "fact one"
-
-    def test_get_preferences_without_embeddings(self, tmp_path):
-        db = self._setup_db(tmp_path)
-        db.add_preference("+1234", "cats", "like")
-        db.add_preference("+1234", "dogs", "like", embedding=serialize_embedding([0.1]))
-
-        without = db.get_preferences_without_embeddings(limit=10)
-        assert len(without) == 1
-        assert without[0].topic == "cats"
 
 
 class TestDatabaseEngagementMethods:
@@ -502,7 +471,7 @@ class TestDatabaseEngagementMethods:
         )
         db.add_engagement(
             user="+5678",
-            engagement_type=PennyConstants.EngagementType.LIKE_COMMAND,
+            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.8,
             entity_id=entity.id,

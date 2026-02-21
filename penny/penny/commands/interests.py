@@ -24,8 +24,8 @@ class InterestsCommand(Command):
         "See what Penny thinks you're interested in, ranked by score.\n\n"
         "**Usage**:\n"
         "- `/interests` — Show ranked entities by interest score\n\n"
-        "Scores are computed from your interactions: likes, dislikes, "
-        "searches, reactions, and mentions. Higher scores mean stronger interest."
+        "Scores are computed from your interactions: searches, reactions, "
+        "mentions, and learn commands. Higher scores mean stronger interest."
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:

@@ -420,7 +420,7 @@ async def test_extraction_backfills_all_embeddings(
 ):
     """
     Test that ExtractionPipeline backfills embeddings for existing
-    entities, facts, AND preferences that don't have them.
+    entities and facts that don't have them.
     """
     config = make_config(ollama_embedding_model="nomic-embed-text")
 
@@ -430,24 +430,20 @@ async def test_extraction_backfills_all_embeddings(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Pre-seed entity, facts, and preferences WITHOUT embeddings
+        # Pre-seed entity and facts WITHOUT embeddings
         entity = penny.db.get_or_create_entity(TEST_SENDER, "test entity")
         assert entity is not None and entity.id is not None
         penny.db.add_fact(entity.id, "fact one")
         penny.db.add_fact(entity.id, "fact two")
-        penny.db.add_preference(TEST_SENDER, "cats", "like")
-        penny.db.add_preference(TEST_SENDER, "dogs", "like")
 
         assert len(penny.db.get_facts_without_embeddings(limit=10)) == 2
         assert len(penny.db.get_entities_without_embeddings(limit=10)) == 1
-        assert len(penny.db.get_preferences_without_embeddings(limit=10)) == 2
 
         work_done = await penny.extraction_pipeline.execute()
         assert work_done, "Backfill should count as work done"
 
         assert len(penny.db.get_facts_without_embeddings(limit=10)) == 0
         assert len(penny.db.get_entities_without_embeddings(limit=10)) == 0
-        assert len(penny.db.get_preferences_without_embeddings(limit=10)) == 0
 
 
 # --- Message entity extraction (new functionality) ---
