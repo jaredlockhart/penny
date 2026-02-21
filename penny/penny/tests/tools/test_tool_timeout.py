@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from penny.agents.base import Agent
+from penny.config import Config
 from penny.database import Database
 from penny.tools import ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.base import Tool
@@ -68,6 +69,19 @@ class TestToolTimeout:
         db = Database(test_db)
         db.create_tables()
 
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            ollama_api_url="http://localhost:11434",
+            ollama_foreground_model="test-model",
+            ollama_background_model="test-model",
+            perplexity_api_key=None,
+            log_level="DEBUG",
+            db_path=test_db,
+        )
         # Create agent with custom timeout
         agent = Agent(
             system_prompt="test",
@@ -75,6 +89,7 @@ class TestToolTimeout:
             ollama_api_url="http://localhost:11434",
             tools=[],
             db=db,
+            config=config,
             tool_timeout=90.0,
         )
 

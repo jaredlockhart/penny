@@ -614,7 +614,7 @@ class ExtractionPipeline(Agent):
         """
         if not self.embedding_model:
             return entities
-        if len(entities) < PennyConstants.ENTITY_PREFILTER_MIN_COUNT:
+        if len(entities) < self.config.extraction_prefilter_min_count:
             return entities
 
         entities_with_embeddings = [e for e in entities if e.embedding is not None]
@@ -637,7 +637,7 @@ class ExtractionPipeline(Agent):
                 content_vec,
                 candidates,
                 top_k=len(candidates),
-                threshold=PennyConstants.ENTITY_PREFILTER_SIMILARITY_THRESHOLD,
+                threshold=self.config.extraction_prefilter_similarity_threshold,
             )
 
             matched_indices = {idx for idx, _score in matches}
@@ -675,12 +675,13 @@ class ExtractionPipeline(Agent):
             )
             candidate_embedding = vecs[0]
             score = cosine_similarity(candidate_embedding, vecs[1])
-            if score < PennyConstants.ENTITY_NAME_SEMANTIC_THRESHOLD:
+            threshold = self.config.extraction_entity_semantic_threshold
+            if score < threshold:
                 logger.info(
                     "Rejected entity '%s' (similarity %.2f < %.2f)",
                     candidate_name,
                     score,
-                    PennyConstants.ENTITY_NAME_SEMANTIC_THRESHOLD,
+                    threshold,
                 )
                 return False, None, 0.0
             return True, candidate_embedding, score
@@ -707,11 +708,11 @@ class ExtractionPipeline(Agent):
             if entity.embedding is None:
                 continue
             tcr = token_containment_ratio(candidate_name, entity.name)
-            if tcr < PennyConstants.ENTITY_DEDUP_TCR_THRESHOLD:
+            if tcr < self.config.extraction_entity_dedup_tcr_threshold:
                 continue
             entity_vec = deserialize_embedding(entity.embedding)
             sim = cosine_similarity(candidate_embedding, entity_vec)
-            if sim >= PennyConstants.ENTITY_DEDUP_EMBEDDING_THRESHOLD:
+            if sim >= self.config.extraction_entity_dedup_embedding_threshold:
                 logger.info(
                     "Dedup: '%s' matches existing '%s' (TCR=%.2f, sim=%.2f)",
                     candidate_name,
@@ -805,7 +806,7 @@ class ExtractionPipeline(Agent):
                     query_vec,
                     existing_candidates,
                     top_k=1,
-                    threshold=PennyConstants.FACT_DEDUP_SIMILARITY_THRESHOLD,
+                    threshold=self.config.extraction_fact_dedup_similarity_threshold,
                 )
                 if matches:
                     logger.debug("Skipping duplicate fact (embedding match): %s", fact_text[:50])
@@ -819,11 +820,10 @@ class ExtractionPipeline(Agent):
 
     # --- Message filtering ---
 
-    @staticmethod
-    def _should_process_message(message: MessageLog) -> bool:
+    def _should_process_message(self, message: MessageLog) -> bool:
         """Lightweight pre-filter to skip low-signal messages before LLM calls."""
         content = message.content.strip()
-        if len(content) < PennyConstants.MIN_EXTRACTION_MESSAGE_LENGTH:
+        if len(content) < self.config.extraction_min_message_length:
             return False
         return not content.startswith("/")
 
@@ -925,11 +925,11 @@ class ExtractionPipeline(Agent):
 
         state.last_proactive_send = datetime.now(UTC)
         if state.backoff_seconds <= 0:
-            state.backoff_seconds = PennyConstants.FACT_NOTIFICATION_INITIAL_BACKOFF
+            state.backoff_seconds = self.config.notification_initial_backoff
         else:
             state.backoff_seconds = min(
                 state.backoff_seconds * 2,
-                PennyConstants.FACT_NOTIFICATION_MAX_BACKOFF,
+                self.config.notification_max_backoff,
             )
 
     async def _send_fact_notification(
@@ -961,7 +961,7 @@ class ExtractionPipeline(Agent):
         )
         if not result.answer:
             return
-        if len(result.answer) < PennyConstants.FACT_NOTIFICATION_MIN_LENGTH:
+        if len(result.answer) < self.config.notification_min_length:
             logger.debug(
                 "Skipping near-empty notification (%d chars): %r",
                 len(result.answer),

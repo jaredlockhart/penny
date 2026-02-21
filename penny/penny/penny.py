@@ -59,6 +59,7 @@ class Penny:
                 ollama_api_url=config.ollama_api_url,
                 tools=search_tools(db),
                 db=db,
+                config=config,
                 max_steps=config.message_max_steps,
                 max_retries=config.ollama_max_retries,
                 retry_delay=config.ollama_retry_delay,
@@ -128,6 +129,7 @@ class Penny:
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
             embedding_model=config.ollama_embedding_model,
+            config=config,
         )
 
         # Learn loop uses SearchTool directly (not the agentic loop)
@@ -144,6 +146,7 @@ class Penny:
             retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
             embedding_model=config.ollama_embedding_model,
+            config=config,
         )
 
         self.schedule_executor = ScheduleExecutor(
@@ -152,6 +155,7 @@ class Penny:
             ollama_api_url=config.ollama_api_url,
             tools=[],  # Schedule executor doesn't need tools itself
             db=self.db,
+            config=config,
             max_steps=1,  # Just executes schedules, doesn't need multi-step loop
             max_retries=config.ollama_max_retries,
             retry_delay=config.ollama_retry_delay,
