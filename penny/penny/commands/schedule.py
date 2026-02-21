@@ -137,7 +137,7 @@ class ScheduleCommand(Command):
         prompt = Prompt.SCHEDULE_PARSE_PROMPT.format(timezone=user_timezone, command=command)
 
         try:
-            response = await context.ollama_client.generate(
+            response = await context.foreground_model_client.generate(
                 prompt=prompt,
                 format="json",
             )

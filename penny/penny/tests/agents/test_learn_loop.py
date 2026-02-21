@@ -53,14 +53,12 @@ async def test_learn_loop_enrichment(
         agent = LearnLoopAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
             tools=[],
             db=penny.db,
             config=config,
             max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
 
@@ -115,14 +113,12 @@ async def test_learn_loop_skips_negative_interest(
         agent = LearnLoopAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
             tools=[],
             db=penny.db,
             config=config,
             max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
 
@@ -146,14 +142,12 @@ async def test_learn_loop_no_entities(
         agent = LearnLoopAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
             tools=[],
             db=penny.db,
             config=config,
             max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
 
@@ -177,14 +171,12 @@ async def test_learn_loop_no_search_tool(
         agent = LearnLoopAgent(
             search_tool=None,
             system_prompt="",
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
             tools=[],
             db=penny.db,
             config=config,
             max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
 
@@ -250,14 +242,12 @@ async def test_learn_loop_dedup_facts(
         agent = LearnLoopAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
             tools=[],
             db=penny.db,
             config=config,
             max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
 
@@ -339,14 +329,12 @@ async def test_learn_loop_semantic_interest_priority(
         agent = LearnLoopAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
             tools=[],
             db=penny.db,
             config=config,
             max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
 

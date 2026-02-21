@@ -232,7 +232,7 @@ class ExtractionPipeline(Agent):
             work_done |= await self._learn_loop.execute()
 
         # Phase 4: Backfill embeddings for items that don't have them
-        if self.embedding_model:
+        if self._embedding_model_client:
             work_done |= await self._backfill_embeddings()
 
         return work_done
@@ -562,11 +562,9 @@ class ExtractionPipeline(Agent):
 
             # Batch-embed all new facts at once
             fact_embeddings: list[bytes | None] = [None] * len(new_fact_texts)
-            if self.embedding_model:
+            if self._embedding_model_client:
                 try:
-                    vecs = await self._ollama_client.embed(
-                        new_fact_texts, model=self.embedding_model
-                    )
+                    vecs = await self._embedding_model_client.embed(new_fact_texts)
                     fact_embeddings = [serialize_embedding(v) for v in vecs]
                 except Exception as e:
                     logger.warning("Failed to embed facts for '%s': %s", entity.name, e)
@@ -586,7 +584,7 @@ class ExtractionPipeline(Agent):
             entities_with_new_facts.append(entity.id)
 
         # Regenerate entity embeddings for entities that got new facts
-        if self.embedding_model and entities_with_new_facts:
+        if self._embedding_model_client and entities_with_new_facts:
             await self._update_entity_embeddings(
                 [e for e in entities_to_process if e.id in entities_with_new_facts]
             )
@@ -618,7 +616,7 @@ class ExtractionPipeline(Agent):
         )
 
         try:
-            response = await self._ollama_client.generate(
+            response = await self._background_model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=IdentifiedEntities.model_json_schema(),
@@ -656,7 +654,7 @@ class ExtractionPipeline(Agent):
         )
 
         try:
-            response = await self._ollama_client.generate(
+            response = await self._background_model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=IdentifiedKnownEntities.model_json_schema(),
@@ -681,7 +679,7 @@ class ExtractionPipeline(Agent):
         filtering when the entity count is below ENTITY_PREFILTER_MIN_COUNT
         or when no embedding model is configured.
         """
-        if not self.embedding_model:
+        if not self._embedding_model_client:
             return entities
         if len(entities) < self.config.runtime.EXTRACTION_PREFILTER_MIN_COUNT:
             return entities
@@ -693,7 +691,7 @@ class ExtractionPipeline(Agent):
             return entities
 
         try:
-            content_vecs = await self._ollama_client.embed(content, model=self.embedding_model)
+            content_vecs = await self._embedding_model_client.embed(content)
             content_vec = content_vecs[0]
 
             candidates = [
@@ -736,12 +734,10 @@ class ExtractionPipeline(Agent):
         call. The similarity score is returned so callers can record it as engagement
         strength.
         """
-        if not self.embedding_model:
+        if not self._embedding_model_client:
             return True, None, 0.0
         try:
-            vecs = await self._ollama_client.embed(
-                [candidate_name, trigger_text], model=self.embedding_model
-            )
+            vecs = await self._embedding_model_client.embed([candidate_name, trigger_text])
             candidate_embedding = vecs[0]
             score = cosine_similarity(candidate_embedding, vecs[1])
             threshold = self.config.runtime.EXTRACTION_ENTITY_SEMANTIC_THRESHOLD
@@ -819,7 +815,7 @@ class ExtractionPipeline(Agent):
         )
 
         try:
-            response = await self._ollama_client.generate(
+            response = await self._background_model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=ExtractedFacts.model_json_schema(),
@@ -854,7 +850,7 @@ class ExtractionPipeline(Agent):
             return []
 
         # Slow pass: embedding similarity dedup
-        if not self.embedding_model:
+        if not self._embedding_model_client:
             return candidates
 
         facts_with_embeddings = [f for f in existing_facts if f.embedding is not None]
@@ -862,7 +858,7 @@ class ExtractionPipeline(Agent):
             return candidates
 
         try:
-            vecs = await self._ollama_client.embed(candidates, model=self.embedding_model)
+            vecs = await self._embedding_model_client.embed(candidates)
             existing_candidates = [
                 (i, deserialize_embedding(f.embedding))
                 for i, f in enumerate(facts_with_embeddings)
@@ -907,7 +903,7 @@ class ExtractionPipeline(Agent):
         Returns:
             True if any engagements were created.
         """
-        if not message.parent_id or not self.embedding_model:
+        if not message.parent_id or not self._embedding_model_client:
             return False
 
         parent_msg = self.db.get_message_by_id(message.parent_id)
@@ -927,7 +923,7 @@ class ExtractionPipeline(Agent):
             return False
 
         try:
-            vecs = await self._ollama_client.embed(parent_msg.content, model=self.embedding_model)
+            vecs = await self._embedding_model_client.embed(parent_msg.content)
             query_vec = vecs[0]
             matches = find_similar(
                 query_vec,
@@ -968,7 +964,7 @@ class ExtractionPipeline(Agent):
         )
 
         try:
-            response = await self._ollama_client.generate(
+            response = await self._background_model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=MessageSentiments.model_json_schema(),
@@ -991,7 +987,7 @@ class ExtractionPipeline(Agent):
 
     async def _update_entity_embeddings(self, entities: list[Entity]) -> None:
         """Regenerate embeddings for entities by composing name + facts."""
-        assert self.embedding_model is not None
+        assert self._embedding_model_client is not None
         if not entities:
             return
 
@@ -1002,7 +998,7 @@ class ExtractionPipeline(Agent):
             embed_texts.append(build_entity_embed_text(entity.name, [f.content for f in facts]))
 
         try:
-            vecs = await self._ollama_client.embed(embed_texts, model=self.embedding_model)
+            vecs = await self._embedding_model_client.embed(embed_texts)
             for entity, vec in zip(entities, vecs, strict=True):
                 assert entity.id is not None
                 self.db.update_entity_embedding(entity.id, serialize_embedding(vec))
@@ -1018,7 +1014,7 @@ class ExtractionPipeline(Agent):
         Returns:
             True if any embeddings were generated.
         """
-        assert self.embedding_model is not None
+        assert self._embedding_model_client is not None
         work_done = False
         batch_limit = PennyConstants.EMBEDDING_BACKFILL_BATCH_LIMIT
 
@@ -1027,7 +1023,7 @@ class ExtractionPipeline(Agent):
         if facts:
             fact_texts = [f.content for f in facts]
             try:
-                vecs = await self._ollama_client.embed(fact_texts, model=self.embedding_model)
+                vecs = await self._embedding_model_client.embed(fact_texts)
                 for fact, vec in zip(facts, vecs, strict=True):
                     assert fact.id is not None
                     self.db.update_fact_embedding(fact.id, serialize_embedding(vec))
@@ -1047,7 +1043,7 @@ class ExtractionPipeline(Agent):
                     build_entity_embed_text(entity.name, [f.content for f in facts_for_entity])
                 )
             try:
-                vecs = await self._ollama_client.embed(embed_texts, model=self.embedding_model)
+                vecs = await self._embedding_model_client.embed(embed_texts)
                 for entity, vec in zip(entities, vecs, strict=True):
                     assert entity.id is not None
                     self.db.update_entity_embedding(entity.id, serialize_embedding(vec))
@@ -1061,7 +1057,7 @@ class ExtractionPipeline(Agent):
         if prefs:
             topics = [p.topic for p in prefs]
             try:
-                vecs = await self._ollama_client.embed(topics, model=self.embedding_model)
+                vecs = await self._embedding_model_client.embed(topics)
                 for pref, vec in zip(prefs, vecs, strict=True):
                     assert pref.id is not None
                     self.db.update_preference_embedding(pref.id, serialize_embedding(vec))

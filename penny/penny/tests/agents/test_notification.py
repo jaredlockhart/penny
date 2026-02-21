@@ -13,14 +13,11 @@ def _create_notification_agent(penny, config):
     """Create a NotificationAgent wired to penny's DB and channel."""
     agent = NotificationAgent(
         system_prompt="",
-        model=config.ollama_background_model,
-        user_facing_model=config.ollama_foreground_model,
-        ollama_api_url=config.ollama_api_url,
+        background_model_client=penny.background_model_client,
+        foreground_model_client=penny.foreground_model_client,
         tools=[],
         db=penny.db,
         max_steps=1,
-        max_retries=config.ollama_max_retries,
-        retry_delay=config.ollama_retry_delay,
         tool_timeout=config.tool_timeout,
         config=config,
     )

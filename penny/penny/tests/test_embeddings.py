@@ -186,11 +186,11 @@ class TestOllamaClientEmbed:
 
         client = OllamaClient(
             api_url="http://localhost:11434",
-            model="test-model",
+            model="nomic-embed-text",
             max_retries=1,
             retry_delay=0.0,
         )
-        result = await client.embed("hello world", model="nomic-embed-text")
+        result = await client.embed("hello world")
 
         assert result == expected
         assert len(mock_ollama.embed_requests) == 1
@@ -206,11 +206,11 @@ class TestOllamaClientEmbed:
 
         client = OllamaClient(
             api_url="http://localhost:11434",
-            model="test-model",
+            model="nomic-embed-text",
             max_retries=1,
             retry_delay=0.0,
         )
-        result = await client.embed(["a", "b", "c"], model="nomic-embed-text")
+        result = await client.embed(["a", "b", "c"])
 
         assert len(result) == 3
         assert result == expected
@@ -222,11 +222,11 @@ class TestOllamaClientEmbed:
 
         client = OllamaClient(
             api_url="http://localhost:11434",
-            model="test-model",
+            model="nomic-embed-text",
             max_retries=1,
             retry_delay=0.0,
         )
-        result = await client.embed("test", model="nomic-embed-text")
+        result = await client.embed("test")
 
         assert len(result) == 1
         assert result[0] == [1.0, 0.0, 0.0, 0.0]
@@ -248,12 +248,12 @@ class TestOllamaClientEmbed:
 
         client = OllamaClient(
             api_url="http://localhost:11434",
-            model="test-model",
+            model="missing-model",
             max_retries=3,
             retry_delay=0.0,
         )
         with pytest.raises(ollama.ResponseError) as exc_info:
-            await client.embed("hello", model="missing-model")
+            await client.embed("hello")
 
         assert exc_info.value.status_code == 404
         # Must have called embed exactly once — no retries on 404
@@ -275,12 +275,12 @@ class TestOllamaClientEmbed:
 
         client = OllamaClient(
             api_url="http://localhost:11434",
-            model="test-model",
+            model="some-model",
             max_retries=3,
             retry_delay=0.0,
         )
         with pytest.raises(ollama.ResponseError):
-            await client.embed("hello", model="some-model")
+            await client.embed("hello")
 
         # Should have retried all 3 times
         assert call_count == 3

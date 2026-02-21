@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from penny.config import Config
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog
+from penny.ollama import OllamaClient
 from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.responses import PennyResponse
 
@@ -64,7 +65,15 @@ class MessageChannel(ABC):
         """Set the scheduler for message notifications."""
         self._scheduler = scheduler
 
-    def set_command_context(self, config: Config, channel_type: str, start_time: datetime) -> None:
+    def set_command_context(
+        self,
+        config: Config,
+        channel_type: str,
+        start_time: datetime,
+        foreground_model_client: OllamaClient,
+        embedding_model_client: OllamaClient | None = None,
+        image_model_client: OllamaClient | None = None,
+    ) -> None:
         """
         Set command context for command execution.
 
@@ -72,28 +81,25 @@ class MessageChannel(ABC):
             config: Penny config
             channel_type: Channel type ("signal" or "discord")
             start_time: Penny startup time
+            foreground_model_client: Shared foreground OllamaClient for commands
+            embedding_model_client: Shared embedding OllamaClient for similarity
+            image_model_client: Shared image generation OllamaClient for /draw
         """
         self._config = config
+        self._foreground_model_client = foreground_model_client
+        self._embedding_model_client = embedding_model_client
 
         from penny.commands import CommandContext
-        from penny.ollama import OllamaClient
-
-        # Create an Ollama client for command execution
-        ollama_client = OllamaClient(
-            api_url=config.ollama_api_url,
-            model=config.ollama_foreground_model,
-            db=self._db,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-        )
 
         self._command_context = CommandContext(
             db=self._db,
             config=config,
-            ollama_client=ollama_client,
+            foreground_model_client=foreground_model_client,
             user="",  # Will be set per-command
             channel_type=channel_type,
             start_time=start_time,
+            embedding_model_client=embedding_model_client,
+            image_model_client=image_model_client,
             scheduler=self._scheduler,
         )
 
@@ -441,8 +447,8 @@ class MessageChannel(ABC):
         else:
             return  # Unrecognized emoji — skip
 
-        # Need embedding model for entity matching
-        if not self._config or not self._config.ollama_embedding_model:
+        # Need embedding model client for entity matching
+        if not self._embedding_model_client:
             return
 
         try:
@@ -461,19 +467,7 @@ class MessageChannel(ABC):
             if not entities:
                 return
 
-            from penny.ollama import OllamaClient
-
-            ollama_client = OllamaClient(
-                api_url=self._config.ollama_api_url,
-                model=self._config.ollama_foreground_model,
-                db=self._db,
-                max_retries=self._config.ollama_max_retries,
-                retry_delay=self._config.ollama_retry_delay,
-            )
-
-            vecs = await ollama_client.embed(
-                reacted_msg.content, model=self._config.ollama_embedding_model
-            )
+            vecs = await self._embedding_model_client.embed(reacted_msg.content)
             query_embedding = vecs[0]
 
             candidates = []

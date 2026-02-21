@@ -5,6 +5,7 @@ import pytest
 from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
+from penny.ollama import OllamaClient
 from penny.tools.builtin import SearchTool
 
 
@@ -32,10 +33,17 @@ class TestToolNotFound:
         )
         search_tool = SearchTool(perplexity_api_key="test-key", db=db)
 
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
         agent = Agent(
             system_prompt="test",
-            model="test-model",
-            ollama_api_url="http://localhost:11434",
+            background_model_client=client,
+            foreground_model_client=client,
             tools=[search_tool],
             db=db,
             config=config,

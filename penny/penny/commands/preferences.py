@@ -61,8 +61,7 @@ async def _record_preference_engagements(
         )
 
     # Try to find matching entities via embedding similarity
-    embedding_model = context.config.ollama_embedding_model
-    if not embedding_model:
+    if not context.embedding_model_client:
         return
 
     try:
@@ -71,7 +70,7 @@ async def _record_preference_engagements(
             return
 
         # Embed the preference topic
-        vecs = await context.ollama_client.embed(preference.topic, model=embedding_model)
+        vecs = await context.embedding_model_client.embed(preference.topic)
         query_embedding = vecs[0]
 
         # Build candidates from entities with embeddings

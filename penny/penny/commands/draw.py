@@ -20,9 +20,6 @@ class DrawCommand(Command):
         "Describe what you want to see and the image will be sent back."
     )
 
-    def __init__(self, image_model: str):
-        self._image_model = image_model
-
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Execute the draw command."""
         prompt = args.strip()
@@ -30,10 +27,13 @@ class DrawCommand(Command):
         if not prompt:
             return CommandResult(text=PennyResponse.DRAW_USAGE)
 
-        try:
-            image_b64 = await context.ollama_client.generate_image(
-                prompt=prompt, model=self._image_model
+        if not context.image_model_client:
+            return CommandResult(
+                text=PennyResponse.DRAW_ERROR.format(error="No image model configured")
             )
+
+        try:
+            image_b64 = await context.image_model_client.generate_image(prompt=prompt)
             return CommandResult(text="", attachments=[image_b64])
 
         except Exception as e:

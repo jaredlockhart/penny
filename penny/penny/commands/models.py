@@ -23,10 +23,12 @@ class CommandContext:
 
     db: Database
     config: Config
-    ollama_client: OllamaClient
+    foreground_model_client: OllamaClient
     user: str  # Signal number or Discord user ID
     channel_type: str  # "signal" or "discord"
     start_time: datetime  # Penny startup time for uptime calculation
+    embedding_model_client: OllamaClient | None = None
+    image_model_client: OllamaClient | None = None
     scheduler: BackgroundScheduler | None = None  # Background task scheduler
     message: IncomingMessage | None = None  # The incoming message (for quote-reply metadata)
 

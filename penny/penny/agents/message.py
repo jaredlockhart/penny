@@ -133,7 +133,7 @@ class MessageAgent(Agent):
             - is_sufficient: True if enough knowledge exists to potentially
               answer without search
         """
-        if not self.embedding_model:
+        if not self._embedding_model_client:
             return None, False
 
         # Load user entities with embeddings
@@ -149,7 +149,7 @@ class MessageAgent(Agent):
 
         # Embed the user's message
         try:
-            vecs = await self._ollama_client.embed(content, model=self.embedding_model)
+            vecs = await self._embedding_model_client.embed(content)
             query_vec = vecs[0]
         except Exception:
             logger.warning("Failed to embed message for entity context, skipping")

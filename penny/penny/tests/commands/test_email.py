@@ -62,16 +62,12 @@ def mock_jmap_client():
 def email_context():
     """Create a CommandContext for email command tests."""
     config = MagicMock(spec=Config)
-    config.ollama_foreground_model = "test-model"
-    config.ollama_api_url = "http://localhost:11434"
     config.email_max_steps = 5
-    config.ollama_max_retries = 1
-    config.ollama_retry_delay = 0.1
     config.tool_timeout = 60.0
     return CommandContext(
         db=MagicMock(),
         config=config,
-        ollama_client=MagicMock(),
+        foreground_model_client=MagicMock(),
         user=TEST_SENDER,
         channel_type="signal",
         start_time=datetime.now(UTC),

@@ -158,7 +158,7 @@ class ProfileCommand(Command):
         # NEW PROFILE CREATION (no existing profile)
         if not user_info:
             # Use LLM to parse profile creation arguments
-            parsed = await self._parse_profile_create(args, context.ollama_client)
+            parsed = await self._parse_profile_create(args, context.foreground_model_client)
             if not parsed:
                 return CommandResult(text=PennyResponse.PROFILE_CREATE_PARSE_ERROR)
 
@@ -194,7 +194,7 @@ class ProfileCommand(Command):
         # PROFILE UPDATE (existing profile)
 
         # Use LLM to parse profile update arguments
-        parsed = await self._parse_profile_update(args, context.ollama_client)
+        parsed = await self._parse_profile_update(args, context.foreground_model_client)
         if not parsed:
             return CommandResult(text=PennyResponse.PROFILE_UPDATE_PARSE_ERROR)
 

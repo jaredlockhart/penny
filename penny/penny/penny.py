@@ -47,30 +47,97 @@ class Penny:
         # Set database reference for runtime config lookups
         config.runtime._db = self.db
 
+        # Shared Ollama model clients: foreground (fast, user-facing) and background (smart)
+        self.foreground_model_client = OllamaClient(
+            api_url=config.ollama_api_url,
+            model=config.ollama_foreground_model,
+            db=self.db,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+        )
+        self.background_model_client = OllamaClient(
+            api_url=config.ollama_api_url,
+            model=config.ollama_background_model,
+            db=self.db,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
+        )
+
+        # Optional model clients: vision (image understanding) and embedding (similarity)
+        self.vision_model_client: OllamaClient | None = None
+        if config.ollama_vision_model:
+            self.vision_model_client = OllamaClient(
+                api_url=config.ollama_api_url,
+                model=config.ollama_vision_model,
+                db=self.db,
+                max_retries=config.ollama_max_retries,
+                retry_delay=config.ollama_retry_delay,
+            )
+
+        self.embedding_model_client: OllamaClient | None = None
+        if config.ollama_embedding_model:
+            self.embedding_model_client = OllamaClient(
+                api_url=config.ollama_api_url,
+                model=config.ollama_embedding_model,
+                db=self.db,
+                max_retries=config.ollama_max_retries,
+                retry_delay=config.ollama_retry_delay,
+            )
+
+        self.image_model_client: OllamaClient | None = None
+        if config.ollama_image_model:
+            self.image_model_client = OllamaClient(
+                api_url=config.ollama_api_url,
+                model=config.ollama_image_model,
+                db=self.db,
+                max_retries=config.ollama_max_retries,
+                retry_delay=config.ollama_retry_delay,
+            )
+
         def search_tools(db):
             if config.perplexity_api_key:
                 return [SearchTool(perplexity_api_key=config.perplexity_api_key, db=db)]
             return []
 
         def create_message_agent(db):
-            """Factory for creating MessageAgent with a given database."""
+            """Factory for creating MessageAgent with a given database.
+
+            Creates its own OllamaClient because the /test command needs
+            prompt logging against a separate test database.
+            """
+            client = OllamaClient(
+                api_url=config.ollama_api_url,
+                model=config.ollama_foreground_model,
+                db=db,
+                max_retries=config.ollama_max_retries,
+                retry_delay=config.ollama_retry_delay,
+            )
             return MessageAgent(
                 system_prompt=Prompt.SEARCH_PROMPT,
-                model=config.ollama_foreground_model,
-                ollama_api_url=config.ollama_api_url,
+                background_model_client=client,
+                foreground_model_client=client,
                 tools=search_tools(db),
                 db=db,
                 config=config,
                 max_steps=int(config.runtime.MESSAGE_MAX_STEPS),
-                max_retries=config.ollama_max_retries,
-                retry_delay=config.ollama_retry_delay,
                 tool_timeout=config.tool_timeout,
-                vision_model=config.ollama_vision_model,
-                embedding_model=config.ollama_embedding_model,
+                vision_model_client=self.vision_model_client,
+                embedding_model_client=self.embedding_model_client,
             )
 
         # Create message agent for production use
-        self.message_agent = create_message_agent(self.db)
+        self.message_agent = MessageAgent(
+            system_prompt=Prompt.SEARCH_PROMPT,
+            background_model_client=self.foreground_model_client,
+            foreground_model_client=self.foreground_model_client,
+            tools=search_tools(self.db),
+            db=self.db,
+            config=config,
+            max_steps=int(config.runtime.MESSAGE_MAX_STEPS),
+            tool_timeout=config.tool_timeout,
+            vision_model_client=self.vision_model_client,
+            embedding_model_client=self.embedding_model_client,
+        )
 
         # Initialize GitHub client if configured
         github_api = None
@@ -113,7 +180,7 @@ class Penny:
         self.command_registry = create_command_registry(
             message_agent_factory=create_message_agent,
             github_api=github_api,
-            ollama_image_model=config.ollama_image_model,
+            image_model_client=self.image_model_client,
             fastmail_api_token=config.fastmail_api_token,
             search_tool=shared_search_tool,
         )
@@ -123,59 +190,48 @@ class Penny:
         self.learn_loop = LearnLoopAgent(
             search_tool=shared_search_tool,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
-            model=config.ollama_background_model,
-            user_facing_model=config.ollama_foreground_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=self.background_model_client,
+            foreground_model_client=self.foreground_model_client,
             tools=[],
             db=self.db,
             max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
-            embedding_model=config.ollama_embedding_model,
+            embedding_model_client=self.embedding_model_client,
             config=config,
         )
 
         self.extraction_pipeline = ExtractionPipeline(
             learn_loop=self.learn_loop,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
-            model=config.ollama_background_model,
-            user_facing_model=config.ollama_foreground_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=self.background_model_client,
+            foreground_model_client=self.foreground_model_client,
             tools=[],
             db=self.db,
             max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
-            embedding_model=config.ollama_embedding_model,
+            embedding_model_client=self.embedding_model_client,
             config=config,
         )
 
         self.notification_agent = NotificationAgent(
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
-            model=config.ollama_background_model,
-            user_facing_model=config.ollama_foreground_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=self.background_model_client,
+            foreground_model_client=self.foreground_model_client,
             tools=[],
             db=self.db,
             max_steps=1,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
             config=config,
         )
 
         self.schedule_executor = ScheduleExecutor(
             system_prompt="",  # ScheduleExecutor delegates to message_agent.run()
-            model=config.ollama_background_model,
-            ollama_api_url=config.ollama_api_url,
+            background_model_client=self.background_model_client,
+            foreground_model_client=self.foreground_model_client,
             tools=[],  # Schedule executor doesn't need tools itself
             db=self.db,
             config=config,
             max_steps=1,  # Just executes schedules, doesn't need multi-step loop
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
             tool_timeout=config.tool_timeout,
         )
 
@@ -225,6 +281,9 @@ class Penny:
             config=config,
             channel_type=config.channel_type,
             start_time=self.start_time,
+            foreground_model_client=self.foreground_model_client,
+            embedding_model_client=self.embedding_model_client,
+            image_model_client=self.image_model_client,
         )
 
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -254,7 +313,7 @@ class Penny:
         if not optional_models:
             return
 
-        available = await self.message_agent._ollama_client.list_models()
+        available = await self.foreground_model_client.list_models()
         for model_name, env_var in optional_models:
             # Strip tag for comparison since some models report without tag
             base_name = model_name.split(":")[0]
@@ -307,18 +366,8 @@ class Penny:
                 logger.info("No recipients found for startup announcement")
                 return
 
-            # Create temporary Ollama client for restart message generation
-            ollama_client = OllamaClient(
-                api_url=self.config.ollama_api_url,
-                model=self.config.ollama_foreground_model,
-                db=self.db,
-                max_retries=self.config.ollama_max_retries,
-                retry_delay=self.config.ollama_retry_delay,
-            )
-
             # Generate restart message
-            restart_msg = await get_restart_message(ollama_client)
-            await ollama_client.close()
+            restart_msg = await get_restart_message(self.foreground_model_client)
 
             # Combine wave with restart message
             announcement = f"👋 {restart_msg}"
@@ -368,6 +417,14 @@ class Penny:
         self.scheduler.stop()
         await self.channel.close()
         await Agent.close_all()
+        await self.foreground_model_client.close()
+        await self.background_model_client.close()
+        if self.vision_model_client:
+            await self.vision_model_client.close()
+        if self.embedding_model_client:
+            await self.embedding_model_client.close()
+        if self.image_model_client:
+            await self.image_model_client.close()
         logger.info("Agent shutdown complete")
 
 
