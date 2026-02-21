@@ -99,7 +99,7 @@ async def test_schedule_create_and_list(signal_server, test_config, mock_ollama,
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should list the schedule
-        assert "1. daily 9am 'what's the news?'" in response["message"]
+        assert "1. **daily 9am**: what's the news?" in response["message"]
 
 
 @pytest.mark.asyncio

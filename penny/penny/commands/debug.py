@@ -124,4 +124,4 @@ class DebugCommand(Command):
                     )
                 )
 
-        return ", ".join(status_parts)
+        return "\n".join(status_parts)

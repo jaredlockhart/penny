@@ -67,9 +67,9 @@ class ScheduleCommand(Command):
             if not schedules:
                 return CommandResult(text=PennyResponse.SCHEDULE_NO_TASKS)
 
-            lines = []
+            lines = ["**Your Schedules**", ""]
             for idx, sched in enumerate(schedules, start=1):
-                lines.append(f"{idx}. {sched.timing_description} '{sched.prompt_text}'")
+                lines.append(f"{idx}. **{sched.timing_description}**: {sched.prompt_text}")
 
             return CommandResult(text="\n".join(lines))
 
@@ -116,7 +116,7 @@ class ScheduleCommand(Command):
                 PennyResponse.SCHEDULE_STILL_SCHEDULED,
             ]
             for idx, sched in enumerate(remaining, start=1):
-                lines.append(f"{idx}. {sched.timing_description} '{sched.prompt_text}'")
+                lines.append(f"{idx}. **{sched.timing_description}**: {sched.prompt_text}")
 
             return CommandResult(text="\n".join(lines))
 
