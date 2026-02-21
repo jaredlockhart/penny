@@ -9,7 +9,7 @@ flowchart TD
     Penny -->|"3. prompt + tools"| Ollama[Ollama LLM]
     Ollama -->|"4. tool call"| Search[SearchTool]
     Search -->|"web search"| Perplexity[Perplexity API]
-    Search -->|"image search"| DDG[DuckDuckGo]
+    Search -->|"image search"| Serper[Serper API]
     Search -->|"5. results"| Ollama
     Ollama -->|"6. final response"| Penny
     Penny -->|"7. send response"| Channel
@@ -24,7 +24,7 @@ flowchart TD
 - **Vision**: Optional vision model (e.g., qwen3-vl) for processing image attachments from Signal
 - **Image Generation**: Optional image model (e.g., x/z-image-turbo) for generating images via `/draw` command
 - **Perplexity**: Web search — Penny always searches before answering, never uses model knowledge alone
-- **DuckDuckGo**: Image search — runs in parallel with Perplexity, attaches a relevant image to every response
+- **Serper**: Image search (Google Images) — runs in parallel with Perplexity, attaches a relevant image to every response
 - **SQLite**: Logs all prompts, searches, and messages; stores thread history via parent-child links
 
 ## Directory Structure
@@ -70,7 +70,7 @@ penny/
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult
-    builtin.py        — SearchTool (Perplexity text + DuckDuckGo images, run in parallel)
+    builtin.py        — SearchTool (Perplexity text + Serper images, run in parallel)
     email.py          — SearchEmailsTool, ReadEmailTool (Fastmail JMAP)
   jmap/
     client.py         — JmapClient: Fastmail JMAP API client (httpx)
@@ -99,7 +99,7 @@ penny/
     mocks/
       signal_server.py  — Mock Signal WebSocket + REST server (aiohttp)
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
-      search_patches.py — Perplexity + DuckDuckGo SDK monkeypatches
+      search_patches.py — Perplexity + Serper image search monkeypatches
     agents/           — Per-agent integration tests
       test_message.py, test_extraction.py, test_learn.py
     channels/         — Channel integration tests
@@ -341,7 +341,7 @@ Notifications are decoupled from extraction. The ExtractionPipeline stores facts
 
 - **Always search**: System prompt forces search on every message — no hallucinated answers
 - **One search per message**: System prompt tells model it only gets one search, so it combines everything into a single comprehensive query
-- **Parallel search + images**: Single `SearchTool` runs Perplexity (text) and DuckDuckGo (images) concurrently via `asyncio.gather`, image failures degrade gracefully to text-only. `skip_images` flag disables image search
+- **Parallel search + images**: Single `SearchTool` runs Perplexity (text) and Serper (images) concurrently via `asyncio.gather`, image failures degrade gracefully to text-only. `skip_images` flag disables image search
 - **URL extraction**: URLs extracted from Perplexity results, appended as Sources list so the model can pick the most relevant one
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
@@ -361,7 +361,7 @@ Notifications are decoupled from extraction. The ExtractionPipeline stores facts
 
 ## Dependencies
 
-- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `ollama`, `perplexityai`, `duckduckgo-search`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`
+- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `ollama`, `perplexityai`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`
 - Dev: `ruff` (lint/format), `ty` (type check), `pytest`, `pytest-asyncio`, `aiohttp` (mock Signal server)
 - Python 3.12+
 
@@ -404,7 +404,7 @@ Strongly prefer end-to-end integration tests over unit tests. Test through publi
 **Mocks** (in `tests/mocks/`):
 - `MockSignalServer`: WebSocket + REST server using aiohttp, captures outgoing messages and typing events
 - `MockOllamaAsyncClient`: Monkeypatches `ollama.AsyncClient`, configurable responses via `set_default_flow()` or `set_response_handler()`
-- `MockPerplexity`, `MockDDGS`: Monkeypatches Perplexity and DuckDuckGo SDKs
+- `MockPerplexity`: Monkeypatches Perplexity SDK; `search_image` mocked via AsyncMock
 
 **Fixtures** (in `tests/conftest.py`):
 - `TEST_SENDER`: Standard test phone number constant

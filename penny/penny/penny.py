@@ -96,7 +96,13 @@ class Penny:
 
         def search_tools(db):
             if config.perplexity_api_key:
-                return [SearchTool(perplexity_api_key=config.perplexity_api_key, db=db)]
+                return [
+                    SearchTool(
+                        perplexity_api_key=config.perplexity_api_key,
+                        db=db,
+                        serper_api_key=config.serper_api_key,
+                    )
+                ]
             return []
 
         def create_message_agent(db):

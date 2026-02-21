@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class SearchTool(Tool):
-    """Combined search tool: Perplexity for text, DuckDuckGo for images, run in parallel."""
+    """Combined search tool: Perplexity for text, Serper for images, run in parallel."""
 
     name = "search"
     description = (
@@ -40,11 +40,18 @@ class SearchTool(Tool):
         "required": ["query"],
     }
 
-    def __init__(self, perplexity_api_key: str, db=None, skip_images: bool = False):
+    def __init__(
+        self,
+        perplexity_api_key: str,
+        db=None,
+        skip_images: bool = False,
+        serper_api_key: str | None = None,
+    ):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
         self.redact_terms: list[str] = []
         self.skip_images = skip_images
+        self.serper_api_key = serper_api_key
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -63,7 +70,7 @@ class SearchTool(Tool):
         return text.strip()
 
     async def execute(self, **kwargs) -> Any:
-        """Run Perplexity text search and optionally DuckDuckGo image search in parallel.
+        """Run Perplexity text search and optionally Serper image search in parallel.
 
         Accepts optional kwargs beyond the tool schema (not exposed to the model):
             skip_images: Override instance default for this call
@@ -172,5 +179,5 @@ class SearchTool(Tool):
         return result, urls
 
     async def _search_image(self, query: str) -> str | None:
-        """Search for an image via DuckDuckGo and return base64 data."""
-        return await search_image(query)
+        """Search for an image via Serper and return base64 data."""
+        return await search_image(query, api_key=self.serper_api_key)

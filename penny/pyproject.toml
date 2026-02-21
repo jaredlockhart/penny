@@ -13,7 +13,7 @@ dependencies = [
     "discord.py>=2.6.4",
     "ollama>=0.4.0",
     "perplexityai>=0.27.0",
-    "duckduckgo-search>=7.0.0",
+
     "psutil>=6.1.0",
     "dateparser>=1.2.0",
     "timezonefinder>=6.5.0",
