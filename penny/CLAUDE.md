@@ -16,7 +16,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nExtraction · LearnLoop"]
+    Penny -.->|"schedule"| BG["Background Agents\nKnowledge Pipeline"]
 ```
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
@@ -138,9 +138,13 @@ The base `Agent` class implements the core agentic loop:
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the foreground model
 
 **ExtractionPipeline** (`agents/extraction.py`)
-- Unified background task replacing the former EntityExtractor and PreferenceAgent
-- Processes both SearchLog entries and MessageLog entries in a single pipeline
-- Three phases per execution: search log extraction → message extraction → embedding backfill
+- Unified knowledge pipeline that runs as a single scheduled background task
+- Processes in strict priority order (four phases per execution):
+  1. **User messages** (highest priority): freshest signals, processed first
+  2. **Search logs** (drain backlog): entity/fact extraction from search results
+  3. **Enrichment** (gated): only runs when phases 1 & 2 are fully drained — delegates to LearnLoopAgent
+  4. **Embedding backfill**: backfills missing embeddings for facts, entities, preferences
+- Enrichment creates new SearchLog entries (trigger=penny_enrichment) that feed back into phase 2 on the next cycle
 - **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results. Checks `trigger` field to determine mode — full extraction (user-triggered, creates entities with validation) vs known-only (penny-triggered, facts only)
 - **Entity validation**: New entity candidates pass structural filter (word count, LLM artifacts, URLs) then semantic filter (embedding similarity to query, threshold ~0.35)
 - **Insertion-time dedup**: Before creating a new entity, checks all existing entities using dual-threshold detection — token containment ratio (TCR >= 0.75) as fast lexical pre-filter, then embedding cosine similarity (>= 0.85) for confirmation. Both must pass. Routes to existing entity instead of creating a duplicate
@@ -155,7 +159,8 @@ The base `Agent` class implements the core agentic loop:
 - All content processed newest-first (ORDER BY timestamp DESC)
 
 **LearnLoopAgent** (`agents/learn_loop.py`)
-- Background task: adaptive research driven by entity interest scores
+- Adaptive research agent driven by entity interest scores
+- Composed into ExtractionPipeline as the enrichment phase (not scheduled independently)
 - Picks the highest-priority entity across all users each cycle
 - Priority scoring: `interest × (1/fact_count) × staleness_factor` (Python-space, no LLM)
 - Two modes: **enrichment** (< 5 facts, broad search) and **briefing** (5+ facts, novelty check)
@@ -166,7 +171,6 @@ The base `Agent` class implements the core agentic loop:
 - Confirms existing facts by updating `last_verified` timestamps
 - Composes casual message about novel findings and sends via channel
 - Triggered by `/learn` command (creates LEARN_COMMAND engagement with high strength)
-- Scheduled as `PeriodicSchedule` (idle-only, default 300s interval)
 
 **ScheduleExecutor** (`scheduler/schedule_runner.py`)
 - Background task: runs user-created cron-based scheduled tasks
@@ -179,8 +183,8 @@ The base `Agent` class implements the core agentic loop:
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule → extraction → learn_loop)
-- Tracks global idle threshold (default: 300s)
+- Runs tasks in priority order (schedule executor → knowledge pipeline)
+- Tracks global idle threshold (default: 60s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
 - Passes `is_idle` boolean to schedules (whether system is past global idle threshold)
@@ -195,7 +199,7 @@ The `scheduler/` module manages background tasks:
 
 **PeriodicSchedule**
 - Runs periodically while system is idle at a configurable interval
-- Used for extraction pipeline and learn loop (default: 300s)
+- Used for the knowledge pipeline (default: 10s, near-continuous while idle)
 - Tracks last run time and fires again after interval elapses
 - Resets when a message arrives
 
@@ -256,7 +260,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `/config` reads and writes to a `RuntimeConfig` table in SQLite (migration `0002_add_runtime_config_table.py`)
 - `ConfigParam` definitions in `config_params.py` declare which settings are runtime-configurable, with types and validation
 - Config values are read on each use (not cached), so changes take effect immediately
-- Configurable params: `MESSAGE_MAX_STEPS`, `IDLE_SECONDS`, `MAINTENANCE_INTERVAL_SECONDS`, `LEARN_LOOP_INTERVAL`
+- Configurable params: `MESSAGE_MAX_STEPS`, `IDLE_SECONDS`, `MAINTENANCE_INTERVAL_SECONDS`
 
 ## Knowledge System
 
@@ -337,9 +341,9 @@ When extraction discovers new facts, one proactive message per entity is sent. U
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Specialized agents**: Each task type (message, extraction, learn loop) has its own agent subclass
-- **Priority scheduling**: Schedule → extraction → learn_loop
-- **Always-run schedules**: User-created schedules run regardless of idle state; extraction/learn wait for idle
-- **Global idle threshold**: Single configurable idle time (default: 300s) controls when idle-dependent tasks become eligible
+- **Priority scheduling**: Schedule executor → knowledge pipeline (extraction + enrichment in strict phase order)
+- **Always-run schedules**: User-created schedules run regardless of idle state; knowledge pipeline waits for idle
+- **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background suspension**: Foreground message processing suspends background tasks to prevent interference
 - **Vision captioning**: When images are present and `OLLAMA_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the foreground model. Search tools are disabled for image messages
 - **Channel abstraction**: Signal and Discord share the same interface; easy to add more platforms

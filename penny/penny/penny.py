@@ -117,7 +117,10 @@ class Penny:
             search_tool=shared_search_tool,
         )
 
-        self.extraction_pipeline = ExtractionPipeline(
+        # Learn loop uses SearchTool directly (not the agentic loop).
+        # Composed into ExtractionPipeline as the enrichment phase.
+        self.learn_loop = LearnLoopAgent(
+            search_tool=shared_search_tool,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             model=config.ollama_background_model,
             user_facing_model=config.ollama_foreground_model,
@@ -132,9 +135,8 @@ class Penny:
             config=config,
         )
 
-        # Learn loop uses SearchTool directly (not the agentic loop)
-        self.learn_loop = LearnLoopAgent(
-            search_tool=shared_search_tool,
+        self.extraction_pipeline = ExtractionPipeline(
+            learn_loop=self.learn_loop,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             model=config.ollama_background_model,
             user_facing_model=config.ollama_foreground_model,
@@ -170,14 +172,16 @@ class Penny:
             command_registry=self.command_registry,
         )
 
-        # Connect agents that send messages to channel
+        # Connect agents that send messages to channel.
+        # ExtractionPipeline.set_channel() forwards to learn loop automatically.
         self.extraction_pipeline.set_channel(self.channel)
-        self.learn_loop.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Schedules (priority: schedule, extract, learn)
+        # Schedules (priority: schedule executor, then unified knowledge pipeline)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
-        # LearnLoopAgent runs periodically while idle to research entities by interest score
+        # ExtractionPipeline runs the unified knowledge pipeline: messages → search logs →
+        # enrichment → embedding backfill (enrichment is gated — only runs when phases 1 & 2
+        # are fully drained)
         schedules = [
             AlwaysRunSchedule(
                 agent=self.schedule_executor,
@@ -186,10 +190,6 @@ class Penny:
             PeriodicSchedule(
                 agent=self.extraction_pipeline,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
-            ),
-            PeriodicSchedule(
-                agent=self.learn_loop,
-                interval=config.runtime.LEARN_LOOP_INTERVAL,
             ),
         ]
         self.scheduler = BackgroundScheduler(
