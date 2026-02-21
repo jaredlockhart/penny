@@ -26,6 +26,7 @@ from penny.ollama.embeddings import (
 from penny.prompts import Prompt
 
 if TYPE_CHECKING:
+    from penny.agents.learn_loop import LearnLoopAgent
     from penny.channels import MessageChannel
     from penny.database.models import MessageLog
 
@@ -158,10 +159,11 @@ class ExtractionPipeline(Agent):
     that processes both SearchLog and MessageLog entries.
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, learn_loop: LearnLoopAgent | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._channel: MessageChannel | None = None
         self._backoff_state: dict[str, _UserBackoff] = {}
+        self._learn_loop = learn_loop
 
     @property
     def name(self) -> str:
@@ -169,24 +171,37 @@ class ExtractionPipeline(Agent):
         return "extraction"
 
     def set_channel(self, channel: MessageChannel) -> None:
-        """Set the channel for sending preference notifications."""
+        """Set the channel for sending notifications (forwarded to learn loop)."""
         self._channel = channel
+        if self._learn_loop:
+            self._learn_loop.set_channel(channel)
 
     async def execute(self) -> bool:
-        """Process unextracted search logs, then unprocessed messages, then backfill.
+        """Run the knowledge pipeline in strict priority order.
+
+        Phase 1: User messages (highest priority — freshest signals)
+        Phase 2: Search logs (drain backlog before enrichment)
+        Phase 3: Enrichment (only when 1 & 2 had nothing to do)
+        Phase 4: Embedding backfill
 
         Returns:
             True if any work was done.
         """
         work_done = False
 
-        # Phase 1: Extract entities/facts from search results (newest first)
-        work_done |= await self._process_search_logs()
-
-        # Phase 2: Extract entities/facts/preferences from messages (newest first)
+        # Phase 1: Extract entities/facts from user messages (highest priority)
         work_done |= await self._process_messages()
 
-        # Phase 3: Backfill embeddings for items that don't have them
+        # Phase 2: Extract entities/facts from search results (newest first)
+        work_done |= await self._process_search_logs()
+
+        # Phase 3: Enrichment — only when phases 1 & 2 are fully drained.
+        # Enrichment creates new SearchLog entries (trigger=penny_enrichment)
+        # that feed back into phase 2 on the next cycle.
+        if not work_done and self._learn_loop:
+            work_done |= await self._learn_loop.execute()
+
+        # Phase 4: Backfill embeddings for items that don't have them
         if self.embedding_model:
             work_done |= await self._backfill_embeddings()
 

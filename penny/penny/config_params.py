@@ -73,14 +73,14 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {
         key="IDLE_SECONDS",
         description="Global idle threshold in seconds",
         type=float,
-        default=300.0,
+        default=60.0,
         validator=_validate_positive_float,
     ),
     "MAINTENANCE_INTERVAL_SECONDS": ConfigParam(
         key="MAINTENANCE_INTERVAL_SECONDS",
-        description="Interval for periodic maintenance tasks (summarize, profile) in seconds",
+        description="Interval for the knowledge pipeline cycle in seconds",
         type=float,
-        default=300.0,
+        default=10.0,
         validator=_validate_positive_float,
     ),
     "LEARN_LOOP_INTERVAL": ConfigParam(
