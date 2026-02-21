@@ -73,16 +73,19 @@ class LearnCommand(Command):
         lines = [PennyResponse.LEARN_STATUS_HEADER, ""]
         for i, lp in enumerate(display_prompts, 1):
             assert lp.id is not None
-            if lp.status == PennyConstants.LearnPromptStatus.COMPLETED:
-                status_text = "\u2713"
-            elif lp.searches_remaining > 0:
-                status_text = f"({lp.searches_remaining} searches left)"
-            else:
-                status_text = "..."
-            lines.append(f"{i}) '{lp.prompt_text}' {status_text}")
 
-            # Follow provenance chain: LearnPrompt → SearchLogs → Facts → Entities
+            # Fetch search logs first — used for both status and provenance
             search_logs = context.db.get_search_logs_by_learn_prompt(lp.id)
+
+            if lp.status != PennyConstants.LearnPromptStatus.COMPLETED:
+                status_text = f"(searching, {lp.searches_remaining} left)"
+            elif search_logs and any(not sl.extracted for sl in search_logs):
+                extracted = sum(1 for sl in search_logs if sl.extracted)
+                total = len(search_logs)
+                status_text = f"(reading, {extracted} of {total} processed)"
+            else:
+                status_text = "\u2713"
+            lines.append(f"{i}) '{lp.prompt_text}' {status_text}")
             if not search_logs:
                 continue
 

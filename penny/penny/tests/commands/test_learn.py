@@ -137,9 +137,16 @@ async def test_learn_no_args_shows_status(signal_server, test_config, mock_ollam
 
         assert "Queued learning" in response["message"]
         assert "find me stuff about speakers" in response["message"]
-        assert "\u2713" in response["message"]  # Completed indicator
+        # Search log not yet extracted — should show "reading" stage
+        assert "reading, 0 of 1 processed" in response["message"]
         assert "kef ls50 meta" in response["message"]
         assert "1 fact" in response["message"]
+
+        # Mark search log as extracted — should now show ✓
+        penny.db.mark_search_extracted(search_logs[0].id)
+        await signal_server.push_message(sender=TEST_SENDER, content="/learn")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "\u2713" in response["message"]
 
 
 @pytest.mark.asyncio
@@ -168,7 +175,7 @@ async def test_learn_status_shows_active(signal_server, test_config, mock_ollama
 
         assert "Queued learning" in response["message"]
         assert "ai conferences in europe" in response["message"]
-        assert "3 searches left" in response["message"]
+        assert "searching, 3 left" in response["message"]
 
 
 @pytest.mark.asyncio
