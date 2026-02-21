@@ -164,13 +164,12 @@ The base `Agent` class implements the core agentic loop:
 - Adaptive research agent driven by entity interest scores
 - Composed into ExtractionPipeline as the enrichment phase (not scheduled independently)
 - Picks the highest-priority entity across all users each cycle
-- Priority scoring: `interest × (1/fact_count) × staleness_factor` (Python-space, no LLM)
+- Priority scoring: `interest × (1/fact_count)` (Python-space, no LLM)
 - Two modes: **enrichment** (< 5 facts, broad search) and **briefing** (5+ facts, novelty check)
-- Skips entities with negative interest or recently verified facts (< 1 day)
+- Skips entities with negative interest
 - Uses SearchTool directly (not the agentic loop) for Perplexity searches
 - Extracts facts via `ollama_client.generate()` with structured output (Pydantic schema)
 - Two-pass fact dedup: normalized string match (fast) then embedding similarity (threshold 0.85)
-- Confirms existing facts by updating `last_verified` timestamps
 - Stores facts with `notified_at=NULL` — the NotificationAgent surfaces them
 - Triggered by `/learn` command (creates LEARN_COMMAND engagement with high strength)
 
@@ -286,7 +285,7 @@ Penny learns what the user likes, finds information about those things, and proa
 ### Data Model
 
 - **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search
-- **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at`, `last_verified`, and `notified_at` timestamps. `notified_at=NULL` means not yet communicated to user
+- **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at` and `notified_at` timestamps. `notified_at=NULL` means not yet communicated to user
 - **Engagement**: User interest signals (likes, searches, mentions, reactions). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
 - **Preference**: User likes/dislikes with optional embeddings for entity matching
 - **LearnPrompt**: First-class learning prompt with lifecycle tracking — enables provenance chain: prompt → searches → facts → entities

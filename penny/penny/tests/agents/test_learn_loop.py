@@ -201,7 +201,7 @@ async def test_learn_loop_dedup_facts(
     test_user_info,
     running_penny,
 ):
-    """New facts that match existing ones are deduplicated and last_verified is updated."""
+    """New facts that match existing ones are deduplicated."""
     config = make_config()
 
     def handler(request: dict, count: int) -> dict:

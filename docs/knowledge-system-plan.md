@@ -70,7 +70,7 @@ For messages, the pipeline always allows new entity creation (messages are user-
 
 When Penny is idle and has no unprocessed content, she picks the highest-priority known entity and searches for new facts. The search is tagged `trigger=penny_enrichment`, so the extraction pipeline will only extract facts for known entities.
 
-**Priority scoring:** `interest_score × (1 / fact_count) × staleness_factor`
+**Priority scoring:** `interest_score × (1 / fact_count)`
 
 **Adaptive behavior:**
 
@@ -78,8 +78,7 @@ When Penny is idle and has no unprocessed content, she picks the highest-priorit
 |---|---|---|---|
 | Few facts (0-5) | Enrichment | Broad queries to fill gaps | Message on any substantial findings |
 | Moderate facts (5-15) | Enrichment | Targeted queries for what's NOT known | Message on meaningful new info |
-| Many facts (15+), stale | Briefing | "What's new since [date]" queries | Message only if genuinely novel |
-| Many facts, recent | Skip | — | — |
+| Many facts (15+) | Briefing | "What's new since [date]" queries | Message only if genuinely novel |
 | Negative interest | Skip | — | — |
 
 ---
@@ -180,7 +179,6 @@ fact
   source_search_log_id  INTEGER FK → searchlog (indexed)
   source_message_id     INTEGER FK → messagelog (indexed)
   learned_at            TIMESTAMP
-  last_verified         TIMESTAMP (nullable)
   embedding             BLOB (nullable)
 ```
 
@@ -305,7 +303,7 @@ The structural filter does the heavy lifting — in testing against production d
 **Trigger**: Periodic during idle. Picks the highest-priority known entity.
 
 **What it does:**
-1. Score all entities: `interest × (1/fact_count) × staleness`
+1. Score all entities: `interest × (1/fact_count)`
 2. Pick the top candidate
 3. Search for it (enrichment or briefing mode)
 4. Tag the SearchLog as `trigger=penny_enrichment`

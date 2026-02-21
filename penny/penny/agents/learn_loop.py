@@ -69,39 +69,13 @@ class _ScoredEntity:
         self.priority = priority
 
 
-def _staleness_factor(facts: list[Fact], recent_days: float, staleness_days: float) -> float:
-    """Compute staleness factor from a list of facts.
-
-    Returns a multiplier:
-    - 2.0 if no facts (needs enrichment)
-    - 0.1 if most recent verification < recent_days ago
-    - Scales linearly up to 3.0 cap based on days since last verification
-    """
-    if not facts:
-        return 2.0
-
-    now = datetime.now(UTC)
-    latest = max(
-        (f.last_verified or f.learned_at for f in facts),
-        default=now,
-    )
-    # SQLite returns naive datetimes; treat as UTC
-    if latest.tzinfo is None:
-        latest = latest.replace(tzinfo=UTC)
-
-    days_since = (now - latest).total_seconds() / 86400.0
-    if days_since < recent_days:
-        return 0.1
-    return min(days_since / staleness_days, 3.0)
-
-
 class LearnLoopAgent(Agent):
     """Background agent that adaptively researches entities based on interest scores.
 
     Picks the highest-priority entity across all users each cycle:
     - Enrichment mode (few facts): broad search to build knowledge
-    - Briefing mode (many facts, stale): targeted search for new developments
-    - Skip: if entity was recently verified or has negative interest
+    - Briefing mode (many facts): targeted search for new developments
+    - Skip: if entity has negative interest
 
     Uses SearchTool for Perplexity searches and OllamaClient for fact extraction
     and message composition.
@@ -172,10 +146,6 @@ class LearnLoopAgent(Agent):
             entity.name,
         )
 
-        # Update last_verified on confirmed existing facts
-        for fact_id in confirmed_fact_ids:
-            self.db.update_fact_last_verified(fact_id)
-
         # Store new facts
         stored_facts = await self._store_new_facts(entity, new_facts, search_result)
 
@@ -219,13 +189,8 @@ class LearnLoopAgent(Agent):
 
                 facts = self.db.get_entity_facts(entity.id)
                 fact_count = len(facts)
-                staleness = _staleness_factor(
-                    facts,
-                    recent_days=self.config.runtime.LEARN_RECENT_DAYS,
-                    staleness_days=self.config.runtime.LEARN_STALENESS_DAYS,
-                )
 
-                priority = interest * (1.0 / max(fact_count, 1)) * staleness
+                priority = interest * (1.0 / max(fact_count, 1))
 
                 candidates.append(
                     _ScoredEntity(
