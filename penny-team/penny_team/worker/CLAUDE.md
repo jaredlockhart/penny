@@ -423,7 +423,7 @@ Refer to `CLAUDE.md` for the full technical context. Key points:
 ### Architecture
 - **Agents**: MessageAgent, SummarizeAgent, FollowupAgent, PreferenceAgent, DiscoveryAgent in `penny/penny/agent/agents/`
 - **Channels**: Signal and Discord in `penny/penny/channels/`
-- **Tools**: SearchTool (Perplexity + DuckDuckGo) in `penny/penny/tools/`
+- **Tools**: SearchTool (Perplexity + Serper) in `penny/penny/tools/`
 - **Scheduler**: BackgroundScheduler with priority-based scheduling in `penny/penny/scheduler/`
 - **Database**: SQLite via SQLModel in `penny/penny/database/`
 - **Ollama**: Local LLM client in `penny/penny/ollama/`

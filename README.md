@@ -36,7 +36,7 @@ flowchart TD
     Penny -->|"3. prompt + tools"| Ollama[Ollama LLM]
     Ollama -->|"4. tool call"| Search[SearchTool]
     Search -->|"web search"| Perplexity[Perplexity API]
-    Search -->|"image search"| DDG[DuckDuckGo]
+    Search -->|"image search"| Serper[Serper API]
     Search -->|"5. results"| Ollama
     Ollama -->|"6. final response"| Penny
     Penny -->|"7. send response"| Channel
@@ -81,7 +81,7 @@ The scheduler resets all timers when a new message arrives.
 4. MessageAgent handles the message:
    - If quote-reply: look up quoted message, walk parent chain for history
    - If image: caption via vision model, then forward combined prompt
-   - Run agentic loop with tools (Perplexity search + DuckDuckGo images)
+   - Run agentic loop with tools (Perplexity search + Serper images)
 5. Log messages to database (linked via parent_id)
 6. Send response back via channel with image attachment (if available)
 7. Background: when idle, extract entities/facts/preferences, clean up duplicates, and research interesting topics
@@ -344,7 +344,7 @@ CI runs `make check` in Docker on every push to `main` and on pull requests via 
 Tests use mock servers and SDK patches:
 - `MockSignalServer`: Simulates Signal WebSocket + REST API
 - `MockOllamaAsyncClient`: Configurable LLM responses
-- `MockPerplexity`, `MockDDGS`: Search API mocks
+- `MockPerplexity`: Search API mocks; `search_image` mocked via AsyncMock
 
 </details>
 

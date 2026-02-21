@@ -1,7 +1,9 @@
-"""Patches for search-related SDKs (Perplexity, DuckDuckGo)."""
+"""Patches for search-related SDKs (Perplexity, Serper)."""
+
+from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -46,22 +48,21 @@ class MockPerplexity:
         self.responses = MockPerplexityResponses()
 
 
-class MockDDGS:
-    """Mock DuckDuckGo Search client."""
-
-    def __init__(self, results: list[dict] | None = None):
-        self._results = results or []
-
-    def images(self, query: str, max_results: int = 3) -> list[dict]:
-        """Mock images() call - returns empty list by default."""
-        return self._results
+def _make_image_mock(images: list[dict] | None = None) -> AsyncMock:
+    """Create an AsyncMock for search_image that returns None (default)."""
+    mock = AsyncMock(return_value=None)
+    # Store images config for tests that check it, but default returns None
+    mock._images = images or []
+    return mock
 
 
 @pytest.fixture
 def mock_search(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fixture to patch Perplexity and DuckDuckGo SDKs with default mocks."""
+    """Fixture to patch Perplexity and image search with default mocks."""
     monkeypatch.setattr("penny.tools.builtin.Perplexity", MockPerplexity)
-    monkeypatch.setattr("penny.tools.image_search.DDGS", MockDDGS)
+    mock_image = _make_image_mock()
+    monkeypatch.setattr("penny.tools.builtin.search_image", mock_image)
+    monkeypatch.setattr("penny.agents.base.search_image", mock_image)
 
 
 @pytest.fixture
@@ -90,14 +91,9 @@ def mock_search_with_results(monkeypatch: pytest.MonkeyPatch):
                 self.api_key = api_key
                 self.responses = MockPerplexityResponses(response)
 
-        class ConfiguredDDGS:
-            def __init__(self) -> None:
-                pass
-
-            def images(self, query: str, max_results: int = 3) -> list[dict]:
-                return images or []
-
         monkeypatch.setattr("penny.tools.builtin.Perplexity", ConfiguredPerplexity)
-        monkeypatch.setattr("penny.tools.image_search.DDGS", ConfiguredDDGS)
+        mock_image = _make_image_mock(images)
+        monkeypatch.setattr("penny.tools.builtin.search_image", mock_image)
+        monkeypatch.setattr("penny.agents.base.search_image", mock_image)
 
     return _configure

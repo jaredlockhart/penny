@@ -129,6 +129,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 
 **API Keys**:
 - `PERPLEXITY_API_KEY`: API key for web search
+- `SERPER_API_KEY`: API key for Serper image search (optional; if unset, messages won't include images)
 - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
 - `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email` command)
 

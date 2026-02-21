@@ -54,6 +54,7 @@ class Config:
     ollama_vision_model: str | None = None  # Vision model for image understanding
     ollama_image_model: str | None = None  # Image generation model (e.g., x/z-image-turbo)
     ollama_embedding_model: str | None = None  # Embedding model (e.g., nomic-embed-text)
+    serper_api_key: str | None = None  # Serper API key for image search
 
     # GitHub App Configuration (optional, needed for /bug command)
     github_app_id: str | None = None
@@ -139,6 +140,7 @@ class Config:
         ollama_image_model = os.getenv("OLLAMA_IMAGE_MODEL")  # Optional
         ollama_embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL")  # Optional
         perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")  # Optional
+        serper_api_key = os.getenv("SERPER_API_KEY")  # Optional (image search)
         log_level = os.getenv("LOG_LEVEL", "INFO")
         db_path = os.getenv("DB_PATH", "/penny/data/penny/penny.db")
         log_file = os.getenv("LOG_FILE")  # Optional, defaults to None
@@ -177,6 +179,7 @@ class Config:
             ollama_image_model=ollama_image_model,
             ollama_embedding_model=ollama_embedding_model,
             perplexity_api_key=perplexity_api_key,
+            serper_api_key=serper_api_key,
             github_app_id=github_app_id,
             github_app_private_key_path=github_app_private_key_path,
             github_app_installation_id=github_app_installation_id,
@@ -246,7 +249,6 @@ def setup_logging(
         "httpx",
         "websockets",
         "perplexity",
-        "duckduckgo_search",
         "primp",
         "rquest",
         "rustls",
