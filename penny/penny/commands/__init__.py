@@ -7,7 +7,6 @@ from penny.commands.base import Command, CommandRegistry
 from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
 from penny.commands.index import IndexCommand
-from penny.commands.interests import InterestsCommand
 from penny.commands.learn import LearnCommand
 from penny.commands.memory import MemoryCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
@@ -62,7 +61,6 @@ def create_command_registry(
     registry.register(ProfileCommand())
     registry.register(ScheduleCommand())
     registry.register(MemoryCommand())
-    registry.register(InterestsCommand())
     registry.register(LearnCommand(search_tool))
 
     # Register test command if factory provided

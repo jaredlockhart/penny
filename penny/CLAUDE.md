@@ -60,8 +60,7 @@ penny/
     index.py          — /commands: list available commands
     profile.py        — /profile: user info collection (name, location, DOB, timezone)
     learn.py          — /learn: express active research interest in a topic
-    memory.py         — /memory: view/manage knowledge base entities and facts
-    interests.py      — /interests: ranked interest graph visibility
+    memory.py         — /memory: view/manage knowledge base entities and facts (ranked by interest)
     schedule.py       — /schedule: create, list, delete recurring background tasks
     test.py           — /test: isolated test mode for development
     draw.py           — /draw: generate images via Ollama image model (optional)
@@ -108,7 +107,7 @@ penny/
       test_signal_formatting.py, test_startup_announcement.py
     commands/         — Per-command tests
       test_commands.py, test_config.py, test_debug.py, test_draw.py, test_email.py,
-      test_feature.py, test_interests.py, test_learn.py, test_memory.py,
+      test_feature.py, test_learn.py, test_memory.py,
       test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
@@ -254,8 +253,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/config** (`config.py`): View and modify runtime settings (e.g., `/config idle_seconds 600`)
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
 - **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` searches via SearchTool, discovers entities from results via LLM entity identification, creates them with LEARN_COMMAND engagements. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`). Falls back to creating a single entity from topic text if no SearchTool is configured
-- **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities with fact counts; `/memory <number>` shows entity details and facts; `/memory <number> delete` removes an entity and its facts
-- **/interests** (`interests.py`): View interest graph ranked by computed score. Displays entity name, score (with sign), fact count, and last activity date. Score = `sum(valence_sign × strength × recency_decay)` with 30-day half-life. Capped at 20 entries
+- **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities ranked by interest score (with score, fact count); `/memory <number>` shows entity details and facts; `/memory <number> delete` removes an entity and its facts
 - **/schedule** (`schedule.py`): Create, list, and delete recurring cron-based background tasks (uses LLM to parse natural language timing)
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
 
@@ -290,7 +288,7 @@ Penny learns what the user likes, finds information about those things, and proa
 
 Pure function: `compute_interest_score(engagements) → float`
 
-Formula: `sum(valence_sign × strength × recency_decay)` with 30-day half-life. Drives research priority in the learn agent and ranking in `/interests`.
+Formula: `sum(valence_sign × strength × recency_decay)` with 30-day half-life. Drives research priority in the learn agent and ranking in `/memory`.
 
 ### Search Trigger Tracking
 

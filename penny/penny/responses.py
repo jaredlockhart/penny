@@ -34,13 +34,6 @@ class PennyResponse:
     VISION_IMAGE_CONTEXT = "User said '{user_text}' and included an image of: {caption}"
     VISION_IMAGE_ONLY_CONTEXT = "User sent an image of: {caption}"
 
-    # ── Interests ──────────────────────────────────────────────────────────
-
-    INTERESTS_EMPTY = (
-        "No interest data yet. As you interact, I'll build a picture of what you care about."
-    )
-    INTERESTS_HEADER = "Here's what I think you're interested in:"
-
     # ── Learn ────────────────────────────────────────────────────────────────
 
     LEARN_ACKNOWLEDGED = "Okay, I'll learn more about {topic}"
