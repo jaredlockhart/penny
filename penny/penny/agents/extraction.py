@@ -25,7 +25,7 @@ from penny.ollama.embeddings import (
 from penny.prompts import Prompt
 
 if TYPE_CHECKING:
-    from penny.agents.learn_loop import LearnLoopAgent
+    from penny.agents.learn import LearnAgent
     from penny.database.models import MessageLog
 
 logger = logging.getLogger(__name__)
@@ -197,9 +197,9 @@ class ExtractionPipeline(Agent):
     Does not send notifications — the NotificationAgent handles that separately.
     """
 
-    def __init__(self, learn_loop: LearnLoopAgent | None = None, **kwargs: object) -> None:
+    def __init__(self, learn_agent: LearnAgent | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self._learn_loop = learn_loop
+        self._learn_agent = learn_agent
 
     @property
     def name(self) -> str:
@@ -228,8 +228,8 @@ class ExtractionPipeline(Agent):
         # Phase 3: Enrichment — only when phases 1 & 2 are fully drained.
         # Enrichment creates new SearchLog entries (trigger=penny_enrichment)
         # that feed back into phase 2 on the next cycle.
-        if not work_done and self._learn_loop:
-            work_done |= await self._learn_loop.execute()
+        if not work_done and self._learn_agent:
+            work_done |= await self._learn_agent.execute()
 
         # Phase 4: Backfill embeddings for items that don't have them
         if self._embedding_model_client:

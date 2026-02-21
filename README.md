@@ -43,7 +43,7 @@ flowchart TD
     Channel -->|"8. reply + image"| User
 
     Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nExtraction · LearnLoop"]
+    Penny -.->|"schedule"| BG["Background Agents\nExtraction · Learn"]
 ```
 
 ### Agent Architecture
@@ -52,7 +52,7 @@ Penny uses specialized agent subclasses for different tasks:
 
 - **MessageAgent**: Handles incoming user messages, prepares context, runs agentic loop
 - **ExtractionPipeline**: Unified background task that extracts entities, facts, and preferences from search results and messages. Deduplicates entities at insertion time using dual-threshold detection (token containment ratio + embedding cosine similarity)
-- **LearnLoopAgent**: Adaptive background research driven by interest scores — picks the most interesting entity and searches for new facts
+- **LearnAgent**: Adaptive background research driven by interest scores — picks the most interesting entity and searches for new facts
 - **ScheduleExecutor**: Runs user-created cron-based scheduled tasks
 
 Each agent owns its own OllamaClient instance and can have its own tools and prompts.
@@ -63,13 +63,13 @@ Background tasks are managed by a priority-based scheduler with a global idle th
 
 1. **Schedule** (AlwaysRunSchedule) — runs user-created cron-based tasks every 60s
 2. **Extraction** (PeriodicSchedule) — extracts entities, facts, and preferences from search results and messages
-3. **LearnLoop** (PeriodicSchedule) — adaptive background research on interesting entities
+3. **Learn** (PeriodicSchedule) — adaptive background research on interesting entities
 
 **Global idle threshold** (default: 300s): Idle-dependent background tasks wait for the system to become idle before they can run. Background tasks are suspended during foreground message processing.
 
 Schedule types:
 - **AlwaysRunSchedule**: Runs regardless of idle state at a configurable interval (used for user-created schedules)
-- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for extraction, learn loop; default: 300s)
+- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for extraction, learn; default: 300s)
 
 The scheduler resets all timers when a new message arrives.
 
@@ -151,7 +151,7 @@ Penny stores data in SQLite across several tables:
 
 **Engagement**: User interest signals for entities
 - Type (search, mention, reaction, learn command), strength, valence
-- Drives interest scores for LearnLoopAgent topic selection
+- Drives interest scores for LearnAgent topic selection
 
 **Schedule**: User-created recurring background tasks
 - Cron expression, prompt text, user timezone, timing description
@@ -292,7 +292,7 @@ Penny auto-detects which channel to use based on configured credentials:
 **Behavior:**
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
 - `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 300)
-- `LEARN_LOOP_INTERVAL`: Interval for learn loop in seconds (default: 300)
+- `LEARN_INTERVAL`: Interval for learn agent in seconds (default: 300)
 - `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
 
 **Logging:**
@@ -336,7 +336,7 @@ CI runs `make check` in Docker on every push to `main` and on pull requests via 
 
 **Test Coverage:**
 - Message flow: tool calls, direct responses, typing indicators, DB logging
-- Background tasks: extraction pipeline, entity cleaner, learn loop
+- Background tasks: extraction pipeline, entity cleaner, learn agent
 - Commands: /debug, /config, /test, /commands, /personality, /learn, /schedule, /bug, /draw, /email, /like, /dislike
 - Startup announcements, Signal channel integration, vision processing
 - Tool validation: timeouts, missing params, non-existent tools, search redaction

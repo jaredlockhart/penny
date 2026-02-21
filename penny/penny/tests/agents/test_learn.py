@@ -1,16 +1,16 @@
-"""Integration tests for the LearnLoopAgent."""
+"""Integration tests for the LearnAgent."""
 
 import json
 
 import pytest
 
-from penny.agents.learn_loop import LearnLoopAgent
+from penny.agents.learn import LearnAgent
 from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
-async def test_learn_loop_enrichment(
+async def test_learn_enrichment(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -18,7 +18,7 @@ async def test_learn_loop_enrichment(
     test_user_info,
     running_penny,
 ):
-    """Entity with few facts and positive interest → enrichment search."""
+    """Entity with few facts and positive interest -> enrichment search."""
     config = make_config()
 
     def handler(request: dict, count: int) -> dict:
@@ -49,8 +49,8 @@ async def test_learn_loop_enrichment(
         # Clear previous mock state
         mock_ollama.requests.clear()
 
-        # Create and run learn loop agent
-        agent = LearnLoopAgent(
+        # Create and run learn agent
+        agent = LearnAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -79,7 +79,7 @@ async def test_learn_loop_enrichment(
 
 
 @pytest.mark.asyncio
-async def test_learn_loop_skips_negative_interest(
+async def test_learn_skips_negative_interest(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -110,7 +110,7 @@ async def test_learn_loop_skips_negative_interest(
             entity_id=entity.id,
         )
 
-        agent = LearnLoopAgent(
+        agent = LearnAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -127,7 +127,7 @@ async def test_learn_loop_skips_negative_interest(
 
 
 @pytest.mark.asyncio
-async def test_learn_loop_no_entities(
+async def test_learn_no_entities(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -135,11 +135,11 @@ async def test_learn_loop_no_entities(
     test_user_info,
     running_penny,
 ):
-    """No entities for any user → returns False."""
+    """No entities for any user -> returns False."""
     config = make_config()
 
     async with running_penny(config) as penny:
-        agent = LearnLoopAgent(
+        agent = LearnAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -156,7 +156,7 @@ async def test_learn_loop_no_entities(
 
 
 @pytest.mark.asyncio
-async def test_learn_loop_no_search_tool(
+async def test_learn_no_search_tool(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -168,7 +168,7 @@ async def test_learn_loop_no_search_tool(
     config = make_config()
 
     async with running_penny(config) as penny:
-        agent = LearnLoopAgent(
+        agent = LearnAgent(
             search_tool=None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -185,7 +185,7 @@ async def test_learn_loop_no_search_tool(
 
 
 @pytest.mark.asyncio
-async def test_learn_loop_dedup_facts(
+async def test_learn_dedup_facts(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -239,7 +239,7 @@ async def test_learn_loop_dedup_facts(
 
         mock_ollama.requests.clear()
 
-        agent = LearnLoopAgent(
+        agent = LearnAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -263,7 +263,7 @@ async def test_learn_loop_dedup_facts(
 
 
 @pytest.mark.asyncio
-async def test_learn_loop_semantic_interest_priority(
+async def test_learn_semantic_interest_priority(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -326,7 +326,7 @@ async def test_learn_loop_semantic_interest_priority(
 
         mock_ollama.requests.clear()
 
-        agent = LearnLoopAgent(
+        agent = LearnAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,

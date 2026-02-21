@@ -151,7 +151,7 @@ class Agent:
         Builds messages with the identity prompt and timestamp, calls the model,
         and returns a ControllerResponse with optional image attachment.
 
-        Used directly by proactive notifications (learn loop, extraction),
+        Used directly by proactive notifications (learn agent, extraction),
         and by run() for the no-tool path (e.g. image messages).
         """
         messages = self._build_messages(prompt, history, system_prompt)

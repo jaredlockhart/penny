@@ -10,7 +10,7 @@ from typing import Any
 from penny.agents import (
     Agent,
     ExtractionPipeline,
-    LearnLoopAgent,
+    LearnAgent,
     MessageAgent,
     NotificationAgent,
 )
@@ -185,9 +185,9 @@ class Penny:
             search_tool=shared_search_tool,
         )
 
-        # Learn loop uses SearchTool directly (not the agentic loop).
+        # Learn agent uses SearchTool directly (not the agentic loop).
         # Composed into ExtractionPipeline as the enrichment phase.
-        self.learn_loop = LearnLoopAgent(
+        self.learn_agent = LearnAgent(
             search_tool=shared_search_tool,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             background_model_client=self.background_model_client,
@@ -201,7 +201,7 @@ class Penny:
         )
 
         self.extraction_pipeline = ExtractionPipeline(
-            learn_loop=self.learn_loop,
+            learn_agent=self.learn_agent,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             background_model_client=self.background_model_client,
             foreground_model_client=self.foreground_model_client,

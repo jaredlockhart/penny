@@ -1,4 +1,4 @@
-"""Adaptive learn loop — background research driven by interest scores."""
+"""Adaptive learn agent — background research driven by interest scores."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ class _ScoredEntity:
         self.priority = priority
 
 
-class LearnLoopAgent(Agent):
+class LearnAgent(Agent):
     """Background agent that adaptively researches entities based on interest scores.
 
     Picks the highest-priority entity across all users each cycle:
@@ -88,22 +88,22 @@ class LearnLoopAgent(Agent):
     @property
     def name(self) -> str:
         """Task name for logging."""
-        return "learn_loop"
+        return "learn"
 
     async def execute(self) -> bool:
-        """Run one cycle of the learn loop.
+        """Run one cycle of the learn agent.
 
         Returns:
             True if work was done, False if nothing to research.
         """
         if not self._search_tool:
-            logger.debug("LearnLoopAgent: no search tool configured")
+            logger.debug("LearnAgent: no search tool configured")
             return False
 
         # Score all entities and pick the highest-priority one
         candidates = self._score_candidates()
         if not candidates:
-            logger.debug("LearnLoopAgent: no candidates to research")
+            logger.debug("LearnAgent: no candidates to research")
             return False
 
         candidate = max(candidates, key=lambda c: c.priority)
@@ -117,7 +117,7 @@ class LearnLoopAgent(Agent):
 
         mode_label = "enrichment" if is_enrichment else "briefing"
         logger.info(
-            "Learn loop: %s mode for '%s' (user=%s, interest=%.2f, facts=%d, priority=%.3f)",
+            "Learn: %s mode for '%s' (user=%s, interest=%.2f, facts=%d, priority=%.3f)",
             mode_label,
             entity.name,
             user,
@@ -128,7 +128,7 @@ class LearnLoopAgent(Agent):
 
         # Build search query
         query = self._build_query(entity.name, is_enrichment)
-        logger.info("Learn loop search query: '%s'", query)
+        logger.info("Learn search query: '%s'", query)
 
         # Execute search
         search_result = await self._search(query)
@@ -140,7 +140,7 @@ class LearnLoopAgent(Agent):
             entity, candidate.facts, search_result
         )
         logger.info(
-            "Learn loop extracted %d new facts, %d confirmed existing for '%s'",
+            "Learn extracted %d new facts, %d confirmed existing for '%s'",
             len(new_facts),
             len(confirmed_fact_ids),
             entity.name,
@@ -225,7 +225,7 @@ class LearnLoopAgent(Agent):
                 return result.text
             return str(result) if result else None
         except Exception as e:
-            logger.error("Learn loop search failed: %s", e)
+            logger.error("Learn search failed: %s", e)
             return None
 
     async def _extract_and_dedup_facts(
@@ -363,7 +363,7 @@ class LearnLoopAgent(Agent):
             )
             if fact:
                 stored.append(fact_text)
-                logger.info("Learn loop +fact for '%s': %s", entity.name, fact_text)
+                logger.info("Learn +fact for '%s': %s", entity.name, fact_text)
 
         return stored
 

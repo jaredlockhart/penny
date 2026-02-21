@@ -34,7 +34,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant LL as Learn Loop
+    participant LL as Learn Agent
     participant DB as Database
 
     LL->>DB: score entities (interest x 1/fact_count x staleness)

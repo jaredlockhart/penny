@@ -867,7 +867,7 @@ async def test_extraction_penny_enrichment_known_only(
             search_logs = list(session.exec(select(SearchLog)).all())
             assert all(sl.extracted for sl in search_logs)
 
-        # Verify NO fact discovery notification was sent (learn loop handles its own)
+        # Verify NO fact discovery notification was sent (learn agent handles its own)
         fact_notifications = [
             msg
             for msg in signal_server.outgoing_messages
@@ -1479,7 +1479,7 @@ async def test_enrichment_runs_when_pipeline_drained(
 ):
     """
     When no messages or search logs are pending, the pipeline's enrichment
-    phase (learn loop) runs and creates a new search log.
+    phase (learn agent) runs and creates a new search log.
     """
     config = make_config()
 
@@ -1517,7 +1517,7 @@ async def test_enrichment_runs_when_pipeline_drained(
         if msgs:
             penny.db.mark_messages_processed([m.id for m in msgs if m.id is not None])
 
-        # Create entity with positive interest (needed for learn loop candidate scoring)
+        # Create entity with positive interest (needed for learn agent candidate scoring)
         entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
         penny.db.add_engagement(

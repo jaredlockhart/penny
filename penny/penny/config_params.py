@@ -83,9 +83,9 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {
         default=10.0,
         validator=_validate_positive_float,
     ),
-    "LEARN_LOOP_INTERVAL": ConfigParam(
-        key="LEARN_LOOP_INTERVAL",
-        description="Interval for learn loop in seconds (runs during idle)",
+    "LEARN_INTERVAL": ConfigParam(
+        key="LEARN_INTERVAL",
+        description="Interval for learn agent in seconds (runs during idle)",
         type=float,
         default=300.0,
         validator=_validate_positive_float,
@@ -162,7 +162,7 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {
         default=75,
         validator=_validate_positive_int,
     ),
-    # Learn loop tuning
+    # Learn agent tuning
     "LEARN_ENRICHMENT_FACT_THRESHOLD": ConfigParam(
         key="LEARN_ENRICHMENT_FACT_THRESHOLD",
         description="Fact count below which an entity enters enrichment mode",

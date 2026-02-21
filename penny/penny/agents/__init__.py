@@ -2,7 +2,7 @@
 
 from penny.agents.base import Agent
 from penny.agents.extraction import ExtractionPipeline
-from penny.agents.learn_loop import LearnLoopAgent
+from penny.agents.learn import LearnAgent
 from penny.agents.message import MessageAgent
 from penny.agents.models import (
     ChatMessage,
@@ -16,7 +16,7 @@ __all__ = [
     "ChatMessage",
     "ControllerResponse",
     "ExtractionPipeline",
-    "LearnLoopAgent",
+    "LearnAgent",
     "MessageAgent",
     "MessageRole",
     "NotificationAgent",
