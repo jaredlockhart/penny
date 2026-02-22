@@ -23,153 +23,131 @@ Ask Penny anything and she'll search the web and text you back, always with sour
 
 But she's not just a question-answering bot. She pays attention. She remembers your conversations, learns what you're into, and starts sharing things she thinks you'd like on her own. She follows up on old topics when she finds something new. She gets to know you over time and her responses get more personal because of it.
 
-Penny is a feed only for you.  Private, personal, and local.
+Penny is a feed only for you. Private, personal, and local.
 
-## Architecture
+## How It Works
 
-### Message Flow Diagram
+### Conversations
 
-```mermaid
-flowchart TD
-    User((User)) -->|"1. send message"| Channel[Signal / Discord]
-    Channel -->|"2. extract"| Penny[Penny Agent]
-    Penny -->|"3. prompt + tools"| Ollama[Ollama LLM]
-    Ollama -->|"4. tool call"| Search[SearchTool]
-    Search -->|"web search"| Perplexity[Perplexity API]
-    Search -->|"image search"| Serper[Serper API]
-    Search -->|"5. results"| Ollama
-    Ollama -->|"6. final response"| Penny
-    Penny -->|"7. send response"| Channel
-    Channel -->|"8. reply + image"| User
+When you send Penny a message, she always searches the web before responding — she never makes things up from model knowledge. A local LLM (via [Ollama](https://ollama.com)) reads the search results and writes a response in her own voice: casual, calm, with sources. Every response includes a relevant image when one is available.
 
-    Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nExtraction · Learn"]
-```
+Penny talks to you over [Signal](https://signal.org) or [Discord](https://discord.com) — the same apps you already use to message people. Quote-reply to continue a thread; she'll walk the conversation history for context.
 
-### Agent Architecture
+### Knowledge
 
-Penny uses specialized agent subclasses for different tasks:
+Every conversation leaves a trace. When you ask about something, Penny doesn't just answer — she remembers. Behind the scenes, a knowledge pipeline extracts **entities** (products, people, topics) and **facts** from every search result and message. These get stored in a local knowledge graph, deduplicated against what she already knows, and linked back to the conversations that produced them.
 
-- **MessageAgent**: Handles incoming user messages, prepares context, runs agentic loop
-- **ExtractionPipeline**: Unified background task that extracts entities, facts, and preferences from search results and messages. Deduplicates entities at insertion time using dual-threshold detection (token containment ratio + embedding cosine similarity)
-- **LearnAgent**: Adaptive background research driven by interest scores — picks the most interesting entity and searches for new facts
-- **ScheduleExecutor**: Runs user-created cron-based scheduled tasks
+Entity creation is user-gated: only your messages and searches can introduce new entities. Penny's own background research can deepen knowledge about existing entities, but never widen the graph on its own. This keeps the knowledge base focused on what you actually care about.
 
-Each agent owns its own OllamaClient instance and can have its own tools and prompts.
+Embeddings are central to knowledge quality. Every entity and fact gets an embedding vector (computed by a dedicated local embedding model), and these vectors are used throughout the system: validating that a candidate entity is semantically related to the query that surfaced it, catching duplicate entities at insertion time (token overlap + cosine similarity), detecting paraphrased facts before storing them, and pre-filtering the entity list so extraction only considers entities relevant to each search result. This keeps the knowledge graph clean without relying on exact string matching.
 
-### Scheduler System
+### Interest
 
-Background tasks are managed by a priority-based scheduler with a global idle threshold. The scheduler runs tasks in priority order:
+Penny builds a model of what you're interested in — not from explicit "like" buttons, but from how you naturally interact. Searching for something, mentioning a topic, reacting with an emoji, expressing an opinion — these all generate **engagement signals** with different strengths and sentiments. An interest score decays over time (30-day half-life), so Penny's attention shifts as yours does.
 
-1. **Schedule** (AlwaysRunSchedule) — runs user-created cron-based tasks every 60s
-2. **Extraction** (PeriodicSchedule) — extracts entities, facts, and preferences from search results and messages
-3. **Learn** (PeriodicSchedule) — adaptive background research on interesting entities
+Interest scores drive everything downstream: which entities get researched first, which discoveries get surfaced, and how entities are ranked when you browse your knowledge base.
 
-**Global idle threshold** (default: 300s): Idle-dependent background tasks wait for the system to become idle before they can run. Background tasks are suspended during foreground message processing.
+### Learning
 
-Schedule types:
-- **AlwaysRunSchedule**: Runs regardless of idle state at a configurable interval (used for user-created schedules)
-- **PeriodicSchedule**: Runs periodically while idle at a configurable interval (used for extraction, learn; default: 300s)
+When Penny is idle, she researches the things you're most interested in. The **LearnAgent** picks the highest-priority entity (interest score weighted by how little she knows about it), searches the web for new information, extracts facts from the results, and deduplicates them against existing knowledge using embedding similarity.
 
-The scheduler resets all timers when a new message arrives.
+You can also tell Penny to learn about something specific with `/learn <topic>`. She'll search immediately, discover entities from the results, and continue researching them in the background. When she's done, she sends a summary of what she found.
 
-### Message Flow
+### Notifications
 
-1. User sends message (Signal or Discord)
-2. Channel extracts message → checks for slash commands
-3. Channel notifies scheduler (resets timers, suspends background tasks)
-4. MessageAgent handles the message:
-   - If quote-reply: look up quoted message, walk parent chain for history
-   - If image: caption via vision model, then forward combined prompt
-   - Run agentic loop with tools (Perplexity search + Serper images)
-5. Log messages to database (linked via parent_id)
-6. Send response back via channel with image attachment (if available)
-7. Background: when idle, extract entities/facts/preferences, clean up duplicates, and research interesting topics
-
-### Design Decisions
-
-- **Host Services**: signal-cli-rest-api, Discord bot, and Ollama run directly on host
-- **Containerized Agent**: Only the Python agent runs in Docker
-- **Networking**: `--network host` for simplicity
-- **Persistence**: SQLite on host filesystem via volume mount
-- **Channel Abstraction**: Signal and Discord share the same interface
-- **Per-user Personality**: Custom personality prompts stored in DB, applied via LLM response transformation
-- **Always-search**: System prompt forces web search on every message — no hallucinated answers
-- **Background Suspension**: Foreground messages pause background tasks to prevent interference
+Penny proactively shares what she discovers. A **NotificationAgent** watches for un-notified facts, picks the most interesting entity, and composes a message — one at a time, with exponential backoff. If you don't respond, she backs off (up to an hour between messages). When you send a message, the backoff resets. She won't overwhelm you, but she won't go quiet either.
 
 ### Commands
 
-Penny supports slash commands sent as messages:
+Beyond regular conversation, Penny supports slash commands:
 
-- **/commands**: List all available commands
-- **/debug**: Show agent status, git commit, background task state
-- **/config**: View and modify runtime settings (e.g., `/config idle_seconds 600`)
-- **/profile**: Set up user profile (name, location, DOB) — required before chatting
-- **/like**, **/dislike**: Explicitly manage topic preferences
-- **/personality**: Customize Penny's tone and behavior (e.g., `/personality be a pirate`)
-- **/learn**: Express active interest in a topic for background research
-- **/schedule**: Create recurring background tasks (e.g., `/schedule daily 9am weather forecast`)
-- **/draw**: Generate an image from a text description (requires `OLLAMA_IMAGE_MODEL`)
-- **/bug**: File a bug report on GitHub (requires GitHub App config)
-- **/email**: Search Fastmail email via JMAP (requires `FASTMAIL_API_TOKEN`)
-- **/test**: Enter isolated test mode with a separate DB for development
+- **/learn** — express interest in a topic for background research
+- **/memory** — browse your knowledge base, ranked by interest score
+- **/schedule** — set up recurring tasks (e.g., `/schedule daily 9am weather forecast`)
+- **/config** — tune runtime parameters (idle threshold, extraction settings, etc.)
+- **/profile** — set your name, location, and timezone
+- **/draw** — generate images via a local model
+- **/bug**, **/feature** — file GitHub issues
+- **/email** — search your Fastmail inbox
 
-## Data Model
+## Architecture
 
-Penny stores data in SQLite across several tables:
+```mermaid
+flowchart TD
+    User((User)) -->|message| Channel[Signal / Discord]
 
-**PromptLog**: Every call to Ollama
-- Model name, full message list (JSON), tool definitions (JSON), response (JSON)
-- Thinking/reasoning trace (if model supports it)
-- Call duration in milliseconds
+    subgraph Foreground["Foreground Loop"]
+        Channel --> MA[MessageAgent]
+        MA -->|"prompt + tools"| FG["Ollama<br>foreground model"]
+        FG -->|tool call| Search[SearchTool]
+        Search --> Perplexity[Perplexity API]
+        Search --> Serper[Serper API]
+        Search -.->|results| FG
+        FG -->|response| MA
+    end
 
-**SearchLog**: Every Perplexity search
-- Query text, response text, call duration
+    MA -->|reply + image| Channel --> User
+    MA & Search -->|log| DB[(SQLite)]
 
-**MessageLog**: Every user message and agent response
-- Direction (incoming/outgoing), sender, content
-- Parent ID (foreign key to self) for threading
-- External ID (platform-specific message ID for quote-reply lookup)
-- Is-reaction flag (true if message is a reaction)
-- Processed flag (tracks whether extraction pipeline has analyzed this message)
+    subgraph Background["Background (when idle)"]
+        direction TB
+        Extract["ExtractionPipeline<br>messages → search logs<br>→ enrichment → embeddings"]
+        Learn[LearnAgent] -->|search| Search2[SearchTool]
+        Extract -.->|delegates| Learn
+        Notify["NotificationAgent<br>fact discovery + backoff"]
+    end
 
-**UserInfo**: User profile information
-- Name, location, timezone (IANA), date of birth
-- Collected via `/profile` command, required before chatting
+    DB -.-> Extract & Notify
+    Extract & Notify -->|entities, facts| DB
+    Notify -->|proactive message| Channel
+    Search2 -.->|new searches| DB
 
-**Preference**: User topic preferences
-- User, topic, type (like/dislike)
-- Set explicitly via `/like`/`/dislike` or extracted by ExtractionPipeline from messages
+    User -.->|"resets idle · cancels background"| Background
+```
 
-**Entity**: Named entity knowledge base
-- User, name, embedding vector for semantic similarity
-- Extracted from search results and messages by ExtractionPipeline
+### Models
 
-**Fact**: Individual facts about entities
-- Entity reference, content text, embedding, source provenance
-- Deduplicated via normalized string match and embedding similarity
+Penny uses up to five Ollama model roles, all running locally:
 
-**Engagement**: User interest signals for entities
-- Type (search, mention, reaction, learn command), strength, valence
-- Drives interest scores for LearnAgent topic selection
+| Role | Purpose | Required? |
+|---|---|---|
+| **Foreground** | User-facing responses — fast model for real-time chat | Yes |
+| **Background** | Entity/fact extraction, notification composition, learn queries | Yes (defaults to foreground) |
+| **Embedding** | Semantic similarity for entity dedup, fact dedup, and validation | Optional (falls back to background) |
+| **Vision** | Image captioning when users send photos | Optional |
+| **Image** | Image generation via `/draw` | Optional |
 
-**Schedule**: User-created recurring background tasks
-- Cron expression, prompt text, user timezone, timing description
+### Extraction Pipeline
 
-**PersonalityPrompt**: Per-user personality customization
-- Prompt text that transforms Penny's response style
+The knowledge pipeline runs as a single background task with four phases in strict priority order:
 
-**RuntimeConfig**: User-configurable settings (via `/config`)
-**CommandLog**: Log of every command invocation
+1. **User messages** — extract entities and sentiment from what the user said
+2. **Search logs** — two-pass extraction (identify entities, then extract facts per entity) from search results
+3. **Enrichment** — delegate to LearnAgent for background research on interesting entities (only runs when phases 1 and 2 are fully drained)
+4. **Embedding backfill** — compute missing embeddings for new facts and entities
+
+Extraction mode depends on what triggered the search. User-triggered searches can create new entities (after structural and semantic validation). Penny-triggered enrichment searches can only add facts to existing entities — they never create new ones.
+
+New entities pass through three quality gates: a structural filter (rejects LLM artifacts, URLs, bare numbers, dates, locations), a semantic filter (embedding similarity to the triggering query), and post-fact pruning (LLM checks if extracted facts are actually relevant to the entity). Duplicates are caught at insertion time using token containment ratio + embedding cosine similarity.
+
+### Scheduling
+
+A priority-based scheduler runs background tasks when the system is idle (default: 60 seconds after the last message). Foreground messages immediately cancel the active background task to free Ollama for the user — cancelled work is idempotent and resumes next cycle.
+
+User-created scheduled tasks (via `/schedule`) run on their own timer regardless of idle state, so a daily weather briefing won't be blocked by an active conversation.
+
+### Runtime Configuration
+
+38 parameters are tunable at runtime via `/config` — extraction thresholds, engagement strengths, notification backoff, scheduling intervals, and more. Values follow a three-tier lookup: database override → environment variable → default. Changes take effect immediately without restart.
 
 ## Setup & Running
 
 ### Prerequisites
 
-1. **For Signal**: signal-cli-rest-api running on host (port 8080)
+1. **For Signal**: [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) running on host (port 8080)
 2. **For Discord**: Discord bot token and channel ID
-3. **Ollama** running on host (port 11434)
-4. **Perplexity API key** (for web search)
+3. **[Ollama](https://ollama.com)** running on host (port 11434)
+4. **[Perplexity API key](https://www.perplexity.ai)** (for web search)
 5. Docker & Docker Compose installed
 
 ### Quick Start
@@ -190,21 +168,16 @@ make up               # Build and start all services (foreground)
 make prod             # Deploy penny only (no team, no override)
 make kill             # Tear down containers and remove local images
 make build            # Build the penny Docker image
-make team-build       # Build the penny-team Docker image
 make check            # Build, format check, lint, typecheck, and run tests
 make pytest           # Run integration tests
 make fmt              # Format with ruff
-make lint             # Lint with ruff
 make fix              # Format + autofix lint issues
 make typecheck        # Type check with ty
 make token            # Generate GitHub App installation token for gh CLI
 make migrate-test     # Test database migrations against a copy of prod DB
-make migrate-validate # Check for duplicate migration number prefixes
 ```
 
 All dev tool commands run in temporary Docker containers via `docker compose run --rm`, with source volume-mounted so changes write back to the host filesystem.
-
-`make prod` starts the penny service only (skips `docker-compose.override.yml` and the `team` profile). Use `make up` for the full stack including agents and watcher.
 
 <details>
 <summary><h2>Configuration</h2></summary>
@@ -240,7 +213,7 @@ LOG_LEVEL="INFO"
 
 # Agent behavior (optional, defaults shown)
 MESSAGE_MAX_STEPS=5
-IDLE_SECONDS=300                    # Global idle threshold for background tasks
+IDLE_SECONDS=60                     # Global idle threshold for background tasks
 
 # Fastmail JMAP (optional, enables /email command)
 # FASTMAIL_API_TOKEN="your-api-token"
@@ -260,44 +233,35 @@ Penny auto-detects which channel to use based on configured credentials:
 
 ### Configuration Reference
 
-**Channel Selection:**
-- `CHANNEL_TYPE`: "signal" or "discord" (auto-detected if not set)
-
-**Signal (required if using Signal):**
-- `SIGNAL_NUMBER`: Your registered Signal number
-- `SIGNAL_API_URL`: signal-cli REST API endpoint (default: http://localhost:8080)
-
-**Discord (required if using Discord):**
-- `DISCORD_BOT_TOKEN`: Bot token from Discord Developer Portal
-- `DISCORD_CHANNEL_ID`: Channel ID to listen to and send messages in
-
 **Ollama:**
 - `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
 - `OLLAMA_FOREGROUND_MODEL`: Fast model for user-facing messages (default: gpt-oss:20b)
 - `OLLAMA_BACKGROUND_MODEL`: Smarter model for background tasks (default: same as foreground)
-- `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
-- `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/flux2-klein). Optional; enables the `/draw` command when set
+- `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional
+- `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables `/draw`
+- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model (e.g., nomic-embed-text). Optional; if unset, uses background model
 - `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
 - `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 
 **API Keys:**
-- `PERPLEXITY_API_KEY`: API key for web search (without this, the agent has no tools)
-- `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email` command)
+- `PERPLEXITY_API_KEY`: API key for web search
+- `SERPER_API_KEY`: API key for Serper image search (optional; if unset, responses won't include images)
+- `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email`)
 
-**GitHub App** (optional, enables `/bug` command; required for agent containers):
-- `GITHUB_APP_ID`: GitHub App ID for authenticated API access
-- `GITHUB_APP_PRIVATE_KEY_PATH`: Path to GitHub App private key file
-- `GITHUB_APP_INSTALLATION_ID`: GitHub App installation ID for the repository
+**GitHub App** (optional, enables `/bug` and `/feature`; required for agent containers):
+- `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATION_ID`
 
 **Behavior:**
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
-- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 300)
-- `LEARN_INTERVAL`: Interval for learn agent in seconds (default: 300)
+- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 60)
 - `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
+- Many more parameters are runtime-configurable via `/config` (38 total)
 
 **Logging:**
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)
 - `LOG_FILE`: Optional path to log file
+- `LOG_MAX_BYTES`: Maximum log file size before rotation (default: 10 MB)
+- `LOG_BACKUP_COUNT`: Number of rotated backup files to keep (default: 5)
 - `DB_PATH`: SQLite database location (default: /penny/data/penny/penny.db)
 
 </details>
@@ -334,17 +298,7 @@ make check       # Run format, lint, typecheck, and tests
 
 CI runs `make check` in Docker on every push to `main` and on pull requests via GitHub Actions.
 
-**Test Coverage:**
-- Message flow: tool calls, direct responses, typing indicators, DB logging
-- Background tasks: extraction pipeline, entity cleaner, learn agent
-- Commands: /debug, /config, /test, /commands, /personality, /learn, /schedule, /bug, /draw, /email, /like, /dislike
-- Startup announcements, Signal channel integration, vision processing
-- Tool validation: timeouts, missing params, non-existent tools, search redaction
-
-Tests use mock servers and SDK patches:
-- `MockSignalServer`: Simulates Signal WebSocket + REST API
-- `MockOllamaAsyncClient`: Configurable LLM responses
-- `MockPerplexity`: Search API mocks; `search_image` mocked via AsyncMock
+Tests cover the full message flow (search, response, threading, typing indicators), all background agents (extraction, learn, notification, scheduler coordination), every slash command, vision processing, and tool edge cases. External services are replaced with mock servers and SDK patches — a mock Signal WebSocket server, a mock Ollama client with configurable responses, and mock search APIs.
 
 </details>
 
@@ -359,63 +313,16 @@ bug → in-review → closed                                                    
 ```
 
 **Agents:**
-- **Product Manager**: Gathers requirements for `requirements` issues (5-min cycle, 600s timeout)
-- **Architect**: Writes detailed specs for `specification` issues, handles spec feedback (5-min cycle, 600s timeout)
-- **Worker**: Implements `in-progress` issues — creates branches, writes code/tests, runs `make check`, opens PRs; addresses PR feedback on `in-review` issues; fixes `bug` issues directly (5-min cycle, 1800s timeout)
-- **Monitor**: Watches production logs for errors, deduplicates against existing issues, and files `bug` issues automatically (5-min cycle, 600s timeout)
+- **Product Manager**: Gathers requirements for `requirements` issues
+- **Architect**: Writes detailed specs for `specification` issues, handles spec feedback
+- **Worker**: Implements `in-progress` issues — creates branches, writes code/tests, runs `make check`, opens PRs; addresses PR feedback on `in-review` issues; fixes `bug` issues directly
+- **Monitor**: Watches production logs for errors, deduplicates against existing issues, and files `bug` issues automatically
 
 Each agent checks for matching GitHub issue labels before waking Claude CLI, so idle cycles cost ~1 second instead of a full Claude invocation.
 
 ```bash
 make up          # Run orchestrator with full stack
 ```
-
-</details>
-
-<details>
-<summary><h2>Code Style</h2></summary>
-
-- **Pydantic for all structured data**: All structured data (API payloads, config, internal messages) must be brokered through Pydantic models — no raw dicts
-- **Constants for string literals**: All string literals must be defined as constants or enums — no magic strings in logic
-
-</details>
-
-<details>
-<summary><h2>Technical Notes</h2></summary>
-
-### Signal Formatting
-
-signal-cli-rest-api supports markdown-style text formatting:
-- `**bold**` → **bold**
-- `*italic*` → *italic*
-- `~strikethrough~` → ~~strikethrough~~ (note: single tilde, not double)
-- `` `monospace` `` → `monospace`
-
-**Formatting pipeline** (`SignalChannel.prepare_outgoing`):
-1. **Table conversion**: Markdown tables are converted to bullet-point lists (tables don't render well in Signal)
-2. **Tilde escaping**: Regular tildes converted to tilde operator (U+223C) to prevent accidental strikethrough (e.g., "~$50" stays as-is)
-3. **Strikethrough**: Intentional `~~text~~` converted to Signal's single-tilde format
-4. **Heading removal**: Markdown `#` headings stripped (keeps text)
-5. **Link conversion**: `[text](url)` converted to `text (url)`
-
-### Quote-Reply Thread Reconstruction
-
-When a user quote-replies to a Penny message, Signal:
-1. Converts markdown to native formatting (so `**bold**` becomes plain bold)
-2. Strips all formatting when including the quoted text in the reply envelope
-3. Truncates the quoted text (often to ~100 characters)
-
-To reliably look up the original message:
-- Outgoing messages are stored with markdown stripped (in `Database.log_message`)
-- Tilde operators (U+223C) are normalized back to regular tildes for matching
-- Quoted text is stripped before lookup (in `Database.find_outgoing_by_content`)
-- Lookup uses prefix matching (`startswith`) instead of exact match
-
-### Discord Specifics
-
-- Messages are limited to 2000 characters (auto-chunked if longer)
-- Typing indicators auto-expire after ~10 seconds
-- Bot ignores its own messages and messages from other bots
 
 </details>
 
