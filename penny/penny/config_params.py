@@ -355,7 +355,7 @@ ConfigParam(
     key="NOTIFICATION_INITIAL_BACKOFF",
     description="Initial backoff in seconds after sending a fact notification",
     type=float,
-    default=60.0,
+    default=300.0,
     validator=_validate_positive_float,
 )
 
