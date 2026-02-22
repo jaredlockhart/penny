@@ -78,7 +78,7 @@ class MemoryCommand(Command):
             return CommandResult(text=PennyResponse.MEMORY_NO_FACTS.format(name=entity.name))
 
         updated = entity.updated_at.strftime("%Y-%m-%d %H:%M")
-        facts_text = "\n".join(f"- {f.content}" for f in facts)
+        facts_text = "\n\n".join(f"• {f.content}" for f in facts)
         lines = [
             f"**{entity.name}**",
             f"**Updated**: {updated}",
