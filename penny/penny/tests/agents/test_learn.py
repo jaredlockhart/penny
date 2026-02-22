@@ -40,7 +40,7 @@ async def test_learn_enrichment(
         assert entity is not None and entity.id is not None
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
@@ -231,7 +231,7 @@ async def test_learn_dedup_facts(
 
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
@@ -273,7 +273,7 @@ async def test_learn_semantic_interest_priority(
 ):
     """Entity with higher SEARCH_DISCOVERY strength is prioritized.
 
-    Two entities with identical SEARCH_INITIATED engagement — entity A has a
+    Two entities with identical USER_SEARCH engagement — entity A has a
     SEARCH_DISCOVERY engagement with high strength (0.9), entity B with low
     strength (0.6). Entity A should be selected first.
     """
@@ -289,7 +289,7 @@ async def test_learn_semantic_interest_priority(
         await signal_server.push_message(sender=TEST_SENDER, content="hello")
         await signal_server.wait_for_message(timeout=10.0)
 
-        # Create two entities with identical SEARCH_INITIATED engagement
+        # Create two entities with identical USER_SEARCH engagement
         entity_a = penny.db.get_or_create_entity(TEST_SENDER, "aamas")
         entity_b = penny.db.get_or_create_entity(TEST_SENDER, "coral beach hotel")
         assert entity_a is not None and entity_a.id is not None
@@ -298,7 +298,7 @@ async def test_learn_semantic_interest_priority(
         for eid in (entity_a.id, entity_b.id):
             penny.db.add_engagement(
                 user=TEST_SENDER,
-                engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
+                engagement_type=PennyConstants.EngagementType.USER_SEARCH,
                 valence=PennyConstants.EngagementValence.POSITIVE,
                 strength=0.6,
                 entity_id=eid,

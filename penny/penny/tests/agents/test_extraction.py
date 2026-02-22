@@ -117,16 +117,14 @@ async def test_extraction_processes_search_log(
         # Verify facts have source_search_log_id set
         assert all(f.source_search_log_id == search_logs[0].id for f in facts)
 
-        # Verify SEARCH_INITIATED engagement was created
+        # Verify USER_SEARCH engagement was created
         engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
         search_engagements = [
-            e
-            for e in engagements
-            if e.engagement_type == PennyConstants.EngagementType.SEARCH_INITIATED
+            e for e in engagements if e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
         ]
         assert len(search_engagements) >= 1
         assert search_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert search_engagements[0].strength == 0.6
+        assert search_engagements[0].strength == 1.0
 
         # Verify SearchLog is marked as extracted
         with penny.db.get_session() as session:
@@ -792,7 +790,7 @@ async def test_extraction_penny_enrichment_known_only(
     2. Create a SearchLog with trigger=penny_enrichment
     3. Mock LLM to return the known entity + facts
     4. Verify: known entity gets new facts, NO new entities created,
-       NO SEARCH_INITIATED engagements
+       NO USER_SEARCH engagements
     """
     config = make_config()
 
@@ -847,15 +845,13 @@ async def test_extraction_penny_enrichment_known_only(
             f"Expected only 1 entity, got {len(entities)}: {[e.name for e in entities]}"
         )
 
-        # Verify NO SEARCH_INITIATED engagements
+        # Verify NO USER_SEARCH engagements
         engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
         search_engagements = [
-            e
-            for e in engagements
-            if e.engagement_type == PennyConstants.EngagementType.SEARCH_INITIATED
+            e for e in engagements if e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
         ]
         assert len(search_engagements) == 0, (
-            "penny_enrichment should not create SEARCH_INITIATED engagements"
+            "penny_enrichment should not create USER_SEARCH engagements"
         )
 
         # Verify SearchLog is marked as extracted
@@ -1399,16 +1395,14 @@ async def test_extraction_does_not_send_notifications(
         assert len(facts) >= 1
         assert all(f.notified_at is None for f in facts)
 
-        # Verify LEARN_COMMAND engagement was created for learn-triggered search
+        # Verify USER_SEARCH engagement was created for learn-triggered search
         engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
-        learn_engagements = [
-            e
-            for e in engagements
-            if e.engagement_type == PennyConstants.EngagementType.LEARN_COMMAND
+        search_engagements = [
+            e for e in engagements if e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
         ]
-        assert len(learn_engagements) >= 1
-        assert learn_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert learn_engagements[0].strength == 1.0
+        assert len(search_engagements) >= 1
+        assert search_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
+        assert search_engagements[0].strength == 1.0
 
 
 @pytest.mark.asyncio
@@ -1524,7 +1518,7 @@ async def test_enrichment_runs_when_pipeline_drained(
         assert entity is not None and entity.id is not None
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
@@ -1598,7 +1592,7 @@ async def test_enrichment_blocked_by_pending_search_logs(
         penny.db.add_fact(entity.id, "Costs $1,599 per pair")
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,

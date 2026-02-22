@@ -67,7 +67,7 @@ async def test_notification_sends_highest_interest_entity(
         # High interest: strong engagement
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=high_entity.id,
@@ -363,7 +363,7 @@ async def test_learn_completion_announcement(
         assert entity is not None and entity.id is not None
         penny.db.add_engagement(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
