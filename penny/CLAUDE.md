@@ -221,9 +221,9 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Queries for un-notified facts (`notified_at IS NULL`), groups by entity
 - Picks the highest-interest entity using `compute_interest_score()`
 - Composes ONE message per cycle via `_compose_user_facing()` with image search
-- Exponential backoff per user (in-memory): 15s initial, doubles up to 3600s max
-- Backoff resets when user sends a message or command
-- Expired backoff resets to eager state (fresh backoff cycle, not doubled from stale value)
+- Exponential backoff per user (in-memory): 60s initial, doubles up to 3600s max
+- Backoff resets to eager (0s) when user sends a message or command
+- At max backoff, stays at that cadence until user re-engages
 - Marks facts as notified (`notified_at = now`) after sending
 - Uses `FACT_DISCOVERY_NEW_ENTITY_PROMPT` for new entities, `FACT_DISCOVERY_KNOWN_ENTITY_PROMPT` for known
 - Learn-aware variants: includes `/learn` topic context when facts originate from a learn command
@@ -241,7 +241,7 @@ The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
 - Runs tasks in priority order (schedule executor → extraction pipeline → notification agent)
-- Tracks global idle threshold (default: 15s)
+- Tracks global idle threshold (default: 60s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
 - Passes `is_idle` boolean to schedules (whether system is past global idle threshold)

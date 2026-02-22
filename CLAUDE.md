@@ -142,7 +142,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 **Behavior**:
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
 - `EMAIL_MAX_STEPS`: Max agent loop steps for `/email` command (default: 5)
-- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 15)
+- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 60)
 - `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
 
 **Logging**:

@@ -235,7 +235,7 @@ ConfigParam(
     key="IDLE_SECONDS",
     description="Global idle threshold in seconds",
     type=float,
-    default=15.0,
+    default=60.0,
     validator=_validate_positive_float,
 )
 
@@ -307,7 +307,7 @@ ConfigParam(
     key="LEARN_MIN_INTEREST_SCORE",
     description="Minimum interest score for an entity to be considered for enrichment",
     type=float,
-    default=0.1,
+    default=0.3,
     validator=_validate_positive_float,
 )
 
@@ -347,7 +347,7 @@ ConfigParam(
     key="NOTIFICATION_INITIAL_BACKOFF",
     description="Initial backoff in seconds after sending a fact notification",
     type=float,
-    default=15.0,
+    default=60.0,
     validator=_validate_positive_float,
 )
 

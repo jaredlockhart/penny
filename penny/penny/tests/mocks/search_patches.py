@@ -29,6 +29,9 @@ class MockPerplexityResponse:
             self.output.append(mock_message)
 
 
+_captured_perplexity_queries: list[str] = []
+
+
 class MockPerplexityResponses:
     """Mock for Perplexity responses API."""
 
@@ -37,6 +40,7 @@ class MockPerplexityResponses:
 
     def create(self, preset: str, input: str) -> MockPerplexityResponse:
         """Mock responses.create() call."""
+        _captured_perplexity_queries.append(input)
         return self._response
 
 

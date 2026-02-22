@@ -7,6 +7,7 @@ import pytest
 from penny.agents.learn import LearnAgent
 from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
+from penny.tests.mocks.search_patches import _captured_perplexity_queries
 
 
 @pytest.mark.asyncio
@@ -238,6 +239,7 @@ async def test_learn_dedup_facts(
         )
 
         mock_ollama.requests.clear()
+        _captured_perplexity_queries.clear()
 
         agent = LearnAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
@@ -253,6 +255,12 @@ async def test_learn_dedup_facts(
 
         result = await agent.execute()
         assert result is True
+
+        # Enrichment query should include existing facts for Perplexity context
+        assert len(_captured_perplexity_queries) >= 1
+        search_query = _captured_perplexity_queries[0]
+        assert "kef ls50 meta" in search_query.lower()
+        assert "Costs $1,599 per pair" in search_query
 
         # Should have 2 facts total (1 existing + 1 new), not 3
         facts = penny.db.get_entity_facts(entity.id)

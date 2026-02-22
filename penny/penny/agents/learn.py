@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -127,7 +128,7 @@ class LearnAgent(Agent):
         )
 
         # Build search query
-        query = self._build_query(entity.name, is_enrichment)
+        query = self._build_query(entity.name, is_enrichment, candidate.facts)
         logger.info("Learn search query: '%s'", query)
 
         # Execute search
@@ -193,7 +194,10 @@ class LearnAgent(Agent):
                 facts = self.db.get_entity_facts(entity.id)
                 fact_count = len(facts)
 
-                priority = interest * (1.0 / max(fact_count, 1))
+                # Log-diminishing returns: high-interest entities stay on top,
+                # but gradually yield as facts accumulate, allowing rotation.
+                # log2(0+2)=1.0, log2(3+2)=2.3, log2(7+2)=3.2, log2(15+2)=4.1
+                priority = interest / math.log2(fact_count + 2)
 
                 candidates.append(
                     _ScoredEntity(
@@ -208,10 +212,23 @@ class LearnAgent(Agent):
 
         return candidates
 
-    def _build_query(self, entity_name: str, is_enrichment: bool) -> str:
-        """Build a search query based on mode."""
+    def _build_query(
+        self, entity_name: str, is_enrichment: bool, existing_facts: list[Fact]
+    ) -> str:
+        """Build a search query based on mode.
+
+        For enrichment, includes existing facts so Perplexity can focus on
+        information we don't already have.
+        """
         if is_enrichment:
-            return entity_name
+            if not existing_facts:
+                return entity_name
+            facts_text = "\n".join(f"- {f.content}" for f in existing_facts)
+            return (
+                f"Tell me more about {entity_name}. "
+                f"I already know:\n{facts_text}\n\n"
+                f"What else is important to know?"
+            )
         year = datetime.now(UTC).year
         return f"{entity_name} latest news updates {year}"
 

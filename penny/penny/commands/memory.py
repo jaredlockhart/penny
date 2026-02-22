@@ -78,14 +78,32 @@ class MemoryCommand(Command):
             return CommandResult(text=PennyResponse.MEMORY_NO_FACTS.format(name=entity.name))
 
         updated = entity.updated_at.strftime("%Y-%m-%d %H:%M")
+        origin = self._get_origin(facts, context)
         facts_text = "\n\n".join(f"• {f.content}" for f in facts)
         lines = [
             f"**{entity.name}**",
             f"**Updated**: {updated}",
-            "",
-            facts_text,
         ]
+        if origin:
+            lines.append(f"**Origin**: {origin}")
+        lines += ["", facts_text]
         return CommandResult(text="\n".join(lines))
+
+    @staticmethod
+    def _get_origin(facts: list, context: CommandContext) -> str | None:
+        """Trace facts back to their originating learn topic or search query."""
+        for fact in facts:
+            if fact.source_search_log_id is None:
+                continue
+            search_log = context.db.get_search_log(fact.source_search_log_id)
+            if search_log is None:
+                continue
+            if search_log.learn_prompt_id is not None:
+                learn_prompt = context.db.get_learn_prompt(search_log.learn_prompt_id)
+                if learn_prompt is not None:
+                    return f"/learn {learn_prompt.prompt_text}"
+            return f"search: {search_log.query[:80]}"
+        return None
 
     @staticmethod
     def _scored_entities(context: CommandContext) -> list[tuple[float, Entity]]:
