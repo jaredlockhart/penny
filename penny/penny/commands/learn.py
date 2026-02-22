@@ -234,7 +234,7 @@ def _build_entity_lines(entity_fact_counts: dict[int, int], context: CommandCont
         if entity is None:
             continue
         facts_label = f"{fact_count} fact{'s' if fact_count != 1 else ''}"
-        lines.append(f"- **{entity.name}** ({facts_label})")
+        lines.append(f"• **{entity.name}** ({facts_label})")
     return lines
 
 
