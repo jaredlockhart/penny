@@ -179,6 +179,15 @@ class PennyResponse:
     COMMANDS_UNKNOWN = "Unknown command: /{name}. Use /commands to see available commands."
     COMMANDS_HELP_HEADER = "**Command: /{name}**"
 
+    # ── Unlearn ────────────────────────────────────────────────────────────────
+
+    UNLEARN_EMPTY = "No learn history yet. Use `/learn <topic>` to start learning about something."
+    UNLEARN_LIST_HEADER = "**Learn History**"
+    UNLEARN_INVALID_NUMBER = "#{number} doesn't match any topic. Use /unlearn to see the list."
+    UNLEARN_HEADER = "Forgetting what I learned about **{topic}**"
+    UNLEARN_ENTITY_LINE = "• {name} ({fact_count} facts)"
+    UNLEARN_NO_ENTITIES = "No entities were discovered from this topic."
+
     # ── Mute ──────────────────────────────────────────────────────────────────
 
     MUTE_ENABLED = "Notifications muted. Use /unmute when you want them back."

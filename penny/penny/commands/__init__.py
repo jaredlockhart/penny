@@ -14,6 +14,7 @@ from penny.commands.mute import MuteCommand
 from penny.commands.profile import ProfileCommand
 from penny.commands.schedule import ScheduleCommand
 from penny.commands.test import TestCommand
+from penny.commands.unlearn import UnlearnCommand
 from penny.commands.unmute import UnmuteCommand
 
 if TYPE_CHECKING:
@@ -65,6 +66,7 @@ def create_command_registry(
     registry.register(MemoryCommand())
     registry.register(LearnCommand(search_tool))
     registry.register(MuteCommand())
+    registry.register(UnlearnCommand())
     registry.register(UnmuteCommand())
 
     # Register test command if factory provided
