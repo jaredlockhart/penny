@@ -8,6 +8,7 @@ import contextlib
 import pytest
 
 from penny.scheduler.base import BackgroundScheduler, Schedule
+from penny.tests.conftest import TEST_SENDER
 
 
 class _SlowAgent:
@@ -110,3 +111,28 @@ async def test_foreground_during_idle_prevents_task_start():
         scheduler_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await scheduler_task
+
+
+@pytest.mark.asyncio
+async def test_command_does_not_cancel_background_task(
+    signal_server, make_config, mock_ollama, running_penny
+):
+    """Commands don't use Ollama, so they should not interrupt background tasks."""
+    config = make_config(IDLE_SECONDS=0.0, MAINTENANCE_INTERVAL_SECONDS=0.01)
+
+    async with running_penny(config) as penny:
+        # Spy on the scheduler's notify_foreground_start
+        original = penny.scheduler.notify_foreground_start
+        calls: list[bool] = []
+
+        def tracking_notify() -> None:
+            calls.append(True)
+            original()
+
+        penny.scheduler.notify_foreground_start = tracking_notify  # type: ignore[assignment]
+
+        # Send a command (doesn't need Ollama)
+        await signal_server.push_message(sender=TEST_SENDER, content="/commands")
+        await signal_server.wait_for_message(timeout=5.0)
+
+        assert not calls, "Command should not trigger notify_foreground_start"
