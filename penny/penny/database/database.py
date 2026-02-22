@@ -1011,6 +1011,20 @@ class Database:
         with self.get_session() as session:
             return session.get(LearnPrompt, learn_prompt_id)
 
+    def get_next_active_learn_prompt(self) -> LearnPrompt | None:
+        """Get the next active LearnPrompt to process (oldest first, across all users).
+
+        Returns:
+            The oldest active LearnPrompt, or None if no pending work.
+        """
+        with self.get_session() as session:
+            return session.exec(
+                select(LearnPrompt)
+                .where(LearnPrompt.status == PennyConstants.LearnPromptStatus.ACTIVE)
+                .order_by(LearnPrompt.created_at.asc())  # type: ignore[union-attr]
+                .limit(1)
+            ).first()
+
     def update_learn_prompt_status(self, learn_prompt_id: int, status: str) -> None:
         """Update the status of a LearnPrompt.
 

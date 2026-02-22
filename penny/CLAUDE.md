@@ -30,9 +30,12 @@ flowchart TD
             P3 --> P4["Phase 4<br>Embedding Backfill"]
         end
 
-        P3 -.->|delegates to| Learn[LearnAgent]
-        Learn -->|search| Search2[SearchTool]
+        P3 -.->|delegates to| Enrich[EnrichAgent]
+        Enrich -->|search| Search2[SearchTool]
         Search2 -.->|"new SearchLogs<br>trigger=enrichment"| DB
+
+        LearnWorker[LearnAgent] -->|search| Search3[SearchTool]
+        Search3 -.->|"new SearchLogs<br>trigger=learn_command"| DB
 
         Pipeline -->|"extract entities<br>& facts"| BG_Ollama["Ollama<br>background model"]
         BG_Ollama -.-> DB
@@ -73,10 +76,11 @@ penny/
   datetime_utils.py   — Timezone derivation from location (geopy + timezonefinder)
   agents/
     base.py           — Agent base class: agentic loop, tool execution, Ollama integration
-    models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
+    models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord, GeneratedQuery
     message.py        — MessageAgent: handles incoming user messages
     extraction.py     — ExtractionPipeline: unified entity/fact extraction from search results and messages (no notifications)
-    learn.py          — LearnAgent: adaptive background research driven by interest scores (no notifications)
+    enrich.py         — EnrichAgent: adaptive background research driven by interest scores (no notifications)
+    learn.py          — LearnAgent: scheduled worker for /learn command — one search step per tick
     notification.py   — NotificationAgent: interest-ranked fact discovery notifications with backoff
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
@@ -133,7 +137,7 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + Serper image search monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_extraction.py, test_learn.py, test_notification.py
+      test_message.py, test_extraction.py, test_enrich.py, test_notification.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py,
       test_signal_formatting.py, test_startup_announcement.py
@@ -184,9 +188,10 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Processes in strict priority order (four phases per execution):
   1. **User messages** (highest priority): freshest signals, processed first
   2. **Search logs** (drain backlog): entity/fact extraction from search results
-  3. **Enrichment** (gated): only runs when phases 1 & 2 are fully drained — delegates to LearnAgent
+  3. **Enrichment** (gated): only runs when phases 1 & 2 are fully drained — delegates to EnrichAgent
   4. **Embedding backfill**: backfills missing embeddings for facts and entities
 - Enrichment creates new SearchLog entries (trigger=penny_enrichment) that feed back into phase 2 on the next cycle
+- Does NOT process `/learn` prompts — that's the LearnAgent's job
 - **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results. Checks `trigger` field to determine mode — full extraction (user-triggered, creates entities with validation) vs known-only (penny-triggered, facts only)
 - **Post-fact semantic pruning**: After fact extraction, LLM checks if extracted facts are semantically relevant to the entity; removes irrelevant facts
 - **Entity validation**: New entity candidates pass structural filter (word count, LLM artifacts, URLs, numbers, dates, locations) then semantic filter (embedding similarity to query, threshold ~0.50)
@@ -203,6 +208,16 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Learn prompts and their searches processed oldest-first (ORDER BY created_at/timestamp ASC)
 
 **LearnAgent** (`agents/learn.py`)
+- Scheduled worker that processes `/learn` prompts one search step at a time
+- Runs on its own PeriodicSchedule (higher priority than ExtractionPipeline)
+- Each `execute()` call: finds the oldest active LearnPrompt, generates one query, executes one search, decrements `searches_remaining`
+- Previous results reconstructed from DB via `get_search_logs_by_learn_prompt()` (no in-memory state)
+- Query generation: initial query from topic text, followup queries informed by previous search results
+- Marks LearnPrompt as completed when `searches_remaining == 0` or LLM returns empty query
+- Uses `foreground_model_client` for query generation (structured output via `GeneratedQuery` schema)
+- Creates SearchLog entries with `trigger=learn_command` and `learn_prompt_id` for provenance
+
+**EnrichAgent** (`agents/enrich.py`)
 - Adaptive research agent driven by entity interest scores
 - Composed into ExtractionPipeline as the enrichment phase (not scheduled independently)
 - Picks the highest-priority entity across all users each cycle
@@ -215,7 +230,6 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Stores facts with `notified_at=NULL` — the NotificationAgent surfaces them
 - Exponential backoff (in-memory): 300s initial, doubles up to 3600s max
 - Backoff resets when any user sends a message or command
-- Triggered by `/learn` command (creates USER_SEARCH engagement with high strength)
 
 **NotificationAgent** (`agents/notification.py`)
 - Single agent that owns ALL proactive messaging to users
@@ -242,7 +256,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule executor → extraction pipeline → notification agent)
+- Runs tasks in priority order (schedule executor → learn agent → extraction pipeline → notification agent)
 - Tracks global idle threshold (default: 60s)
 - Notifies schedules when messages arrive (resets timers)
 - Only runs one task per tick
@@ -303,7 +317,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/debug** (`debug.py`): Shows agent status, git commit, system info, background task state
 - **/config** (`config.py`): View and modify runtime settings (e.g., `/config idle_seconds 600`). Reads/writes RuntimeConfig table in SQLite; changes take effect immediately
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
-- **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` searches via SearchTool, discovers entities from results via LLM entity identification, creates them with USER_SEARCH engagements. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`). Falls back to creating a single entity from topic text if no SearchTool is configured
+- **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` creates a LearnPrompt DB record and acknowledges. The scheduled LearnAgent worker picks up pending prompts and processes them one search step at a time, generating queries via LLM and executing Perplexity searches. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`)
 - **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities ranked by interest score (with score and fact count); `/memory <number>` shows entity details and facts; `/memory <number> delete` removes an entity and its facts
 - **/schedule** (`schedule.py`): Create, list, and delete recurring cron-based background tasks (uses LLM to parse natural language timing)
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
@@ -420,7 +434,7 @@ The NotificationAgent also sends learn completion announcements when all searche
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Specialized agents**: Each task type (message, extraction, learn, notification) has its own agent subclass
-- **Priority scheduling**: Schedule executor → knowledge pipeline (extraction + enrichment in strict phase order) → notifications
+- **Priority scheduling**: Schedule executor → learn worker → knowledge pipeline (extraction + enrichment in strict phase order) → notifications
 - **Always-run schedules**: User-created schedules run regardless of idle state; knowledge pipeline waits for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free Ollama immediately; cancelled work is idempotent and retried next cycle

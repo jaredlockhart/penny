@@ -9,6 +9,7 @@ from typing import Any
 
 from penny.agents import (
     Agent,
+    EnrichAgent,
     ExtractionPipeline,
     LearnAgent,
     MessageAgent,
@@ -190,12 +191,11 @@ class Penny:
             github_api=github_api,
             image_model_client=self.image_model_client,
             fastmail_api_token=config.fastmail_api_token,
-            search_tool=shared_search_tool,
         )
 
-        # Learn agent uses SearchTool directly (not the agentic loop).
+        # Enrich agent autonomously researches entities based on interest scores.
         # Composed into ExtractionPipeline as the enrichment phase.
-        self.learn_agent = LearnAgent(
+        self.enrich_agent = EnrichAgent(
             search_tool=shared_search_tool,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             background_model_client=self.background_model_client,
@@ -208,8 +208,22 @@ class Penny:
             config=config,
         )
 
+        # Learn agent processes /learn prompts one search step at a time.
+        # Scheduled before extraction so search logs are ready for the next extraction tick.
+        self.learn_agent = LearnAgent(
+            search_tool=shared_search_tool,
+            system_prompt="",
+            background_model_client=self.background_model_client,
+            foreground_model_client=self.foreground_model_client,
+            tools=[],
+            db=self.db,
+            max_steps=1,
+            tool_timeout=config.tool_timeout,
+            config=config,
+        )
+
         self.extraction_pipeline = ExtractionPipeline(
-            learn_agent=self.learn_agent,
+            enrich_agent=self.enrich_agent,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             background_model_client=self.background_model_client,
             foreground_model_client=self.foreground_model_client,
@@ -255,8 +269,9 @@ class Penny:
         self.notification_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Schedules (priority: schedule executor → extraction → notification)
+        # Schedules (priority: schedule executor → learn → extraction → notification)
         # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
+        # LearnAgent processes /learn prompts one search step per tick
         # ExtractionPipeline runs the unified knowledge pipeline: messages → search logs →
         # enrichment → embedding backfill (enrichment is gated — only runs when phases 1 & 2
         # are fully drained)
@@ -265,6 +280,10 @@ class Penny:
             AlwaysRunSchedule(
                 agent=self.schedule_executor,
                 interval=60.0,  # Check every minute for due schedules
+            ),
+            PeriodicSchedule(
+                agent=self.learn_agent,
+                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
             PeriodicSchedule(
                 agent=self.extraction_pipeline,

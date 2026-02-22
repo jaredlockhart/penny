@@ -16,7 +16,7 @@ class BackoffState:
     """Exponential backoff that resets on user interaction.
 
     Shared by NotificationAgent (one instance per user) and
-    LearnAgent (single global instance).
+    EnrichAgent (single global instance).
 
     State machine:
         Initial (backoff=0) → first action sets backoff to `initial`.

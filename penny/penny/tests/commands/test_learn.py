@@ -10,9 +10,9 @@ from penny.tests.conftest import TEST_SENDER, wait_until
 
 @pytest.mark.asyncio
 async def test_learn_iterative_search(
-    signal_server, test_config, mock_ollama, _mock_search, running_penny
+    signal_server, mock_ollama, _mock_search, make_config, running_penny
 ):
-    """Search-based /learn creates LearnPrompt, iteratively generates and runs searches."""
+    """Search-based /learn creates LearnPrompt, scheduled worker iteratively runs searches."""
     call_count = 0
 
     def handler(request: dict, count: int) -> dict:
@@ -43,7 +43,10 @@ async def test_learn_iterative_search(
 
     mock_ollama.set_response_handler(handler)
 
-    async with running_penny(test_config) as penny:
+    # Enable scheduler: IDLE_SECONDS=0 so background tasks run immediately,
+    # MAINTENANCE_INTERVAL_SECONDS=0.01 so the worker fires on every tick
+    config = make_config(IDLE_SECONDS=0.0, MAINTENANCE_INTERVAL_SECONDS=0.01)
+    async with running_penny(config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/learn kef speakers")
         response = await signal_server.wait_for_message(timeout=10.0)
 
