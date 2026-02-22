@@ -200,7 +200,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Facts track provenance via `source_search_log_id` or `source_message_id`
 - Facts from user messages and USER_MESSAGE searches are pre-marked with `notified_at` (user already knows)
 - Does NOT send notifications — the NotificationAgent handles all proactive messaging
-- All content processed newest-first (ORDER BY timestamp DESC)
+- Learn prompts and their searches processed oldest-first (ORDER BY created_at/timestamp ASC)
 
 **LearnAgent** (`agents/learn.py`)
 - Adaptive research agent driven by entity interest scores
