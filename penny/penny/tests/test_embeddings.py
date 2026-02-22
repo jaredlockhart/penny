@@ -300,6 +300,25 @@ class TestBuildEntityEmbedText:
         result = build_entity_embed_text("python", ["A programming language"])
         assert result == "python: A programming language"
 
+    def test_name_with_tagline(self):
+        result = build_entity_embed_text("genesis", [], tagline="british progressive rock band")
+        assert result == "genesis (british progressive rock band)"
+
+    def test_name_with_tagline_and_facts(self):
+        result = build_entity_embed_text(
+            "genesis",
+            ["Formed in 1967", "From Surrey, England"],
+            tagline="british progressive rock band",
+        )
+        assert (
+            result
+            == "genesis (british progressive rock band): Formed in 1967; From Surrey, England"
+        )
+
+    def test_tagline_none_unchanged(self):
+        result = build_entity_embed_text("kef ls50 meta", ["Costs $1,599"], tagline=None)
+        assert result == "kef ls50 meta: Costs $1,599"
+
 
 class TestDatabaseEmbeddingMethods:
     """Tests for database embedding storage and retrieval."""

@@ -54,7 +54,7 @@ async def test_extraction_processes_search_log(
                     {
                         "known": [],
                         "new": [
-                            {"name": "KEF LS50 Meta"},
+                            {"name": "KEF LS50 Meta", "tagline": "bookshelf speaker by kef"},
                         ],
                     }
                 ),
@@ -107,6 +107,9 @@ async def test_extraction_processes_search_log(
         entities = penny.db.get_user_entities(TEST_SENDER)
         assert len(entities) >= 1
         entity = next(e for e in entities if e.name == "kef ls50 meta")
+
+        # Verify tagline was stored
+        assert entity.tagline == "bookshelf speaker by kef"
 
         # Verify facts stored as individual Fact rows
         facts = penny.db.get_entity_facts(entity.id)
@@ -256,7 +259,7 @@ async def test_extraction_known_and_new_entities(
                     {
                         "known": ["kef ls50 meta"],
                         "new": [
-                            {"name": "Wharfedale Linton"},
+                            {"name": "Wharfedale Linton", "tagline": "heritage bookshelf speaker"},
                         ],
                     }
                 ),

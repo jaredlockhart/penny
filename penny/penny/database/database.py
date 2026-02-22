@@ -1294,6 +1294,23 @@ class Database:
         except Exception as e:
             logger.error("Failed to update entity %d embedding: %s", entity_id, e)
 
+    def update_entity_tagline(self, entity_id: int, tagline: str) -> None:
+        """Update the tagline for an entity.
+
+        Args:
+            entity_id: Entity primary key
+            tagline: Short disambiguating summary
+        """
+        try:
+            with self.get_session() as session:
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.tagline = tagline
+                    session.add(entity)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update entity %d tagline: %s", entity_id, e)
+
     def update_fact_embedding(self, fact_id: int, embedding: bytes) -> None:
         """Update the embedding for a fact.
 

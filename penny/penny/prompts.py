@@ -193,7 +193,15 @@ Examples:
         "- Institutions that only appear as context for a person "
         "(if the text is about Susskind's work at Stanford, "
         "extract 'Leonard Susskind' not 'Stanford')\n"
-        "- The user or the search query itself"
+        "- The user or the search query itself\n\n"
+        "TAGLINE:\n"
+        "For each new entity, provide a short tagline (3-8 words) describing "
+        "what the entity is. The tagline is a summary you extrapolate, "
+        "not a verbatim quote from the text.\n"
+        "- 'KEF LS50 Meta' → 'bookshelf speaker by kef'\n"
+        "- 'Leonard Susskind' → 'theoretical physicist at stanford'\n"
+        "- 'Genesis' → 'british progressive rock band'\n"
+        "- 'ROCm' → 'amd gpu software platform'"
     )
 
     ENTITY_FACT_EXTRACTION_PROMPT = (
@@ -239,7 +247,15 @@ Examples:
         "- Dates, years, months, launch windows, or deadlines\n"
         "- Geographic locations: cities, countries, states, continents, "
         "landmarks ('Paris', 'California', 'Europe')\n"
-        "- The user themselves"
+        "- The user themselves\n\n"
+        "TAGLINE:\n"
+        "For each new entity, provide a short tagline (3-8 words) describing "
+        "what the entity is. The tagline is a summary you extrapolate, "
+        "not a verbatim quote from the text.\n"
+        "- 'KEF LS50 Meta' → 'bookshelf speaker by kef'\n"
+        "- 'Leonard Susskind' → 'theoretical physicist at stanford'\n"
+        "- 'Genesis' → 'british progressive rock band'\n"
+        "- 'ROCm' → 'amd gpu software platform'"
     )
 
     MESSAGE_FACT_EXTRACTION_PROMPT = (

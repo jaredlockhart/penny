@@ -118,16 +118,18 @@ def token_containment_ratio(name_a: str, name_b: str) -> float:
     return len(shorter & longer) / len(shorter)
 
 
-def build_entity_embed_text(name: str, facts: list[str]) -> str:
-    """Build text for embedding an entity (name + facts).
+def build_entity_embed_text(name: str, facts: list[str], tagline: str | None = None) -> str:
+    """Build text for embedding an entity (name + tagline + facts).
 
     Args:
         name: Entity name
         facts: List of fact content strings
+        tagline: Optional disambiguating summary
 
     Returns:
         Combined text suitable for embedding
     """
+    header = f"{name} ({tagline})" if tagline else name
     if facts:
-        return f"{name}: {'; '.join(facts)}"
-    return name
+        return f"{header}: {'; '.join(facts)}"
+    return header

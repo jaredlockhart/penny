@@ -130,6 +130,7 @@ class Entity(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     embedding: bytes | None = None  # Serialized float32 embedding vector
+    tagline: str | None = None  # Short disambiguating summary (e.g., "british prog rock band")
 
 
 class Engagement(SQLModel, table=True):

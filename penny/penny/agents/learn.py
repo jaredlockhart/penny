@@ -155,7 +155,7 @@ class LearnAgent(Agent):
         )
 
         # Build search query
-        query = self._build_query(entity.name, is_enrichment, candidate.facts)
+        query = self._build_query(entity.name, is_enrichment, candidate.facts, entity.tagline)
         logger.info("Learn search query: '%s'", query)
 
         # Execute search
@@ -241,24 +241,30 @@ class LearnAgent(Agent):
         return candidates
 
     def _build_query(
-        self, entity_name: str, is_enrichment: bool, existing_facts: list[Fact]
+        self,
+        entity_name: str,
+        is_enrichment: bool,
+        existing_facts: list[Fact],
+        tagline: str | None = None,
     ) -> str:
         """Build a search query based on mode.
 
         For enrichment, includes existing facts so Perplexity can focus on
-        information we don't already have.
+        information we don't already have. The tagline disambiguates entities
+        with common names (e.g., "genesis" → "genesis (british prog rock band)").
         """
+        label = f"{entity_name} ({tagline})" if tagline else entity_name
         if is_enrichment:
             if not existing_facts:
-                return entity_name
+                return label
             facts_text = "\n".join(f"- {f.content}" for f in existing_facts)
             return (
-                f"Tell me more about {entity_name}. "
+                f"Tell me more about {label}. "
                 f"I already know:\n{facts_text}\n\n"
                 f"What else is important to know?"
             )
         year = datetime.now(UTC).year
-        return f"{entity_name} latest news updates {year}"
+        return f"{label} latest news updates {year}"
 
     async def _search(self, query: str) -> str | None:
         """Execute a search via SearchTool. Returns the text result or None."""
@@ -421,7 +427,7 @@ class LearnAgent(Agent):
         try:
             assert self._embedding_model_client is not None
             facts = self.db.get_entity_facts(entity.id)
-            text = build_entity_embed_text(entity.name, [f.content for f in facts])
+            text = build_entity_embed_text(entity.name, [f.content for f in facts], entity.tagline)
             vecs = await self._embedding_model_client.embed(text)
             self.db.update_entity_embedding(entity.id, serialize_embedding(vecs[0]))
         except Exception as e:
