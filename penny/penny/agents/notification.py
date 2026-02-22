@@ -68,12 +68,12 @@ class NotificationAgent(Agent):
     # --- Learn completion announcements ---
 
     async def _try_learn_completion(self, user: str) -> bool:
-        """Check for completed learn prompts and send completion announcements.
+        """Check for completed learn prompts and send one completion announcement.
 
         Bypasses backoff entirely — the user explicitly requested this research.
-        Sends ALL ready announcements in one cycle (no one-per-cycle limit).
-        Does NOT affect backoff state for entity notifications.
-        Returns True if any announcement was sent.
+        Sends ONE announcement per cycle so multiple completions arrive spaced out
+        rather than in a burst. Does NOT affect backoff state for entity notifications.
+        Returns True if an announcement was sent.
         """
         assert self._channel is not None
 
@@ -81,7 +81,6 @@ class NotificationAgent(Agent):
         if not learn_prompts:
             return False
 
-        any_sent = False
         for lp in learn_prompts:
             assert lp.id is not None
             search_logs = self.db.get_search_logs_by_learn_prompt(lp.id)
@@ -106,9 +105,9 @@ class NotificationAgent(Agent):
                 self.db.mark_facts_notified(unnotified_ids)
 
             self.db.mark_learn_prompt_announced(lp.id)
-            any_sent = True
+            return True
 
-        return any_sent
+        return False
 
     async def _send_learn_completion(self, lp: LearnPrompt, user: str) -> bool:
         """Compose and send a learn completion summary via the model.
@@ -168,7 +167,7 @@ class NotificationAgent(Agent):
             f"\n\nEntities and facts discovered:\n\n{all_sections}"
         )
 
-        result = await self._compose_user_facing(prompt)
+        result = await self._compose_user_facing(prompt, image_query=lp.prompt_text)
         if not result.answer:
             logger.warning("Failed to compose learn completion for '%s'", lp.prompt_text)
             return False
