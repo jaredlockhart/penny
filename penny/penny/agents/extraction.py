@@ -195,7 +195,6 @@ class _EntityCandidate:
     """New entity held in memory until post-fact semantic pruning."""
 
     name: str
-    bare_embedding: list[float] | None = None
     facts: list[str] = field(default_factory=list)
 
 
@@ -491,25 +490,19 @@ class ExtractionPipeline(Agent):
                     logger.info("Rejected entity '%s' (token-subset of another candidate)", name)
                     continue
 
-                # Compute bare name embedding for dedup only (no similarity gate)
-                candidate_embedding: list[float] | None = None
-                if self._embedding_model_client:
+                # Check for duplicate against existing entities
+                duplicate: Entity | None = None
+                if existing_entities and self._embedding_model_client:
                     try:
                         vecs = await self._embedding_model_client.embed([name])
-                        candidate_embedding = vecs[0]
+                        duplicate = self._find_duplicate_entity(name, vecs[0], existing_entities)
                     except Exception:
                         logger.debug("Failed to embed candidate '%s'", name, exc_info=True)
 
-                # Check for duplicate before creating
-                duplicate = self._find_duplicate_entity(
-                    name, candidate_embedding, existing_entities
-                )
                 if duplicate:
                     entities_to_process.append(duplicate)
                 else:
-                    candidates.append(
-                        _EntityCandidate(name=name, bare_embedding=candidate_embedding)
-                    )
+                    candidates.append(_EntityCandidate(name=name))
 
             # Look up known entities that were identified
             for known_name in identified.known:
