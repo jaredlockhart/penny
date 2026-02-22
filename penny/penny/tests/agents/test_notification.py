@@ -321,6 +321,124 @@ async def test_notification_backoff_and_reset(
 
 
 @pytest.mark.asyncio
+async def test_notification_command_resets_backoff(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Commands (like /learn) reset notification backoff, not just regular messages."""
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Here's an interesting discovery — some really great new facts about this topic!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        agent = _create_notification_agent(penny, config)
+
+        # --- Cycle 1: notification sent (no backoff) ---
+        e1 = penny.db.get_or_create_entity(TEST_SENDER, "command backoff entity 1")
+        assert e1 is not None and e1.id is not None
+        penny.db.add_fact(e1.id, "Fact for command backoff test 1")
+
+        signal_server.outgoing_messages.clear()
+        result1 = await agent.execute()
+        assert result1 is True
+
+        # --- Cycle 2: suppressed (backoff active) ---
+        e2 = penny.db.get_or_create_entity(TEST_SENDER, "command backoff entity 2")
+        assert e2 is not None and e2.id is not None
+        penny.db.add_fact(e2.id, "Fact for command backoff test 2")
+
+        signal_server.outgoing_messages.clear()
+        result2 = await agent.execute()
+        assert result2 is False
+
+        # --- User sends a command (not a message) → should also reset backoff ---
+        penny.db.log_command(
+            user=TEST_SENDER,
+            channel_type="signal",
+            command_name="learn",
+            command_args="kef speakers",
+            response="Okay, I'll learn more about kef speakers",
+        )
+
+        # --- Cycle 3: notification sent (backoff reset by command) ---
+        signal_server.outgoing_messages.clear()
+        result3 = await agent.execute()
+        assert result3 is True
+        assert len(signal_server.outgoing_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_notification_expired_backoff_resets_to_eager(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """When backoff expires naturally, agent returns to eager state with fresh backoff cycle."""
+    from datetime import timedelta
+
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Here's an interesting discovery — some really great new facts about this topic!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        agent = _create_notification_agent(penny, config)
+
+        # --- Cycle 1: notification sent → backoff starts ---
+        e1 = penny.db.get_or_create_entity(TEST_SENDER, "eager entity 1")
+        assert e1 is not None and e1.id is not None
+        penny.db.add_fact(e1.id, "Fact for eager test 1")
+
+        signal_server.outgoing_messages.clear()
+        await agent.execute()
+        assert len(signal_server.outgoing_messages) == 1
+
+        # Backoff is now at NOTIFICATION_INITIAL_BACKOFF (15s)
+        state = agent._backoff_state[TEST_SENDER]
+        assert state.backoff_seconds == config.runtime.NOTIFICATION_INITIAL_BACKOFF
+
+        # --- Simulate expired backoff by moving last_proactive_send into the past ---
+        state.last_proactive_send = datetime.now(UTC) - timedelta(seconds=3600)
+        state.backoff_seconds = 480.0  # Simulates accumulated backoff from previous sends
+
+        # --- Cycle 2: backoff expired → fires AND resets to fresh cycle ---
+        e2 = penny.db.get_or_create_entity(TEST_SENDER, "eager entity 2")
+        assert e2 is not None and e2.id is not None
+        penny.db.add_fact(e2.id, "Fact for eager test 2")
+
+        signal_server.outgoing_messages.clear()
+        result2 = await agent.execute()
+        assert result2 is True
+
+        # Backoff should be at INITIAL (fresh cycle), not doubled from 480
+        assert state.backoff_seconds == config.runtime.NOTIFICATION_INITIAL_BACKOFF
+
+
+@pytest.mark.asyncio
 async def test_learn_completion_announcement(
     signal_server,
     mock_ollama,
@@ -331,7 +449,20 @@ async def test_learn_completion_announcement(
 ):
     """Completion announcement sent when learn prompt is completed and all search logs extracted."""
     config = make_config()
-    mock_ollama.set_default_flow(search_query="test", final_response="ok")
+
+    captured_prompts: list[str] = []
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+        captured_prompts.append(prompt)
+        return mock_ollama._make_text_response(
+            request,
+            "I finished researching **kef speakers** and found some cool stuff about "
+            "**kef ls50 meta** — they use Metamaterial Absorption Technology!",
+        )
+
+    mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
@@ -379,13 +510,14 @@ async def test_learn_completion_announcement(
         result = await agent.execute()
         assert result is True
 
-        # Announcement should contain the topic and entity summary
+        # Model was given the topic and entity facts to compose a summary
+        assert any("kef speakers" in p for p in captured_prompts)
+        assert any("kef ls50 meta" in p for p in captured_prompts)
+        assert any("Metamaterial Absorption Technology" in p for p in captured_prompts)
+
+        # Announcement was sent
         msgs = signal_server.outgoing_messages
         assert len(msgs) == 1
-        message = msgs[0]["message"]
-        assert "kef speakers" in message
-        assert "kef ls50 meta" in message
-        assert "1 fact" in message
 
         # LearnPrompt should be marked as announced
         updated_lp = penny.db.get_learn_prompt(lp.id)
@@ -450,7 +582,14 @@ async def test_learn_completion_marks_facts_notified(
 ):
     """After learn completion announcement, un-notified facts from the learn prompt are marked."""
     config = make_config()
-    mock_ollama.set_default_flow(search_query="test", final_response="ok")
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "I finished researching kef speakers and found some interesting stuff!",
+        )
+
+    mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")

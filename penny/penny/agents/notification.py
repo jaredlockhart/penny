@@ -76,10 +76,12 @@ class NotificationAgent(Agent):
     # --- Learn completion announcements ---
 
     async def _try_learn_completion(self, user: str) -> bool:
-        """Check for completed learn prompts and send a completion announcement.
+        """Check for completed learn prompts and send completion announcements.
 
-        Bypasses backoff — the user explicitly requested this research.
-        Returns True if an announcement was sent.
+        Bypasses backoff entirely — the user explicitly requested this research.
+        Sends ALL ready announcements in one cycle (no one-per-cycle limit).
+        Does NOT affect backoff state for entity notifications.
+        Returns True if any announcement was sent.
         """
         assert self._channel is not None
 
@@ -87,6 +89,7 @@ class NotificationAgent(Agent):
         if not learn_prompts:
             return False
 
+        any_sent = False
         for lp in learn_prompts:
             assert lp.id is not None
             search_logs = self.db.get_search_logs_by_learn_prompt(lp.id)
@@ -99,13 +102,9 @@ class NotificationAgent(Agent):
             if not all(sl.extracted for sl in search_logs):
                 continue  # Extraction not finished yet
 
-            message = self._build_learn_completion_message(lp, user)
-            await self._channel.send_response(user, message, parent_id=None)
-            logger.info(
-                "Learn completion announcement sent for '%s' to %s",
-                lp.prompt_text,
-                user,
-            )
+            sent = await self._send_learn_completion(lp, user)
+            if not sent:
+                continue
 
             # Mark remaining un-notified facts from this learn prompt as notified
             search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
@@ -115,37 +114,48 @@ class NotificationAgent(Agent):
                 self.db.mark_facts_notified(unnotified_ids)
 
             self.db.mark_learn_prompt_announced(lp.id)
-            self._mark_proactive_sent(user)
-            return True
+            any_sent = True
 
-        return False
+        return any_sent
 
-    def _build_learn_completion_message(self, lp: LearnPrompt, user: str) -> str:
-        """Build a structured completion summary for a learn prompt."""
+    async def _send_learn_completion(self, lp: LearnPrompt, user: str) -> bool:
+        """Compose and send a learn completion summary via the model.
+
+        Returns True if the announcement was sent.
+        """
+        assert self._channel is not None
         assert lp.id is not None
-        header = PennyResponse.LEARN_COMPLETE_HEADER.format(topic=lp.prompt_text)
 
         search_logs = self.db.get_search_logs_by_learn_prompt(lp.id)
         search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
         facts = self.db.get_facts_by_search_log_ids(search_log_ids)
 
         if not facts:
-            return f"{header}\n\n{PennyResponse.LEARN_COMPLETE_NO_ENTITIES}"
+            message = (
+                f"{PennyResponse.LEARN_COMPLETE_HEADER.format(topic=lp.prompt_text)}"
+                f"\n\n{PennyResponse.LEARN_COMPLETE_NO_ENTITIES}"
+            )
+            await self._channel.send_response(user, message, parent_id=None)
+            logger.info(
+                "Learn completion announcement sent (no entities) for '%s' to %s",
+                lp.prompt_text,
+                user,
+            )
+            return True
 
-        # Group facts by entity
+        # Group facts by entity, sorted by interest score
         facts_by_entity: dict[int, list[Fact]] = defaultdict(list)
         for fact in facts:
             facts_by_entity[fact.entity_id].append(fact)
 
-        # Compute interest scores
         all_engagements = self.db.get_user_engagements(user)
         engagements_by_entity: dict[int, list] = defaultdict(list)
         for eng in all_engagements:
             if eng.entity_id is not None:
                 engagements_by_entity[eng.entity_id].append(eng)
 
-        # Build entity lines sorted by interest score descending
-        entity_lines: list[tuple[float, str]] = []
+        # Build entity sections with actual facts for the model
+        entity_sections: list[tuple[float, str]] = []
         for entity_id, entity_facts in facts_by_entity.items():
             entity = self.db.get_entity(entity_id)
             if entity is None:
@@ -154,19 +164,41 @@ class NotificationAgent(Agent):
                 engagements_by_entity.get(entity_id, []),
                 half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
             )
-            fact_count = len(entity_facts)
-            line = PennyResponse.LEARN_COMPLETE_ENTITY_LINE.format(
-                name=entity.name,
-                fact_count=fact_count,
-                score=f"{score:.1f}",
+            facts_text = "\n".join(f"- {f.content}" for f in entity_facts)
+            section = f"{entity.name}:\n{facts_text}"
+            entity_sections.append((score, section))
+
+        entity_sections.sort(key=lambda x: x[0], reverse=True)
+        all_sections = "\n\n".join(section for _, section in entity_sections)
+
+        prompt = (
+            f"{Prompt.LEARN_COMPLETION_SUMMARY_PROMPT.format(topic=lp.prompt_text)}"
+            f"\n\nEntities and facts discovered:\n\n{all_sections}"
+        )
+
+        result = await self._compose_user_facing(prompt)
+        if not result.answer:
+            logger.warning("Failed to compose learn completion for '%s'", lp.prompt_text)
+            return False
+
+        typing_task = asyncio.create_task(self._channel._typing_loop(user))
+        try:
+            await self._channel.send_response(
+                user,
+                result.answer,
+                parent_id=None,
+                attachments=result.attachments or None,
             )
-            entity_lines.append((score, line))
+            logger.info(
+                "Learn completion announcement sent for '%s' to %s",
+                lp.prompt_text,
+                user,
+            )
+        finally:
+            typing_task.cancel()
+            await self._channel.send_typing(user, False)
 
-        entity_lines.sort(key=lambda x: x[0], reverse=True)
-
-        lines = [header, ""]
-        lines.extend(line for _, line in entity_lines)
-        return "\n".join(lines)
+        return True
 
     # --- Fact discovery notifications ---
 
@@ -222,17 +254,17 @@ class NotificationAgent(Agent):
         if state is None:
             return True
 
-        # Check if user has sent a message since our last proactive send
+        # Check if user has interacted (message or command) since our last proactive send
         if state.last_proactive_send is not None:
-            latest_incoming = self.db.get_latest_incoming_message_time(user)
-            if latest_incoming is not None:
-                incoming_time = latest_incoming
-                if incoming_time.tzinfo is None:
-                    incoming_time = incoming_time.replace(tzinfo=UTC)
+            latest_interaction = self.db.get_latest_user_interaction_time(user)
+            if latest_interaction is not None:
+                interaction_time = latest_interaction
+                if interaction_time.tzinfo is None:
+                    interaction_time = interaction_time.replace(tzinfo=UTC)
                 last_send = state.last_proactive_send
                 if last_send.tzinfo is None:
                     last_send = last_send.replace(tzinfo=UTC)
-                if incoming_time > last_send:
+                if interaction_time > last_send:
                     state.backoff_seconds = 0.0
 
         if state.backoff_seconds <= 0:
@@ -246,7 +278,11 @@ class NotificationAgent(Agent):
         if last_send.tzinfo is None:
             last_send = last_send.replace(tzinfo=UTC)
         elapsed = (now - last_send).total_seconds()
-        return elapsed >= state.backoff_seconds
+        if elapsed >= state.backoff_seconds:
+            # Backoff expired — return to eager state so next cycle starts fresh
+            state.backoff_seconds = 0.0
+            return True
+        return False
 
     def _mark_proactive_sent(self, user: str) -> None:
         """Record that we sent a notification and increase backoff."""

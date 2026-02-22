@@ -129,6 +129,15 @@ Examples:
         "Use **bold** for topic names and bullet points for key facts."
     )
 
+    # Learn completion summary prompt
+    LEARN_COMPLETION_SUMMARY_PROMPT = (
+        "You just finished researching **{topic}** (something the user asked you to look into). "
+        "Write a casual summary of what you found. "
+        "Group findings by topic, highlight the most interesting facts, "
+        "and use **bold** for topic names and bullet points for key facts. "
+        "Keep it concise but informative."
+    )
+
     # Learn agent message composition prompts
     LEARN_ENRICHMENT_MESSAGE_PROMPT = (
         "You just learned new facts about {entity_name}. "

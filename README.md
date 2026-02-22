@@ -132,7 +132,7 @@ New entities pass through three quality gates: a structural filter (rejects LLM 
 
 ### Scheduling
 
-A priority-based scheduler runs background tasks when the system is idle (default: 60 seconds after the last message). Foreground messages immediately cancel the active background task to free Ollama for the user — cancelled work is idempotent and resumes next cycle.
+A priority-based scheduler runs background tasks when the system is idle (default: 15 seconds after the last message). Foreground messages immediately cancel the active background task to free Ollama for the user — cancelled work is idempotent and resumes next cycle.
 
 User-created scheduled tasks (via `/schedule`) run on their own timer regardless of idle state, so a daily weather briefing won't be blocked by an active conversation.
 
@@ -213,7 +213,7 @@ LOG_LEVEL="INFO"
 
 # Agent behavior (optional, defaults shown)
 MESSAGE_MAX_STEPS=5
-IDLE_SECONDS=60                     # Global idle threshold for background tasks
+IDLE_SECONDS=15                     # Global idle threshold for background tasks
 
 # Fastmail JMAP (optional, enables /email command)
 # FASTMAIL_API_TOKEN="your-api-token"
@@ -253,7 +253,7 @@ Penny auto-detects which channel to use based on configured credentials:
 
 **Behavior:**
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
-- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 60)
+- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 15)
 - `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
 - Many more parameters are runtime-configurable via `/config` (38 total)
 

@@ -517,6 +517,30 @@ class Database:
                 .limit(1)
             ).first()
 
+    def get_latest_user_interaction_time(self, sender: str) -> datetime | None:
+        """Get the timestamp of the most recent user interaction (message or command).
+
+        Args:
+            sender: The user's identifier
+
+        Returns:
+            Most recent timestamp from either MessageLog or CommandLog, or None
+        """
+        msg_time = self.get_latest_incoming_message_time(sender)
+        with self.get_session() as session:
+            cmd_time = session.exec(
+                select(CommandLog.timestamp)
+                .where(CommandLog.user == sender)
+                .order_by(CommandLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+
+        if msg_time is None:
+            return cmd_time
+        if cmd_time is None:
+            return msg_time
+        return max(msg_time, cmd_time)
+
     def get_user_info(self, sender: str) -> UserInfo | None:
         """
         Get the basic user info for a user.
@@ -859,18 +883,25 @@ class Database:
         """
         Get SearchLog entries that haven't been processed for entity extraction.
 
+        Grouped by learn prompt (most recent first) so all searches for one
+        /learn topic complete before moving to the next. Non-learn searches
+        (NULL learn_prompt_id) come last.
+
         Args:
             limit: Maximum number of entries to return
 
         Returns:
-            List of unprocessed SearchLog entries, most recent first
+            List of unprocessed SearchLog entries, grouped by learn prompt
         """
         with self.get_session() as session:
             return list(
                 session.exec(
                     select(SearchLog)
                     .where(SearchLog.extracted == False)  # noqa: E712
-                    .order_by(SearchLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(
+                        SearchLog.learn_prompt_id.desc(),  # type: ignore[unresolved-attribute]
+                        SearchLog.timestamp.desc(),  # type: ignore[unresolved-attribute]
+                    )
                     .limit(limit)
                 ).all()
             )

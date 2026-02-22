@@ -235,7 +235,7 @@ ConfigParam(
     key="IDLE_SECONDS",
     description="Global idle threshold in seconds",
     type=float,
-    default=60.0,
+    default=15.0,
     validator=_validate_positive_float,
 )
 
@@ -347,7 +347,7 @@ ConfigParam(
     key="NOTIFICATION_INITIAL_BACKOFF",
     description="Initial backoff in seconds after sending a fact notification",
     type=float,
-    default=60.0,
+    default=15.0,
     validator=_validate_positive_float,
 )
 
