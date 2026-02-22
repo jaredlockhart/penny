@@ -101,6 +101,8 @@ class Penny:
                         perplexity_api_key=config.perplexity_api_key,
                         db=db,
                         serper_api_key=config.serper_api_key,
+                        image_max_results=int(config.runtime.IMAGE_MAX_RESULTS),
+                        image_download_timeout=config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
                     )
                 ]
             return []

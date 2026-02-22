@@ -150,7 +150,10 @@ class NotificationAgent(Agent):
             entity = self.db.get_entity(entity_id)
             if entity is None:
                 continue
-            score = compute_interest_score(engagements_by_entity.get(entity_id, []))
+            score = compute_interest_score(
+                engagements_by_entity.get(entity_id, []),
+                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+            )
             fact_count = len(entity_facts)
             line = PennyResponse.LEARN_COMPLETE_ENTITY_LINE.format(
                 name=entity.name,
@@ -275,7 +278,10 @@ class NotificationAgent(Agent):
         best_id: int | None = None
         best_score = float("-inf")
         for eid in entity_ids:
-            score = compute_interest_score(engagements_by_entity.get(eid, []))
+            score = compute_interest_score(
+                engagements_by_entity.get(eid, []),
+                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+            )
             if score > best_score:
                 best_score = score
                 best_id = eid

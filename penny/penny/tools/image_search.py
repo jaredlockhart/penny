@@ -8,8 +8,6 @@ import logging
 import httpx
 from pydantic import BaseModel
 
-from penny.constants import PennyConstants
-
 logger = logging.getLogger(__name__)
 
 SERPER_IMAGES_URL = "https://google.serper.dev/images"
@@ -35,7 +33,13 @@ class SerperImageResponse(BaseModel):
     images: list[SerperImageResult] = []
 
 
-async def search_image(query: str, api_key: str | None = None) -> str | None:
+async def search_image(
+    query: str,
+    api_key: str | None = None,
+    *,
+    max_results: int,
+    timeout: float,
+) -> str | None:
     """Search for an image via Serper and return base64 data URI.
 
     Returns a data URI string (e.g., 'data:image/jpeg;base64,...') or None
@@ -45,13 +49,11 @@ async def search_image(query: str, api_key: str | None = None) -> str | None:
         return None
 
     try:
-        async with httpx.AsyncClient(
-            timeout=PennyConstants.IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True
-        ) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             # Search for images via Serper
             resp = await client.post(
                 SERPER_IMAGES_URL,
-                json={"q": query, "num": PennyConstants.IMAGE_MAX_RESULTS},
+                json={"q": query, "num": max_results},
                 headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
             )
             resp.raise_for_status()

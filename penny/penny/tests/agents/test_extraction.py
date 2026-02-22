@@ -126,7 +126,7 @@ async def test_extraction_processes_search_log(
         ]
         assert len(search_engagements) >= 1
         assert search_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert search_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_SEARCH_INITIATED
+        assert search_engagements[0].strength == 0.6
 
         # Verify SearchLog is marked as extracted
         with penny.db.get_session() as session:
@@ -545,7 +545,7 @@ async def test_extraction_processes_messages_for_entities(
         ]
         assert len(mention_engagements) >= 1
         assert mention_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert mention_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_MESSAGE_MENTION
+        assert mention_engagements[0].strength == 0.2
 
         # Verify EXPLICIT_STATEMENT engagement was created from sentiment extraction
         statement_engagements = [
@@ -555,10 +555,7 @@ async def test_extraction_processes_messages_for_entities(
         ]
         assert len(statement_engagements) >= 1
         assert statement_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert (
-            statement_engagements[0].strength
-            == PennyConstants.ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT
-        )
+        assert statement_engagements[0].strength == 0.7
 
 
 @pytest.mark.asyncio
@@ -620,10 +617,7 @@ async def test_extraction_creates_follow_up_engagements(
         ]
         assert len(follow_up_engagements) == 1
         assert follow_up_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert (
-            follow_up_engagements[0].strength
-            == PennyConstants.ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION
-        )
+        assert follow_up_engagements[0].strength == 0.5
         assert follow_up_engagements[0].source_message_id == incoming_id
 
 
@@ -710,9 +704,7 @@ async def test_extraction_skips_short_messages(
         assert work_done is False
 
         # Message should be marked as processed
-        unprocessed = penny.db.get_unprocessed_messages(
-            TEST_SENDER, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
-        )
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=20)
         assert len(unprocessed) == 0
 
 
@@ -739,9 +731,7 @@ async def test_extraction_skips_commands(
         work_done = await penny.extraction_pipeline.execute()
         assert work_done is False
 
-        unprocessed = penny.db.get_unprocessed_messages(
-            TEST_SENDER, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
-        )
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=20)
         assert len(unprocessed) == 0
 
 
@@ -769,9 +759,7 @@ async def test_extraction_skips_processed_messages(
         assert msg_id is not None
         penny.db.mark_messages_processed([msg_id])
 
-        unprocessed = penny.db.get_unprocessed_messages(
-            TEST_SENDER, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
-        )
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=20)
         assert len(unprocessed) == 0
 
         msg_id2 = penny.db.log_message(
@@ -781,9 +769,7 @@ async def test_extraction_skips_processed_messages(
         )
         assert msg_id2 is not None
 
-        unprocessed = penny.db.get_unprocessed_messages(
-            TEST_SENDER, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
-        )
+        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=20)
         assert len(unprocessed) == 1
         assert unprocessed[0].id == msg_id2
 
@@ -1419,7 +1405,7 @@ async def test_extraction_does_not_send_notifications(
         ]
         assert len(learn_engagements) >= 1
         assert learn_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert learn_engagements[0].strength == PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND
+        assert learn_engagements[0].strength == 1.0
 
 
 @pytest.mark.asyncio
@@ -1537,7 +1523,7 @@ async def test_enrichment_runs_when_pipeline_drained(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+            strength=1.0,
             entity_id=entity.id,
         )
 
@@ -1611,7 +1597,7 @@ async def test_enrichment_blocked_by_pending_search_logs(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+            strength=1.0,
             entity_id=entity.id,
         )
 

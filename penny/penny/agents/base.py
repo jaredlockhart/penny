@@ -161,7 +161,12 @@ class Agent:
             if image_query:
                 response, image = await asyncio.gather(
                     self._foreground_model_client.chat(messages=messages),
-                    search_image(image_query, api_key=self.config.serper_api_key),
+                    search_image(
+                        image_query,
+                        api_key=self.config.serper_api_key,
+                        max_results=int(self.config.runtime.IMAGE_MAX_RESULTS),
+                        timeout=self.config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
+                    ),
                 )
             else:
                 response = await self._foreground_model_client.chat(messages=messages)

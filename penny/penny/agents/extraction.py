@@ -246,7 +246,7 @@ class ExtractionPipeline(Agent):
     async def _process_search_logs(self) -> bool:
         """Process unextracted SearchLog entries for entity/fact extraction."""
         search_logs = self.db.get_unprocessed_search_logs(
-            limit=PennyConstants.ENTITY_EXTRACTION_BATCH_LIMIT
+            limit=int(self.config.runtime.ENTITY_EXTRACTION_BATCH_LIMIT)
         )
         if not search_logs:
             return False
@@ -309,7 +309,7 @@ class ExtractionPipeline(Agent):
                             user=user,
                             engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
                             valence=PennyConstants.EngagementValence.POSITIVE,
-                            strength=PennyConstants.ENGAGEMENT_STRENGTH_SEARCH_INITIATED,
+                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_SEARCH_INITIATED,
                             entity_id=entity.id,
                         )
 
@@ -321,7 +321,7 @@ class ExtractionPipeline(Agent):
                                 user=user,
                                 engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
                                 valence=PennyConstants.EngagementValence.POSITIVE,
-                                strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+                                strength=self.config.runtime.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
                                 entity_id=entity.id,
                             )
 
@@ -341,7 +341,7 @@ class ExtractionPipeline(Agent):
 
         for sender in senders:
             messages = self.db.get_unprocessed_messages(
-                sender, limit=PennyConstants.PREFERENCE_BATCH_LIMIT
+                sender, limit=int(self.config.runtime.PREFERENCE_BATCH_LIMIT)
             )
 
             if not messages:
@@ -382,7 +382,7 @@ class ExtractionPipeline(Agent):
                             user=sender,
                             engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
                             valence=PennyConstants.EngagementValence.POSITIVE,
-                            strength=PennyConstants.ENGAGEMENT_STRENGTH_MESSAGE_MENTION,
+                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_MESSAGE_MENTION,
                             entity_id=entity.id,
                             source_message_id=message.id,
                         )
@@ -399,7 +399,7 @@ class ExtractionPipeline(Agent):
                             user=sender,
                             engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
                             valence=s.sentiment,
-                            strength=PennyConstants.ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT,
+                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT,
                             entity_id=matched.id,
                             source_message_id=message.id,
                         )
@@ -950,8 +950,8 @@ class ExtractionPipeline(Agent):
             matches = find_similar(
                 query_vec,
                 candidates,
-                top_k=PennyConstants.ENTITY_CONTEXT_TOP_K,
-                threshold=PennyConstants.ENTITY_CONTEXT_THRESHOLD,
+                top_k=int(self.config.runtime.ENTITY_CONTEXT_TOP_K),
+                threshold=self.config.runtime.ENTITY_CONTEXT_THRESHOLD,
             )
 
             for entity_id, _score in matches:
@@ -959,7 +959,7 @@ class ExtractionPipeline(Agent):
                     user=sender,
                     engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
                     valence=PennyConstants.EngagementValence.POSITIVE,
-                    strength=PennyConstants.ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION,
+                    strength=self.config.runtime.ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION,
                     entity_id=entity_id,
                     source_message_id=message.id,
                 )
@@ -1038,7 +1038,7 @@ class ExtractionPipeline(Agent):
         """
         assert self._embedding_model_client is not None
         work_done = False
-        batch_limit = PennyConstants.EMBEDDING_BACKFILL_BATCH_LIMIT
+        batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
 
         # Backfill fact embeddings
         facts = self.db.get_facts_without_embeddings(limit=batch_limit)

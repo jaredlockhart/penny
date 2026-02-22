@@ -42,7 +42,7 @@ async def test_learn_enrichment(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+            strength=1.0,
             entity_id=entity.id,
         )
 
@@ -106,7 +106,7 @@ async def test_learn_skips_negative_interest(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
             valence=PennyConstants.EngagementValence.NEGATIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE,
+            strength=0.8,
             entity_id=entity.id,
         )
 
@@ -233,7 +233,7 @@ async def test_learn_dedup_facts(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+            strength=1.0,
             entity_id=entity.id,
         )
 
@@ -300,7 +300,7 @@ async def test_learn_semantic_interest_priority(
                 user=TEST_SENDER,
                 engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
                 valence=PennyConstants.EngagementValence.POSITIVE,
-                strength=PennyConstants.ENGAGEMENT_STRENGTH_SEARCH_INITIATED,
+                strength=0.6,
                 entity_id=eid,
             )
 

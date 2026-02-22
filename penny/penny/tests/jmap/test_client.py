@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.jmap.client import JmapClient, _strip_html
+
+_JMAP_TIMEOUT = RUNTIME_CONFIG_PARAMS["JMAP_REQUEST_TIMEOUT"].default
+_EMAIL_MAX_LENGTH = int(RUNTIME_CONFIG_PARAMS["EMAIL_BODY_MAX_LENGTH"].default)
 
 FAKE_TOKEN = "fmu1-test-token"
 FAKE_API_URL = "https://api.fastmail.com/jmap/api/"
@@ -127,7 +131,7 @@ def _make_response(json_data: dict, status_code: int = 200) -> httpx.Response:
 @pytest.mark.asyncio
 async def test_session_fetched_and_cached():
     """Test that the JMAP session is fetched once and cached."""
-    client = JmapClient(FAKE_TOKEN)
+    client = JmapClient(FAKE_TOKEN, timeout=_JMAP_TIMEOUT, max_body_length=_EMAIL_MAX_LENGTH)
 
     with patch.object(client._http, "get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = _make_response(SESSION_RESPONSE)
@@ -149,7 +153,7 @@ async def test_session_fetched_and_cached():
 @pytest.mark.asyncio
 async def test_search_emails_returns_summaries():
     """Test that search_emails parses JMAP response into EmailSummary objects."""
-    client = JmapClient(FAKE_TOKEN)
+    client = JmapClient(FAKE_TOKEN, timeout=_JMAP_TIMEOUT, max_body_length=_EMAIL_MAX_LENGTH)
 
     with patch.object(client._http, "get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = _make_response(SESSION_RESPONSE)
@@ -170,7 +174,7 @@ async def test_search_emails_returns_summaries():
 @pytest.mark.asyncio
 async def test_search_emails_builds_filter():
     """Test that search parameters are passed as JMAP filter properties."""
-    client = JmapClient(FAKE_TOKEN)
+    client = JmapClient(FAKE_TOKEN, timeout=_JMAP_TIMEOUT, max_body_length=_EMAIL_MAX_LENGTH)
 
     with patch.object(client._http, "get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = _make_response(SESSION_RESPONSE)
@@ -201,7 +205,7 @@ async def test_search_emails_builds_filter():
 @pytest.mark.asyncio
 async def test_read_emails_returns_details():
     """Test that read_emails parses full email bodies from bodyValues."""
-    client = JmapClient(FAKE_TOKEN)
+    client = JmapClient(FAKE_TOKEN, timeout=_JMAP_TIMEOUT, max_body_length=_EMAIL_MAX_LENGTH)
 
     with patch.object(client._http, "get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = _make_response(SESSION_RESPONSE)
@@ -221,7 +225,7 @@ async def test_read_emails_returns_details():
 @pytest.mark.asyncio
 async def test_read_emails_falls_back_to_html():
     """Test that read_emails strips HTML tags when no text body is available."""
-    client = JmapClient(FAKE_TOKEN)
+    client = JmapClient(FAKE_TOKEN, timeout=_JMAP_TIMEOUT, max_body_length=_EMAIL_MAX_LENGTH)
 
     with patch.object(client._http, "get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = _make_response(SESSION_RESPONSE)
@@ -241,7 +245,7 @@ async def test_read_emails_falls_back_to_html():
 @pytest.mark.asyncio
 async def test_read_emails_not_found():
     """Test that read_emails returns empty list for missing email."""
-    client = JmapClient(FAKE_TOKEN)
+    client = JmapClient(FAKE_TOKEN, timeout=_JMAP_TIMEOUT, max_body_length=_EMAIL_MAX_LENGTH)
 
     with patch.object(client._http, "get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = _make_response(SESSION_RESPONSE)

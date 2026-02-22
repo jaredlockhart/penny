@@ -45,11 +45,18 @@ def _strip_html(html_text: str) -> str:
 class JmapClient:
     """Fastmail JMAP API client."""
 
-    def __init__(self, api_token: str) -> None:
+    def __init__(
+        self,
+        api_token: str,
+        *,
+        timeout: float,
+        max_body_length: int,
+    ) -> None:
         self._api_token = api_token
+        self._max_body_length = max_body_length
         self._session: JmapSession | None = None
         self._http = httpx.AsyncClient(
-            timeout=PennyConstants.JMAP_REQUEST_TIMEOUT,
+            timeout=timeout,
             headers={"Authorization": f"Bearer {api_token}"},
         )
 
@@ -202,8 +209,8 @@ class JmapClient:
                         text_body += _strip_html(html_content)
 
             # Truncate long bodies
-            if len(text_body) > PennyConstants.EMAIL_BODY_MAX_LENGTH:
-                text_body = text_body[: PennyConstants.EMAIL_BODY_MAX_LENGTH] + "\n\n[truncated]"
+            if len(text_body) > self._max_body_length:
+                text_body = text_body[: self._max_body_length] + "\n\n[truncated]"
 
             results.append(
                 EmailDetail(

@@ -4,9 +4,13 @@ import pytest
 
 from penny.agents.base import Agent
 from penny.config import Config
+from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.tools.builtin import SearchTool
+
+_IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
+_IMAGE_TIMEOUT = RUNTIME_CONFIG_PARAMS["IMAGE_DOWNLOAD_TIMEOUT"].default
 
 
 class TestToolNotFound:
@@ -31,7 +35,12 @@ class TestToolNotFound:
             log_level="DEBUG",
             db_path=test_db,
         )
-        search_tool = SearchTool(perplexity_api_key="test-key", db=db)
+        search_tool = SearchTool(
+            perplexity_api_key="test-key",
+            db=db,
+            image_max_results=_IMAGE_MAX_RESULTS,
+            image_download_timeout=_IMAGE_TIMEOUT,
+        )
 
         client = OllamaClient(
             api_url="http://localhost:11434",

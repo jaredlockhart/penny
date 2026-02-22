@@ -34,7 +34,7 @@ async def test_memory_list_ranked_by_interest(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+            strength=1.0,
             entity_id=entity2.id,
         )
 
@@ -43,7 +43,7 @@ async def test_memory_list_ranked_by_interest(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_MESSAGE_MENTION,
+            strength=0.2,
             entity_id=entity1.id,
         )
 
@@ -75,7 +75,7 @@ async def test_memory_shows_negative_scores(signal_server, test_config, mock_oll
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
             valence=PennyConstants.EngagementValence.NEGATIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE,
+            strength=0.8,
             entity_id=entity.id,
         )
 

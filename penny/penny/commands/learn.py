@@ -68,7 +68,7 @@ class LearnCommand(Command):
             return CommandResult(text=PennyResponse.LEARN_EMPTY)
 
         # Limit display
-        display_prompts = learn_prompts[: PennyConstants.LEARN_STATUS_DISPLAY_LIMIT]
+        display_prompts = learn_prompts[: int(context.config.runtime.LEARN_STATUS_DISPLAY_LIMIT)]
 
         lines = [PennyResponse.LEARN_STATUS_HEADER, ""]
         for i, lp in enumerate(display_prompts, 1):
@@ -112,7 +112,7 @@ class LearnCommand(Command):
         learn_prompt = context.db.create_learn_prompt(
             user=context.user,
             prompt_text=topic,
-            searches_remaining=PennyConstants.LEARN_PROMPT_DEFAULT_SEARCHES,
+            searches_remaining=int(context.config.runtime.LEARN_PROMPT_DEFAULT_SEARCHES),
         )
 
         if self._search_tool and learn_prompt and learn_prompt.id is not None:
@@ -188,7 +188,7 @@ class LearnCommand(Command):
     ) -> None:
         """Iteratively research a topic: each query builds on previous results."""
         try:
-            max_searches = PennyConstants.LEARN_PROMPT_DEFAULT_SEARCHES
+            max_searches = int(context.config.runtime.LEARN_PROMPT_DEFAULT_SEARCHES)
             previous_results: list[str] = []
             search_count = 0
 

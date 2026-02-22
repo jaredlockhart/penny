@@ -9,7 +9,12 @@ from penny.constants import PennyConstants
 from penny.database.models import Engagement
 
 
-def _recency_weight(created_at: datetime, now: datetime | None = None) -> float:
+def _recency_weight(
+    created_at: datetime,
+    now: datetime | None = None,
+    *,
+    half_life_days: float,
+) -> float:
     """Compute exponential recency decay weight for an engagement.
 
     Uses a half-life decay: weight = 2^(-age_days / half_life_days).
@@ -31,7 +36,7 @@ def _recency_weight(created_at: datetime, now: datetime | None = None) -> float:
     age_days = (now - created_at).total_seconds() / 86400.0
     if age_days < 0:
         age_days = 0.0
-    return math.pow(2.0, -age_days / PennyConstants.INTEREST_SCORE_HALF_LIFE_DAYS)
+    return math.pow(2.0, -age_days / half_life_days)
 
 
 def _valence_sign(valence: str) -> float:
@@ -53,6 +58,8 @@ def _valence_sign(valence: str) -> float:
 def compute_interest_score(
     engagements: list[Engagement],
     now: datetime | None = None,
+    *,
+    half_life_days: float,
 ) -> float:
     """Compute interest score from a list of engagements.
 
@@ -76,7 +83,7 @@ def compute_interest_score(
     score = 0.0
     for engagement in engagements:
         sign = _valence_sign(engagement.valence)
-        decay = _recency_weight(engagement.created_at, now=now)
+        decay = _recency_weight(engagement.created_at, now=now, half_life_days=half_life_days)
         score += sign * engagement.strength * decay
 
     return score

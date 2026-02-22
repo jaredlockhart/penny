@@ -447,8 +447,8 @@ class MessageChannel(ABC):
         else:
             return  # Unrecognized emoji — skip
 
-        # Need embedding model client for entity matching
-        if not self._embedding_model_client:
+        # Need embedding model client and config for entity matching
+        if not self._embedding_model_client or not self._config:
             return
 
         try:
@@ -456,11 +456,13 @@ class MessageChannel(ABC):
 
             # Determine strength based on valence and proactive status
             if valence == PennyConstants.EngagementValence.NEGATIVE and is_proactive:
-                strength = PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE
+                strength = (
+                    self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE
+                )
             elif is_proactive:
-                strength = PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE
+                strength = self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE
             else:
-                strength = PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL
+                strength = self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL
 
             # Find entities in the reacted-to message via embedding similarity
             entities = self._db.get_user_entities_with_embeddings(sender)
@@ -479,8 +481,8 @@ class MessageChannel(ABC):
             matches = find_similar(
                 query_embedding,
                 candidates,
-                top_k=PennyConstants.ENTITY_CONTEXT_TOP_K,
-                threshold=PennyConstants.ENTITY_CONTEXT_THRESHOLD,
+                top_k=int(self._config.runtime.ENTITY_CONTEXT_TOP_K),
+                threshold=self._config.runtime.ENTITY_CONTEXT_THRESHOLD,
             )
 
             for entity_id, _score in matches:

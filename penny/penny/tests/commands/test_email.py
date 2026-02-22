@@ -64,6 +64,10 @@ def email_context():
     config = MagicMock(spec=Config)
     config.email_max_steps = 5
     config.tool_timeout = 60.0
+    runtime = MagicMock()
+    runtime.JMAP_REQUEST_TIMEOUT = 30.0
+    runtime.EMAIL_BODY_MAX_LENGTH = 4000
+    config.runtime = runtime
     return CommandContext(
         db=MagicMock(),
         config=config,
@@ -170,7 +174,11 @@ async def test_email_jmap_client_created_with_token(email_context):
         cmd = EmailCommand(FAKE_TOKEN)
         await cmd.execute("anything", email_context)
 
-    mock_jmap_cls.assert_called_once_with(FAKE_TOKEN)
+    mock_jmap_cls.assert_called_once_with(
+        FAKE_TOKEN,
+        timeout=30.0,
+        max_body_length=4000,
+    )
 
 
 @pytest.mark.asyncio

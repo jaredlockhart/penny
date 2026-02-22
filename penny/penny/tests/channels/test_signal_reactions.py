@@ -278,7 +278,7 @@ async def test_reaction_creates_entity_engagements(
         eng = reaction_engagements[0]
         assert eng.valence == PennyConstants.EngagementValence.POSITIVE
         # Normal response (has incoming parent) → normal strength
-        assert eng.strength == PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL
+        assert eng.strength == 0.3
 
 
 @pytest.mark.asyncio
@@ -348,4 +348,4 @@ async def test_negative_reaction_on_proactive_message(
         assert len(reaction_engagements) == 1
         eng = reaction_engagements[0]
         assert eng.valence == PennyConstants.EngagementValence.NEGATIVE
-        assert eng.strength == PennyConstants.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE
+        assert eng.strength == 0.8

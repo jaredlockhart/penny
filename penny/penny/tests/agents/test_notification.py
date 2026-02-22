@@ -69,7 +69,7 @@ async def test_notification_sends_highest_interest_entity(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+            strength=1.0,
             entity_id=high_entity.id,
         )
 
@@ -365,7 +365,7 @@ async def test_learn_completion_announcement(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=PennyConstants.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
+            strength=1.0,
             entity_id=entity.id,
         )
         penny.db.add_fact(
