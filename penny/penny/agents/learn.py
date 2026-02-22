@@ -182,7 +182,10 @@ class LearnAgent(Agent):
             for entity in entities:
                 assert entity.id is not None
                 entity_engagements = engagements_by_entity.get(entity.id, [])
-                interest = compute_interest_score(entity_engagements)
+                interest = compute_interest_score(
+                    entity_engagements,
+                    half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+                )
 
                 if interest < self.config.runtime.LEARN_MIN_INTEREST_SCORE:
                     continue

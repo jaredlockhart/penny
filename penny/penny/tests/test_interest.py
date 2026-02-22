@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.constants import PennyConstants
 from penny.database.models import Engagement
 from penny.interest import (
@@ -11,6 +12,8 @@ from penny.interest import (
     _valence_sign,
     compute_interest_score,
 )
+
+_HALF_LIFE = RUNTIME_CONFIG_PARAMS["INTEREST_SCORE_HALF_LIFE_DAYS"].default
 
 _DEFAULT_USER = "+1234"
 _DEFAULT_TYPE = PennyConstants.EngagementType.MESSAGE_MENTION
@@ -23,27 +26,31 @@ class TestRecencyWeight:
 
     def test_zero_age_returns_one(self):
         now = datetime(2025, 6, 1, tzinfo=UTC)
-        assert _recency_weight(now, now=now) == pytest.approx(1.0)
+        assert _recency_weight(now, now=now, half_life_days=_HALF_LIFE) == pytest.approx(1.0)
 
     def test_half_life_returns_half(self):
         now = datetime(2025, 6, 1, tzinfo=UTC)
-        half_life_ago = now - timedelta(days=PennyConstants.INTEREST_SCORE_HALF_LIFE_DAYS)
-        assert _recency_weight(half_life_ago, now=now) == pytest.approx(0.5)
+        half_life_ago = now - timedelta(days=_HALF_LIFE)
+        assert _recency_weight(half_life_ago, now=now, half_life_days=_HALF_LIFE) == pytest.approx(
+            0.5
+        )
 
     def test_two_half_lives_returns_quarter(self):
         now = datetime(2025, 6, 1, tzinfo=UTC)
-        two_half_lives = now - timedelta(days=PennyConstants.INTEREST_SCORE_HALF_LIFE_DAYS * 2)
-        assert _recency_weight(two_half_lives, now=now) == pytest.approx(0.25)
+        two_half_lives = now - timedelta(days=_HALF_LIFE * 2)
+        assert _recency_weight(two_half_lives, now=now, half_life_days=_HALF_LIFE) == pytest.approx(
+            0.25
+        )
 
     def test_future_engagement_clamped_to_one(self):
         now = datetime(2025, 6, 1, tzinfo=UTC)
         future = now + timedelta(days=1)
-        assert _recency_weight(future, now=now) == pytest.approx(1.0)
+        assert _recency_weight(future, now=now, half_life_days=_HALF_LIFE) == pytest.approx(1.0)
 
     def test_very_old_engagement_approaches_zero(self):
         now = datetime(2025, 6, 1, tzinfo=UTC)
         ancient = now - timedelta(days=365)
-        weight = _recency_weight(ancient, now=now)
+        weight = _recency_weight(ancient, now=now, half_life_days=_HALF_LIFE)
         assert weight < 0.001
 
 
@@ -64,7 +71,7 @@ class TestComputeInterestScore:
     """Tests for the overall interest score computation."""
 
     def test_empty_engagements_returns_zero(self):
-        assert compute_interest_score([]) == 0.0
+        assert compute_interest_score([], half_life_days=_HALF_LIFE) == 0.0
 
     def test_single_positive_recent_engagement(self):
         now = datetime(2025, 6, 1, tzinfo=UTC)
@@ -75,7 +82,7 @@ class TestComputeInterestScore:
             strength=0.7,
             created_at=now,
         )
-        score = compute_interest_score([engagement], now=now)
+        score = compute_interest_score([engagement], now=now, half_life_days=_HALF_LIFE)
         assert score == pytest.approx(0.7)
 
     def test_single_negative_engagement(self):
@@ -87,7 +94,7 @@ class TestComputeInterestScore:
             strength=0.8,
             created_at=now,
         )
-        score = compute_interest_score([engagement], now=now)
+        score = compute_interest_score([engagement], now=now, half_life_days=_HALF_LIFE)
         assert score == pytest.approx(-0.8)
 
     def test_neutral_engagement_contributes_nothing(self):
@@ -99,7 +106,7 @@ class TestComputeInterestScore:
             strength=1.0,
             created_at=now,
         )
-        assert compute_interest_score([engagement], now=now) == 0.0
+        assert compute_interest_score([engagement], now=now, half_life_days=_HALF_LIFE) == 0.0
 
     def test_recency_reduces_contribution(self):
         now = datetime(2025, 6, 1, tzinfo=UTC)
@@ -108,9 +115,9 @@ class TestComputeInterestScore:
             engagement_type=_DEFAULT_TYPE,
             valence=_DEFAULT_VALENCE,
             strength=1.0,
-            created_at=now - timedelta(days=PennyConstants.INTEREST_SCORE_HALF_LIFE_DAYS),
+            created_at=now - timedelta(days=_HALF_LIFE),
         )
-        score = compute_interest_score([old_engagement], now=now)
+        score = compute_interest_score([old_engagement], now=now, half_life_days=_HALF_LIFE)
         assert score == pytest.approx(0.5)
 
     def test_mixed_engagements_can_cancel(self):
@@ -129,7 +136,7 @@ class TestComputeInterestScore:
             strength=0.5,
             created_at=now,
         )
-        score = compute_interest_score([like, dislike], now=now)
+        score = compute_interest_score([like, dislike], now=now, half_life_days=_HALF_LIFE)
         assert score == pytest.approx(0.0)
 
     def test_multiple_engagements_accumulate(self):
@@ -150,7 +157,7 @@ class TestComputeInterestScore:
                 created_at=now,
             ),
         ]
-        score = compute_interest_score(engagements, now=now)
+        score = compute_interest_score(engagements, now=now, half_life_days=_HALF_LIFE)
         assert score == pytest.approx(0.5)
 
     def test_negative_score_possible(self):
@@ -171,5 +178,5 @@ class TestComputeInterestScore:
                 created_at=now,
             ),
         ]
-        score = compute_interest_score(engagements, now=now)
+        score = compute_interest_score(engagements, now=now, half_life_days=_HALF_LIFE)
         assert score == pytest.approx(-0.6)

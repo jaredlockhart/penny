@@ -45,8 +45,8 @@ class ConfigCommand(Command):
                         key=key, value=current_value, description=param.description
                     )
                 )
+                lines.append("")
 
-            lines.append("")
             lines.append(PennyResponse.CONFIG_FOOTER)
             return CommandResult(text="\n".join(lines))
 

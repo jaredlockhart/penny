@@ -46,12 +46,17 @@ class SearchTool(Tool):
         db=None,
         skip_images: bool = False,
         serper_api_key: str | None = None,
+        *,
+        image_max_results: int,
+        image_download_timeout: float,
     ):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
         self.redact_terms: list[str] = []
         self.skip_images = skip_images
         self.serper_api_key = serper_api_key
+        self.image_max_results = image_max_results
+        self.image_download_timeout = image_download_timeout
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -180,4 +185,9 @@ class SearchTool(Tool):
 
     async def _search_image(self, query: str) -> str | None:
         """Search for an image via Serper and return base64 data."""
-        return await search_image(query, api_key=self.serper_api_key)
+        return await search_image(
+            query,
+            api_key=self.serper_api_key,
+            max_results=self.image_max_results,
+            timeout=self.image_download_timeout,
+        )

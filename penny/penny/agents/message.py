@@ -7,7 +7,6 @@ import re
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
-from penny.constants import PennyConstants
 from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -159,8 +158,8 @@ class MessageAgent(Agent):
         matches = find_similar(
             query_vec,
             candidates,
-            top_k=PennyConstants.ENTITY_CONTEXT_TOP_K,
-            threshold=PennyConstants.ENTITY_CONTEXT_THRESHOLD,
+            top_k=int(self.config.runtime.ENTITY_CONTEXT_TOP_K),
+            threshold=self.config.runtime.ENTITY_CONTEXT_THRESHOLD,
         )
 
         if not matches:
@@ -180,7 +179,9 @@ class MessageAgent(Agent):
             if not facts:
                 continue
 
-            fact_texts = [f.content for f in facts[: PennyConstants.ENTITY_CONTEXT_MAX_FACTS]]
+            fact_texts = [
+                f.content for f in facts[: int(self.config.runtime.ENTITY_CONTEXT_MAX_FACTS)]
+            ]
             context_lines.append(f"- {entity.name}: {'; '.join(fact_texts)}")
             total_facts += len(fact_texts)
 
@@ -192,8 +193,8 @@ class MessageAgent(Agent):
         # Knowledge is sufficient when we have enough facts from a high-confidence match
         top_score = matches[0][1]
         is_sufficient = (
-            total_facts >= PennyConstants.KNOWLEDGE_SUFFICIENT_MIN_FACTS
-            and top_score >= PennyConstants.KNOWLEDGE_SUFFICIENT_MIN_SCORE
+            total_facts >= self.config.runtime.KNOWLEDGE_SUFFICIENT_MIN_FACTS
+            and top_score >= self.config.runtime.KNOWLEDGE_SUFFICIENT_MIN_SCORE
         )
 
         logger.info(

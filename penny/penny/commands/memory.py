@@ -104,7 +104,10 @@ class MemoryCommand(Command):
         for entity in entities:
             assert entity.id is not None
             entity_engagements = engagements_by_entity.get(entity.id, [])
-            score = compute_interest_score(entity_engagements)
+            score = compute_interest_score(
+                entity_engagements,
+                half_life_days=context.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+            )
             scored.append((score, entity))
 
         scored.sort(key=lambda x: abs(x[0]), reverse=True)

@@ -129,7 +129,7 @@ async def test_command_does_not_cancel_background_task(
             calls.append(True)
             original()
 
-        penny.scheduler.notify_foreground_start = tracking_notify  # type: ignore[assignment]
+        penny.scheduler.notify_foreground_start = tracking_notify
 
         # Send a command (doesn't need Ollama)
         await signal_server.push_message(sender=TEST_SENDER, content="/commands")

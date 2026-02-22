@@ -40,7 +40,11 @@ class EmailCommand(Command):
         if not prompt:
             return CommandResult(text=PennyResponse.EMAIL_NO_QUERY_TEXT)
 
-        jmap_client = JmapClient(self._fastmail_api_token)
+        jmap_client = JmapClient(
+            self._fastmail_api_token,
+            timeout=context.config.runtime.JMAP_REQUEST_TIMEOUT,
+            max_body_length=int(context.config.runtime.EMAIL_BODY_MAX_LENGTH),
+        )
         agent: Agent | None = None
         try:
             tools = [
