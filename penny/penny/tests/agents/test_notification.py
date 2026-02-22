@@ -629,3 +629,70 @@ async def test_learn_completion_marks_facts_notified(
         # Facts should now be marked as notified
         facts_after = penny.db.get_entity_facts(entity.id)
         assert all(f.notified_at is not None for f in facts_after)
+
+
+@pytest.mark.asyncio
+async def test_learn_completion_sends_one_per_cycle(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Multiple completed learn prompts are announced one per cycle, not all at once."""
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(request, "Here's what I found!")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        # Create two completed learn prompts, both fully extracted
+        for topic in ("kef speakers", "nvidia gpus"):
+            lp = penny.db.create_learn_prompt(
+                user=TEST_SENDER, prompt_text=topic, searches_remaining=0
+            )
+            assert lp is not None and lp.id is not None
+            penny.db.update_learn_prompt_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
+            penny.db.log_search(
+                query=f"{topic} overview",
+                response=f"Info about {topic}...",
+                trigger="learn_command",
+                learn_prompt_id=lp.id,
+            )
+            search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
+            assert search_logs[0].id is not None
+            penny.db.mark_search_extracted(search_logs[0].id)
+
+            entity = penny.db.get_or_create_entity(TEST_SENDER, topic)
+            assert entity is not None and entity.id is not None
+            penny.db.add_fact(
+                entity.id, f"Fact about {topic}", source_search_log_id=search_logs[0].id
+            )
+
+        agent = _create_notification_agent(penny, config)
+
+        # First cycle: only one announcement sent
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is True
+        assert len(signal_server.outgoing_messages) == 1
+
+        # One learn prompt announced, one still pending
+        prompts = penny.db.get_unannounced_completed_learn_prompts(TEST_SENDER)
+        assert len(prompts) == 1
+
+        # Second cycle: the other announcement sent
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is True
+        assert len(signal_server.outgoing_messages) == 1
+
+        # Both now announced
+        prompts = penny.db.get_unannounced_completed_learn_prompts(TEST_SENDER)
+        assert len(prompts) == 0
