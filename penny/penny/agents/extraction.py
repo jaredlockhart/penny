@@ -306,29 +306,17 @@ class ExtractionPipeline(Agent):
             if result.entities:
                 work_done = True
 
-                # Create SEARCH_INITIATED engagements only for user-triggered searches
+                # Create USER_SEARCH engagements for user-triggered searches
                 if allow_new:
                     for entity in result.entities:
                         assert entity.id is not None
                         self.db.add_engagement(
                             user=user,
-                            engagement_type=PennyConstants.EngagementType.SEARCH_INITIATED,
+                            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
                             valence=PennyConstants.EngagementValence.POSITIVE,
-                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_SEARCH_INITIATED,
+                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_USER_SEARCH,
                             entity_id=entity.id,
                         )
-
-                    # Create LEARN_COMMAND engagements for /learn-triggered searches
-                    if search_log.trigger == PennyConstants.SearchTrigger.LEARN_COMMAND:
-                        for entity in result.entities:
-                            assert entity.id is not None
-                            self.db.add_engagement(
-                                user=user,
-                                engagement_type=PennyConstants.EngagementType.LEARN_COMMAND,
-                                valence=PennyConstants.EngagementValence.POSITIVE,
-                                strength=self.config.runtime.ENGAGEMENT_STRENGTH_LEARN_COMMAND,
-                                entity_id=entity.id,
-                            )
 
             self.db.mark_search_extracted(search_log.id)
 

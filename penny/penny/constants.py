@@ -18,9 +18,8 @@ class PennyConstants:
 
         EXPLICIT_STATEMENT = "explicit_statement"
         EMOJI_REACTION = "emoji_reaction"
-        SEARCH_INITIATED = "search_initiated"
+        USER_SEARCH = "user_search"
         FOLLOW_UP_QUESTION = "follow_up_question"
-        LEARN_COMMAND = "learn_command"
         MESSAGE_MENTION = "message_mention"
         SEARCH_DISCOVERY = "search_discovery"
 
