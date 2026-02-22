@@ -183,12 +183,7 @@ Examples:
         "- Institutions that only appear as context for a person "
         "(if the text is about Susskind's work at Stanford, "
         "extract 'Leonard Susskind' not 'Stanford')\n"
-        "- The user or the search query itself\n\n"
-        "CONTEXT RULE:\n"
-        "- For each new entity, include a brief context snippet (5-15 words) "
-        "describing what the entity is, taken from the search text.\n"
-        "- Example: name='Jethro Tull', "
-        "context='progressive rock band mixing folk and hard rock'"
+        "- The user or the search query itself"
     )
 
     ENTITY_FACT_EXTRACTION_PROMPT = (

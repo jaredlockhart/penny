@@ -242,7 +242,6 @@ async def test_extraction_known_and_new_entities(
     config = make_config()
 
     request_count = [0]
-    pass2_calls = [0]
 
     def handler(request: dict, count: int) -> dict:
         request_count[0] += 1
@@ -265,8 +264,9 @@ async def test_extraction_known_and_new_entities(
                 ),
             )
         else:
-            pass2_calls[0] += 1
-            if pass2_calls[0] == 1:
+            # Fact extraction — route by entity name in prompt
+            prompt = request["messages"][0]["content"]
+            if "entity: wharfedale linton" in prompt.lower():
                 return mock_ollama._make_text_response(
                     request,
                     json.dumps(
@@ -955,7 +955,8 @@ async def test_semantic_entity_name_validation(
     running_penny,
 ):
     """
-    Semantically unrelated entity candidates are rejected via embedding similarity.
+    Post-fact semantic pruning: entities whose name+facts embedding doesn't
+    relate to the trigger query are rejected after fact extraction.
     """
     config = make_config(ollama_embedding_model="test-embed-model")
 
@@ -971,25 +972,27 @@ async def test_semantic_entity_name_validation(
                     {
                         "known": [],
                         "new": [
-                            {"name": "KEF LS50 Meta", "context": "well-reviewed bookshelf speaker"},
-                            {
-                                "name": "Random Conference Sponsor",
-                                "context": "attended CES trade show",
-                            },
+                            {"name": "KEF LS50 Meta"},
+                            {"name": "Random Conference Sponsor"},
                         ],
                     }
                 ),
             )
         else:
-            # Fact extraction
+            # Fact extraction — runs for BOTH candidates (in memory)
+            prompt = request["messages"][0]["content"]
+            if "entity: kef ls50 meta" in prompt.lower():
+                facts = ["A well-reviewed bookshelf speaker"]
+            else:
+                facts = ["A sponsor at CES trade show"]
             return mock_ollama._make_text_response(
                 request,
-                json.dumps({"facts": ["A well-known product"]}),
+                json.dumps({"facts": facts}),
             )
 
     mock_ollama.set_response_handler(handler)
 
-    # Embed handler: return high similarity for KEF (related to speakers query),
+    # Embed handler: return high similarity for KEF/speaker content,
     # low similarity for the unrelated entity
     def embed_handler(model, input_text):
         texts = [input_text] if isinstance(input_text, str) else input_text
@@ -1022,15 +1025,15 @@ async def test_semantic_entity_name_validation(
         entities = penny.db.get_user_entities(TEST_SENDER)
         entity_names = [e.name for e in entities]
 
-        # KEF should be created (semantically related to "best bookshelf speakers")
+        # KEF should be created (entity+facts embeds close to "best bookshelf speakers")
         assert "kef ls50 meta" in entity_names
 
-        # Random Conference Sponsor should be rejected (semantically unrelated)
+        # Random Conference Sponsor should be rejected (entity+facts unrelated to query)
         assert "random conference sponsor" not in entity_names, (
-            f"Unrelated entity should be rejected by semantic filter, got: {entity_names}"
+            f"Unrelated entity should be rejected by post-fact pruning, got: {entity_names}"
         )
 
-        # SEARCH_DISCOVERY engagement should be created with the similarity score
+        # SEARCH_DISCOVERY engagement should be created with the post-fact similarity score
         kef_entity = next(e for e in entities if e.name == "kef ls50 meta")
         assert kef_entity.id is not None
         engagements = penny.db.get_entity_engagements(TEST_SENDER, kef_entity.id)
@@ -1041,7 +1044,7 @@ async def test_semantic_entity_name_validation(
         ]
         assert len(discovery_engagements) == 1
         assert discovery_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        # Similarity should be 1.0 (both "kef" and "speaker" map to [1,0,0,0])
+        # Similarity should be 1.0 (entity+facts text contains "kef" and "speaker")
         assert discovery_engagements[0].strength == pytest.approx(1.0)
 
 
