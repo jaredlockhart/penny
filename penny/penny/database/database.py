@@ -17,6 +17,7 @@ from penny.database.models import (
     Fact,
     LearnPrompt,
     MessageLog,
+    MuteState,
     PromptLog,
     SearchLog,
     UserInfo,
@@ -1392,3 +1393,26 @@ class Database:
                     .order_by(Engagement.created_at.desc())  # type: ignore[unresolved-attribute]
                 ).all()
             )
+
+    # ── Mute State ────────────────────────────────────────────────────────
+
+    def is_muted(self, user: str) -> bool:
+        """Check if a user has muted proactive notifications."""
+        with self.get_session() as session:
+            return session.get(MuteState, user) is not None
+
+    def set_muted(self, user: str) -> None:
+        """Mute proactive notifications for a user."""
+        with self.get_session() as session:
+            existing = session.get(MuteState, user)
+            if not existing:
+                session.add(MuteState(user=user))
+                session.commit()
+
+    def set_unmuted(self, user: str) -> None:
+        """Unmute proactive notifications for a user."""
+        with self.get_session() as session:
+            existing = session.get(MuteState, user)
+            if existing:
+                session.delete(existing)
+                session.commit()
