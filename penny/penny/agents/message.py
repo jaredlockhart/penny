@@ -182,7 +182,8 @@ class MessageAgent(Agent):
             fact_texts = [
                 f.content for f in facts[: int(self.config.runtime.ENTITY_CONTEXT_MAX_FACTS)]
             ]
-            context_lines.append(f"- {entity.name}: {'; '.join(fact_texts)}")
+            label = f"{entity.name} ({entity.tagline})" if entity.tagline else entity.name
+            context_lines.append(f"- {label}: {'; '.join(fact_texts)}")
             total_facts += len(fact_texts)
 
         if not context_lines:

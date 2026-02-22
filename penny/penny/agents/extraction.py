@@ -134,6 +134,11 @@ class IdentifiedNewEntity(BaseModel):
     """A newly discovered entity from pass 1."""
 
     name: str = Field(description="Entity name (e.g., 'KEF LS50 Meta', 'NVIDIA Jetson')")
+    tagline: str = Field(
+        default="",
+        description="Short 3-8 word summary describing what the entity is "
+        "(e.g., 'bookshelf speaker by kef', 'british progressive rock band')",
+    )
 
 
 class IdentifiedEntities(BaseModel):
@@ -190,11 +195,18 @@ class _ExtractionResult:
     entities: list[Entity] = field(default_factory=list)
 
 
+class GeneratedTagline(BaseModel):
+    """Schema for LLM response: a short disambiguating tagline."""
+
+    tagline: str = Field(description="Short 3-8 word summary describing what the entity is")
+
+
 @dataclass
 class _EntityCandidate:
     """New entity held in memory until post-fact semantic pruning."""
 
     name: str
+    tagline: str | None = None
     facts: list[str] = field(default_factory=list)
 
 
@@ -502,7 +514,14 @@ class ExtractionPipeline(Agent):
                 if duplicate:
                     entities_to_process.append(duplicate)
                 else:
-                    candidates.append(_EntityCandidate(name=name))
+                    tagline = (
+                        new_entity.tagline.strip().lower().rstrip(".")
+                        if new_entity.tagline
+                        else None
+                    )
+                    if tagline and len(tagline.split()) > 10:
+                        tagline = None  # Reject overly long taglines
+                    candidates.append(_EntityCandidate(name=name, tagline=tagline or None))
 
             # Look up known entities that were identified
             for known_name in identified.known:
@@ -612,11 +631,16 @@ class ExtractionPipeline(Agent):
         content: str,
     ) -> IdentifiedEntities | None:
         """Pass 1: Identify which known entities appear in the text and any new entities."""
-        known_names = [e.name for e in existing_entities]
-        if known_names:
+        if existing_entities:
+            known_lines = []
+            for e in existing_entities:
+                if e.tagline:
+                    known_lines.append(f"- {e.name} ({e.tagline})")
+                else:
+                    known_lines.append(f"- {e.name}")
             known_context = (
                 "\n\nKnown entities (return any that appear in the text):\n"
-                + "\n".join(f"- {name}" for name in known_names)
+                + "\n".join(known_lines)
             )
         else:
             known_context = (
@@ -653,12 +677,17 @@ class ExtractionPipeline(Agent):
         content: str,
     ) -> IdentifiedKnownEntities | None:
         """Known-only identification: only match against existing entities, never create new."""
-        known_names = [e.name for e in existing_entities]
-        if not known_names:
+        if not existing_entities:
             return None
 
+        known_lines = []
+        for e in existing_entities:
+            if e.tagline:
+                known_lines.append(f"- {e.name} ({e.tagline})")
+            else:
+                known_lines.append(f"- {e.name}")
         known_context = "\n\nKnown entities (return any that appear in the text):\n" + "\n".join(
-            f"- {name}" for name in known_names
+            known_lines
         )
 
         prompt = (
@@ -767,7 +796,7 @@ class ExtractionPipeline(Agent):
             survivors_with_scores = [(c, 0.0) for c in candidates]
         else:
             # Batch-embed all entity+facts texts + trigger text in one call
-            embed_texts = [build_entity_embed_text(c.name, c.facts) for c in candidates]
+            embed_texts = [build_entity_embed_text(c.name, c.facts, c.tagline) for c in candidates]
             embed_texts.append(trigger_text)
 
             try:
@@ -809,6 +838,12 @@ class ExtractionPipeline(Agent):
             if not entity or entity.id is None:
                 continue
             logger.info("New entity discovered: '%s'", candidate.name)
+
+            # Store tagline if available
+            if candidate.tagline and entity.tagline is None:
+                self.db.update_entity_tagline(entity.id, candidate.tagline)
+                entity.tagline = candidate.tagline
+                logger.info("Tagline for '%s': '%s'", candidate.name, candidate.tagline)
 
             # Batch-embed and store facts
             fact_embeddings: list[bytes | None] = [None] * len(candidate.facts)
@@ -1075,6 +1110,37 @@ class ExtractionPipeline(Agent):
             logger.debug("Sentiment extraction failed", exc_info=True)
             return []
 
+    # --- Tagline generation ---
+
+    async def _generate_tagline(self, entity_name: str, facts: list[str]) -> str | None:
+        """Generate a short disambiguating tagline for an entity using LLM.
+
+        Used for backfilling existing entities that don't have taglines.
+        New entities get taglines from the identification step instead.
+        """
+        facts_text = "\n".join(f"- {f}" for f in facts[:10])
+        prompt = (
+            f"{Prompt.TAGLINE_GENERATION_PROMPT}\n\n"
+            f"Entity: {entity_name}\n\n"
+            f"Known facts:\n{facts_text}"
+        )
+
+        try:
+            response = await self._background_model_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=GeneratedTagline.model_json_schema(),
+            )
+            result = GeneratedTagline.model_validate_json(response.content)
+            tagline = result.tagline.strip().lower().rstrip(".")
+            if tagline and len(tagline.split()) <= 10:
+                return tagline
+            logger.warning("Rejected tagline for '%s': too long or empty", entity_name)
+            return None
+        except Exception as e:
+            logger.error("Failed to generate tagline for '%s': %s", entity_name, e)
+            return None
+
     # --- Entity embedding updates ---
 
     async def _update_entity_embeddings(self, entities: list[Entity]) -> None:
@@ -1087,7 +1153,9 @@ class ExtractionPipeline(Agent):
         for entity in entities:
             assert entity.id is not None
             facts = self.db.get_entity_facts(entity.id)
-            embed_texts.append(build_entity_embed_text(entity.name, [f.content for f in facts]))
+            embed_texts.append(
+                build_entity_embed_text(entity.name, [f.content for f in facts], entity.tagline)
+            )
 
         try:
             vecs = await self._embedding_model_client.embed(embed_texts)
@@ -1132,7 +1200,9 @@ class ExtractionPipeline(Agent):
                 assert entity.id is not None
                 facts_for_entity = self.db.get_entity_facts(entity.id)
                 embed_texts.append(
-                    build_entity_embed_text(entity.name, [f.content for f in facts_for_entity])
+                    build_entity_embed_text(
+                        entity.name, [f.content for f in facts_for_entity], entity.tagline
+                    )
                 )
             try:
                 vecs = await self._embedding_model_client.embed(embed_texts)
@@ -1143,5 +1213,19 @@ class ExtractionPipeline(Agent):
                 work_done = True
             except Exception as e:
                 logger.warning("Failed to backfill entity embeddings: %s", e)
+
+        # Backfill taglines for entities that have facts but no tagline (1 per cycle)
+        entities_needing_taglines = self.db.get_entities_without_taglines(limit=1)
+        for entity in entities_needing_taglines:
+            assert entity.id is not None
+            entity_facts = self.db.get_entity_facts(entity.id)
+            if entity_facts:
+                tagline = await self._generate_tagline(
+                    entity.name, [f.content for f in entity_facts]
+                )
+                if tagline:
+                    self.db.update_entity_tagline(entity.id, tagline)
+                    logger.info("Backfilled tagline for '%s': '%s'", entity.name, tagline)
+                    work_done = True
 
         return work_done

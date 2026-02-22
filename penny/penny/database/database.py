@@ -1294,6 +1294,23 @@ class Database:
         except Exception as e:
             logger.error("Failed to update entity %d embedding: %s", entity_id, e)
 
+    def update_entity_tagline(self, entity_id: int, tagline: str) -> None:
+        """Update the tagline for an entity.
+
+        Args:
+            entity_id: Entity primary key
+            tagline: Short disambiguating summary
+        """
+        try:
+            with self.get_session() as session:
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.tagline = tagline
+                    session.add(entity)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update entity %d tagline: %s", entity_id, e)
+
     def update_fact_embedding(self, fact_id: int, embedding: bytes) -> None:
         """Update the embedding for a fact.
 
@@ -1345,6 +1362,29 @@ class Database:
                     select(Fact)
                     .where(Fact.embedding == None)  # noqa: E711
                     .order_by(Fact.learned_at.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+
+    def get_entities_without_taglines(self, limit: int) -> list[Entity]:
+        """Get entities that have facts but no tagline yet.
+
+        Args:
+            limit: Maximum number of entities to return
+
+        Returns:
+            List of Entity objects without taglines that have at least one fact
+        """
+        with self.get_session() as session:
+            entities_with_facts = select(Fact.entity_id).distinct()
+            return list(
+                session.exec(
+                    select(Entity)
+                    .where(
+                        Entity.tagline == None,  # noqa: E711
+                        Entity.id.in_(entities_with_facts),  # type: ignore[union-attr]
+                    )
+                    .order_by(Entity.created_at.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
                 ).all()
             )

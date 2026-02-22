@@ -326,9 +326,14 @@ class NotificationAgent(Agent):
 
         prompt = f"{prompt_text}\n\nNew facts:\n{facts_text}"
 
+        image_query = (
+            f"{entity.name} {entity.tagline}"  # type: ignore[union-attr]
+            if entity.tagline  # type: ignore[union-attr]
+            else entity.name  # type: ignore[union-attr]
+        )
         result = await self._compose_user_facing(
             prompt,
-            image_query=entity.name,  # type: ignore[union-attr]
+            image_query=image_query,
         )
         if not result.answer:
             return False
