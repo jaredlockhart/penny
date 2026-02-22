@@ -278,11 +278,9 @@ class NotificationAgent(Agent):
         if last_send.tzinfo is None:
             last_send = last_send.replace(tzinfo=UTC)
         elapsed = (now - last_send).total_seconds()
-        if elapsed >= state.backoff_seconds:
-            # Backoff expired — return to eager state so next cycle starts fresh
-            state.backoff_seconds = 0.0
-            return True
-        return False
+        # Backoff expired — fire but keep backoff value so it stays at
+        # this cadence (e.g. max backoff) until user re-engages.
+        return elapsed >= state.backoff_seconds
 
     def _mark_proactive_sent(self, user: str) -> None:
         """Record that we sent a notification and increase backoff."""

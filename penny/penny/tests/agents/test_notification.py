@@ -381,7 +381,7 @@ async def test_notification_command_resets_backoff(
 
 
 @pytest.mark.asyncio
-async def test_notification_expired_backoff_resets_to_eager(
+async def test_notification_expired_backoff_stays_at_cadence(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -389,53 +389,46 @@ async def test_notification_expired_backoff_resets_to_eager(
     test_user_info,
     running_penny,
 ):
-    """When backoff expires naturally, agent returns to eager state with fresh backoff cycle."""
+    """At max backoff, _mark_proactive_sent doubles (clamped at max), not reset to initial.
+
+    Tests the backoff state machine directly: when backoff expires and a notification
+    fires, the next backoff should double from the current value.
+    """
     from datetime import timedelta
 
+    from penny.agents.notification import _UserBackoff
+
     config = make_config()
-
-    def handler(request: dict, count: int) -> dict:
-        return mock_ollama._make_text_response(
-            request,
-            "Here's an interesting discovery — some really great new facts about this topic!",
-        )
-
-    mock_ollama.set_response_handler(handler)
+    max_backoff = config.runtime.NOTIFICATION_MAX_BACKOFF
+    initial_backoff = config.runtime.NOTIFICATION_INITIAL_BACKOFF
 
     async with running_penny(config) as penny:
-        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
-        penny.db.mark_messages_processed([msg_id])
-
         agent = _create_notification_agent(penny, config)
 
-        # --- Cycle 1: notification sent → backoff starts ---
-        e1 = penny.db.get_or_create_entity(TEST_SENDER, "eager entity 1")
-        assert e1 is not None and e1.id is not None
-        penny.db.add_fact(e1.id, "Fact for eager test 1")
+        # Simulate state: backoff at 480s, expired (last send was 481s ago)
+        state = _UserBackoff()
+        state.backoff_seconds = 480.0
+        state.last_proactive_send = datetime.now(UTC) - timedelta(seconds=481)
+        agent._backoff_state[TEST_SENDER] = state
 
-        signal_server.outgoing_messages.clear()
-        await agent.execute()
-        assert len(signal_server.outgoing_messages) == 1
+        # _should_send should return True (backoff expired)
+        assert agent._should_send(TEST_SENDER) is True
+        # But backoff value should NOT have been reset to 0
+        assert state.backoff_seconds == 480.0
 
-        # Backoff is now at NOTIFICATION_INITIAL_BACKOFF (15s)
-        state = agent._backoff_state[TEST_SENDER]
-        assert state.backoff_seconds == config.runtime.NOTIFICATION_INITIAL_BACKOFF
+        # After sending, _mark_proactive_sent doubles from 480 → 960
+        agent._mark_proactive_sent(TEST_SENDER)
+        assert state.backoff_seconds == 960.0
 
-        # --- Simulate expired backoff by moving last_proactive_send into the past ---
-        state.last_proactive_send = datetime.now(UTC) - timedelta(seconds=3600)
-        state.backoff_seconds = 480.0  # Simulates accumulated backoff from previous sends
+        # At max backoff, stays clamped
+        state.backoff_seconds = max_backoff
+        agent._mark_proactive_sent(TEST_SENDER)
+        assert state.backoff_seconds == max_backoff
 
-        # --- Cycle 2: backoff expired → fires AND resets to fresh cycle ---
-        e2 = penny.db.get_or_create_entity(TEST_SENDER, "eager entity 2")
-        assert e2 is not None and e2.id is not None
-        penny.db.add_fact(e2.id, "Fact for eager test 2")
-
-        signal_server.outgoing_messages.clear()
-        result2 = await agent.execute()
-        assert result2 is True
-
-        # Backoff should be at INITIAL (fresh cycle), not doubled from 480
-        assert state.backoff_seconds == config.runtime.NOTIFICATION_INITIAL_BACKOFF
+        # User interaction resets to eager (0), then first send starts fresh
+        state.backoff_seconds = 0.0
+        agent._mark_proactive_sent(TEST_SENDER)
+        assert state.backoff_seconds == initial_backoff
 
 
 @pytest.mark.asyncio

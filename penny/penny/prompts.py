@@ -132,7 +132,8 @@ Examples:
     # Learn completion summary prompt
     LEARN_COMPLETION_SUMMARY_PROMPT = (
         "You just finished researching **{topic}** (something the user asked you to look into). "
-        "Write a casual summary of what you found. "
+        'Open with "Here\'s what I learned about {topic}" then write a casual '
+        "summary of what you found. "
         "Group findings by topic, highlight the most interesting facts, "
         "and use **bold** for topic names and bullet points for key facts. "
         "Keep it concise but informative."

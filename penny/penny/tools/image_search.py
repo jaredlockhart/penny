@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel
@@ -11,6 +12,8 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 SERPER_IMAGES_URL = "https://google.serper.dev/images"
+ALLOWED_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
+ALLOWED_IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 
 
 class SerperImageResult(BaseModel):
@@ -62,18 +65,25 @@ async def search_image(
             if not response.images:
                 return None
 
-            # Download first valid image
+            # Download first valid image (skip non-raster formats like SVG)
             for result in response.images:
                 if not result.imageUrl:
+                    continue
+                # Filter by URL extension before downloading
+                path = urlparse(result.imageUrl).path.lower()
+                ext = path[path.rfind(".") :] if "." in path else ""
+                if ext and ext not in ALLOWED_IMAGE_EXTENSIONS:
+                    logger.debug("Skipping disallowed extension %s: %s", ext, result.imageUrl)
                     continue
                 try:
                     img_resp = await client.get(result.imageUrl)
                     img_resp.raise_for_status()
                     content_type = img_resp.headers.get("content-type", "")
-                    if "image" not in content_type:
+                    mime = content_type.split(";")[0].strip()
+                    if mime not in ALLOWED_IMAGE_MIMES:
+                        logger.debug("Skipping disallowed MIME %s: %s", mime, result.imageUrl)
                         continue
                     image_b64 = base64.b64encode(img_resp.content).decode()
-                    mime = content_type.split(";")[0].strip()
                     return f"data:{mime};base64,{image_b64}"
                 except httpx.HTTPError:
                     logger.debug("Failed to download image: %s", result.imageUrl)
