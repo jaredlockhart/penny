@@ -1191,6 +1191,90 @@ class Database:
                 e,
             )
 
+    def delete_learn_prompt(self, learn_prompt_id: int) -> list[tuple[str, int]]:
+        """Delete a LearnPrompt and all entities/facts acquired from its searches.
+
+        Deletes in order: engagements → facts → entities → search logs → learn prompt.
+        An entity is deleted if ANY of its facts came from this learn prompt's searches.
+
+        Args:
+            learn_prompt_id: LearnPrompt primary key
+
+        Returns:
+            List of (entity_name, fact_count) for each deleted entity
+        """
+        try:
+            with self.get_session() as session:
+                learn_prompt = session.get(LearnPrompt, learn_prompt_id)
+                if not learn_prompt:
+                    return []
+
+                # Find all search logs for this learn prompt
+                search_logs = list(
+                    session.exec(
+                        select(SearchLog).where(SearchLog.learn_prompt_id == learn_prompt_id)
+                    ).all()
+                )
+                search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
+
+                # Find all facts from those searches
+                facts: list[Fact] = []
+                if search_log_ids:
+                    facts = list(
+                        session.exec(
+                            select(Fact).where(
+                                Fact.source_search_log_id.in_(search_log_ids)  # type: ignore[union-attr]
+                            )
+                        ).all()
+                    )
+
+                # Collect unique entity IDs to delete
+                entity_ids = {f.entity_id for f in facts}
+
+                # Build per-entity summary before deleting
+                deleted_entities: list[tuple[str, int]] = []
+                for entity_id in entity_ids:
+                    entity = session.get(Entity, entity_id)
+                    if not entity:
+                        continue
+
+                    # Delete engagements
+                    engagements = list(
+                        session.exec(
+                            select(Engagement).where(Engagement.entity_id == entity_id)
+                        ).all()
+                    )
+                    for eng in engagements:
+                        session.delete(eng)
+
+                    # Delete ALL facts for this entity
+                    entity_facts = list(
+                        session.exec(select(Fact).where(Fact.entity_id == entity_id)).all()
+                    )
+                    for fact in entity_facts:
+                        session.delete(fact)
+
+                    deleted_entities.append((entity.name, len(entity_facts)))
+                    session.delete(entity)
+
+                # Delete search logs
+                for sl in search_logs:
+                    session.delete(sl)
+
+                # Delete the learn prompt
+                session.delete(learn_prompt)
+                session.commit()
+
+                logger.debug(
+                    "Deleted LearnPrompt %d (%d entities)",
+                    learn_prompt_id,
+                    len(deleted_entities),
+                )
+                return deleted_entities
+        except Exception as e:
+            logger.error("Failed to delete LearnPrompt %d: %s", learn_prompt_id, e)
+            return []
+
     # --- Embedding methods ---
 
     def update_entity_embedding(self, entity_id: int, embedding: bytes) -> None:
