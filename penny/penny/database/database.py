@@ -1366,29 +1366,6 @@ class Database:
                 ).all()
             )
 
-    def get_entities_without_taglines(self, limit: int) -> list[Entity]:
-        """Get entities that have facts but no tagline yet.
-
-        Args:
-            limit: Maximum number of entities to return
-
-        Returns:
-            List of Entity objects without taglines that have at least one fact
-        """
-        with self.get_session() as session:
-            entities_with_facts = select(Fact.entity_id).distinct()
-            return list(
-                session.exec(
-                    select(Entity)
-                    .where(
-                        Entity.tagline == None,  # noqa: E711
-                        Entity.id.in_(entities_with_facts),  # type: ignore[union-attr]
-                    )
-                    .order_by(Entity.created_at.desc())  # type: ignore[unresolved-attribute]
-                    .limit(limit)
-                ).all()
-            )
-
     def get_unnotified_facts(self, user: str) -> list[Fact]:
         """Get facts that haven't been communicated to a user yet.
 

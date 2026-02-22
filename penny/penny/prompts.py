@@ -285,17 +285,3 @@ Examples:
         "the user must express a clear opinion.\n\n"
         "If no entity has clear sentiment, return an empty list."
     )
-
-    # Tagline generation prompt (for backfilling existing entities)
-    TAGLINE_GENERATION_PROMPT = (
-        "Generate a very short tagline (3-8 words) that describes what this entity is.\n"
-        "The tagline should disambiguate the entity — it's a summary you extrapolate, "
-        "not a verbatim quote.\n\n"
-        "Examples:\n"
-        "- 'KEF LS50 Meta' → 'bookshelf speaker by kef'\n"
-        "- 'Leonard Susskind' → 'theoretical physicist at stanford'\n"
-        "- 'Genesis' → 'british progressive rock band'\n"
-        "- 'ROCm' → 'amd gpu software platform'\n"
-        "- 'SYK model' → 'quantum mechanical model'\n\n"
-        "Return only the tagline, lowercase, no punctuation."
-    )

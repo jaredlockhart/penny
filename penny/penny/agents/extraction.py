@@ -195,12 +195,6 @@ class _ExtractionResult:
     entities: list[Entity] = field(default_factory=list)
 
 
-class GeneratedTagline(BaseModel):
-    """Schema for LLM response: a short disambiguating tagline."""
-
-    tagline: str = Field(description="Short 3-8 word summary describing what the entity is")
-
-
 @dataclass
 class _EntityCandidate:
     """New entity held in memory until post-fact semantic pruning."""
@@ -1110,37 +1104,6 @@ class ExtractionPipeline(Agent):
             logger.debug("Sentiment extraction failed", exc_info=True)
             return []
 
-    # --- Tagline generation ---
-
-    async def _generate_tagline(self, entity_name: str, facts: list[str]) -> str | None:
-        """Generate a short disambiguating tagline for an entity using LLM.
-
-        Used for backfilling existing entities that don't have taglines.
-        New entities get taglines from the identification step instead.
-        """
-        facts_text = "\n".join(f"- {f}" for f in facts[:10])
-        prompt = (
-            f"{Prompt.TAGLINE_GENERATION_PROMPT}\n\n"
-            f"Entity: {entity_name}\n\n"
-            f"Known facts:\n{facts_text}"
-        )
-
-        try:
-            response = await self._background_model_client.generate(
-                prompt=prompt,
-                tools=None,
-                format=GeneratedTagline.model_json_schema(),
-            )
-            result = GeneratedTagline.model_validate_json(response.content)
-            tagline = result.tagline.strip().lower().rstrip(".")
-            if tagline and len(tagline.split()) <= 10:
-                return tagline
-            logger.warning("Rejected tagline for '%s': too long or empty", entity_name)
-            return None
-        except Exception as e:
-            logger.error("Failed to generate tagline for '%s': %s", entity_name, e)
-            return None
-
     # --- Entity embedding updates ---
 
     async def _update_entity_embeddings(self, entities: list[Entity]) -> None:
@@ -1213,19 +1176,5 @@ class ExtractionPipeline(Agent):
                 work_done = True
             except Exception as e:
                 logger.warning("Failed to backfill entity embeddings: %s", e)
-
-        # Backfill taglines for entities that have facts but no tagline (1 per cycle)
-        entities_needing_taglines = self.db.get_entities_without_taglines(limit=1)
-        for entity in entities_needing_taglines:
-            assert entity.id is not None
-            entity_facts = self.db.get_entity_facts(entity.id)
-            if entity_facts:
-                tagline = await self._generate_tagline(
-                    entity.name, [f.content for f in entity_facts]
-                )
-                if tagline:
-                    self.db.update_entity_tagline(entity.id, tagline)
-                    logger.info("Backfilled tagline for '%s': '%s'", entity.name, tagline)
-                    work_done = True
 
         return work_done
