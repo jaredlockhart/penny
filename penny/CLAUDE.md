@@ -213,6 +213,8 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Extracts facts via `ollama_client.generate()` with structured output (Pydantic schema)
 - Two-pass fact dedup: normalized string match (fast) then embedding similarity (threshold 0.85)
 - Stores facts with `notified_at=NULL` — the NotificationAgent surfaces them
+- Exponential backoff (in-memory): 300s initial, doubles up to 3600s max
+- Backoff resets when any user sends a message or command
 - Triggered by `/learn` command (creates USER_SEARCH engagement with high strength)
 
 **NotificationAgent** (`agents/notification.py`)

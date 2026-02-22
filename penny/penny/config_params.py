@@ -296,10 +296,18 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="LEARN_INTERVAL",
-    description="Interval for learn agent in seconds (runs during idle)",
+    key="ENRICHMENT_INITIAL_BACKOFF",
+    description="Initial backoff in seconds after an enrichment search",
     type=float,
     default=300.0,
+    validator=_validate_positive_float,
+)
+
+ConfigParam(
+    key="ENRICHMENT_MAX_BACKOFF",
+    description="Maximum backoff cap in seconds for enrichment searches",
+    type=float,
+    default=3600.0,
     validator=_validate_positive_float,
 )
 

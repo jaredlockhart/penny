@@ -396,7 +396,7 @@ async def test_notification_expired_backoff_stays_at_cadence(
     """
     from datetime import timedelta
 
-    from penny.agents.notification import _UserBackoff
+    from penny.agents.backoff import BackoffState
 
     config = make_config()
     max_backoff = config.runtime.NOTIFICATION_MAX_BACKOFF
@@ -406,9 +406,9 @@ async def test_notification_expired_backoff_stays_at_cadence(
         agent = _create_notification_agent(penny, config)
 
         # Simulate state: backoff at 480s, expired (last send was 481s ago)
-        state = _UserBackoff()
+        state = BackoffState()
         state.backoff_seconds = 480.0
-        state.last_proactive_send = datetime.now(UTC) - timedelta(seconds=481)
+        state.last_action_time = datetime.now(UTC) - timedelta(seconds=481)
         agent._backoff_state[TEST_SENDER] = state
 
         # _should_send should return True (backoff expired)
