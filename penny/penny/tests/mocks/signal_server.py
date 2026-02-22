@@ -20,6 +20,14 @@ class MockSignalServer:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self.port: int | None = None
+        # Queue of (status, body) tuples to return for upcoming /v2/send requests.
+        # When non-empty, the next send request pops and returns the queued response
+        # instead of the default 200 success. Useful for simulating transient errors.
+        self._send_response_queue: list[tuple[int, dict]] = []
+
+    def queue_send_error(self, status: int, body: dict) -> None:
+        """Queue a specific HTTP response for the next /v2/send request."""
+        self._send_response_queue.append((status, body))
 
     async def start(self, port: int = 0) -> None:
         """Start the mock server on specified port (0 = random available port)."""
@@ -182,6 +190,10 @@ class MockSignalServer:
     async def _handle_send(self, request: web.Request) -> web.Response:
         """Handle POST /v2/send - capture outgoing messages."""
         data = await request.json()
+        # Return a queued error response if one is staged
+        if self._send_response_queue:
+            status, body = self._send_response_queue.pop(0)
+            return web.json_response(body, status=status)
         self.outgoing_messages.append(data)
         return web.json_response({"timestamp": int(time.time() * 1000)})
 

@@ -249,3 +249,163 @@ async def test_send_message_allows_empty_text_with_attachments(
     assert result is not None
 
     await channel.close()
+
+
+@pytest.mark.asyncio
+async def test_send_message_retries_on_socket_exception_400(
+    signal_server, test_config, mock_ollama
+):
+    """Test that send_message retries when signal-cli returns a 400 SocketException."""
+    from penny.agents import MessageAgent
+    from penny.prompts import Prompt
+
+    db = Database(test_config.db_path)
+    db.create_tables()
+
+    client = OllamaClient(
+        api_url=test_config.ollama_api_url,
+        model=test_config.ollama_foreground_model,
+        db=db,
+        max_retries=test_config.ollama_max_retries,
+        retry_delay=test_config.ollama_retry_delay,
+    )
+    message_agent = MessageAgent(
+        system_prompt=Prompt.SEARCH_PROMPT,
+        background_model_client=client,
+        foreground_model_client=client,
+        tools=[],
+        db=db,
+        config=test_config,
+        max_steps=1,
+    )
+
+    channel = SignalChannel(
+        api_url=test_config.signal_api_url,
+        phone_number=test_config.signal_number or "+15551234567",
+        message_agent=message_agent,
+        db=db,
+        max_retries=2,
+        retry_delay=0.01,
+    )
+
+    # Queue one transient SocketException 400 then let the retry succeed
+    socket_error_body = {
+        "error": (
+            "Failed to send message: Failed to get response for request"
+            " (SocketException) (UnexpectedErrorException)"
+        )
+    }
+    signal_server.queue_send_error(400, socket_error_body)
+
+    result = await channel.send_message(TEST_SENDER, "hello", attachments=None, quote_message=None)
+
+    # Should have succeeded on the retry
+    assert result is not None
+    # The message was eventually delivered (the successful send is captured)
+    assert len(signal_server.outgoing_messages) == 1
+
+    await channel.close()
+
+
+@pytest.mark.asyncio
+async def test_send_message_no_retry_on_non_transient_400(signal_server, test_config, mock_ollama):
+    """Test that send_message does NOT retry on non-transient 400 errors."""
+    from penny.agents import MessageAgent
+    from penny.prompts import Prompt
+
+    db = Database(test_config.db_path)
+    db.create_tables()
+
+    client = OllamaClient(
+        api_url=test_config.ollama_api_url,
+        model=test_config.ollama_foreground_model,
+        db=db,
+        max_retries=test_config.ollama_max_retries,
+        retry_delay=test_config.ollama_retry_delay,
+    )
+    message_agent = MessageAgent(
+        system_prompt=Prompt.SEARCH_PROMPT,
+        background_model_client=client,
+        foreground_model_client=client,
+        tools=[],
+        db=db,
+        config=test_config,
+        max_steps=1,
+    )
+
+    channel = SignalChannel(
+        api_url=test_config.signal_api_url,
+        phone_number=test_config.signal_number or "+15551234567",
+        message_agent=message_agent,
+        db=db,
+        max_retries=2,
+        retry_delay=0.01,
+    )
+
+    # Queue a non-transient 400 (bad recipient format — should not retry)
+    signal_server.queue_send_error(400, {"error": "Invalid recipient number"})
+    # Queue another 200 success that should NOT be reached if retry is skipped
+    signal_server.queue_send_error(400, {"error": "Invalid recipient number"})
+
+    result = await channel.send_message(TEST_SENDER, "hello", attachments=None, quote_message=None)
+
+    # Should have returned None without retrying
+    assert result is None
+    # No messages should have been captured by the success handler
+    assert len(signal_server.outgoing_messages) == 0
+    # The second queued error should still be in the queue (retry was not attempted)
+    assert len(signal_server._send_response_queue) == 1
+
+    await channel.close()
+
+
+@pytest.mark.asyncio
+async def test_send_message_gives_up_after_max_retries(signal_server, test_config, mock_ollama):
+    """Test that send_message returns None after exhausting retries on persistent errors."""
+    from penny.agents import MessageAgent
+    from penny.prompts import Prompt
+
+    db = Database(test_config.db_path)
+    db.create_tables()
+
+    client = OllamaClient(
+        api_url=test_config.ollama_api_url,
+        model=test_config.ollama_foreground_model,
+        db=db,
+        max_retries=test_config.ollama_max_retries,
+        retry_delay=test_config.ollama_retry_delay,
+    )
+    message_agent = MessageAgent(
+        system_prompt=Prompt.SEARCH_PROMPT,
+        background_model_client=client,
+        foreground_model_client=client,
+        tools=[],
+        db=db,
+        config=test_config,
+        max_steps=1,
+    )
+
+    channel = SignalChannel(
+        api_url=test_config.signal_api_url,
+        phone_number=test_config.signal_number or "+15551234567",
+        message_agent=message_agent,
+        db=db,
+        max_retries=2,
+        retry_delay=0.01,
+    )
+
+    # Queue 3 transient errors (initial attempt + 2 retries = 3 total)
+    socket_error = {"error": "Failed to send message: (SocketException)"}
+    for _ in range(3):
+        signal_server.queue_send_error(400, socket_error)
+
+    result = await channel.send_message(TEST_SENDER, "hello", attachments=None, quote_message=None)
+
+    # All retries exhausted — should return None
+    assert result is None
+    # No successful sends
+    assert len(signal_server.outgoing_messages) == 0
+    # All 3 queued errors were consumed
+    assert len(signal_server._send_response_queue) == 0
+
+    await channel.close()

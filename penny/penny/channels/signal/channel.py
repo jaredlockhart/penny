@@ -25,6 +25,11 @@ from penny.channels.signal.models import (
 )
 from penny.constants import PennyConstants
 
+# Error substrings that indicate a transient signal-cli transport failure.
+# These appear in the 400 response body when signal-cli's socket to Signal's
+# servers was broken — the request itself was valid and should be retried.
+_TRANSIENT_ERROR_INDICATORS = ("SocketException", "UnexpectedErrorException")
+
 if TYPE_CHECKING:
     from penny.agents import MessageAgent
     from penny.commands import CommandRegistry
@@ -44,6 +49,8 @@ class SignalChannel(MessageChannel):
         message_agent: MessageAgent,
         db: Database,
         command_registry: CommandRegistry | None = None,
+        max_retries: int = 3,
+        retry_delay: float = 0.5,
     ):
         """
         Initialize Signal channel.
@@ -54,12 +61,16 @@ class SignalChannel(MessageChannel):
             message_agent: Agent for processing incoming messages
             db: Database for logging messages
             command_registry: Optional command registry for handling commands
+            max_retries: Number of retry attempts for transient send failures (default: 3)
+            retry_delay: Base delay in seconds between retries, doubled each attempt (default: 0.5)
         """
         super().__init__(message_agent=message_agent, db=db, command_registry=command_registry)
         self.api_url = api_url.rstrip("/")
         self.phone_number = phone_number
         self._running = True
         self.http_client = httpx.AsyncClient(timeout=30.0)
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         logger.info("Initialized Signal channel: url=%s, number=%s", api_url, phone_number)
 
     @property
@@ -324,73 +335,96 @@ class SignalChannel(MessageChannel):
             logger.error("Attempted to send empty message to %s", recipient)
             raise ValueError("Cannot send empty or whitespace-only message")
 
-        try:
-            url = f"{self.api_url}/v2/send"
+        url = f"{self.api_url}/v2/send"
 
-            # Build quote fields if quote_message provided
-            quote_timestamp = None
-            quote_author = None
-            quote_text = None
-            if quote_message:
-                # Get the Signal timestamp for the quoted message:
-                # - For incoming messages: use signal_timestamp field
-                # - For outgoing messages: use external_id (set after send_message completes)
-                # - Fallback: convert database timestamp to ms
-                if quote_message.signal_timestamp:
-                    quote_timestamp = quote_message.signal_timestamp
-                elif quote_message.external_id:
-                    quote_timestamp = int(quote_message.external_id)
-                else:
-                    quote_timestamp = int(quote_message.timestamp.timestamp() * 1000)
-                quote_author = quote_message.sender
-                quote_text = quote_message.content
+        # Build quote fields if quote_message provided
+        quote_timestamp = None
+        quote_author = None
+        quote_text = None
+        if quote_message:
+            # Get the Signal timestamp for the quoted message:
+            # - For incoming messages: use signal_timestamp field
+            # - For outgoing messages: use external_id (set after send_message completes)
+            # - Fallback: convert database timestamp to ms
+            if quote_message.signal_timestamp:
+                quote_timestamp = quote_message.signal_timestamp
+            elif quote_message.external_id:
+                quote_timestamp = int(quote_message.external_id)
+            else:
+                quote_timestamp = int(quote_message.timestamp.timestamp() * 1000)
+            quote_author = quote_message.sender
+            quote_text = quote_message.content
 
-            request = SendMessageRequest(
-                message=message,
-                number=self.phone_number,
-                recipients=[recipient],
-                base64_attachments=attachments if attachments else None,
-                quote_timestamp=quote_timestamp,
-                quote_author=quote_author,
-                quote_message=quote_text,
-            )
+        request = SendMessageRequest(
+            message=message,
+            number=self.phone_number,
+            recipients=[recipient],
+            base64_attachments=attachments if attachments else None,
+            quote_timestamp=quote_timestamp,
+            quote_author=quote_author,
+            quote_message=quote_text,
+        )
 
-            logger.debug("Sending to %s: %s", url, request)
+        logger.debug("Sending to %s: %s", url, request)
 
-            response = await self.http_client.post(
-                url,
-                json=request.model_dump(exclude_none=True),
-            )
-            response.raise_for_status()
-
-            # Parse response to get the timestamp
-            send_response = SendMessageResponse.model_validate(response.json())
-            timestamp = send_response.timestamp
-
-            logger.info(
-                "Sent message to %s (length: %d, timestamp: %s), status: %d",
-                recipient,
-                len(message),
-                timestamp,
-                response.status_code,
-            )
-            logger.debug("Response: %s", response.text)
-            return timestamp
-
-        except (httpx.ConnectError, httpx.NetworkError) as e:
-            logger.info("Network or DNS error sending Signal message: %s", e)
-            return None
-
-        except httpx.HTTPError as e:
-            logger.error("Failed to send Signal message: %s", e)
-            resp = getattr(e, "response", None)
-            if resp is not None:
-                logger.error(
-                    "Response status: %d, body: %s",
-                    resp.status_code,
-                    resp.text,
+        delay = self.retry_delay
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = await self.http_client.post(
+                    url,
+                    json=request.model_dump(exclude_none=True),
                 )
-            return None
+                response.raise_for_status()
+
+                # Parse response to get the timestamp
+                send_response = SendMessageResponse.model_validate(response.json())
+                timestamp = send_response.timestamp
+
+                logger.info(
+                    "Sent message to %s (length: %d, timestamp: %s), status: %d",
+                    recipient,
+                    len(message),
+                    timestamp,
+                    response.status_code,
+                )
+                logger.debug("Response: %s", response.text)
+                return timestamp
+
+            except (httpx.ConnectError, httpx.NetworkError) as e:
+                logger.info("Network or DNS error sending Signal message: %s", e)
+                return None
+
+            except httpx.HTTPStatusError as e:
+                resp = e.response
+                body = resp.text
+                logger.error(
+                    "Failed to send Signal message: %s — status: %d, body: %s",
+                    e,
+                    resp.status_code,
+                    body,
+                )
+                # Only retry on 400s that signal a transient signal-cli transport failure
+                # (e.g., SocketException). Other 4xx/5xx errors are not retried.
+                is_transient = resp.status_code == 400 and any(
+                    indicator in body for indicator in _TRANSIENT_ERROR_INDICATORS
+                )
+                if is_transient and attempt < self.max_retries:
+                    logger.info(
+                        "Transient signal-cli error — retrying in %.2fs (attempt %d/%d)",
+                        delay,
+                        attempt + 1,
+                        self.max_retries,
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                return None
+
+            except httpx.HTTPError as e:
+                logger.error("Failed to send Signal message: %s", e)
+                return None
+
+        return None
 
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """Send a typing indicator via Signal."""
