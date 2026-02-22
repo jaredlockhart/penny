@@ -65,6 +65,8 @@ class NotificationAgent(Agent):
 
         users = self.db.get_all_senders()
         for user in users:
+            if self.db.is_muted(user):
+                continue
             # Learn completion announcements take priority and bypass backoff
             if await self._try_learn_completion(user):
                 return True

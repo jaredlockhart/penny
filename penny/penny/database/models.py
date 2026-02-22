@@ -145,6 +145,16 @@ class Engagement(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
 
 
+class MuteState(SQLModel, table=True):
+    """Per-user mute state for proactive notifications.
+
+    Row exists = muted. Delete row = unmuted.
+    """
+
+    user: str = Field(primary_key=True)
+    muted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class Fact(SQLModel, table=True):
     """An individual fact about an entity with provenance tracking."""
 

@@ -10,9 +10,11 @@ from penny.commands.index import IndexCommand
 from penny.commands.learn import LearnCommand
 from penny.commands.memory import MemoryCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
+from penny.commands.mute import MuteCommand
 from penny.commands.profile import ProfileCommand
 from penny.commands.schedule import ScheduleCommand
 from penny.commands.test import TestCommand
+from penny.commands.unmute import UnmuteCommand
 
 if TYPE_CHECKING:
     from github_api.api import GitHubAPI
@@ -62,6 +64,8 @@ def create_command_registry(
     registry.register(ScheduleCommand())
     registry.register(MemoryCommand())
     registry.register(LearnCommand(search_tool))
+    registry.register(MuteCommand())
+    registry.register(UnmuteCommand())
 
     # Register test command if factory provided
     if message_agent_factory:
