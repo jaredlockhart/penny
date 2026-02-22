@@ -185,9 +185,9 @@ async def test_profile_context_excludes_dob_and_redacts_name_from_search(
         assert "1990-01-01" not in all_system_text, "DOB should not be in profile context"
         assert "born" not in all_system_text.lower(), "DOB field should not be in profile context"
 
-        # Verify profile context IS present (name + location)
+        # Verify profile context IS present (name only, not location)
         assert "Test User" in all_system_text, "Name should be in profile context"
-        assert "Seattle" in all_system_text, "Location should be in profile context"
+        assert "Seattle" not in all_system_text, "Location should not be in profile context"
 
         # Verify user name was redacted from the search query logged to DB
         with penny.db.get_session() as session:

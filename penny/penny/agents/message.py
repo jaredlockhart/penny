@@ -46,9 +46,7 @@ class MessageAgent(Agent):
         try:
             user_info = self.db.get_user_info(sender)
             if user_info:
-                profile_summary = (
-                    f"User context: {user_info.name}, {user_info.location} ({user_info.timezone})"
-                )
+                profile_summary = f"The user's name is {user_info.name}."
                 # Prepend profile context to history
                 history = history or []
                 history = [(MessageRole.SYSTEM.value, profile_summary), *history]
