@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Fact
@@ -85,11 +86,34 @@ class LearnAgent(Agent):
     def __init__(self, search_tool: Tool | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._search_tool = search_tool
+        self._backoff = BackoffState()
 
     @property
     def name(self) -> str:
         """Task name for logging."""
         return "learn"
+
+    def _should_enrich(self) -> bool:
+        """Check if enough time has elapsed since the last enrichment search."""
+        latest = self._latest_user_interaction()
+        return self._backoff.should_act(latest)
+
+    def _mark_enrichment_done(self) -> None:
+        """Record that an enrichment search was performed and increase backoff."""
+        self._backoff.mark_done(
+            self.config.runtime.ENRICHMENT_INITIAL_BACKOFF,
+            self.config.runtime.ENRICHMENT_MAX_BACKOFF,
+        )
+        logger.info("Enrichment backoff set to %.0fs", self._backoff.backoff_seconds)
+
+    def _latest_user_interaction(self) -> datetime | None:
+        """Find the most recent interaction time across all users."""
+        latest: datetime | None = None
+        for user in self.db.get_all_senders():
+            t = self.db.get_latest_user_interaction_time(user)
+            if t is not None and (latest is None or t > latest):
+                latest = t
+        return latest
 
     async def execute(self) -> bool:
         """Run one cycle of the learn agent.
@@ -99,6 +123,9 @@ class LearnAgent(Agent):
         """
         if not self._search_tool:
             logger.debug("LearnAgent: no search tool configured")
+            return False
+
+        if not self._should_enrich():
             return False
 
         # Score all entities and pick the highest-priority one
@@ -155,6 +182,7 @@ class LearnAgent(Agent):
             await self._update_entity_embedding(entity)
             logger.info("Updated entity embedding for '%s'", entity.name)
 
+        self._mark_enrichment_done()
         return True
 
     def _score_candidates(self) -> list[_ScoredEntity]:

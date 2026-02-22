@@ -10,8 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime
 
+from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
 from penny.database.models import Fact, LearnPrompt
@@ -20,16 +20,6 @@ from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
-
-
-class _UserBackoff:
-    """Per-user backoff state for proactive notifications."""
-
-    __slots__ = ("last_proactive_send", "backoff_seconds")
-
-    def __init__(self) -> None:
-        self.last_proactive_send: datetime | None = None
-        self.backoff_seconds: float = 0.0
 
 
 class NotificationAgent(Agent):
@@ -45,7 +35,7 @@ class NotificationAgent(Agent):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._channel: MessageChannel | None = None
-        self._backoff_state: dict[str, _UserBackoff] = {}
+        self._backoff_state: dict[str, BackoffState] = {}
 
     @property
     def name(self) -> str:
@@ -255,50 +245,19 @@ class NotificationAgent(Agent):
         state = self._backoff_state.get(user)
         if state is None:
             return True
-
-        # Check if user has interacted (message or command) since our last proactive send
-        if state.last_proactive_send is not None:
-            latest_interaction = self.db.get_latest_user_interaction_time(user)
-            if latest_interaction is not None:
-                interaction_time = latest_interaction
-                if interaction_time.tzinfo is None:
-                    interaction_time = interaction_time.replace(tzinfo=UTC)
-                last_send = state.last_proactive_send
-                if last_send.tzinfo is None:
-                    last_send = last_send.replace(tzinfo=UTC)
-                if interaction_time > last_send:
-                    state.backoff_seconds = 0.0
-
-        if state.backoff_seconds <= 0:
-            return True
-
-        if state.last_proactive_send is None:
-            return True
-
-        now = datetime.now(UTC)
-        last_send = state.last_proactive_send
-        if last_send.tzinfo is None:
-            last_send = last_send.replace(tzinfo=UTC)
-        elapsed = (now - last_send).total_seconds()
-        # Backoff expired — fire but keep backoff value so it stays at
-        # this cadence (e.g. max backoff) until user re-engages.
-        return elapsed >= state.backoff_seconds
+        latest = self.db.get_latest_user_interaction_time(user)
+        return state.should_act(latest)
 
     def _mark_proactive_sent(self, user: str) -> None:
         """Record that we sent a notification and increase backoff."""
         state = self._backoff_state.get(user)
         if state is None:
-            state = _UserBackoff()
+            state = BackoffState()
             self._backoff_state[user] = state
-
-        state.last_proactive_send = datetime.now(UTC)
-        if state.backoff_seconds <= 0:
-            state.backoff_seconds = self.config.runtime.NOTIFICATION_INITIAL_BACKOFF
-        else:
-            state.backoff_seconds = min(
-                state.backoff_seconds * 2,
-                self.config.runtime.NOTIFICATION_MAX_BACKOFF,
-            )
+        state.mark_done(
+            self.config.runtime.NOTIFICATION_INITIAL_BACKOFF,
+            self.config.runtime.NOTIFICATION_MAX_BACKOFF,
+        )
 
     def _pick_best_entity(self, user: str, entity_ids: list[int]) -> int | None:
         """Pick the entity with the highest interest score from candidates."""

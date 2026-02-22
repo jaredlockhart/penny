@@ -362,3 +362,75 @@ async def test_learn_semantic_interest_priority(
             f"Expected entity B (coral beach hotel) to remain at 1 fact, "
             f"but it has {len(facts_b)} fact(s)"
         )
+
+
+@pytest.mark.asyncio
+async def test_learn_enrichment_backoff(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Enrichment applies exponential backoff after each search.
+
+    First execute() succeeds, second is blocked by backoff,
+    then a user interaction resets the backoff and third execute() succeeds.
+    """
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            json.dumps({"facts": ["Some interesting fact"]}),
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Create sender
+        await signal_server.push_message(sender=TEST_SENDER, content="hello")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Create entity with positive interest
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "backoff test entity")
+        assert entity is not None and entity.id is not None
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=entity.id,
+        )
+
+        agent = LearnAgent(
+            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
+            system_prompt="",
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
+            tools=[],
+            db=penny.db,
+            config=config,
+            max_steps=1,
+            tool_timeout=config.tool_timeout,
+        )
+
+        # First execute: should succeed and set backoff
+        result = await agent.execute()
+        assert result is True
+        assert agent._backoff.backoff_seconds == config.runtime.ENRICHMENT_INITIAL_BACKOFF
+
+        # Second execute: should be blocked by backoff (not enough time elapsed)
+        result = await agent.execute()
+        assert result is False
+
+        # Simulate user interaction after the last enrichment
+        await signal_server.push_message(sender=TEST_SENDER, content="tell me more")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Third execute: user interaction resets backoff, should succeed
+        result = await agent.execute()
+        assert result is True
+        # Backoff should be at initial again (was reset to 0, then set to initial)
+        assert agent._backoff.backoff_seconds == config.runtime.ENRICHMENT_INITIAL_BACKOFF
