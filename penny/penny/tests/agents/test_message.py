@@ -332,6 +332,63 @@ async def test_entity_context_searches_when_insufficient(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_response,expected_clean",
+    [
+        (
+            "<think>Outline steps for planting tomato.</think>\nSure! Here are the steps:\n"
+            "1. Choose a location",
+            "Sure! Here are the steps:\n1. Choose a location",
+        ),
+        (
+            "<thinking>internal reasoning goes here</thinking>The actual answer for the user.",
+            "The actual answer for the user.",
+        ),
+        (
+            "<THINK>case insensitive thinking</THINK>Clean response.",
+            "Clean response.",
+        ),
+    ],
+    ids=["think-tag", "thinking-tag", "think-uppercase"],
+)
+async def test_thinking_tags_not_leaked_to_user(
+    raw_response,
+    expected_clean,
+    signal_server,
+    mock_ollama,
+    test_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+):
+    """
+    Regression test for #442: thinking tags embedded in content must be stripped.
+
+    Some models (e.g. DeepSeek-style reasoning models) emit <think>...</think>
+    blocks directly in the content field. These must not be forwarded to the user.
+    """
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(request, raw_response)
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(test_config):
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="what are the steps to plant a tomato?",
+        )
+
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        assert expected_clean in response["message"], (
+            f"Thinking tag content leaked to user. Got: {response['message']!r}"
+        )
+        assert "<think>" not in response["message"].lower()
+        assert "<thinking>" not in response["message"].lower()
+
+
+@pytest.mark.asyncio
 async def test_entity_context_graceful_on_embed_failure(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):

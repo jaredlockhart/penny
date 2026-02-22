@@ -24,10 +24,25 @@ logger = logging.getLogger(__name__)
 # or <tools><search>...</search></tools>
 _XML_TAG_PATTERN = re.compile(r"<[a-zA-Z]\w*[\s=>].*</[a-zA-Z]\w*>", re.DOTALL)
 
+# Matches <think>...</think> or <thinking>...</thinking> blocks (case-insensitive, multi-line)
+_THINKING_TAG_PATTERN = re.compile(
+    r"<think(?:ing)?>\s*.*?\s*</think(?:ing)?>", re.DOTALL | re.IGNORECASE
+)
+
 
 def _has_xml_tags(content: str) -> bool:
     """Return True if content contains XML-like tag pairs."""
     return bool(_XML_TAG_PATTERN.search(content))
+
+
+def _strip_thinking_tags(content: str) -> str:
+    """Remove embedded <think>...</think> and <thinking>...</thinking> blocks from content.
+
+    Some models (e.g. DeepSeek-style reasoning models) embed their internal reasoning
+    in the content field using XML-style thinking tags. These must be stripped before
+    the content is sent to the user.
+    """
+    return _THINKING_TAG_PATTERN.sub("", content).strip()
 
 
 class Agent:
@@ -175,7 +190,7 @@ class Agent:
             logger.error("Failed to compose user-facing message: %s", e)
             return ControllerResponse(answer="")
 
-        content = response.content.strip()
+        content = _strip_thinking_tags(response.content)
         thinking = response.thinking or response.message.thinking
         attachments = [image] if image else []
         return ControllerResponse(answer=content, thinking=thinking, attachments=attachments)
@@ -313,7 +328,7 @@ class Agent:
                 continue
 
             # No tool calls — final answer
-            content = response.content.strip()
+            content = _strip_thinking_tags(response.content)
 
             if not content:
                 logger.error("Model returned empty content!")
