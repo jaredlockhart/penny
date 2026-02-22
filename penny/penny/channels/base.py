@@ -531,10 +531,6 @@ class MessageChannel(ABC):
         # Execute command with typing indicator
         typing_task = asyncio.create_task(self._typing_loop(message.sender))
         try:
-            # Notify scheduler that foreground work is starting
-            if self._scheduler:
-                self._scheduler.notify_foreground_start()
-
             # Update context with current user and message
             context = self._command_context
             context.user = message.sender
@@ -576,6 +572,3 @@ class MessageChannel(ABC):
         finally:
             typing_task.cancel()
             await self.send_typing(message.sender, False)
-            # Notify scheduler that foreground work is complete
-            if self._scheduler:
-                self._scheduler.notify_foreground_end()
