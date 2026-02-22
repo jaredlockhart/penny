@@ -59,6 +59,8 @@ def create_channel(
             message_agent=message_agent,
             db=db,
             command_registry=command_registry,
+            max_retries=config.ollama_max_retries,
+            retry_delay=config.ollama_retry_delay,
         )
     else:
         raise ValueError(f"Unknown channel type: {config.channel_type}")
