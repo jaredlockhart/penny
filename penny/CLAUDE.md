@@ -4,25 +4,56 @@
 
 ```mermaid
 flowchart TD
-    User((User)) -->|"1. send message"| Channel[Signal / Discord]
-    Channel -->|"2. extract"| Penny[Penny Agent]
-    Penny -->|"3. prompt + tools"| Ollama[Ollama LLM]
-    Ollama -->|"4. tool call"| Search[SearchTool]
-    Search -->|"web search"| Perplexity[Perplexity API]
-    Search -->|"image search"| Serper[Serper API]
-    Search -->|"5. results"| Ollama
-    Ollama -->|"6. final response"| Penny
-    Penny -->|"7. send response"| Channel
-    Channel -->|"8. reply + image"| User
+    User((User)) -->|message| Channel[Signal / Discord]
 
-    Penny -.->|"log"| DB[(SQLite)]
-    Penny -.->|"schedule"| BG["Background Agents\nKnowledge Pipeline"]
+    subgraph Foreground["Foreground Loop"]
+        Channel -->|extract| MA[MessageAgent]
+        MA -->|"prompt + tools"| FG_Ollama["Ollama<br>foreground model"]
+        FG_Ollama -->|tool call| Search[SearchTool]
+        Search -->|text| Perplexity[Perplexity API]
+        Search -->|images| Serper[Serper API]
+        Search -.->|results| FG_Ollama
+        FG_Ollama -->|response| MA
+    end
+
+    MA -->|reply + image| Channel -->|send| User
+    MA -->|log| DB[(SQLite)]
+    Search -->|log| DB
+
+    subgraph Scheduler["Background Scheduler (when idle)"]
+        direction TB
+
+        subgraph Pipeline["ExtractionPipeline (priority order)"]
+            direction TB
+            P1["Phase 1<br>User Messages"] --> P2["Phase 2<br>Search Logs"]
+            P2 --> P3["Phase 3<br>Enrichment"]
+            P3 --> P4["Phase 4<br>Embedding Backfill"]
+        end
+
+        P3 -.->|delegates to| Learn[LearnAgent]
+        Learn -->|search| Search2[SearchTool]
+        Search2 -.->|"new SearchLogs<br>trigger=enrichment"| DB
+
+        Pipeline -->|"extract entities<br>& facts"| BG_Ollama["Ollama<br>background model"]
+        BG_Ollama -.-> DB
+
+        Notify[NotificationAgent] -->|compose| BG_Ollama
+    end
+
+    DB -.->|"unprocessed<br>messages & searches"| P1
+    DB -.->|"un-notified facts<br>+ interest scores"| Notify
+    Notify -->|"proactive message<br>(with backoff)"| Channel
+
+    User -.->|"resets idle<br>cancels background"| Scheduler
+
+    Embed["Ollama<br>embedding model"] -.-> Pipeline
 ```
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
 - **Ollama**: Local LLM inference (default model: gpt-oss:20b)
 - **Vision**: Optional vision model (e.g., qwen3-vl) for processing image attachments from Signal
 - **Image Generation**: Optional image model (e.g., x/z-image-turbo) for generating images via `/draw` command
+- **Embedding Model**: Optional dedicated embedding model (e.g., nomic-embed-text) for semantic validation, dedup, and entity context injection
 - **Perplexity**: Web search — Penny always searches before answering, never uses model knowledge alone
 - **Serper**: Image search (Google Images) — runs in parallel with Perplexity, attaches a relevant image to every response
 - **SQLite**: Logs all prompts, searches, and messages; stores thread history via parent-child links
@@ -33,10 +64,10 @@ flowchart TD
 penny/
   penny.py            — Entry point. Penny class: creates agents, channel, scheduler
   config.py           — Config dataclass loaded from .env, channel auto-detection
-  config_params.py    — ConfigParam definitions for runtime-configurable settings
-  constants.py        — System prompt, research prompts, all constants
+  config_params.py    — ConfigParam definitions for 38 runtime-configurable settings
+  constants.py        — System prompt, research prompts, engagement/trigger enums
   interest.py         — Interest score computation (pure function, half-life decay)
-  prompts.py          — LLM prompt templates (extraction, learn queries)
+  prompts.py          — LLM prompt templates (extraction, learn queries, notifications)
   responses.py        — All user-facing response strings (PennyResponse class)
   startup.py          — Startup announcement message generation (git commit info)
   datetime_utils.py   — Timezone derivation from location (geopy + timezonefinder)
@@ -55,6 +86,7 @@ penny/
     __init__.py       — create_command_registry() factory
     base.py           — Command ABC, CommandRegistry
     models.py         — CommandContext, CommandResult, CommandError
+    github_issue.py   — GitHubIssueCommand base class for /bug and /feature
     config.py         — /config: view and modify runtime settings
     debug.py          — /debug: show agent status, git commit, system info
     index.py          — /commands: list available commands
@@ -88,20 +120,20 @@ penny/
     database.py       — Database: SQLite via SQLModel, thread walking, entity storage
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0022)
+    migrations/       — Numbered migration files (0001–0023)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client
     models.py         — ChatResponse, ChatResponseMessage
     embeddings.py     — Embedding utilities (serialize, deserialize, find_similar, build_entity_embed_text, token_containment_ratio)
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
-    test_interest.py, test_embeddings.py, test_periodic_schedule.py
+    test_interest.py, test_embeddings.py, test_periodic_schedule.py, test_scheduler.py
     mocks/
       signal_server.py  — Mock Signal WebSocket + REST server (aiohttp)
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + Serper image search monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_extraction.py, test_learn.py
+      test_message.py, test_extraction.py, test_learn.py, test_notification.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py,
       test_signal_formatting.py, test_startup_announcement.py
@@ -128,6 +160,17 @@ The base `Agent` class implements the core agentic loop:
 - Executes tool calls via `ToolExecutor` with parameter validation
 - Handles duplicate tool call prevention
 - Appends source URLs to responses when model omits them
+
+### Shared Ollama Client Instances
+
+All OllamaClient instances are created centrally in `Penny.__init__()` and shared across agents and commands:
+
+- `foreground_model_client`: Fast model for user-facing messages (MessageAgent, commands)
+- `background_model_client`: Smart model for background tasks (ExtractionPipeline, NotificationAgent)
+- `vision_model_client`: Optional vision model for image understanding
+- `embedding_model_client`: Optional embedding model for semantic validation, dedup, and entity context injection
+- `image_model_client`: Optional image generation model for `/draw` command
+
 ### Specialized Agents
 
 **MessageAgent** (`agents/message.py`)
@@ -145,12 +188,14 @@ The base `Agent` class implements the core agentic loop:
   4. **Embedding backfill**: backfills missing embeddings for facts and entities
 - Enrichment creates new SearchLog entries (trigger=penny_enrichment) that feed back into phase 2 on the next cycle
 - **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results. Checks `trigger` field to determine mode — full extraction (user-triggered, creates entities with validation) vs known-only (penny-triggered, facts only)
-- **Entity validation**: New entity candidates pass structural filter (word count, LLM artifacts, URLs) then semantic filter (embedding similarity to query, threshold ~0.35)
-- **Insertion-time dedup**: Before creating a new entity, checks all existing entities using dual-threshold detection — token containment ratio (TCR >= 0.75) as fast lexical pre-filter, then embedding cosine similarity (>= 0.85) for confirmation. Both must pass. Routes to existing entity instead of creating a duplicate
+- **Post-fact semantic pruning**: After fact extraction, LLM checks if extracted facts are semantically relevant to the entity; removes irrelevant facts
+- **Entity validation**: New entity candidates pass structural filter (word count, LLM artifacts, URLs, numbers, dates, locations) then semantic filter (embedding similarity to query, threshold ~0.50)
+- **Insertion-time dedup**: Before creating a new entity, checks all existing entities using dual-threshold detection — token containment ratio (TCR >= 0.60) as fast lexical pre-filter, then embedding cosine similarity (>= 0.85) for confirmation. Both must pass. Routes to existing entity instead of creating a duplicate
 - **Message extraction**: Extracts entities/facts from user messages
 - Pre-filters messages before LLM calls: skips short messages (< 20 chars) and slash commands
 - Creates MESSAGE_MENTION engagements when entities are found in user messages
-- Creates SEARCH_INITIATED engagements for entities found in user-triggered searches
+- Creates USER_SEARCH engagements for entities found in user-triggered searches
+- Extracts sentiment from user messages (explicit opinions about entities → engagement signals)
 - Fact dedup: normalized string match (fast) then embedding similarity (paraphrase detection, threshold=0.85)
 - Facts track provenance via `source_search_log_id` or `source_message_id`
 - Facts from user messages and USER_MESSAGE searches are pre-marked with `notified_at` (user already knows)
@@ -168,7 +213,7 @@ The base `Agent` class implements the core agentic loop:
 - Extracts facts via `ollama_client.generate()` with structured output (Pydantic schema)
 - Two-pass fact dedup: normalized string match (fast) then embedding similarity (threshold 0.85)
 - Stores facts with `notified_at=NULL` — the NotificationAgent surfaces them
-- Triggered by `/learn` command (creates LEARN_COMMAND engagement with high strength)
+- Triggered by `/learn` command (creates USER_SEARCH engagement with high strength)
 
 **NotificationAgent** (`agents/notification.py`)
 - Single agent that owns ALL proactive messaging to users
@@ -180,6 +225,8 @@ The base `Agent` class implements the core agentic loop:
 - Backoff resets when user sends a message
 - Marks facts as notified (`notified_at = now`) after sending
 - Uses `FACT_DISCOVERY_NEW_ENTITY_PROMPT` for new entities, `FACT_DISCOVERY_KNOWN_ENTITY_PROMPT` for known
+- Learn-aware variants: includes `/learn` topic context when facts originate from a learn command
+- Sends learn completion announcement when all searches for a `/learn` topic finish extraction
 
 **ScheduleExecutor** (`scheduler/schedule_runner.py`)
 - Background task: runs user-created cron-based scheduled tasks
@@ -198,6 +245,7 @@ The `scheduler/` module manages background tasks:
 - Only runs one task per tick
 - Passes `is_idle` boolean to schedules (whether system is past global idle threshold)
 - **Cancels active background task** when a foreground message arrives (`notify_foreground_start()` calls `task.cancel()`), freeing Ollama immediately for the user's message. Cancelled tasks are idempotent — unprocessed items stay in their queues and are re-picked up on the next cycle
+- Commands do NOT interrupt background tasks — they run cooperatively
 
 ### Schedule Types (`scheduler/schedules.py`)
 
@@ -250,10 +298,10 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 ### Built-in Commands (always registered)
 - **/commands** (`index.py`): Lists all available commands with descriptions
 - **/debug** (`debug.py`): Shows agent status, git commit, system info, background task state
-- **/config** (`config.py`): View and modify runtime settings (e.g., `/config idle_seconds 600`)
+- **/config** (`config.py`): View and modify runtime settings (e.g., `/config idle_seconds 600`). Reads/writes RuntimeConfig table in SQLite; changes take effect immediately
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
-- **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` searches via SearchTool, discovers entities from results via LLM entity identification, creates them with LEARN_COMMAND engagements. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`). Falls back to creating a single entity from topic text if no SearchTool is configured
-- **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities ranked by interest score (with score, fact count); `/memory <number>` shows entity details and facts; `/memory <number> delete` removes an entity and its facts
+- **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` searches via SearchTool, discovers entities from results via LLM entity identification, creates them with USER_SEARCH engagements. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`). Falls back to creating a single entity from topic text if no SearchTool is configured
+- **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities ranked by interest score (with score and fact count); `/memory <number>` shows entity details and facts; `/memory <number> delete` removes an entity and its facts
 - **/schedule** (`schedule.py`): Create, list, and delete recurring cron-based background tasks (uses LLM to parse natural language timing)
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
 
@@ -265,9 +313,10 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 ### Runtime Configuration
 - `/config` reads and writes to a `RuntimeConfig` table in SQLite (migration `0002_add_runtime_config_table.py`)
-- `ConfigParam` definitions in `config_params.py` declare which settings are runtime-configurable, with types and validation
+- `ConfigParam` definitions in `config_params.py` declare 38 runtime-configurable settings with types and validation
+- Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Configurable params: `MESSAGE_MAX_STEPS`, `IDLE_SECONDS`, `MAINTENANCE_INTERVAL_SECONDS`
+- Categories: engagement strengths, extraction thresholds, entity dedup settings, learn parameters, notification backoff, scheduling intervals, and more
 
 ## Knowledge System
 
@@ -281,14 +330,25 @@ Penny learns what the user likes, finds information about those things, and proa
 
 - **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search
 - **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at` and `notified_at` timestamps. `notified_at=NULL` means not yet communicated to user
-- **Engagement**: User interest signals (searches, mentions, reactions, learn commands). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
-- **LearnPrompt**: First-class learning prompt with lifecycle tracking — enables provenance chain: prompt → searches → facts → entities
+- **Engagement**: User interest signals (searches, mentions, reactions, explicit statements). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
+- **LearnPrompt**: First-class learning prompt with lifecycle tracking — enables provenance chain: prompt → searches → facts → entities. Has `announced_at` for learn completion notifications
+
+### Engagement Types
+
+| Type | Source | Strength |
+|---|---|---|
+| `USER_SEARCH` | User search or `/learn` command | 1.0 |
+| `MESSAGE_MENTION` | Entity mentioned in user message | configurable |
+| `EXPLICIT_STATEMENT` | User expresses clear opinion | configurable |
+| `EMOJI_REACTION` | Emoji reaction (positive/negative) | 0.3 normal, 0.5 proactive, 0.8 proactive negative |
+| `FOLLOW_UP_QUESTION` | User asks follow-up about entity | configurable |
+| `SEARCH_DISCOVERY` | Entity discovered in search results | configurable |
 
 ### Interest Scores (`interest.py`)
 
-Pure function: `compute_interest_score(engagements) → float`
+Pure function: `compute_interest_score(engagements, half_life_days) → float`
 
-Formula: `sum(valence_sign × strength × recency_decay)` with 30-day half-life. Drives research priority in the learn agent and ranking in `/memory`.
+Formula: `sum(valence_sign × strength × recency_decay)` with configurable half-life (default: 30 days). Drives research priority in the learn agent, ranking in `/memory`, and notification entity selection.
 
 ### Search Trigger Tracking
 
@@ -308,13 +368,23 @@ The ExtractionPipeline checks each SearchLog's trigger to determine mode:
 
 ### Entity Validation
 
-New entity candidates pass through two filters before creation:
-1. **Structural filter** (deterministic): Rejects names > 8 words, LLM output artifacts, URLs, markdown
-2. **Semantic filter** (embedding-based): Rejects candidates with low cosine similarity to the triggering query
+New entity candidates pass through three filters before creation:
+1. **Structural filter** (deterministic): Rejects names > 8 words, LLM output artifacts, URLs, markdown, bare numbers, dates, locations
+2. **Semantic filter** (embedding-based): Rejects candidates with low cosine similarity to the triggering query (threshold ~0.50)
+3. **Post-fact pruning** (LLM-based): After fact extraction, checks if facts are semantically relevant to the entity
+
+### Entity Dedup (Insertion-Time)
+
+Before creating a new entity, checks all existing entities using dual-threshold detection:
+- **Token containment ratio (TCR >= 0.60)**: Fast lexical pre-filter
+- **Embedding cosine similarity (>= 0.85)**: Confirmation via paraphrase detection
+- Both must pass; routes to existing entity instead of creating a duplicate
 
 ### Fact Discovery Notifications
 
 Notifications are decoupled from extraction. The ExtractionPipeline stores facts silently (with `notified_at=NULL` for discoverable facts, or `notified_at=now` for user-sourced facts). A separate NotificationAgent runs on its own schedule, queries for un-notified facts, picks the highest-interest entity, composes one message, and marks the facts as notified. Uses per-user exponential backoff: each message without a user reply doubles the delay. User engagement resets backoff to zero.
+
+The NotificationAgent also sends learn completion announcements when all searches for a `/learn` topic finish extraction, summarizing discovered entities with fact counts.
 
 ## Message Flow
 
@@ -346,11 +416,12 @@ Notifications are decoupled from extraction. The ExtractionPipeline stores facts
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
-- **Specialized agents**: Each task type (message, extraction, learn) has its own agent subclass
-- **Priority scheduling**: Schedule executor → knowledge pipeline (extraction + enrichment in strict phase order)
+- **Specialized agents**: Each task type (message, extraction, learn, notification) has its own agent subclass
+- **Priority scheduling**: Schedule executor → knowledge pipeline (extraction + enrichment in strict phase order) → notifications
 - **Always-run schedules**: User-created schedules run regardless of idle state; knowledge pipeline waits for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free Ollama immediately; cancelled work is idempotent and retried next cycle
+- **Commands don't interrupt background**: Slash commands run cooperatively without cancelling the active background task
 - **Vision captioning**: When images are present and `OLLAMA_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the foreground model. Search tools are disabled for image messages
 - **Channel abstraction**: Signal and Discord share the same interface; easy to add more platforms
 - **Async throughout**: asyncio, httpx.AsyncClient, ollama.AsyncClient, discord.py
@@ -358,6 +429,7 @@ Notifications are decoupled from extraction. The ExtractionPipeline stores facts
 - **Pydantic everywhere**: All external data validated with Pydantic models
 - **Table-to-bullets**: Markdown tables converted to bullet points in Python (saves model tokens vs. prompting "no tables")
 - **Normal casing**: All user-facing strings (status messages, error messages, acknowledgments) use standard sentence casing — not all lowercase
+- **Organic engagement over explicit preferences**: Interest signals come from natural interactions (searches, mentions, emoji reactions, sentiment extraction) rather than explicit `/like`/`/dislike` commands
 
 ## Dependencies
 
@@ -367,7 +439,7 @@ Notifications are decoupled from extraction. The ExtractionPipeline stores facts
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0019):
+File-based migration system in `database/migrations/` (currently 0001–0023):
 - Each migration is a numbered Python file (e.g., `0001_add_reaction_fields.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -387,6 +459,10 @@ Notable migrations:
 - 0017: `source_message_id` on `fact` table (message-sourced fact provenance)
 - 0018: Drop `research_tasks` and `research_iterations` tables (replaced by learn agent)
 - 0019: `LearnPrompt` table + `trigger`/`learn_prompt_id` columns on `SearchLog` (knowledge system v2)
+- 0020: `notified_at` on `fact` table (notification decoupling)
+- 0021: Drop `fact_last_verified` column (fact verification deprecated)
+- 0022: Drop `preference` table (organic engagement replaces explicit preferences)
+- 0023: `announced_at` on `LearnPrompt` table (learn completion notifications)
 
 ## Extending
 

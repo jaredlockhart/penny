@@ -124,6 +124,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `OLLAMA_BACKGROUND_MODEL`: Smart model for background tasks (default: same as foreground). Also used by the Quality agent for response evaluation — if set, the Quality agent is registered in penny-team
 - `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
 - `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables the `/draw` command when set
+- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model for semantic validation and dedup (e.g., nomic-embed-text). Optional; if unset, uses the background model for embeddings
 - `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
 - `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 
