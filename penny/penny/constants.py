@@ -111,7 +111,7 @@ class PennyConstants:
     LEARN_MIN_INTEREST_SCORE = 0.1  # Minimum interest to consider
 
     # Entity name validation
-    ENTITY_NAME_SEMANTIC_THRESHOLD = 0.58
+    ENTITY_NAME_SEMANTIC_THRESHOLD = 0.50
 
     # Entity pre-filter for extraction pipeline
     ENTITY_PREFILTER_SIMILARITY_THRESHOLD = 0.2
