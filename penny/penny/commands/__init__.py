@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from github_api.api import GitHubAPI
 
     from penny.ollama import OllamaClient
-    from penny.tools import Tool
 
 __all__ = [
     "Command",
@@ -38,7 +37,6 @@ def create_command_registry(
     github_api: GitHubAPI | None = None,
     image_model_client: OllamaClient | None = None,
     fastmail_api_token: str | None = None,
-    search_tool: Tool | None = None,
 ) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
@@ -64,7 +62,7 @@ def create_command_registry(
     registry.register(ProfileCommand())
     registry.register(ScheduleCommand())
     registry.register(MemoryCommand())
-    registry.register(LearnCommand(search_tool))
+    registry.register(LearnCommand())
     registry.register(MuteCommand())
     registry.register(UnlearnCommand())
     registry.register(UnmuteCommand())

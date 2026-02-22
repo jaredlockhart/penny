@@ -2,34 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING
-
-from pydantic import BaseModel, Field
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.constants import PennyConstants
 from penny.database.models import Entity
-from penny.prompts import Prompt
 from penny.responses import PennyResponse
-from penny.tools.models import SearchResult
-
-if TYPE_CHECKING:
-    from penny.tools import Tool
 
 logger = logging.getLogger(__name__)
-
-
-class GeneratedQuery(BaseModel):
-    """Schema for LLM response: a single search query."""
-
-    query: str = Field(
-        default="",
-        description="Search query to execute, or empty string if research is complete",
-    )
 
 
 class LearnCommand(Command):
@@ -46,9 +28,6 @@ class LearnCommand(Command):
         "- `/learn kef ls50 meta`\n"
         "- `/learn travel in china 2026`"
     )
-
-    def __init__(self, search_tool: Tool | None = None) -> None:
-        self._search_tool = search_tool
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Execute learn command."""
@@ -107,121 +86,13 @@ class LearnCommand(Command):
         return CommandResult(text="\n".join(lines))
 
     async def _learn_topic(self, topic: str, context: CommandContext) -> CommandResult:
-        """Create LearnPrompt, acknowledge, and start background research."""
-        # Create LearnPrompt record
-        learn_prompt = context.db.create_learn_prompt(
+        """Create LearnPrompt and acknowledge. Research happens via scheduled worker."""
+        context.db.create_learn_prompt(
             user=context.user,
             prompt_text=topic,
             searches_remaining=int(context.config.runtime.LEARN_PROMPT_DEFAULT_SEARCHES),
         )
-
-        if self._search_tool and learn_prompt and learn_prompt.id is not None:
-            asyncio.create_task(self._research_background(topic, learn_prompt.id, context))
-
         return CommandResult(text=PennyResponse.LEARN_ACKNOWLEDGED.format(topic=topic))
-
-    async def _generate_initial_query(self, topic: str, context: CommandContext) -> str:
-        """Generate the first search query for a topic via LLM."""
-        prompt = f"{Prompt.LEARN_INITIAL_QUERY_PROMPT}\n\nTopic: {topic}"
-
-        try:
-            response = await context.foreground_model_client.generate(
-                prompt=prompt,
-                tools=None,
-                format=GeneratedQuery.model_json_schema(),
-            )
-            result = GeneratedQuery.model_validate_json(response.content)
-            if result.query.strip():
-                return result.query.strip()
-        except Exception as e:
-            logger.error("Failed to generate initial query for '%s': %s", topic, e)
-
-        # Fallback: use the topic as-is
-        return topic
-
-    async def _generate_followup_query(
-        self, topic: str, previous_results: list[str], context: CommandContext
-    ) -> str | None:
-        """Generate the next search query based on previous results.
-
-        Returns the query string, or None if research is complete.
-        """
-        results_text = "\n\n---\n\n".join(
-            f"Search {i + 1}:\n{text[:1000]}" for i, text in enumerate(previous_results)
-        )
-        prompt = Prompt.LEARN_FOLLOWUP_QUERY_PROMPT.format(
-            topic=topic, previous_results=results_text
-        )
-
-        try:
-            response = await context.foreground_model_client.generate(
-                prompt=prompt,
-                tools=None,
-                format=GeneratedQuery.model_json_schema(),
-            )
-            result = GeneratedQuery.model_validate_json(response.content)
-            query = result.query.strip()
-            return query if query else None
-        except Exception as e:
-            logger.error("Failed to generate followup query for '%s': %s", topic, e)
-            return None
-
-    async def _search(self, query: str, learn_prompt_id: int) -> str | None:
-        """Execute search via SearchTool with provenance. Returns text or None."""
-        assert self._search_tool is not None
-        try:
-            result = await self._search_tool.execute(
-                query=query,
-                skip_images=True,
-                trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
-                learn_prompt_id=learn_prompt_id,
-            )
-            if isinstance(result, SearchResult):
-                return result.text
-            return str(result) if result else None
-        except Exception as e:
-            logger.error("Learn command search failed: %s", e)
-            return None
-
-    async def _research_background(
-        self, topic: str, learn_prompt_id: int, context: CommandContext
-    ) -> None:
-        """Iteratively research a topic: each query builds on previous results."""
-        try:
-            max_searches = int(context.config.runtime.LEARN_PROMPT_DEFAULT_SEARCHES)
-            previous_results: list[str] = []
-            search_count = 0
-
-            # First query: broad overview
-            query = await self._generate_initial_query(topic, context)
-            result = await self._search(query, learn_prompt_id)
-            search_count += 1
-            context.db.decrement_learn_prompt_searches(learn_prompt_id)
-
-            if result:
-                previous_results.append(result)
-
-            # Followup queries: each informed by previous results
-            while search_count < max_searches and previous_results:
-                query = await self._generate_followup_query(topic, previous_results, context)
-                if query is None:
-                    # LLM decided research is complete
-                    break
-
-                result = await self._search(query, learn_prompt_id)
-                search_count += 1
-                context.db.decrement_learn_prompt_searches(learn_prompt_id)
-
-                if result:
-                    previous_results.append(result)
-
-            # Mark as completed
-            context.db.update_learn_prompt_status(
-                learn_prompt_id, PennyConstants.LearnPromptStatus.COMPLETED
-            )
-            logger.info("Learn command completed for '%s': %d searches", topic, search_count)
-        except Exception:
-            logger.exception("Background research failed for '%s'", topic)
 
 
 def _build_entity_lines(entity_fact_counts: dict[int, int], context: CommandContext) -> list[str]:

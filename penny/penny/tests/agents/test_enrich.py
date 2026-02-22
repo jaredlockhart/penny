@@ -1,10 +1,10 @@
-"""Integration tests for the LearnAgent."""
+"""Integration tests for the EnrichAgent."""
 
 import json
 
 import pytest
 
-from penny.agents.learn import LearnAgent
+from penny.agents.enrich import EnrichAgent
 from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
 from penny.tests.mocks.search_patches import _captured_perplexity_queries
@@ -51,7 +51,7 @@ async def test_learn_enrichment(
         mock_ollama.requests.clear()
 
         # Create and run learn agent
-        agent = LearnAgent(
+        agent = EnrichAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -111,7 +111,7 @@ async def test_learn_skips_negative_interest(
             entity_id=entity.id,
         )
 
-        agent = LearnAgent(
+        agent = EnrichAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -140,7 +140,7 @@ async def test_learn_no_entities(
     config = make_config()
 
     async with running_penny(config) as penny:
-        agent = LearnAgent(
+        agent = EnrichAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -169,7 +169,7 @@ async def test_learn_no_search_tool(
     config = make_config()
 
     async with running_penny(config) as penny:
-        agent = LearnAgent(
+        agent = EnrichAgent(
             search_tool=None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -241,7 +241,7 @@ async def test_learn_dedup_facts(
         mock_ollama.requests.clear()
         _captured_perplexity_queries.clear()
 
-        agent = LearnAgent(
+        agent = EnrichAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -334,7 +334,7 @@ async def test_learn_semantic_interest_priority(
 
         mock_ollama.requests.clear()
 
-        agent = LearnAgent(
+        agent = EnrichAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
@@ -404,7 +404,7 @@ async def test_learn_enrichment_backoff(
             entity_id=entity.id,
         )
 
-        agent = LearnAgent(
+        agent = EnrichAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
             system_prompt="",
             background_model_client=penny.background_model_client,
