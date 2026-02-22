@@ -95,7 +95,7 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {
         key="EXTRACTION_ENTITY_SEMANTIC_THRESHOLD",
         description="Cosine similarity threshold for semantic entity name validation",
         type=float,
-        default=0.58,
+        default=0.50,
         validator=_validate_unit_float,
     ),
     "EXTRACTION_PREFILTER_SIMILARITY_THRESHOLD": ConfigParam(

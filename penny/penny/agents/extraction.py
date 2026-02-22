@@ -134,6 +134,10 @@ class IdentifiedNewEntity(BaseModel):
     """A newly discovered entity from pass 1."""
 
     name: str = Field(description="Entity name (e.g., 'KEF LS50 Meta', 'NVIDIA Jetson')")
+    context: str = Field(
+        default="",
+        description="Brief description from the source text (5-15 words)",
+    )
 
 
 class IdentifiedEntities(BaseModel):
@@ -491,11 +495,14 @@ class ExtractionPipeline(Agent):
                 if name in subset_names:
                     logger.info("Rejected entity '%s' (token-subset of another candidate)", name)
                     continue
+                entity_context = new_entity.context.strip() if new_entity.context else ""
                 (
                     relevant,
                     candidate_embedding,
                     similarity_score,
-                ) = await self._check_semantic_relevance(name, relevance_reference or context_value)
+                ) = await self._check_semantic_relevance(
+                    name, relevance_reference or context_value, context=entity_context
+                )
                 if not relevant:
                     continue
 
@@ -728,7 +735,7 @@ class ExtractionPipeline(Agent):
             return entities
 
     async def _check_semantic_relevance(
-        self, candidate_name: str, trigger_text: str
+        self, candidate_name: str, trigger_text: str, *, context: str = ""
     ) -> tuple[bool, list[float] | None, float]:
         """Semantic validation: reject entity candidates unrelated to the triggering content.
 
@@ -736,13 +743,25 @@ class ExtractionPipeline(Agent):
         embedding is returned so callers can reuse it for dedup without a second embed
         call. The similarity score is returned so callers can record it as engagement
         strength.
+
+        When context is provided (e.g. from search results), the similarity check
+        uses an enriched text ("{name} - {context}") for better semantic signal,
+        while still returning the bare name embedding for downstream dedup.
         """
         if not self._embedding_model_client:
             return True, None, 0.0
         try:
-            vecs = await self._embedding_model_client.embed([candidate_name, trigger_text])
-            candidate_embedding = vecs[0]
-            score = cosine_similarity(candidate_embedding, vecs[1])
+            if context:
+                enriched = f"{candidate_name} - {context}"
+                vecs = await self._embedding_model_client.embed(
+                    [candidate_name, trigger_text, enriched]
+                )
+                candidate_embedding = vecs[0]  # bare name for dedup
+                score = cosine_similarity(vecs[2], vecs[1])  # enriched vs trigger
+            else:
+                vecs = await self._embedding_model_client.embed([candidate_name, trigger_text])
+                candidate_embedding = vecs[0]
+                score = cosine_similarity(candidate_embedding, vecs[1])
             threshold = self.config.runtime.EXTRACTION_ENTITY_SEMANTIC_THRESHOLD
             if score < threshold:
                 logger.info(

@@ -985,8 +985,11 @@ async def test_semantic_entity_name_validation(
                     {
                         "known": [],
                         "new": [
-                            {"name": "KEF LS50 Meta"},
-                            {"name": "Random Conference Sponsor"},
+                            {"name": "KEF LS50 Meta", "context": "well-reviewed bookshelf speaker"},
+                            {
+                                "name": "Random Conference Sponsor",
+                                "context": "attended CES trade show",
+                            },
                         ],
                     }
                 ),
