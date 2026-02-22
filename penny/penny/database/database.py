@@ -884,7 +884,7 @@ class Database:
         """
         Get SearchLog entries that haven't been processed for entity extraction.
 
-        Grouped by learn prompt (most recent first) so all searches for one
+        Grouped by learn prompt (oldest first) so all searches for one
         /learn topic complete before moving to the next. Non-learn searches
         (NULL learn_prompt_id) come last.
 
@@ -892,7 +892,7 @@ class Database:
             limit: Maximum number of entries to return
 
         Returns:
-            List of unprocessed SearchLog entries, grouped by learn prompt
+            List of unprocessed SearchLog entries, grouped by learn prompt (oldest first)
         """
         with self.get_session() as session:
             return list(
@@ -901,7 +901,7 @@ class Database:
                     .where(SearchLog.extracted == False)  # noqa: E712
                     .order_by(
                         SearchLog.learn_prompt_id.desc(),  # type: ignore[unresolved-attribute]
-                        SearchLog.timestamp.desc(),  # type: ignore[unresolved-attribute]
+                        SearchLog.timestamp.asc(),  # type: ignore[unresolved-attribute]
                     )
                     .limit(limit)
                 ).all()
@@ -1037,7 +1037,7 @@ class Database:
             user: User identifier
 
         Returns:
-            List of active LearnPrompts ordered by created_at descending (newest first)
+            List of active LearnPrompts ordered by created_at ascending (oldest first)
         """
         with self.get_session() as session:
             return list(
@@ -1047,7 +1047,7 @@ class Database:
                         LearnPrompt.user == user,
                         LearnPrompt.status == "active",
                     )
-                    .order_by(LearnPrompt.created_at.desc())  # type: ignore[union-attr]
+                    .order_by(LearnPrompt.created_at.asc())  # type: ignore[union-attr]
                 ).all()
             )
 
@@ -1058,14 +1058,14 @@ class Database:
             user: User identifier
 
         Returns:
-            List of all LearnPrompts ordered by created_at descending (newest first)
+            List of all LearnPrompts ordered by created_at ascending (oldest first)
         """
         with self.get_session() as session:
             return list(
                 session.exec(
                     select(LearnPrompt)
                     .where(LearnPrompt.user == user)
-                    .order_by(LearnPrompt.created_at.desc())  # type: ignore[union-attr]
+                    .order_by(LearnPrompt.created_at.asc())  # type: ignore[union-attr]
                 ).all()
             )
 

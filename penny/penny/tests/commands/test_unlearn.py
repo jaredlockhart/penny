@@ -8,7 +8,7 @@ from penny.tests.conftest import TEST_SENDER
 
 @pytest.mark.asyncio
 async def test_unlearn_no_args_lists_topics(signal_server, test_config, mock_ollama, running_penny):
-    """Test /unlearn with no args lists all learn topics most recent first."""
+    """Test /unlearn with no args lists all learn topics oldest first."""
     async with running_penny(test_config) as penny:
         lp1 = penny.db.create_learn_prompt(
             user=TEST_SENDER, prompt_text="kef speakers", searches_remaining=0
@@ -25,9 +25,9 @@ async def test_unlearn_no_args_lists_topics(signal_server, test_config, mock_oll
         response = await signal_server.wait_for_message(timeout=5.0)
 
         assert "Learn History" in response["message"]
-        # Most recent first
-        assert "1. travel in japan" in response["message"]
-        assert "2. kef speakers" in response["message"]
+        # Oldest first
+        assert "1. kef speakers" in response["message"]
+        assert "2. travel in japan" in response["message"]
         # Active topics show status
         assert "(active)" in response["message"]
 
