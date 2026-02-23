@@ -103,13 +103,15 @@ Examples:
     FACT_DISCOVERY_NEW_ENTITY_PROMPT = (
         "You just came across a new topic: {entity_name}. "
         "Write a short, casual message sharing what you found. "
-        "Use **bold** for the topic name and bullet points for key facts."
+        "Synthesize the facts below into natural sentences — don't just list them verbatim. "
+        "Use **bold** for the topic name."
     )
 
     FACT_DISCOVERY_KNOWN_ENTITY_PROMPT = (
         "You just came across some new information about {entity_name}. "
         "Write a short, casual message sharing what's new. "
-        "Use **bold** for the topic name and bullet points for key facts."
+        "Synthesize the facts below into natural sentences — don't just list them verbatim. "
+        "Use **bold** for the topic name."
     )
 
     # Learn-topic-aware variants (when facts originated from a /learn command)
@@ -118,7 +120,8 @@ Examples:
         "you came across a new topic: {entity_name}. "
         "Write a short, casual message sharing what you found. "
         "Mention that you found this while looking into {learn_topic}. "
-        "Use **bold** for topic names and bullet points for key facts."
+        "Synthesize the facts below into natural sentences — don't just list them verbatim. "
+        "Use **bold** for topic names."
     )
 
     FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT = (
@@ -126,7 +129,8 @@ Examples:
         "you came across some new information about {entity_name}. "
         "Write a short, casual message sharing what's new. "
         "Mention that you found this while looking into {learn_topic}. "
-        "Use **bold** for topic names and bullet points for key facts."
+        "Synthesize the facts below into natural sentences — don't just list them verbatim. "
+        "Use **bold** for topic names."
     )
 
     # Learn completion summary prompt

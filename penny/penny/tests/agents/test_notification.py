@@ -37,11 +37,18 @@ async def test_notification_sends_highest_interest_entity(
     """Notification agent picks the entity with the highest interest score."""
     config = make_config()
 
+    captured_prompts: list[str] = []
+
     def handler(request: dict, count: int) -> dict:
         messages = request.get("messages", [])
         prompt = messages[-1]["content"] if messages else ""
+        captured_prompts.append(prompt)
         if "came across" in prompt:
-            return mock_ollama._make_text_response(request, prompt)
+            return mock_ollama._make_text_response(
+                request,
+                "Hey, I came across **high interest thing** recently and found some"
+                " really interesting stuff worth sharing! 🎉",
+            )
         return mock_ollama._make_text_response(request, "ok")
 
     mock_ollama.set_response_handler(handler)
@@ -86,6 +93,9 @@ async def test_notification_sends_highest_interest_entity(
         msgs = signal_server.outgoing_messages
         assert len(msgs) == 1
         assert "high interest thing" in msgs[0]["message"]
+
+        # Prompt sent to model should instruct it to synthesize, not echo raw facts
+        assert any("Synthesize" in p for p in captured_prompts)
 
 
 @pytest.mark.asyncio
