@@ -128,7 +128,7 @@ class BackgroundScheduler:
 
             # Skip all background tasks if foreground work is active
             if not self._foreground_active:
-                # Find first schedule that fires
+                # Try schedules in priority order; skip agents with no work
                 for schedule in self._schedules:
                     if schedule.should_run(is_idle):
                         agent = schedule.agent
@@ -138,22 +138,23 @@ class BackgroundScheduler:
                         try:
                             self._active_task = asyncio.create_task(agent.execute())
                             did_work = await self._active_task
-                            schedule.mark_complete()
                             self._last_run_times[agent.name] = time.monotonic()
 
                             if did_work:
+                                schedule.mark_complete()
                                 logger.info("Background task completed: %s", agent.name)
-
+                                break
+                            # No work — skip to next eligible schedule
                         except asyncio.CancelledError:
                             logger.info("Background task cancelled: %s", agent.name)
+                            break
                         except Exception as e:
                             logger.exception("Background task failed: %s - %s", agent.name, e)
+                            schedule.mark_complete()
+                            break
                         finally:
                             self._active_task = None
                             self._current_task = None
-
-                        # Only run one task per tick
-                        break
 
             await asyncio.sleep(self._tick_interval)
 

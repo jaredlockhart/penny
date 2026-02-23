@@ -25,7 +25,6 @@ from penny.ollama.embeddings import (
 from penny.prompts import Prompt
 
 if TYPE_CHECKING:
-    from penny.agents.enrich import EnrichAgent
     from penny.database.models import MessageLog
 
 logger = logging.getLogger(__name__)
@@ -211,9 +210,8 @@ class ExtractionPipeline(Agent):
     Does not send notifications — the NotificationAgent handles that separately.
     """
 
-    def __init__(self, enrich_agent: EnrichAgent | None = None, **kwargs: object) -> None:
+    def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self._enrich_agent = enrich_agent
 
     @property
     def name(self) -> str:
@@ -224,9 +222,8 @@ class ExtractionPipeline(Agent):
         """Run the knowledge pipeline in strict priority order.
 
         Phase 1: User messages (highest priority — freshest signals)
-        Phase 2: Search logs (drain backlog before enrichment)
-        Phase 3: Enrichment (only when 1 & 2 had nothing to do)
-        Phase 4: Embedding backfill
+        Phase 2: Search logs (drain backlog)
+        Phase 3: Embedding backfill
 
         Returns:
             True if any work was done.
@@ -239,13 +236,7 @@ class ExtractionPipeline(Agent):
         # Phase 2: Extract entities/facts from search results (newest first)
         work_done |= await self._process_search_logs()
 
-        # Phase 3: Enrichment — only when phases 1 & 2 are fully drained.
-        # Enrichment creates new SearchLog entries (trigger=penny_enrichment)
-        # that feed back into phase 2 on the next cycle.
-        if not work_done and self._enrich_agent:
-            work_done |= await self._enrich_agent.execute()
-
-        # Phase 4: Backfill embeddings for items that don't have them
+        # Phase 3: Backfill embeddings for items that don't have them
         if self._embedding_model_client:
             work_done |= await self._backfill_embeddings()
 
