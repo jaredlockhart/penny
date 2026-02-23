@@ -924,6 +924,26 @@ class Database:
         except Exception as e:
             logger.error("Failed to mark search %d as extracted: %s", search_log_id, e)
 
+    def has_unextracted_learn_search_logs(self) -> bool:
+        """Check if any unextracted SearchLog entries exist with trigger='learn_command'.
+
+        Used by LearnAgent to gate itself: don't start a new search until all
+        previous learn searches have been extracted.
+
+        Returns:
+            True if at least one unextracted learn_command search log exists.
+        """
+        with self.get_session() as session:
+            result = session.exec(
+                select(SearchLog.id)
+                .where(
+                    SearchLog.extracted == False,  # noqa: E712
+                    SearchLog.trigger == PennyConstants.SearchTrigger.LEARN_COMMAND,
+                )
+                .limit(1)
+            ).first()
+            return result is not None
+
     def find_sender_for_timestamp(self, timestamp: datetime) -> str | None:
         """
         Find the sender of the most recent incoming message near a timestamp.

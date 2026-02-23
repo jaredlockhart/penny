@@ -193,23 +193,9 @@ class Penny:
             fastmail_api_token=config.fastmail_api_token,
         )
 
-        # Enrich agent autonomously researches entities based on interest scores.
-        # Composed into ExtractionPipeline as the enrichment phase.
-        self.enrich_agent = EnrichAgent(
-            search_tool=shared_search_tool,
-            system_prompt="",  # No agent-specific prompt; identity added by _build_messages
-            background_model_client=self.background_model_client,
-            foreground_model_client=self.foreground_model_client,
-            tools=[],
-            db=self.db,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-            embedding_model_client=self.embedding_model_client,
-            config=config,
-        )
-
         # Learn agent processes /learn prompts one search step at a time.
-        # Scheduled before extraction so search logs are ready for the next extraction tick.
+        # Scheduled after extraction; gated by unextracted learn search logs so topics
+        # flow through the pipeline one at a time (search → extract → notify).
         self.learn_agent = LearnAgent(
             search_tool=shared_search_tool,
             system_prompt="",
@@ -223,7 +209,6 @@ class Penny:
         )
 
         self.extraction_pipeline = ExtractionPipeline(
-            enrich_agent=self.enrich_agent,
             system_prompt="",  # No agent-specific prompt; identity added by _build_messages
             background_model_client=self.background_model_client,
             foreground_model_client=self.foreground_model_client,
@@ -243,6 +228,21 @@ class Penny:
             db=self.db,
             max_steps=1,
             tool_timeout=config.tool_timeout,
+            config=config,
+        )
+
+        # Enrich agent autonomously researches entities based on interest scores.
+        # Lowest priority — only runs when notification, extraction, and learn have no work.
+        self.enrich_agent = EnrichAgent(
+            search_tool=shared_search_tool,
+            system_prompt="",  # No agent-specific prompt; identity added by _build_messages
+            background_model_client=self.background_model_client,
+            foreground_model_client=self.foreground_model_client,
+            tools=[],
+            db=self.db,
+            max_steps=1,
+            tool_timeout=config.tool_timeout,
+            embedding_model_client=self.embedding_model_client,
             config=config,
         )
 
@@ -269,20 +269,20 @@ class Penny:
         self.notification_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Schedules (priority: schedule executor → learn → extraction → notification)
-        # ScheduleExecutor runs every minute regardless of idle state to check for due schedules
-        # LearnAgent processes /learn prompts one search step per tick
-        # ExtractionPipeline runs the unified knowledge pipeline: messages → search logs →
-        # enrichment → embedding backfill (enrichment is gated — only runs when phases 1 & 2
-        # are fully drained)
-        # NotificationAgent sends interest-ranked fact discovery notifications
+        # Schedules (priority: schedule executor → notification → extraction → learn → enrich)
+        # Agents with no work are skipped, so lower-priority agents get a turn each tick.
+        # ScheduleExecutor runs every minute regardless of idle state
+        # NotificationAgent announces completed topics before new work starts
+        # ExtractionPipeline processes search logs before learn creates more
+        # LearnAgent runs gated by unextracted learn search logs
+        # EnrichAgent runs only when all higher-priority agents have no work
         schedules = [
             AlwaysRunSchedule(
                 agent=self.schedule_executor,
                 interval=60.0,  # Check every minute for due schedules
             ),
             PeriodicSchedule(
-                agent=self.learn_agent,
+                agent=self.notification_agent,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
             PeriodicSchedule(
@@ -290,7 +290,11 @@ class Penny:
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
             PeriodicSchedule(
-                agent=self.notification_agent,
+                agent=self.learn_agent,
+                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
+            ),
+            PeriodicSchedule(
+                agent=self.enrich_agent,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
         ]

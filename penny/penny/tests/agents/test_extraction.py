@@ -1468,7 +1468,7 @@ async def test_extraction_user_message_facts_pre_marked_notified(
 
 
 @pytest.mark.asyncio
-async def test_enrichment_runs_when_pipeline_drained(
+async def test_enrichment_runs_independently(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -1477,8 +1477,8 @@ async def test_enrichment_runs_when_pipeline_drained(
     running_penny,
 ):
     """
-    When no messages or search logs are pending, the pipeline's enrichment
-    phase (learn agent) runs and creates a new search log.
+    EnrichAgent runs as an independent schedule and creates new search logs.
+    (Previously embedded in ExtractionPipeline as phase 3, now a separate schedule.)
     """
     config = make_config()
 
@@ -1516,7 +1516,7 @@ async def test_enrichment_runs_when_pipeline_drained(
         if msgs:
             penny.db.mark_messages_processed([m.id for m in msgs if m.id is not None])
 
-        # Create entity with positive interest (needed for learn agent candidate scoring)
+        # Create entity with positive interest (needed for enrichment candidate scoring)
         entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
         penny.db.add_engagement(
@@ -1527,8 +1527,8 @@ async def test_enrichment_runs_when_pipeline_drained(
             entity_id=entity.id,
         )
 
-        # Run pipeline — phases 1 & 2 have nothing, so enrichment (phase 3) fires
-        work_done = await penny.extraction_pipeline.execute()
+        # Run enrich agent directly (now a separate schedule, not part of extraction)
+        work_done = await penny.enrich_agent.execute()
         assert work_done, "Enrichment should have run and produced work"
 
         # Verify enrichment created a penny_enrichment search log
@@ -1538,86 +1538,3 @@ async def test_enrichment_runs_when_pipeline_drained(
             if sl.trigger == PennyConstants.SearchTrigger.PENNY_ENRICHMENT
         ]
         assert len(enrichment_logs) >= 1, "Enrichment should have created a search log"
-
-
-@pytest.mark.asyncio
-async def test_enrichment_blocked_by_pending_search_logs(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """
-    When unprocessed search logs exist, the pipeline processes them but does
-    NOT run enrichment — enrichment is gated behind a fully drained backlog.
-    """
-    config = make_config()
-
-    def handler(request: dict, count: int) -> dict:
-        messages = request.get("messages", [])
-        prompt = messages[-1]["content"] if messages else ""
-
-        if "Entity:" in prompt:
-            return mock_ollama._make_text_response(
-                request,
-                json.dumps({"facts": ["A known fact"]}),
-            )
-        elif "New facts:" in prompt or "came across" in prompt:
-            return mock_ollama._make_text_response(
-                request,
-                "notification-composed — here is what I found!",
-            )
-        else:
-            return mock_ollama._make_text_response(
-                request,
-                json.dumps({"known": ["kef ls50 meta"], "new": []}),
-            )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        # Create sender and mark messages processed
-        await signal_server.push_message(sender=TEST_SENDER, content="hello")
-        await signal_server.wait_for_message(timeout=10.0)
-        msgs = penny.db.get_unprocessed_messages(TEST_SENDER, limit=100)
-        if msgs:
-            penny.db.mark_messages_processed([m.id for m in msgs if m.id is not None])
-
-        # Mark any search logs from message processing as extracted
-        for sl in penny.db.get_unprocessed_search_logs(limit=100):
-            penny.db.mark_search_extracted(sl.id)
-
-        # Create entity with positive interest (would be picked by enrichment)
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
-        assert entity is not None and entity.id is not None
-        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
-        penny.db.add_engagement(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=1.0,
-            entity_id=entity.id,
-        )
-
-        # Seed a pending search log directly (simulates unprocessed backlog)
-        penny.db.log_search(
-            query="speaker reviews",
-            response="The KEF LS50 Meta is excellent.",
-            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
-        )
-
-        pending = penny.db.get_unprocessed_search_logs(limit=100)
-        assert len(pending) >= 1, "Should have at least one unprocessed search log"
-
-        # Run pipeline — phase 2 processes search logs, enrichment should NOT run
-        work_done = await penny.extraction_pipeline.execute()
-        assert work_done, "Should have processed search logs"
-
-        # Verify NO enrichment search was created
-        all_logs = penny.db.get_unprocessed_search_logs(limit=100)
-        enrichment_logs = [
-            sl for sl in all_logs if sl.trigger == PennyConstants.SearchTrigger.PENNY_ENRICHMENT
-        ]
-        assert len(enrichment_logs) == 0, "Enrichment should NOT run when search logs are pending"

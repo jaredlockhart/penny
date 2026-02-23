@@ -209,7 +209,8 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 
 **LearnAgent** (`agents/learn.py`)
 - Scheduled worker that processes `/learn` prompts one search step at a time
-- Runs on its own PeriodicSchedule (higher priority than ExtractionPipeline)
+- Runs on its own PeriodicSchedule (after ExtractionPipeline in priority order)
+- **Gated by unextracted learn search logs** — won't start a new search until all previous `learn_command` searches have been extracted, ensuring topics flow through the pipeline one step at a time (search → extract → notify)
 - Each `execute()` call: finds the oldest active LearnPrompt, generates one query, executes one search, decrements `searches_remaining`
 - Previous results reconstructed from DB via `get_search_logs_by_learn_prompt()` (no in-memory state)
 - Query generation: initial query from topic text, followup queries informed by previous search results
@@ -219,7 +220,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 
 **EnrichAgent** (`agents/enrich.py`)
 - Adaptive research agent driven by entity interest scores
-- Composed into ExtractionPipeline as the enrichment phase (not scheduled independently)
+- Runs on its own PeriodicSchedule (lowest priority — only runs when all other agents have no work)
 - Picks the highest-priority entity across all users each cycle
 - Priority scoring: `interest × (1/fact_count)` (Python-space, no LLM)
 - Two modes: **enrichment** (< 5 facts, broad search) and **briefing** (5+ facts, novelty check)
@@ -233,7 +234,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 
 **NotificationAgent** (`agents/notification.py`)
 - Single agent that owns ALL proactive messaging to users
-- Runs on its own PeriodicSchedule (after extraction pipeline in priority order)
+- Runs on its own PeriodicSchedule (highest background priority — announces before new work starts)
 - Queries for un-notified facts (`notified_at IS NULL`), groups by entity
 - Picks the highest-interest entity using `compute_interest_score()`
 - Composes ONE message per cycle via `_compose_user_facing()` with image search
@@ -256,10 +257,10 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule executor → learn agent → extraction pipeline → notification agent)
+- Runs tasks in priority order (schedule executor → notification → extraction → learn → enrich)
+- **Skips agents with no work**: when an agent returns False, continues to the next eligible schedule in the same tick. Only breaks when an agent does real work.
 - Tracks global idle threshold (default: 60s)
 - Notifies schedules when messages arrive (resets timers)
-- Only runs one task per tick
 - Passes `is_idle` boolean to schedules (whether system is past global idle threshold)
 - **Cancels active background task** when a foreground message arrives (`notify_foreground_start()` calls `task.cancel()`), freeing Ollama immediately for the user's message. Cancelled tasks are idempotent — unprocessed items stay in their queues and are re-picked up on the next cycle
 - Commands do NOT interrupt background tasks — they run cooperatively
@@ -434,7 +435,7 @@ The NotificationAgent also sends learn completion announcements when all searche
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Specialized agents**: Each task type (message, extraction, learn, notification) has its own agent subclass
-- **Priority scheduling**: Schedule executor → learn worker → knowledge pipeline (extraction + enrichment in strict phase order) → notifications
+- **Priority scheduling**: Schedule executor → notifications → extraction → learn → enrichment (agents with no work are skipped each tick)
 - **Always-run schedules**: User-created schedules run regardless of idle state; knowledge pipeline waits for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free Ollama immediately; cancelled work is idempotent and retried next cycle

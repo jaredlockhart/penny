@@ -40,8 +40,19 @@ class LearnAgent(Agent):
         return "learn"
 
     async def execute(self) -> bool:
-        """Run one search step for the next pending learn prompt."""
+        """Run one search step for the next pending learn prompt.
+
+        Gated by unextracted learn search logs: if any previous learn search
+        hasn't been extracted yet, skip this tick to let ExtractionPipeline
+        catch up. This ensures topics flow through the pipeline one step at a
+        time (search → extract → notify) rather than all searches completing
+        before extraction starts.
+        """
         if not self._search_tool:
+            return False
+
+        # Gate: wait for all previous learn searches to be extracted
+        if self.db.has_unextracted_learn_search_logs():
             return False
 
         learn_prompt = self.db.get_next_active_learn_prompt()
