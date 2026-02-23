@@ -182,6 +182,9 @@ class EnrichAgent(Agent):
             await self._update_entity_embedding(entity)
             logger.info("Updated entity embedding for '%s'", entity.name)
 
+        # Record enrichment time so this entity enters its cooldown window
+        self.db.update_entity_last_enriched_at(entity.id)
+
         self._mark_enrichment_done()
         return True
 
@@ -208,8 +211,27 @@ class EnrichAgent(Agent):
                 if eng.entity_id is not None:
                     engagements_by_entity[eng.entity_id].append(eng)
 
+            cooldown = self.config.runtime.ENRICHMENT_ENTITY_COOLDOWN
+            now = datetime.now(UTC)
+
             for entity in entities:
                 assert entity.id is not None
+
+                # Skip entities enriched within the cooldown window to ensure rotation
+                if entity.last_enriched_at is not None:
+                    last = entity.last_enriched_at
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=UTC)
+                    elapsed = (now - last).total_seconds()
+                    if elapsed < cooldown:
+                        logger.debug(
+                            "EnrichAgent: skipping '%s' (enriched %.0fs ago, cooldown=%.0fs)",
+                            entity.name,
+                            elapsed,
+                            cooldown,
+                        )
+                        continue
+
                 entity_engagements = engagements_by_entity.get(entity.id, [])
                 interest = compute_interest_score(
                     entity_engagements,

@@ -1345,6 +1345,22 @@ class Database:
         except Exception as e:
             logger.error("Failed to update entity %d tagline: %s", entity_id, e)
 
+    def update_entity_last_enriched_at(self, entity_id: int) -> None:
+        """Record that an entity was just enriched.
+
+        Args:
+            entity_id: Entity primary key
+        """
+        try:
+            with self.get_session() as session:
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.last_enriched_at = datetime.now(UTC)
+                    session.add(entity)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update entity %d last_enriched_at: %s", entity_id, e)
+
     def update_fact_embedding(self, fact_id: int, embedding: bytes) -> None:
         """Update the embedding for a fact.
 
