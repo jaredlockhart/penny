@@ -316,6 +316,11 @@ class EnrichAgent(Agent):
                 tools=None,
                 format=ExtractedFacts.model_json_schema(),
             )
+            if not response.content or not response.content.strip():
+                logger.warning(
+                    "Empty LLM response from fact extraction for '%s' — skipping", entity.name
+                )
+                return [], []
             extracted = ExtractedFacts.model_validate_json(response.content)
             candidate_facts = extracted.facts
         except Exception as e:
