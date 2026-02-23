@@ -312,6 +312,14 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="ENRICHMENT_ENTITY_COOLDOWN",
+    description="Seconds an entity must wait after being enriched before it can be picked again",
+    type=float,
+    default=3600.0,
+    validator=_validate_positive_float,
+)
+
+ConfigParam(
     key="LEARN_MIN_INTEREST_SCORE",
     description="Minimum interest score for an entity to be considered for enrichment",
     type=float,

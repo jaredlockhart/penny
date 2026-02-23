@@ -131,6 +131,7 @@ class Entity(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     embedding: bytes | None = None  # Serialized float32 embedding vector
     tagline: str | None = None  # Short disambiguating summary (e.g., "british prog rock band")
+    last_enriched_at: datetime | None = None  # When this entity was last enriched
 
 
 class Engagement(SQLModel, table=True):

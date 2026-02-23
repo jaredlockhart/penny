@@ -378,7 +378,8 @@ async def test_learn_enrichment_backoff(
     First execute() succeeds, second is blocked by backoff,
     then a user interaction resets the backoff and third execute() succeeds.
     """
-    config = make_config()
+    # Disable per-entity cooldown so only the global backoff is tested here
+    config = make_config(enrichment_entity_cooldown=0)
 
     def handler(request: dict, count: int) -> dict:
         return mock_ollama._make_text_response(
@@ -434,3 +435,89 @@ async def test_learn_enrichment_backoff(
         assert result is True
         # Backoff should be at initial again (was reset to 0, then set to initial)
         assert agent._backoff.backoff_seconds == config.runtime.ENRICHMENT_INITIAL_BACKOFF
+
+
+@pytest.mark.asyncio
+async def test_enrich_entity_rotation_cooldown(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Recently-enriched entities are skipped; the next eligible entity is picked instead.
+
+    Entity A has higher interest than entity B.  After enriching entity A,
+    its last_enriched_at is set and it enters the cooldown window.  On the
+    next cycle only entity B is eligible, so entity B gets enriched.
+    """
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            json.dumps({"facts": ["A new fact discovered"]}),
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Create sender
+        await signal_server.push_message(sender=TEST_SENDER, content="hello")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Entity A: higher interest
+        entity_a = penny.db.get_or_create_entity(TEST_SENDER, "entity alpha")
+        assert entity_a is not None and entity_a.id is not None
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=entity_a.id,
+        )
+
+        # Entity B: lower interest but still eligible
+        entity_b = penny.db.get_or_create_entity(TEST_SENDER, "entity beta")
+        assert entity_b is not None and entity_b.id is not None
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            entity_id=entity_b.id,
+        )
+
+        agent = EnrichAgent(
+            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
+            system_prompt="",
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
+            tools=[],
+            db=penny.db,
+            config=config,
+            max_steps=1,
+            tool_timeout=config.tool_timeout,
+        )
+
+        # First cycle: entity A wins (higher interest, no cooldown yet)
+        result = await agent.execute()
+        assert result is True
+        facts_a_after_first = penny.db.get_entity_facts(entity_a.id)
+        assert len(facts_a_after_first) >= 1, "Entity A should have been enriched first"
+
+        # Simulate user interaction to reset the global backoff
+        await signal_server.push_message(sender=TEST_SENDER, content="what else?")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        facts_b_before = penny.db.get_entity_facts(entity_b.id)
+
+        # Second cycle: entity A is in cooldown, entity B should be picked
+        result = await agent.execute()
+        assert result is True
+        facts_b_after = penny.db.get_entity_facts(entity_b.id)
+        assert len(facts_b_after) > len(facts_b_before), (
+            "Entity B should have been enriched on the second cycle "
+            "while entity A is in its cooldown window"
+        )
