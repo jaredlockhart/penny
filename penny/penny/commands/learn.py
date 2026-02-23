@@ -66,11 +66,13 @@ class LearnCommand(Command):
                 status_text = "\u2713"
             lines.append(f"{i}. **{lp.prompt_text}** {status_text}")
             if not search_logs:
+                lines.append("")
                 continue
 
             search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
             facts = context.db.get_facts_by_search_log_ids(search_log_ids)
             if not facts:
+                lines.append("")
                 continue
 
             # Group facts by entity
@@ -82,8 +84,9 @@ class LearnCommand(Command):
             entity_lines = _build_entity_lines(entity_fact_counts, context)
             for entity_line in entity_lines:
                 lines.append(f"   {entity_line}")
+            lines.append("")
 
-        return CommandResult(text="\n".join(lines))
+        return CommandResult(text="\n".join(lines).rstrip())
 
     async def _learn_topic(self, topic: str, context: CommandContext) -> CommandResult:
         """Create LearnPrompt and acknowledge. Research happens via scheduled worker."""
