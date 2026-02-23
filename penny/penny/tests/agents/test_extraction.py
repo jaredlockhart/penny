@@ -360,6 +360,127 @@ async def test_extraction_empty_results(
 
 
 @pytest.mark.asyncio
+async def test_extraction_handles_empty_llm_response(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that ExtractionPipeline handles an empty LLM response gracefully.
+
+    Regression test for: entity extraction crashes on empty LLM response
+    (Pydantic json_invalid EOF). When Ollama returns an empty string (e.g. due
+    to a timeout or stream truncation), the pipeline should log a warning and
+    return early instead of raising a Pydantic validation error.
+    """
+    config = make_config()
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        if request_count[0] == 1:
+            return mock_ollama._make_tool_call_response(
+                request, "search", {"query": "best hifi speakers"}
+            )
+        elif request_count[0] == 2:
+            return mock_ollama._make_text_response(request, "here are some speakers!")
+        else:
+            # Simulate Ollama returning an empty body (timeout / stream truncation)
+            return mock_ollama._make_text_response(request, "")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        await signal_server.push_message(
+            sender=TEST_SENDER, content="what are the best hifi speakers?"
+        )
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Mark messages processed so only search log phase runs
+        msgs = penny.db.get_unprocessed_messages(TEST_SENDER, limit=100)
+        if msgs:
+            penny.db.mark_messages_processed([m.id for m in msgs if m.id is not None])
+
+        # Should not raise — empty response is handled gracefully
+        work_done = await penny.extraction_pipeline.execute()
+        assert work_done is False, "Empty LLM response means no entities extracted"
+
+        # SearchLog should still be marked as extracted
+        with penny.db.get_session() as session:
+            search_logs = list(session.exec(select(SearchLog)).all())
+            assert len(search_logs) >= 1
+            assert all(sl.extracted for sl in search_logs)
+
+        # No entities should be created
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        assert len(entities) == 0
+
+
+@pytest.mark.asyncio
+async def test_extraction_handles_empty_llm_response_known_only(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    Test that known-only entity identification also handles empty LLM response.
+
+    When the LLM returns '' for a penny_enrichment search (known-only mode),
+    the pipeline should log a warning and return early rather than raising
+    a Pydantic json_invalid error.
+    """
+    config = make_config()
+
+    request_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        request_count[0] += 1
+        # All extraction calls return empty string
+        return mock_ollama._make_text_response(request, "")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Pre-seed a known entity
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
+
+        # Seed a recent incoming message so find_sender_for_timestamp works
+        penny.db.log_message(
+            direction="incoming", sender=TEST_SENDER, content="tell me more about speakers"
+        )
+
+        # Create a penny_enrichment SearchLog (triggers known-only identification)
+        penny.db.log_search(
+            query="kef ls50 meta latest",
+            response="KEF LS50 Meta latest news.",
+            trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
+        )
+
+        # Should not raise — empty response is handled gracefully
+        work_done = await penny.extraction_pipeline.execute()
+        assert work_done is False, "Empty LLM response means no facts extracted"
+
+        # SearchLog should still be marked as extracted
+        with penny.db.get_session() as session:
+            search_logs = list(session.exec(select(SearchLog)).all())
+            assert all(sl.extracted for sl in search_logs)
+
+        # No new facts should be added (empty response → no known entities identified)
+        facts = penny.db.get_entity_facts(entity.id)
+        fact_contents = [f.content for f in facts]
+        assert fact_contents == ["Costs $1,599 per pair"]
+
+
+@pytest.mark.asyncio
 async def test_extraction_generates_embeddings(
     signal_server,
     mock_ollama,

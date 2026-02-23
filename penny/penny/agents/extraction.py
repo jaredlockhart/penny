@@ -677,6 +677,9 @@ class ExtractionPipeline(Agent):
                 tools=None,
                 format=IdentifiedEntities.model_json_schema(),
             )
+            if not response.content or not response.content.strip():
+                logger.warning("Empty LLM response from entity identification — skipping")
+                return None
             result = IdentifiedEntities.model_validate_json(response.content)
             if not result.known and not result.new:
                 return None
@@ -720,6 +723,9 @@ class ExtractionPipeline(Agent):
                 tools=None,
                 format=IdentifiedKnownEntities.model_json_schema(),
             )
+            if not response.content or not response.content.strip():
+                logger.warning("Empty LLM response from known entity identification — skipping")
+                return None
             result = IdentifiedKnownEntities.model_validate_json(response.content)
             if not result.known:
                 return None
@@ -966,6 +972,11 @@ class ExtractionPipeline(Agent):
                 tools=None,
                 format=ExtractedFacts.model_json_schema(),
             )
+            if not response.content or not response.content.strip():
+                logger.warning(
+                    "Empty LLM response from fact extraction for '%s' — skipping", entity_name
+                )
+                return []
             result = ExtractedFacts.model_validate_json(response.content)
             return result.facts
         except Exception as e:
@@ -1115,6 +1126,8 @@ class ExtractionPipeline(Agent):
                 tools=None,
                 format=MessageSentiments.model_json_schema(),
             )
+            if not response.content or not response.content.strip():
+                return []
             result = MessageSentiments.model_validate_json(response.content)
             return [
                 s
