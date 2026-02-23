@@ -33,13 +33,34 @@ logger = logging.getLogger(__name__)
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
-def _build_relevance_text(tagline: str | None, facts: list[str]) -> str:
+def _strip_name_from_text(text: str, name: str) -> str:
+    """Remove all occurrences of an entity name from text (case-insensitive).
+
+    Uses word-boundary matching to avoid partial-word replacements, then
+    collapses any resulting extra whitespace/punctuation artifacts.
+    """
+    # Escape for regex, match case-insensitively at word boundaries
+    pattern = re.compile(r"\b" + re.escape(name) + r"\b", re.IGNORECASE)
+    result = pattern.sub("", text)
+    # Collapse leftover whitespace and strip leading punctuation/space
+    result = re.sub(r"\s+", " ", result).strip()
+    result = re.sub(r"^[;,.\s]+", "", result).strip()
+    return result
+
+
+def _build_relevance_text(tagline: str | None, facts: list[str], name: str | None = None) -> str:
     """Build embedding text for relevance comparison (tagline + facts, no name).
 
     Entity names are omitted because ambiguous names (e.g. "genesis", "focus",
-    "renaissance") pull the embedding away from the domain context.
+    "renaissance") pull the embedding away from the domain context.  If *name*
+    is provided it is also stripped from the fact text, since the LLM often
+    embeds the name inside each fact sentence.
     """
-    parts = [p for p in [tagline, *(facts or [])] if p]
+    cleaned_facts = list(facts or [])
+    if name:
+        cleaned_facts = [_strip_name_from_text(f, name) for f in cleaned_facts]
+        cleaned_facts = [f for f in cleaned_facts if f]  # drop empty after stripping
+    parts = [p for p in [tagline, *cleaned_facts] if p]
     return "; ".join(parts) if parts else ""
 
 
@@ -794,7 +815,7 @@ class ExtractionPipeline(Agent):
             # Batch-embed tagline+facts (no name) + trigger text in one call.
             # Entity names are omitted because ambiguous names (e.g. "genesis",
             # "focus", "renaissance") pull the embedding away from the domain.
-            embed_texts = [_build_relevance_text(c.tagline, c.facts) for c in candidates]
+            embed_texts = [_build_relevance_text(c.tagline, c.facts, c.name) for c in candidates]
             embed_texts.append(trigger_text)
 
             try:
