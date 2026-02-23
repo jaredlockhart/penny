@@ -32,6 +32,17 @@ logger = logging.getLogger(__name__)
 # Pattern to collapse whitespace and strip bullet prefixes for fact comparison
 _WHITESPACE_RE = re.compile(r"\s+")
 
+
+def _build_relevance_text(tagline: str | None, facts: list[str]) -> str:
+    """Build embedding text for relevance comparison (tagline + facts, no name).
+
+    Entity names are omitted because ambiguous names (e.g. "genesis", "focus",
+    "renaissance") pull the embedding away from the domain context.
+    """
+    parts = [p for p in [tagline, *(facts or [])] if p]
+    return "; ".join(parts) if parts else ""
+
+
 # --- Entity name validation patterns ---
 _LLM_ARTIFACT_PATTERNS = (
     "{topic}",
@@ -780,8 +791,10 @@ class ExtractionPipeline(Agent):
         if not self._embedding_model_client:
             survivors_with_scores = [(c, 0.0) for c in candidates]
         else:
-            # Batch-embed all entity+facts texts + trigger text in one call
-            embed_texts = [build_entity_embed_text(c.name, c.facts, c.tagline) for c in candidates]
+            # Batch-embed tagline+facts (no name) + trigger text in one call.
+            # Entity names are omitted because ambiguous names (e.g. "genesis",
+            # "focus", "renaissance") pull the embedding away from the domain.
+            embed_texts = [_build_relevance_text(c.tagline, c.facts) for c in candidates]
             embed_texts.append(trigger_text)
 
             try:
@@ -799,7 +812,7 @@ class ExtractionPipeline(Agent):
                 survivors_with_scores = []
 
                 for candidate, entity_vec in zip(candidates, vecs[:-1], strict=True):
-                    score = cosine_similarity(entity_vec, trigger_vec)
+                    score = round(cosine_similarity(entity_vec, trigger_vec), 2)
                     if score >= threshold:
                         logger.info(
                             "Accepted entity '%s' (post-fact similarity %.2f >= %.2f)",
