@@ -152,13 +152,13 @@ class SearchTool(Tool):
 
         # Extract the most-cited URL from response annotations
         url_counts: dict[str, int] = {}
-        for output in response.output:
+        for output in response.output or []:
             if isinstance(output, SearchResultsOutputItem):
-                for r in output.results:
+                for r in output.results or []:
                     if r.url:
                         url_counts.setdefault(r.url, 0)
             elif isinstance(output, MessageOutputItem):
-                for part in output.content:
+                for part in output.content or []:
                     for ann in part.annotations or []:
                         if ann.url:
                             url_counts[ann.url] = url_counts.get(ann.url, 0) + 1

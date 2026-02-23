@@ -1,6 +1,101 @@
 """Tests for search query redaction of personal information."""
 
+import pytest
+
 from penny.tools.builtin import SearchTool
+
+
+class MockResponseNullOutput:
+    """Mock Perplexity response where output is None (nullable in practice)."""
+
+    def __init__(self, text: str = "Some results"):
+        self.output_text = text
+        self.output = None
+
+
+class MockResponseNullResults:
+    """Mock Perplexity response where a SearchResultsOutputItem has results=None."""
+
+    def __init__(self):
+        from unittest.mock import MagicMock
+
+        from perplexity.types.output_item import SearchResultsOutputItem
+
+        self.output_text = "Some results"
+        item = MagicMock(spec=SearchResultsOutputItem)
+        item.results = None
+        self.output = [item]
+
+
+class MockResponseNullContent:
+    """Mock Perplexity response where a MessageOutputItem has content=None."""
+
+    def __init__(self):
+        from unittest.mock import MagicMock
+
+        from perplexity.types.output_item import MessageOutputItem
+
+        self.output_text = "Some results"
+        item = MagicMock(spec=MessageOutputItem)
+        item.content = None
+        self.output = [item]
+
+
+class MockPerplexityForNullTests:
+    """Minimal Perplexity mock that returns a given response."""
+
+    def __init__(self, response):
+        self._response = response
+
+        class _Responses:
+            def __init__(self, resp):
+                self._resp = resp
+
+            def create(self, preset, input):
+                return self._resp
+
+        self.responses = _Responses(response)
+
+
+def _make_search_tool(response) -> SearchTool:
+    """Create a SearchTool wired to a given mock Perplexity response."""
+    tool = object.__new__(SearchTool)
+    tool.perplexity = MockPerplexityForNullTests(response)
+    tool.db = None
+    tool.redact_terms = []
+    tool.skip_images = True
+    tool.serper_api_key = None
+    tool.image_max_results = 3
+    tool.image_download_timeout = 5.0
+    return tool
+
+
+class TestSearchTextNullOutput:
+    """Tests that _search_text handles None output fields without raising TypeError."""
+
+    @pytest.mark.asyncio
+    async def test_null_output_returns_text(self):
+        """response.output is None — should not raise, should return output_text."""
+        tool = _make_search_tool(MockResponseNullOutput("Results text"))
+        text, urls = await tool._search_text("test query")
+        assert text == "Results text"
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_null_results_in_search_output_item(self):
+        """SearchResultsOutputItem.results is None — should not raise."""
+        tool = _make_search_tool(MockResponseNullResults())
+        text, urls = await tool._search_text("test query")
+        assert text == "Some results"
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_null_content_in_message_output_item(self):
+        """MessageOutputItem.content is None — should not raise."""
+        tool = _make_search_tool(MockResponseNullContent())
+        text, urls = await tool._search_text("test query")
+        assert text == "Some results"
+        assert urls == []
 
 
 class TestRedactQuery:
