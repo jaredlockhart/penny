@@ -291,7 +291,7 @@ class NotificationAgent(Agent):
         if state is None:
             return True
         latest = self.db.get_latest_user_interaction_time(user)
-        return state.should_act(latest)
+        return state.should_act(latest, self.config.runtime.NOTIFICATION_INITIAL_BACKOFF)
 
     def _mark_proactive_sent(self, user: str) -> None:
         """Record that we sent a notification and increase backoff."""
