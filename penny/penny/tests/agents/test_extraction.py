@@ -1467,6 +1467,121 @@ async def test_extraction_discards_fragment_entities(
         assert len(entities) == 1
 
 
+@pytest.mark.asyncio
+async def test_extraction_deduplicates_acronym_entity_in_same_batch(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    When the LLM returns both a full name and its acronym in the same batch
+    (e.g., "commercial lunar payload services" and "clps"), the second entity
+    is detected as a duplicate via post-fact embedding similarity and its facts
+    are merged into the first entity instead of creating a separate entry.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    # Embed handler: entity-level texts (containing "lunar" or "clps") get similar
+    # vectors to enable entity dedup.  Individual facts get distinct vectors so
+    # fact-level dedup doesn't drop them as paraphrases.
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        vecs = []
+        for text in texts:
+            lower = text.lower()
+            if "intuitive machines" in lower and "lunar" not in lower:
+                # The merged fact — distinct from the first fact
+                vecs.append([0.0, 0.0, 0.0, 1.0])
+            elif "lunar" in lower or "clps" in lower:
+                vecs.append([0.9, 0.1, 0.0, 0.0])
+            else:
+                vecs.append([0.0, 0.0, 1.0, 0.0])
+        return vecs
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    call_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+
+        if "Entity:" in prompt:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_ollama._make_text_response(
+                    request,
+                    json.dumps({"facts": ["NASA program for lunar deliveries"]}),
+                )
+            else:
+                return mock_ollama._make_text_response(
+                    request,
+                    json.dumps(
+                        {"facts": ["Intuitive Machines and Astrobotic are contracted providers"]}
+                    ),
+                )
+        elif "topics" in prompt.lower():
+            return mock_ollama._make_text_response(request, '{"topics": []}')
+        else:
+            # LLM returns both full name and acronym as new entities
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {
+                        "known": [],
+                        "new": [
+                            {
+                                "name": "commercial lunar payload services",
+                                "tagline": "lunar delivery program",
+                            },
+                            {
+                                "name": "clps",
+                                "tagline": "abbreviation for commercial lunar payload services",
+                            },
+                        ],
+                    }
+                ),
+            )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="tell me about commercial lunar payload services",
+        )
+        penny.db.mark_messages_processed([msg_id])
+
+        penny.db.log_search(
+            query="commercial lunar payload services",
+            response="CLPS is a NASA program for commercial lunar deliveries.",
+            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+        )
+
+        await penny.extraction_pipeline.execute()
+
+        # Only one entity should exist — "clps" should be merged into the full name
+        entities = penny.db.get_user_entities(TEST_SENDER)
+        entity_names = [e.name for e in entities]
+        assert "commercial lunar payload services" in entity_names
+        assert "clps" not in entity_names, (
+            f"Acronym 'clps' should be deduped into full name, got: {entity_names}"
+        )
+        assert len(entities) == 1
+
+        # Both facts should be on the single entity
+        clps_entity = next(e for e in entities if e.name == "commercial lunar payload services")
+        assert clps_entity.id is not None
+        facts = penny.db.get_entity_facts(clps_entity.id)
+        fact_contents = [f.content for f in facts]
+        assert "NASA program for lunar deliveries" in fact_contents
+        assert "Intuitive Machines and Astrobotic are contracted providers" in fact_contents
+
+
 # --- Extraction no longer sends notifications ---
 
 
