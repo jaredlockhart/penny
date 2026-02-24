@@ -28,9 +28,9 @@ class TestCommand(Command):
         "leaving production conversation history untouched.\n\n"
         "**Usage**: `/test <prompt>`\n\n"
         "**Limitations**:\n"
-        "- Threading/quote-replies are not supported\n"
-        "- Nested commands (e.g., `/test /debug`) are not supported\n"
-        "- Test database is snapshotted at startup and persists until container restart"
+        "• Threading/quote-replies are not supported\n"
+        "• Nested commands (e.g., `/test /debug`) are not supported\n"
+        "• Test database is snapshotted at startup and persists until container restart"
     )
 
     def __init__(self, message_agent_factory: Any) -> None:

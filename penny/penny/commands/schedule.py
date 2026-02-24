@@ -33,10 +33,10 @@ class ScheduleCommand(Command):
     help_text = (
         "Create recurring background tasks that run prompts automatically.\n\n"
         "**Usage**:\n"
-        "- `/schedule` — List all your active schedules\n"
-        "- `/schedule <timing> <prompt>` — Create a new schedule\n"
+        "• `/schedule` — List all your active schedules\n"
+        "• `/schedule <timing> <prompt>` — Create a new schedule\n"
         "  (e.g., `/schedule daily 9am what's the news?`)\n"
-        "- `/schedule delete <number>` — Delete a schedule by its list number"
+        "• `/schedule delete <number>` — Delete a schedule by its list number"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:

@@ -22,11 +22,11 @@ class LearnCommand(Command):
     help_text = (
         "Express interest in a topic so Penny researches it in the background.\n\n"
         "**Usage**:\n"
-        "- `/learn` — Show learning status and discoveries\n"
-        "- `/learn <topic>` — Start learning about a topic\n\n"
+        "• `/learn` — Show learning status and discoveries\n"
+        "• `/learn <topic>` — Start learning about a topic\n\n"
         "**Examples**:\n"
-        "- `/learn kef ls50 meta`\n"
-        "- `/learn travel in china 2026`"
+        "• `/learn kef ls50 meta`\n"
+        "• `/learn travel in china 2026`"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:

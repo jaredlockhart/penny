@@ -362,7 +362,7 @@ class ExtractionPipeline(Agent):
 
         for sender in senders:
             messages = self.db.get_unprocessed_messages(
-                sender, limit=int(self.config.runtime.PREFERENCE_BATCH_LIMIT)
+                sender, limit=int(self.config.runtime.MESSAGE_EXTRACTION_BATCH_LIMIT)
             )
 
             if not messages:

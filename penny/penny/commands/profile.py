@@ -46,13 +46,13 @@ class ProfileCommand(Command):
     help_text = (
         "View your current profile or create/update your profile information.\n\n"
         "**Usage**:\n"
-        "- `/profile` — View your current profile\n"
-        "- `/profile <name> <location> <date of birth>` — Create profile (if new)\n"
-        "- `/profile <name> <location>` — Update name/location (if profile exists)\n\n"
+        "• `/profile` — View your current profile\n"
+        "• `/profile <name> <location> <date of birth>` — Create profile (if new)\n"
+        "• `/profile <name> <location>` — Update name/location (if profile exists)\n\n"
         "**Examples**:\n"
-        "- `/profile sam denver march 5 1990` (initial setup)\n"
-        "- `/profile sam denver` (update existing)\n"
-        "- `/profile denver` (update location only)\n\n"
+        "• `/profile sam denver march 5 1990` (initial setup)\n"
+        "• `/profile sam denver` (update existing)\n"
+        "• `/profile denver` (update location only)\n\n"
         "**Note**: Timezone is automatically derived from your location."
     )
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.config_params import RUNTIME_CONFIG_PARAMS
+from penny.config_params import RUNTIME_CONFIG_PARAMS, get_params_by_group
 from penny.responses import PennyResponse
 
 
@@ -17,9 +17,9 @@ class ConfigCommand(Command):
         "View and modify runtime configuration parameters like timing settings. "
         "Configuration is stored in the database and takes effect immediately.\n\n"
         "**Usage**:\n"
-        "- `/config` — List all available configuration parameters and their current values\n"
-        "- `/config <key>` — Show the value of a specific configuration parameter\n"
-        "- `/config <key> <value>` — Update a configuration parameter"
+        "• `/config` — List all available configuration parameters and their current values\n"
+        "• `/config <key>` — Show the value of a specific configuration parameter\n"
+        "• `/config <key> <value>` — Update a configuration parameter"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
@@ -36,15 +36,17 @@ class ConfigCommand(Command):
         if not args.strip():
             lines = [PennyResponse.CONFIG_HEADER, ""]
 
-            # List all parameters with current values
-            for key in sorted(RUNTIME_CONFIG_PARAMS.keys()):
-                param = RUNTIME_CONFIG_PARAMS[key]
-                current_value = getattr(context.config.runtime, key)
-                lines.append(
-                    PennyResponse.CONFIG_PARAM_DISPLAY.format(
-                        key=key, value=current_value, description=param.description
+            for group_name, params in get_params_by_group():
+                lines.append(PennyResponse.CONFIG_GROUP_HEADER.format(group=group_name))
+                for param in params:
+                    current_value = getattr(context.config.runtime, param.key)
+                    lines.append(
+                        PennyResponse.CONFIG_PARAM_DISPLAY.format(
+                            key=param.key,
+                            value=current_value,
+                            description=param.description,
+                        )
                     )
-                )
                 lines.append("")
 
             lines.append(PennyResponse.CONFIG_FOOTER)
