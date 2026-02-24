@@ -6,7 +6,7 @@ import pytest
 
 from penny.agents.notification import NotificationAgent
 from penny.constants import PennyConstants
-from penny.tests.conftest import TEST_SENDER
+from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 def _create_notification_agent(penny, config):
@@ -138,7 +138,8 @@ async def test_notification_entity_cooldown(
     running_penny,
 ):
     """After notifying about an entity, it enters cooldown and other entities are picked instead."""
-    config = make_config()
+    # Use small initial_backoff (50ms) so the second notification fires quickly after user message
+    config = make_config(notification_initial_backoff=0.05)
 
     def handler(request: dict, count: int) -> dict:
         return mock_ollama._make_text_response(
@@ -178,9 +179,13 @@ async def test_notification_entity_cooldown(
         penny.db.add_fact(entity_b.id, "Another beta fact")
         penny.db.add_fact(entity_a.id, "Another alpha fact")
 
-        # Reset backoff so next notification can fire
+        # User sends message → resets backoff (to initial_backoff=50ms from interaction time)
         msg_id2 = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="thanks")
         penny.db.mark_messages_processed([msg_id2])
+
+        # Wait for initial_backoff (50ms) to elapse from interaction time
+        interaction_recorded = datetime.now(UTC)
+        await wait_until(lambda: (datetime.now(UTC) - interaction_recorded).total_seconds() >= 0.1)
 
         # Cycle 2: entity A is in cooldown, so entity B is picked instead
         signal_server.outgoing_messages.clear()
@@ -335,7 +340,11 @@ async def test_notification_backoff_and_reset(
     test_user_info,
     running_penny,
 ):
-    """Notification respects backoff: send, suppress, reset on user message, send again."""
+    """Notification respects backoff: send, then suppress until initial_backoff expires.
+
+    After user interaction, the next notification requires idle + initial_backoff
+    before firing — not immediately on the first idle scheduler tick.
+    """
     config = make_config()
 
     def handler(request: dict, count: int) -> dict:
@@ -352,7 +361,7 @@ async def test_notification_backoff_and_reset(
 
         agent = _create_notification_agent(penny, config)
 
-        # --- Cycle 1: notification sent (no backoff) ---
+        # --- Cycle 1: notification sent (no backoff — never acted before) ---
         e1 = penny.db.get_or_create_entity(TEST_SENDER, "backoff entity 1")
         assert e1 is not None and e1.id is not None
         penny.db.add_fact(e1.id, "Fact for backoff test 1")
@@ -376,10 +385,77 @@ async def test_notification_backoff_and_reset(
         msg_id2 = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="thanks!")
         penny.db.mark_messages_processed([msg_id2])
 
-        # --- Cycle 3: notification sent (backoff reset) ---
+        # Cycle 3: immediately after user message, still suppressed.
+        # The fix: initial_backoff must elapse from interaction time before notification fires.
         signal_server.outgoing_messages.clear()
         result3 = await agent.execute()
-        assert result3 is True
+        assert result3 is False
+        assert len(signal_server.outgoing_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notification_fires_after_initial_backoff_from_user_message(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """After user interaction, notification fires once initial_backoff has elapsed.
+
+    Uses a small initial_backoff so the test completes quickly while still
+    verifying the backoff fires correctly after the wait.
+    """
+    # Use a small initial_backoff (50ms) — reliably larger than Python/DB overhead
+    # but small enough that wait_until (50ms poll) catches it in one or two ticks.
+    config = make_config(notification_initial_backoff=0.05)
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Here's an interesting discovery — some really great new facts about this topic!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Log and process initial message to establish a baseline interaction time
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        agent = _create_notification_agent(penny, config)
+
+        # --- Cycle 1: first notification fires (no prior state) ---
+        e1 = penny.db.get_or_create_entity(TEST_SENDER, "entity for initial backoff test")
+        assert e1 is not None and e1.id is not None
+        penny.db.add_fact(e1.id, "Fact for initial backoff test")
+
+        signal_server.outgoing_messages.clear()
+        result1 = await agent.execute()
+        assert result1 is True
+
+        # --- User sends message → resets backoff (initial_backoff = 50ms from interaction) ---
+        msg_id2 = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="thanks!")
+        penny.db.mark_messages_processed([msg_id2])
+
+        # Add another entity/fact to notify about
+        e2 = penny.db.get_or_create_entity(TEST_SENDER, "entity for initial backoff test 2")
+        assert e2 is not None and e2.id is not None
+        penny.db.add_fact(e2.id, "Fact for initial backoff test 2")
+
+        # Immediately after interaction: suppressed (initial_backoff of 50ms not yet elapsed)
+        signal_server.outgoing_messages.clear()
+        result2_immediate = await agent.execute()
+        assert result2_immediate is False
+
+        # After initial_backoff (50ms) elapses from the interaction time, it fires.
+        # wait_until polls every 50ms, so this resolves in at most 2 poll cycles.
+        interaction_recorded = datetime.now(UTC)
+        await wait_until(lambda: (datetime.now(UTC) - interaction_recorded).total_seconds() >= 0.1)
+        signal_server.outgoing_messages.clear()
+        result2_after = await agent.execute()
+        assert result2_after is True
         assert len(signal_server.outgoing_messages) == 1
 
 
