@@ -521,3 +521,68 @@ async def test_enrich_entity_rotation_cooldown(
             "Entity B should have been enriched on the second cycle "
             "while entity A is in its cooldown window"
         )
+
+
+@pytest.mark.asyncio
+async def test_learn_enrichment_includes_tagline_in_extraction_prompt(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Tagline is included in the fact extraction prompt to disambiguate entities."""
+    config = make_config()
+    captured_prompts: list[str] = []
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        last_content = messages[-1].get("content", "") if messages else ""
+        captured_prompts.append(last_content)
+        return mock_ollama._make_text_response(
+            request,
+            json.dumps({"facts": ["Some fact about the band"]}),
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Create sender
+        await signal_server.push_message(sender=TEST_SENDER, content="hello")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Create entity with a tagline to disambiguate
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "genesis")
+        assert entity is not None and entity.id is not None
+        penny.db.update_entity_tagline(entity.id, "british progressive rock band")
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=entity.id,
+        )
+
+        mock_ollama.requests.clear()
+        captured_prompts.clear()
+
+        agent = EnrichAgent(
+            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
+            system_prompt="",
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
+            tools=[],
+            db=penny.db,
+            config=config,
+            max_steps=1,
+            tool_timeout=config.tool_timeout,
+        )
+
+        result = await agent.execute()
+        assert result is True
+
+        # The extraction prompt should include the tagline for disambiguation
+        extraction_prompts = [p for p in captured_prompts if "Extract specific" in p]
+        assert len(extraction_prompts) >= 1
+        assert "genesis (british progressive rock band)" in extraction_prompts[0]
