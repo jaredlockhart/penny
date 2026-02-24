@@ -39,6 +39,7 @@ class NotificationAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._channel: MessageChannel | None = None
         self._backoff_state: dict[str, BackoffState] = {}
+        self._last_notified_learn_prompt_id: dict[str, int | None] = {}
 
     @property
     def name(self) -> str:
@@ -215,8 +216,9 @@ class NotificationAgent(Agent):
         for fact in unnotified:
             facts_by_entity[fact.entity_id].append(fact)
 
-        # Pick entity with newest unnotified fact, respecting cooldown
-        entity = self._pick_newest_entity(unnotified, facts_by_entity)
+        # Pick entity with newest unnotified fact, respecting cooldown and learn topic dedup
+        last_learn_prompt_id = self._last_notified_learn_prompt_id.get(user)
+        entity = self._pick_newest_entity(unnotified, facts_by_entity, last_learn_prompt_id)
         if entity is None:
             return False
         assert entity.id is not None
@@ -237,6 +239,9 @@ class NotificationAgent(Agent):
         self.db.mark_facts_notified(fact_ids)
         self.db.update_entity_last_notified_at(entity.id)
 
+        # Track which learn prompt this notification came from (to suppress same-topic dedup)
+        self._last_notified_learn_prompt_id[user] = self._get_learn_prompt_id(facts)
+
         # Update backoff
         self._mark_proactive_sent(user)
 
@@ -246,11 +251,16 @@ class NotificationAgent(Agent):
         self,
         unnotified: list[Fact],
         facts_by_entity: dict[int, list[Fact]],
+        last_notified_learn_prompt_id: int | None = None,
     ) -> Entity | None:
         """Pick the entity with the newest unnotified fact, respecting cooldown.
 
         Facts are ordered by learned_at DESC, so the first entity encountered
         that is not in cooldown wins.
+
+        Also skips entities whose unnotified facts all share the same learn_prompt_id
+        as the last-sent notification — to avoid sending back-to-back notifications
+        for entities from the same /learn topic.
         """
         cooldown = self.config.runtime.NOTIFICATION_ENTITY_COOLDOWN
         now = datetime.now(UTC)
@@ -281,6 +291,18 @@ class NotificationAgent(Agent):
                     )
                     continue
 
+            # Skip if this entity's facts share the same learn topic as the last notification
+            if last_notified_learn_prompt_id is not None:
+                entity_learn_prompt_id = self._get_learn_prompt_id(facts_by_entity[eid])
+                if entity_learn_prompt_id == last_notified_learn_prompt_id:
+                    logger.debug(
+                        "Notification: skipping '%s' (same learn topic as last notification, "
+                        "learn_prompt_id=%d)",
+                        entity.name,
+                        last_notified_learn_prompt_id,
+                    )
+                    continue
+
             return entity
 
         return None
@@ -303,6 +325,21 @@ class NotificationAgent(Agent):
             self.config.runtime.NOTIFICATION_INITIAL_BACKOFF,
             self.config.runtime.NOTIFICATION_MAX_BACKOFF,
         )
+
+    def _get_learn_prompt_id(self, facts: list[Fact]) -> int | None:
+        """Trace facts back to a /learn prompt ID, if any.
+
+        Follows: Fact.source_search_log_id → SearchLog.learn_prompt_id
+        Returns the learn_prompt_id of the first matching search log, or None.
+        """
+        for fact in facts:
+            if fact.source_search_log_id is None:
+                continue
+            search_log = self.db.get_search_log(fact.source_search_log_id)
+            if search_log is None or search_log.learn_prompt_id is None:
+                continue
+            return search_log.learn_prompt_id
+        return None
 
     def _get_learn_topic(self, facts: list[Fact]) -> str | None:
         """Trace facts back to a /learn prompt topic, if any.
