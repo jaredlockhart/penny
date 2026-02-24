@@ -325,9 +325,10 @@ class EnrichAgent(Agent):
                 f"\n\nAlready known facts (return only NEW facts not listed here):\n{facts_text}"
             )
 
+        entity_label = f"{entity.name} ({entity.tagline})" if entity.tagline else entity.name
         prompt = (
             f"{Prompt.ENTITY_FACT_EXTRACTION_PROMPT}\n\n"
-            f"Entity: {entity.name}\n\n"
+            f"Entity: {entity_label}\n\n"
             f"Content:\n{search_text}"
             f"{existing_context}"
         )
