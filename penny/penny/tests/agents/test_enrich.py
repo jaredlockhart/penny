@@ -1,6 +1,7 @@
 """Integration tests for the EnrichAgent."""
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -227,7 +228,9 @@ async def test_learn_dedup_facts(
         # Create entity with existing fact and positive interest
         entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        existing_fact = penny.db.add_fact(entity_id=entity.id, content="Costs $1,599 per pair")
+        existing_fact = penny.db.add_fact(
+            entity_id=entity.id, content="Costs $1,599 per pair", notified_at=datetime.now(UTC)
+        )
         assert existing_fact is not None
 
         penny.db.add_engagement(
@@ -328,9 +331,17 @@ async def test_learn_semantic_interest_priority(
             entity_id=entity_b.id,
         )
 
-        # Both get one fact so they're eligible for enrichment
-        penny.db.add_fact(entity_id=entity_a.id, content="AAMAS 2026 is held in Cyprus")
-        penny.db.add_fact(entity_id=entity_b.id, content="Coral Beach Hotel hosts AAMAS 2026")
+        # Both get one announced fact so they're eligible for enrichment
+        penny.db.add_fact(
+            entity_id=entity_a.id,
+            content="AAMAS 2026 is held in Cyprus",
+            notified_at=datetime.now(UTC),
+        )
+        penny.db.add_fact(
+            entity_id=entity_b.id,
+            content="Coral Beach Hotel hosts AAMAS 2026",
+            notified_at=datetime.now(UTC),
+        )
 
         mock_ollama.requests.clear()
 
@@ -365,7 +376,7 @@ async def test_learn_semantic_interest_priority(
 
 
 @pytest.mark.asyncio
-async def test_learn_enrichment_backoff(
+async def test_learn_enrichment_fixed_interval(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -373,12 +384,12 @@ async def test_learn_enrichment_backoff(
     test_user_info,
     running_penny,
 ):
-    """Enrichment applies exponential backoff after each search.
+    """Enrichment uses a fixed interval timer between searches.
 
-    First execute() succeeds, second is blocked by backoff,
-    then a user interaction resets the backoff and third execute() succeeds.
+    First execute() succeeds, second is blocked by the interval timer,
+    then resetting the timer allows a third execute() to succeed.
     """
-    # Disable per-entity cooldown so only the global backoff is tested here
+    # Disable per-entity cooldown so only the global interval is tested here
     config = make_config(enrichment_entity_cooldown=0)
 
     def handler(request: dict, count: int) -> dict:
@@ -395,7 +406,7 @@ async def test_learn_enrichment_backoff(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Create entity with positive interest
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "backoff test entity")
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "interval test entity")
         assert entity is not None and entity.id is not None
         penny.db.add_engagement(
             user=TEST_SENDER,
@@ -417,24 +428,24 @@ async def test_learn_enrichment_backoff(
             tool_timeout=config.tool_timeout,
         )
 
-        # First execute: should succeed and set backoff
+        # First execute: should succeed and record the timer
         result = await agent.execute()
         assert result is True
-        assert agent._backoff.backoff_seconds == config.runtime.ENRICHMENT_INITIAL_BACKOFF
+        assert agent._last_enrich_time is not None
 
-        # Second execute: should be blocked by backoff (not enough time elapsed)
+        # Second execute: blocked by fixed interval (not enough time elapsed)
         result = await agent.execute()
         assert result is False
 
-        # Simulate user interaction after the last enrichment
-        await signal_server.push_message(sender=TEST_SENDER, content="tell me more")
-        await signal_server.wait_for_message(timeout=10.0)
+        # Simulate time passing by resetting the timer, and mark facts as
+        # announced (as the notification agent would) so the entity stays eligible
+        agent._last_enrich_time = None
+        facts = penny.db.get_entity_facts(entity.id)
+        penny.db.mark_facts_notified([f.id for f in facts if f.id is not None])
 
-        # Third execute: user interaction resets backoff, should succeed
+        # Third execute: timer reset, should succeed
         result = await agent.execute()
         assert result is True
-        # Backoff should be at initial again (was reset to 0, then set to initial)
-        assert agent._backoff.backoff_seconds == config.runtime.ENRICHMENT_INITIAL_BACKOFF
 
 
 @pytest.mark.asyncio
@@ -507,13 +518,13 @@ async def test_enrich_entity_rotation_cooldown(
         facts_a_after_first = penny.db.get_entity_facts(entity_a.id)
         assert len(facts_a_after_first) >= 1, "Entity A should have been enriched first"
 
-        # Simulate user interaction to reset the global backoff
-        await signal_server.push_message(sender=TEST_SENDER, content="what else?")
-        await signal_server.wait_for_message(timeout=10.0)
+        # Reset the fixed interval timer to allow immediate re-execution
+        agent._last_enrich_time = None
 
         facts_b_before = penny.db.get_entity_facts(entity_b.id)
 
-        # Second cycle: entity A is in cooldown, entity B should be picked
+        # Second cycle: entity A is in cooldown + has unannounced facts,
+        # entity B should be picked
         result = await agent.execute()
         assert result is True
         facts_b_after = penny.db.get_entity_facts(entity_b.id)
@@ -521,6 +532,53 @@ async def test_enrich_entity_rotation_cooldown(
             "Entity B should have been enriched on the second cycle "
             "while entity A is in its cooldown window"
         )
+
+
+@pytest.mark.asyncio
+async def test_enrich_skips_entity_with_unannounced_facts(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Entities with unannounced facts are skipped to avoid piling on more."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        # Create sender
+        await signal_server.push_message(sender=TEST_SENDER, content="hello")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Create entity with positive interest and an unannounced fact
+        entity = penny.db.get_or_create_entity(TEST_SENDER, "unannounced test entity")
+        assert entity is not None and entity.id is not None
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=entity.id,
+        )
+        # Fact with notified_at=None (unannounced)
+        penny.db.add_fact(entity_id=entity.id, content="Some unannounced fact")
+
+        agent = EnrichAgent(
+            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
+            system_prompt="",
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
+            tools=[],
+            db=penny.db,
+            config=config,
+            max_steps=1,
+            tool_timeout=config.tool_timeout,
+        )
+
+        # Should return False — entity has unannounced facts
+        result = await agent.execute()
+        assert result is False
 
 
 @pytest.mark.asyncio

@@ -26,7 +26,7 @@ def _create_notification_agent(penny, config):
 
 
 @pytest.mark.asyncio
-async def test_notification_sends_highest_interest_entity(
+async def test_notification_sends_newest_entity(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -34,7 +34,7 @@ async def test_notification_sends_highest_interest_entity(
     test_user_info,
     running_penny,
 ):
-    """Notification agent picks the entity with the highest interest score."""
+    """Notification agent picks the entity with the newest unnotified fact."""
     config = make_config()
 
     captured_prompts: list[str] = []
@@ -46,8 +46,8 @@ async def test_notification_sends_highest_interest_entity(
         if "came across" in prompt:
             return mock_ollama._make_text_response(
                 request,
-                "Hey, I came across **high interest thing** recently and found some"
-                " really interesting stuff worth sharing! 🎉",
+                "Hey, I came across **newer entity** recently and found some"
+                " really interesting stuff worth sharing!",
             )
         return mock_ollama._make_text_response(request, "ok")
 
@@ -57,42 +57,25 @@ async def test_notification_sends_highest_interest_entity(
         msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
         penny.db.mark_messages_processed([msg_id])
 
-        # Create two entities — one with higher interest
-        low_entity = penny.db.get_or_create_entity(TEST_SENDER, "low interest thing")
-        high_entity = penny.db.get_or_create_entity(TEST_SENDER, "high interest thing")
-        assert low_entity is not None and low_entity.id is not None
-        assert high_entity is not None and high_entity.id is not None
+        # Create two entities — one with an older fact, one with a newer fact
+        older_entity = penny.db.get_or_create_entity(TEST_SENDER, "older entity")
+        newer_entity = penny.db.get_or_create_entity(TEST_SENDER, "newer entity")
+        assert older_entity is not None and older_entity.id is not None
+        assert newer_entity is not None and newer_entity.id is not None
 
-        # Low interest: weak engagement
-        penny.db.add_engagement(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=0.1,
-            entity_id=low_entity.id,
-        )
-        # High interest: strong engagement
-        penny.db.add_engagement(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=1.0,
-            entity_id=high_entity.id,
-        )
-
-        # Add un-notified facts to both
-        penny.db.add_fact(low_entity.id, "Low interest fact")
-        penny.db.add_fact(high_entity.id, "High interest fact")
+        # Add fact to older entity first, then newer entity
+        penny.db.add_fact(older_entity.id, "Older fact")
+        penny.db.add_fact(newer_entity.id, "Newer fact")
 
         agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
         result = await agent.execute()
         assert result is True
 
-        # Should notify about the high-interest entity
+        # Should notify about the newer entity (most recent unnotified fact)
         msgs = signal_server.outgoing_messages
         assert len(msgs) == 1
-        assert "high interest thing" in msgs[0]["message"]
+        assert "newer entity" in msgs[0]["message"]
 
         # Prompt sent to model should instruct it to synthesize, not echo raw facts
         assert any("Synthesize" in p for p in captured_prompts)
@@ -138,6 +121,76 @@ async def test_notification_marks_facts_notified(
         # Facts should now be marked as notified
         facts_after = penny.db.get_entity_facts(entity.id)
         assert all(f.notified_at is not None for f in facts_after)
+
+        # Entity should have last_notified_at set
+        updated_entity = penny.db.get_entity(entity.id)
+        assert updated_entity is not None
+        assert updated_entity.last_notified_at is not None
+
+
+@pytest.mark.asyncio
+async def test_notification_entity_cooldown(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """After notifying about an entity, it enters cooldown and other entities are picked instead."""
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Here's an interesting discovery — some really great new facts about this topic!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        # Create two entities with facts
+        entity_a = penny.db.get_or_create_entity(TEST_SENDER, "entity alpha")
+        entity_b = penny.db.get_or_create_entity(TEST_SENDER, "entity beta")
+        assert entity_a is not None and entity_a.id is not None
+        assert entity_b is not None and entity_b.id is not None
+
+        # Entity A gets a newer fact (will be picked first)
+        penny.db.add_fact(entity_b.id, "Older fact for beta")
+        penny.db.add_fact(entity_a.id, "Newer fact for alpha")
+
+        agent = _create_notification_agent(penny, config)
+
+        # Cycle 1: entity A picked (newest fact)
+        signal_server.outgoing_messages.clear()
+        result1 = await agent.execute()
+        assert result1 is True
+        # Verify entity A was notified (its fact is marked, its last_notified_at is set)
+        facts_a = penny.db.get_entity_facts(entity_a.id)
+        assert any(f.notified_at is not None for f in facts_a)
+        entity_a_refreshed = penny.db.get_entity(entity_a.id)
+        assert entity_a_refreshed is not None and entity_a_refreshed.last_notified_at is not None
+
+        # Add new facts to both — entity A gets a newer fact again
+        penny.db.add_fact(entity_b.id, "Another beta fact")
+        penny.db.add_fact(entity_a.id, "Another alpha fact")
+
+        # Reset backoff so next notification can fire
+        msg_id2 = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="thanks")
+        penny.db.mark_messages_processed([msg_id2])
+
+        # Cycle 2: entity A is in cooldown, so entity B is picked instead
+        signal_server.outgoing_messages.clear()
+        result2 = await agent.execute()
+        assert result2 is True
+        # Verify entity B was notified this time (cooldown forced rotation)
+        facts_b = penny.db.get_entity_facts(entity_b.id)
+        assert any(f.notified_at is not None for f in facts_b)
+        entity_b_refreshed = penny.db.get_entity(entity_b.id)
+        assert entity_b_refreshed is not None and entity_b_refreshed.last_notified_at is not None
 
 
 @pytest.mark.asyncio
@@ -331,7 +384,7 @@ async def test_notification_backoff_and_reset(
 
 
 @pytest.mark.asyncio
-async def test_notification_command_resets_backoff(
+async def test_notification_command_does_not_reset_backoff(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -339,7 +392,7 @@ async def test_notification_command_resets_backoff(
     test_user_info,
     running_penny,
 ):
-    """Commands (like /learn) reset notification backoff, not just regular messages."""
+    """Commands (like /learn) should NOT reset notification backoff — only real messages do."""
     config = make_config()
 
     def handler(request: dict, count: int) -> dict:
@@ -374,7 +427,7 @@ async def test_notification_command_resets_backoff(
         result2 = await agent.execute()
         assert result2 is False
 
-        # --- User sends a command (not a message) → should also reset backoff ---
+        # --- User sends a command (not a message) → should NOT reset backoff ---
         penny.db.log_command(
             user=TEST_SENDER,
             channel_type="signal",
@@ -383,11 +436,10 @@ async def test_notification_command_resets_backoff(
             response="Okay, I'll learn more about kef speakers",
         )
 
-        # --- Cycle 3: notification sent (backoff reset by command) ---
+        # --- Cycle 3: still suppressed (command does not reset backoff) ---
         signal_server.outgoing_messages.clear()
         result3 = await agent.execute()
-        assert result3 is True
-        assert len(signal_server.outgoing_messages) == 1
+        assert result3 is False
 
 
 @pytest.mark.asyncio

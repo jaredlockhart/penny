@@ -132,6 +132,7 @@ class Entity(SQLModel, table=True):
     embedding: bytes | None = None  # Serialized float32 embedding vector
     tagline: str | None = None  # Short disambiguating summary (e.g., "british prog rock band")
     last_enriched_at: datetime | None = None  # When this entity was last enriched
+    last_notified_at: datetime | None = None  # When this entity was last included in a notification
 
 
 class Engagement(SQLModel, table=True):

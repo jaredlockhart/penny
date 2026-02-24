@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 import math
 import re
+import time
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Fact
@@ -86,7 +86,7 @@ class EnrichAgent(Agent):
     def __init__(self, search_tool: Tool | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._search_tool = search_tool
-        self._backoff = BackoffState()
+        self._last_enrich_time: float | None = None
 
     @property
     def name(self) -> str:
@@ -94,26 +94,16 @@ class EnrichAgent(Agent):
         return "enrich"
 
     def _should_enrich(self) -> bool:
-        """Check if enough time has elapsed since the last enrichment search."""
-        latest = self._latest_user_interaction()
-        return self._backoff.should_act(latest)
+        """Check if the fixed enrichment interval has elapsed."""
+        if self._last_enrich_time is None:
+            return True
+        elapsed = time.monotonic() - self._last_enrich_time
+        return elapsed >= self.config.runtime.ENRICHMENT_INTERVAL
 
     def _mark_enrichment_done(self) -> None:
-        """Record that an enrichment search was performed and increase backoff."""
-        self._backoff.mark_done(
-            self.config.runtime.ENRICHMENT_INITIAL_BACKOFF,
-            self.config.runtime.ENRICHMENT_MAX_BACKOFF,
-        )
-        logger.info("Enrichment backoff set to %.0fs", self._backoff.backoff_seconds)
-
-    def _latest_user_interaction(self) -> datetime | None:
-        """Find the most recent interaction time across all users."""
-        latest: datetime | None = None
-        for user in self.db.get_all_senders():
-            t = self.db.get_latest_user_interaction_time(user)
-            if t is not None and (latest is None or t > latest):
-                latest = t
-        return latest
+        """Record that an enrichment search was performed."""
+        self._last_enrich_time = time.monotonic()
+        logger.info("Enrichment done, next in %.0fs", self.config.runtime.ENRICHMENT_INTERVAL)
 
     async def execute(self) -> bool:
         """Run one cycle of the learn agent.
@@ -243,6 +233,15 @@ class EnrichAgent(Agent):
 
                 facts = self.db.get_entity_facts(entity.id)
                 fact_count = len(facts)
+
+                # Skip entities with unannounced facts — notification hasn't
+                # surfaced them yet, so don't pile on more.
+                if any(f.notified_at is None for f in facts):
+                    logger.debug(
+                        "EnrichAgent: skipping '%s' (has unannounced facts)",
+                        entity.name,
+                    )
+                    continue
 
                 # Log-diminishing returns: high-interest entities stay on top,
                 # but gradually yield as facts accumulate, allowing rotation.
