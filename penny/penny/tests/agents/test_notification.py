@@ -834,3 +834,92 @@ async def test_learn_completion_sends_one_per_cycle(
         # Both now announced
         prompts = penny.db.get_unannounced_completed_learn_prompts(TEST_SENDER)
         assert len(prompts) == 0
+
+
+@pytest.mark.asyncio
+async def test_notification_skips_same_learn_topic_after_notifying(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """After notifying about entity A from learn topic X, skip entity B from same topic X.
+
+    When two entities share the same learn_prompt_id, notifying about one should
+    suppress notifications for the other on the very next cycle — the learn completion
+    announcement will surface all entities from the topic together.
+    """
+    config = make_config(notification_initial_backoff=0.05)
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Here's an interesting discovery — some really great new facts about this topic!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.mark_messages_processed([msg_id])
+
+        # Create a learn prompt and two entities with facts from it
+        lp = penny.db.create_learn_prompt(
+            user=TEST_SENDER,
+            prompt_text="audiophile speakers",
+            searches_remaining=0,
+        )
+        assert lp is not None and lp.id is not None
+
+        penny.db.log_search(
+            query="audiophile speakers",
+            response="KEF and Focal make great speakers...",
+            trigger="learn_command",
+            learn_prompt_id=lp.id,
+        )
+        search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
+        assert len(search_logs) == 1
+        sl_id = search_logs[0].id
+
+        # Entity A: older fact from this learn topic
+        entity_a = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        assert entity_a is not None and entity_a.id is not None
+        penny.db.add_fact(
+            entity_a.id, "KEF LS50 Meta uses MAT technology", source_search_log_id=sl_id
+        )
+
+        # Entity B: newer fact from the SAME learn topic
+        entity_b = penny.db.get_or_create_entity(TEST_SENDER, "focal clear mg")
+        assert entity_b is not None and entity_b.id is not None
+        penny.db.add_fact(
+            entity_b.id, "Focal Clear MG uses magnesium drivers", source_search_log_id=sl_id
+        )
+
+        agent = _create_notification_agent(penny, config)
+
+        # Cycle 1: entity B picked (newest fact) and notified
+        signal_server.outgoing_messages.clear()
+        result1 = await agent.execute()
+        assert result1 is True
+        assert len(signal_server.outgoing_messages) == 1
+
+        # Verify entity B was the one notified (newest fact)
+        facts_b = penny.db.get_entity_facts(entity_b.id)
+        assert any(f.notified_at is not None for f in facts_b)
+
+        # Wait for initial_backoff (50ms) to pass before next cycle
+        interaction_recorded = datetime.now(UTC)
+        await wait_until(lambda: (datetime.now(UTC) - interaction_recorded).total_seconds() >= 0.1)
+
+        # Cycle 2: entity A shares the same learn topic as entity B (just notified)
+        # → should be SKIPPED even though it has unnotified facts
+        signal_server.outgoing_messages.clear()
+        result2 = await agent.execute()
+        assert result2 is False
+        assert len(signal_server.outgoing_messages) == 0
+
+        # Entity A still has unnotified facts (it was skipped, not notified)
+        facts_a = penny.db.get_entity_facts(entity_a.id)
+        assert all(f.notified_at is None for f in facts_a)
