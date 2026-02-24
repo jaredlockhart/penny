@@ -856,54 +856,127 @@ class ExtractionPipeline(Agent):
                             threshold,
                         )
 
-        # Commit survivors: create entity, store facts, record engagement
+        # Commit survivors sequentially: for each candidate, build its full
+        # embedding (name + tagline + facts), check dedup against all existing
+        # entities in the DB (including earlier candidates committed this batch),
+        # then either merge into the dupe or create a new entity.
         committed: list[Entity] = []
         for candidate, score in survivors_with_scores:
-            entity = self.db.get_or_create_entity(user, candidate.name)
-            if not entity or entity.id is None:
-                continue
-            logger.info("New entity discovered: '%s'", candidate.name)
-
-            # Store tagline if available
-            if candidate.tagline and entity.tagline is None:
-                self.db.update_entity_tagline(entity.id, candidate.tagline)
-                entity.tagline = candidate.tagline
-                logger.info("Tagline for '%s': '%s'", candidate.name, candidate.tagline)
-
-            # Batch-embed and store facts
-            fact_embeddings: list[bytes | None] = [None] * len(candidate.facts)
+            # Build full embed text and embedding for dedup comparison
+            candidate_embed_text = build_entity_embed_text(
+                candidate.name, candidate.facts, candidate.tagline
+            )
+            candidate_embedding: list[float] | None = None
             if self._embedding_model_client:
                 try:
-                    fact_vecs = await self._embedding_model_client.embed(candidate.facts)
-                    fact_embeddings = [serialize_embedding(v) for v in fact_vecs]
-                except Exception as e:
-                    logger.warning("Failed to embed facts for '%s': %s", candidate.name, e)
+                    vecs = await self._embedding_model_client.embed([candidate_embed_text])
+                    candidate_embedding = vecs[0]
+                except Exception:
+                    logger.debug(
+                        "Failed to embed candidate '%s' for dedup", candidate.name, exc_info=True
+                    )
 
-            for fact_text, emb in zip(candidate.facts, fact_embeddings, strict=True):
-                self.db.add_fact(
-                    entity_id=entity.id,
-                    content=fact_text,
-                    source_search_log_id=source_search_log_id,
-                    source_message_id=source_message_id,
-                    embedding=emb,
-                    notified_at=notified_at,
+            # Check dedup against all existing entities (refreshed each iteration
+            # to include entities committed earlier in this same loop)
+            existing_entities = self.db.get_user_entities(user)
+            duplicate = self._find_duplicate_entity(
+                candidate.name, candidate_embedding, existing_entities
+            )
+
+            if duplicate:
+                assert duplicate.id is not None
+                logger.info(
+                    "Post-fact dedup: '%s' merges into existing '%s'",
+                    candidate.name,
+                    duplicate.name,
                 )
-                logger.info("  '%s' +fact: %s", candidate.name, fact_text)
+                # Merge facts into the existing entity (with fact-level dedup)
+                existing_facts = self.db.get_entity_facts(duplicate.id)
+                new_fact_texts = await self._dedup_facts(candidate.facts, existing_facts)
 
-            committed.append(entity)
+                if new_fact_texts:
+                    fact_embeddings: list[bytes | None] = [None] * len(new_fact_texts)
+                    if self._embedding_model_client:
+                        try:
+                            fact_vecs = await self._embedding_model_client.embed(new_fact_texts)
+                            fact_embeddings = [serialize_embedding(v) for v in fact_vecs]
+                        except Exception as e:
+                            logger.warning("Failed to embed facts for '%s': %s", duplicate.name, e)
 
-            if record_discovery_score and score > 0.0:
-                self.db.add_engagement(
-                    user=user,
-                    engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
-                    valence=PennyConstants.EngagementValence.POSITIVE,
-                    strength=score,
-                    entity_id=entity.id,
-                )
+                    for fact_text, emb in zip(new_fact_texts, fact_embeddings, strict=True):
+                        self.db.add_fact(
+                            entity_id=duplicate.id,
+                            content=fact_text,
+                            source_search_log_id=source_search_log_id,
+                            source_message_id=source_message_id,
+                            embedding=emb,
+                            notified_at=notified_at,
+                        )
+                        logger.info("  '%s' +fact (merged): %s", duplicate.name, fact_text)
 
-        # Regenerate entity embeddings for all committed entities
-        if self._embedding_model_client and committed:
-            await self._update_entity_embeddings(committed)
+                    # Regenerate embedding for the merged entity
+                    if self._embedding_model_client:
+                        await self._update_entity_embeddings([duplicate])
+
+                committed.append(duplicate)
+
+                if record_discovery_score and score > 0.0:
+                    self.db.add_engagement(
+                        user=user,
+                        engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
+                        valence=PennyConstants.EngagementValence.POSITIVE,
+                        strength=score,
+                        entity_id=duplicate.id,
+                    )
+            else:
+                entity = self.db.get_or_create_entity(user, candidate.name)
+                if not entity or entity.id is None:
+                    continue
+                logger.info("New entity discovered: '%s'", candidate.name)
+
+                # Store tagline if available
+                if candidate.tagline and entity.tagline is None:
+                    self.db.update_entity_tagline(entity.id, candidate.tagline)
+                    entity.tagline = candidate.tagline
+                    logger.info("Tagline for '%s': '%s'", candidate.name, candidate.tagline)
+
+                # Embed and store facts
+                fact_embeddings = [None] * len(candidate.facts)
+                if self._embedding_model_client:
+                    try:
+                        fact_vecs = await self._embedding_model_client.embed(candidate.facts)
+                        fact_embeddings = [serialize_embedding(v) for v in fact_vecs]
+                    except Exception as e:
+                        logger.warning("Failed to embed facts for '%s': %s", candidate.name, e)
+
+                for fact_text, emb in zip(candidate.facts, fact_embeddings, strict=True):
+                    self.db.add_fact(
+                        entity_id=entity.id,
+                        content=fact_text,
+                        source_search_log_id=source_search_log_id,
+                        source_message_id=source_message_id,
+                        embedding=emb,
+                        notified_at=notified_at,
+                    )
+                    logger.info("  '%s' +fact: %s", candidate.name, fact_text)
+
+                # Compute and store entity embedding immediately so subsequent
+                # candidates in this batch can dedup against it
+                if self._embedding_model_client and candidate_embedding is not None:
+                    self.db.update_entity_embedding(
+                        entity.id, serialize_embedding(candidate_embedding)
+                    )
+
+                committed.append(entity)
+
+                if record_discovery_score and score > 0.0:
+                    self.db.add_engagement(
+                        user=user,
+                        engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
+                        valence=PennyConstants.EngagementValence.POSITIVE,
+                        strength=score,
+                        entity_id=entity.id,
+                    )
 
         return committed
 
@@ -918,24 +991,43 @@ class ExtractionPipeline(Agent):
         Uses dual-threshold detection: token containment ratio (TCR) as a fast
         lexical pre-filter, then embedding cosine similarity for confirmation.
         Both signals must pass for a match.
+
+        Exception: when the shorter name is a single token (e.g. an acronym like
+        "clps" vs "commercial lunar payload services"), TCR is structurally blind
+        (zero shared tokens), so we skip it and rely on embedding similarity alone.
         """
         if candidate_embedding is None:
             return None
 
+        tcr_threshold = self.config.runtime.EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD
+        sim_threshold = self.config.runtime.EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD
+        candidate_tokens = tokenize_entity_name(candidate_name)
+
         for entity in existing_entities:
             if entity.embedding is None:
                 continue
-            tcr = token_containment_ratio(candidate_name, entity.name)
-            if tcr < self.config.runtime.EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD:
-                continue
+
+            entity_tokens = tokenize_entity_name(entity.name)
+            shorter_len = min(len(candidate_tokens), len(entity_tokens))
+
+            # Single-token names (acronyms, abbreviations): skip TCR, use
+            # embedding similarity only — TCR is meaningless with one token.
+            if shorter_len <= 1:
+                require_tcr = False
+            else:
+                tcr = token_containment_ratio(candidate_name, entity.name)
+                require_tcr = tcr >= tcr_threshold
+                if not require_tcr:
+                    continue
+
             entity_vec = deserialize_embedding(entity.embedding)
             sim = cosine_similarity(candidate_embedding, entity_vec)
-            if sim >= self.config.runtime.EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD:
+            if sim >= sim_threshold:
                 logger.info(
-                    "Dedup: '%s' matches existing '%s' (TCR=%.2f, sim=%.2f)",
+                    "Dedup: '%s' matches existing '%s' (single_token=%s, sim=%.2f)",
                     candidate_name,
                     entity.name,
-                    tcr,
+                    shorter_len <= 1,
                     sim,
                 )
                 return entity
