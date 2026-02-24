@@ -1,9 +1,63 @@
 """Integration tests for /schedule command."""
 
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from penny.database.models import UserInfo
 from penny.tests.conftest import TEST_SENDER
+
+
+def _is_schedule_due(cron_expression: str, now: datetime) -> bool:
+    """Helper that mirrors the fixed ScheduleExecutor firing logic."""
+    from croniter import croniter
+
+    cron = croniter(cron_expression, now - timedelta(seconds=60))
+    next_occurrence = cron.get_next(datetime)
+    return next_occurrence <= now
+
+
+def test_schedule_fires_at_exact_cron_time():
+    """Schedule must fire when checked at the exact scheduled second.
+
+    Regression test for the bug where croniter.get_prev(now) returned
+    yesterday's occurrence when 'now' exactly equalled the cron time,
+    causing the schedule to silently miss its tick.
+    """
+    tz = ZoneInfo("America/Los_Angeles")
+    # Exactly at 9:30:00 — this is the problematic case
+    now = datetime(2026, 2, 24, 9, 30, 0, tzinfo=tz)
+    assert _is_schedule_due("30 9 * * *", now), "Schedule should fire at the exact cron second"
+
+
+def test_schedule_fires_within_60_second_window():
+    """Schedule should fire for any check within the 60-second window."""
+    tz = ZoneInfo("America/Los_Angeles")
+    for offset_seconds in [0, 1, 30, 59]:
+        now = datetime(2026, 2, 24, 9, 30, offset_seconds, tzinfo=tz)
+        assert _is_schedule_due("30 9 * * *", now), (
+            f"Schedule should fire at +{offset_seconds}s past cron time"
+        )
+
+
+def test_schedule_does_not_fire_before_cron_time():
+    """Schedule must not fire before the cron time."""
+    tz = ZoneInfo("America/Los_Angeles")
+    for offset_seconds in [1, 30, 59]:
+        now = datetime(2026, 2, 24, 9, 29, 60 - offset_seconds, tzinfo=tz)
+        assert not _is_schedule_due("30 9 * * *", now), (
+            f"Schedule should NOT fire {offset_seconds}s before cron time"
+        )
+
+
+def test_schedule_does_not_fire_after_window():
+    """Schedule must not fire more than 60 seconds after the cron time."""
+    tz = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 2, 24, 9, 31, 0, tzinfo=tz)  # 60 seconds after 9:30
+    assert not _is_schedule_due("30 9 * * *", now), (
+        "Schedule should NOT fire 60 seconds after cron time"
+    )
 
 
 @pytest.mark.asyncio
