@@ -296,18 +296,10 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="ENRICHMENT_INITIAL_BACKOFF",
-    description="Initial backoff in seconds after an enrichment search",
+    key="ENRICHMENT_INTERVAL",
+    description="Fixed interval in seconds between enrichment searches",
     type=float,
-    default=300.0,
-    validator=_validate_positive_float,
-)
-
-ConfigParam(
-    key="ENRICHMENT_MAX_BACKOFF",
-    description="Maximum backoff cap in seconds for enrichment searches",
-    type=float,
-    default=3600.0,
+    default=900.0,
     validator=_validate_positive_float,
 )
 
@@ -315,7 +307,7 @@ ConfigParam(
     key="ENRICHMENT_ENTITY_COOLDOWN",
     description="Seconds an entity must wait after being enriched before it can be picked again",
     type=float,
-    default=3600.0,
+    default=604800.0,
     validator=_validate_positive_float,
 )
 
@@ -381,6 +373,14 @@ ConfigParam(
     type=int,
     default=75,
     validator=_validate_positive_int,
+)
+
+ConfigParam(
+    key="NOTIFICATION_ENTITY_COOLDOWN",
+    description="Seconds an entity must wait after being notified before it can be picked again",
+    type=float,
+    default=86400.0,
+    validator=_validate_positive_float,
 )
 
 ConfigParam(

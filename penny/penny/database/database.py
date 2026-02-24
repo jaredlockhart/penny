@@ -519,28 +519,18 @@ class Database:
             ).first()
 
     def get_latest_user_interaction_time(self, sender: str) -> datetime | None:
-        """Get the timestamp of the most recent user interaction (message or command).
+        """Get the timestamp of the most recent incoming user message.
+
+        Used by backoff logic to detect user engagement — only real messages
+        (not slash commands) should signal active conversation and reset backoff.
 
         Args:
             sender: The user's identifier
 
         Returns:
-            Most recent timestamp from either MessageLog or CommandLog, or None
+            Most recent incoming message timestamp, or None
         """
-        msg_time = self.get_latest_incoming_message_time(sender)
-        with self.get_session() as session:
-            cmd_time = session.exec(
-                select(CommandLog.timestamp)
-                .where(CommandLog.user == sender)
-                .order_by(CommandLog.timestamp.desc())  # type: ignore[unresolved-attribute]
-                .limit(1)
-            ).first()
-
-        if msg_time is None:
-            return cmd_time
-        if cmd_time is None:
-            return msg_time
-        return max(msg_time, cmd_time)
+        return self.get_latest_incoming_message_time(sender)
 
     def get_user_info(self, sender: str) -> UserInfo | None:
         """
@@ -1360,6 +1350,22 @@ class Database:
                     session.commit()
         except Exception as e:
             logger.error("Failed to update entity %d last_enriched_at: %s", entity_id, e)
+
+    def update_entity_last_notified_at(self, entity_id: int) -> None:
+        """Record that an entity was just included in a notification.
+
+        Args:
+            entity_id: Entity primary key
+        """
+        try:
+            with self.get_session() as session:
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.last_notified_at = datetime.now(UTC)
+                    session.add(entity)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update entity %d last_notified_at: %s", entity_id, e)
 
     def update_fact_embedding(self, fact_id: int, embedding: bytes) -> None:
         """Update the embedding for a fact.

@@ -1,8 +1,9 @@
 """Notification agent — owns all proactive messaging to users.
 
 Decoupled from extraction: the extraction pipeline stores facts silently,
-and this agent selects the most interesting un-notified discovery to
-surface on each cycle, gated by per-user exponential backoff.
+and this agent selects the entity with the newest un-notified facts to
+surface on each cycle, gated by per-user exponential backoff and a
+per-entity cooldown.
 """
 
 from __future__ import annotations
@@ -10,11 +11,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from datetime import UTC, datetime
 
 from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
-from penny.database.models import Fact, LearnPrompt
+from penny.database.models import Entity, Fact, LearnPrompt
 from penny.interest import compute_interest_score
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -23,10 +25,11 @@ logger = logging.getLogger(__name__)
 
 
 class NotificationAgent(Agent):
-    """Background agent that sends interest-ranked fact discovery notifications.
+    """Background agent that sends recency-ranked fact discovery notifications.
 
-    Queries for un-notified facts, groups by entity, picks the highest-interest
-    entity, composes a message, and sends it — one notification per cycle.
+    Queries for un-notified facts, picks the entity with the newest facts
+    (respecting a per-entity cooldown), composes a message, and sends
+    it — one notification per cycle.
 
     Also sends learn completion announcements when a /learn topic finishes
     extraction, summarizing discovered entities with fact counts and interest scores.
@@ -196,6 +199,8 @@ class NotificationAgent(Agent):
     async def _try_notify_user(self, user: str) -> bool:
         """Attempt to send one notification to this user.
 
+        Picks the entity with the newest unnotified fact (respecting per-entity
+        cooldown), announces all unnotified facts for that entity.
         Returns True if a notification was sent.
         """
         if not self._should_send(user):
@@ -206,23 +211,20 @@ class NotificationAgent(Agent):
             return False
 
         # Group facts by entity
-        facts_by_entity: dict[int, list] = defaultdict(list)
+        facts_by_entity: dict[int, list[Fact]] = defaultdict(list)
         for fact in unnotified:
             facts_by_entity[fact.entity_id].append(fact)
 
-        # Pick highest-interest entity
-        entity_id = self._pick_best_entity(user, list(facts_by_entity.keys()))
-        if entity_id is None:
-            return False
-
-        entity = self.db.get_entity(entity_id)
+        # Pick entity with newest unnotified fact, respecting cooldown
+        entity = self._pick_newest_entity(unnotified, facts_by_entity)
         if entity is None:
             return False
+        assert entity.id is not None
 
-        facts = facts_by_entity[entity_id]
+        facts = facts_by_entity[entity.id]
 
         # Determine if this is a new entity (no previously-notified facts)
-        all_facts = self.db.get_entity_facts(entity_id)
+        all_facts = self.db.get_entity_facts(entity.id)
         is_new = all(f.notified_at is None for f in all_facts)
 
         # Compose and send
@@ -230,14 +232,58 @@ class NotificationAgent(Agent):
         if not sent:
             return False
 
-        # Mark these facts as notified
+        # Mark these facts as notified + record entity notification time
         fact_ids = [f.id for f in facts if f.id is not None]
         self.db.mark_facts_notified(fact_ids)
+        self.db.update_entity_last_notified_at(entity.id)
 
         # Update backoff
         self._mark_proactive_sent(user)
 
         return True
+
+    def _pick_newest_entity(
+        self,
+        unnotified: list[Fact],
+        facts_by_entity: dict[int, list[Fact]],
+    ) -> Entity | None:
+        """Pick the entity with the newest unnotified fact, respecting cooldown.
+
+        Facts are ordered by learned_at DESC, so the first entity encountered
+        that is not in cooldown wins.
+        """
+        cooldown = self.config.runtime.NOTIFICATION_ENTITY_COOLDOWN
+        now = datetime.now(UTC)
+        seen: set[int] = set()
+
+        for fact in unnotified:
+            eid = fact.entity_id
+            if eid in seen:
+                continue
+            seen.add(eid)
+
+            entity = self.db.get_entity(eid)
+            if entity is None:
+                continue
+
+            # Check per-entity cooldown
+            if entity.last_notified_at is not None:
+                last = entity.last_notified_at
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=UTC)
+                elapsed = (now - last).total_seconds()
+                if elapsed < cooldown:
+                    logger.debug(
+                        "Notification: skipping '%s' (notified %.0fs ago, cooldown=%.0fs)",
+                        entity.name,
+                        elapsed,
+                        cooldown,
+                    )
+                    continue
+
+            return entity
+
+        return None
 
     def _should_send(self, user: str) -> bool:
         """Check if we should send proactive notifications to this user."""
@@ -257,30 +303,6 @@ class NotificationAgent(Agent):
             self.config.runtime.NOTIFICATION_INITIAL_BACKOFF,
             self.config.runtime.NOTIFICATION_MAX_BACKOFF,
         )
-
-    def _pick_best_entity(self, user: str, entity_ids: list[int]) -> int | None:
-        """Pick the entity with the highest interest score from candidates."""
-        if not entity_ids:
-            return None
-
-        all_engagements = self.db.get_user_engagements(user)
-        engagements_by_entity: dict[int, list] = defaultdict(list)
-        for eng in all_engagements:
-            if eng.entity_id is not None:
-                engagements_by_entity[eng.entity_id].append(eng)
-
-        best_id: int | None = None
-        best_score = float("-inf")
-        for eid in entity_ids:
-            score = compute_interest_score(
-                engagements_by_entity.get(eid, []),
-                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-            )
-            if score > best_score:
-                best_score = score
-                best_id = eid
-
-        return best_id
 
     def _get_learn_topic(self, facts: list[Fact]) -> str | None:
         """Trace facts back to a /learn prompt topic, if any.

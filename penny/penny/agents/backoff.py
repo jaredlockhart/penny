@@ -15,8 +15,7 @@ def _ensure_utc(dt: datetime) -> datetime:
 class BackoffState:
     """Exponential backoff that resets on user interaction.
 
-    Shared by NotificationAgent (one instance per user) and
-    EnrichAgent (single global instance).
+    Used by NotificationAgent (one instance per user).
 
     State machine:
         Initial (backoff=0) → first action sets backoff to `initial`.
