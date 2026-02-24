@@ -139,9 +139,9 @@ class BackgroundScheduler:
                             self._active_task = asyncio.create_task(agent.execute())
                             did_work = await self._active_task
                             self._last_run_times[agent.name] = time.monotonic()
+                            schedule.mark_complete()
 
                             if did_work:
-                                schedule.mark_complete()
                                 logger.info("Background task completed: %s", agent.name)
                                 break
                             # No work — skip to next eligible schedule

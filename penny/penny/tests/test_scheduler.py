@@ -8,6 +8,7 @@ import contextlib
 import pytest
 
 from penny.scheduler.base import BackgroundScheduler, Schedule
+from penny.scheduler.schedules import PeriodicSchedule
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -198,8 +199,8 @@ async def test_scheduler_skips_agents_with_no_work():
 
 
 @pytest.mark.asyncio
-async def test_scheduler_mark_complete_only_on_work():
-    """mark_complete is only called when an agent does real work."""
+async def test_scheduler_mark_complete_always_called():
+    """mark_complete is called after every execution, even when agent has no work."""
     agent_no_work = _SimpleAgent("no_work", return_value=False)
     agent_has_work = _SimpleAgent("has_work", return_value=True)
 
@@ -216,11 +217,44 @@ async def test_scheduler_mark_complete_only_on_work():
     try:
         await asyncio.sleep(0.1)
 
-        assert schedule_no_work.mark_complete_count == 0, (
-            "mark_complete should not be called for agents that return False"
+        assert schedule_no_work.mark_complete_count > 0, (
+            "mark_complete should be called even when agent returns False"
         )
         assert schedule_has_work.mark_complete_count > 0, (
-            "mark_complete should be called for agents that return True"
+            "mark_complete should be called when agent returns True"
+        )
+    finally:
+        scheduler.stop()
+        scheduler_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await scheduler_task
+
+
+@pytest.mark.asyncio
+async def test_periodic_schedule_interval_respected_without_work():
+    """PeriodicSchedule interval gates execution even when the agent has no work."""
+    agent = _SimpleAgent("idle_agent", return_value=False)
+    schedule = PeriodicSchedule(agent=agent, interval=0.5)  # type: ignore[arg-type]
+
+    scheduler = BackgroundScheduler(
+        schedules=[schedule],
+        idle_threshold=0.0,
+        tick_interval=0.01,
+    )
+
+    scheduler_task = asyncio.create_task(scheduler.run())
+    try:
+        # Let it run for 0.3s — should only get 1 execution (the first immediate run)
+        await asyncio.sleep(0.3)
+        count_at_300ms = agent.execute_count
+        assert count_at_300ms == 1, (
+            f"Expected 1 execution in first 0.3s (before interval), got {count_at_300ms}"
+        )
+
+        # After 0.5s total the interval elapses — should get a second execution
+        await asyncio.sleep(0.3)
+        assert agent.execute_count == 2, (
+            f"Expected 2 executions after interval elapsed, got {agent.execute_count}"
         )
     finally:
         scheduler.stop()
