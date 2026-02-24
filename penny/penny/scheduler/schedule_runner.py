@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -58,17 +58,15 @@ class ScheduleExecutor(Agent):
                     tz = ZoneInfo(sched.user_timezone)
                     now_in_user_tz = now_utc.astimezone(tz)
 
-                    # Parse cron expression
-                    cron = croniter(sched.cron_expression, now_in_user_tz)
+                    # Check if a cron occurrence falls within the past 60 seconds.
+                    # Strategy: find the *next* occurrence after (now - 60s) and check if
+                    # it's <= now. This correctly handles the exact boundary case where
+                    # 'now' equals the cron time — get_prev(now) skips the current second
+                    # and returns yesterday, but get_next(now - 60s) returns today's time.
+                    cron = croniter(sched.cron_expression, now_in_user_tz - timedelta(seconds=60))
+                    next_occurrence = cron.get_next(datetime)
 
-                    # Get previous scheduled time
-                    prev = cron.get_prev(datetime)
-
-                    # Check if prev is within the last 60 seconds (scheduler tick interval)
-                    # This ensures we fire schedules that became due since last check
-                    time_since_due = (now_in_user_tz - prev).total_seconds()
-
-                    if 0 <= time_since_due <= 60:
+                    if next_occurrence <= now_in_user_tz:
                         logger.info(
                             "Executing schedule: user=%s, timing=%s, prompt=%s",
                             sched.user_id,
