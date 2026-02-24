@@ -12,6 +12,26 @@ if TYPE_CHECKING:
 # Auto-populated by ConfigParam.__post_init__
 RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {}
 
+# Group names (display order)
+GROUP_GLOBAL = "Global"
+GROUP_SCHEDULE = "Schedule"
+GROUP_KNOWLEDGE = "Knowledge"
+GROUP_EXTRACTION = "Extraction"
+GROUP_NOTIFICATION = "Notification"
+GROUP_LEARN = "Learn"
+GROUP_ENRICHMENT = "Enrichment"
+
+# Ordered list for display
+CONFIG_GROUPS: list[str] = [
+    GROUP_GLOBAL,
+    GROUP_SCHEDULE,
+    GROUP_KNOWLEDGE,
+    GROUP_EXTRACTION,
+    GROUP_NOTIFICATION,
+    GROUP_LEARN,
+    GROUP_ENRICHMENT,
+]
+
 
 @dataclass
 class ConfigParam:
@@ -25,9 +45,21 @@ class ConfigParam:
     type: type  # int or float
     default: int | float  # Default value (single source of truth)
     validator: Callable[[str], int | float]  # Parses and validates value from string
+    group: str = GROUP_GLOBAL  # Display group for /config listing
 
     def __post_init__(self) -> None:
         RUNTIME_CONFIG_PARAMS[self.key] = self
+
+
+def get_params_by_group() -> list[tuple[str, list[ConfigParam]]]:
+    """Return params grouped by category in display order.
+
+    Within each group, params are sorted alphabetically by key.
+    """
+    groups: dict[str, list[ConfigParam]] = {g: [] for g in CONFIG_GROUPS}
+    for param in RUNTIME_CONFIG_PARAMS.values():
+        groups[param.group].append(param)
+    return [(g, sorted(groups[g], key=lambda p: p.key)) for g in CONFIG_GROUPS if groups[g]]
 
 
 def _validate_positive_int(value: str) -> int:
@@ -69,174 +101,15 @@ def _validate_unit_float(value: str) -> float:
     return parsed
 
 
-# Runtime configurable parameters (alphabetical order)
+# ── Global ────────────────────────────────────────────────────────────────────
 
 ConfigParam(
-    key="EMBEDDING_BACKFILL_BATCH_LIMIT",
-    description="Max facts/entities per embedding backfill cycle",
-    type=int,
-    default=50,
-    validator=_validate_positive_int,
-)
-
-ConfigParam(
-    key="EMAIL_BODY_MAX_LENGTH",
-    description="Max character length for email body content",
-    type=int,
-    default=4000,
-    validator=_validate_positive_int,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL",
-    description="Engagement strength for normal emoji reactions",
-    type=float,
-    default=0.3,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE",
-    description="Engagement strength for proactive emoji reactions",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE",
-    description="Engagement strength for proactive negative emoji reactions",
-    type=float,
-    default=0.8,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT",
-    description="Engagement strength for explicit positive/negative statements",
-    type=float,
-    default=0.7,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION",
-    description="Engagement strength for follow-up questions",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_USER_SEARCH",
-    description="Engagement strength for user-initiated searches (/learn and message searches)",
-    type=float,
-    default=1.0,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_MESSAGE_MENTION",
-    description="Engagement strength for entity mentions in messages",
-    type=float,
-    default=0.2,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="ENTITY_CONTEXT_MAX_FACTS",
-    description="Max facts per entity in message context",
+    key="MESSAGE_MAX_STEPS",
+    description="Max agent loop steps per message",
     type=int,
     default=5,
     validator=_validate_positive_int,
-)
-
-ConfigParam(
-    key="ENTITY_CONTEXT_THRESHOLD",
-    description="Cosine similarity threshold for entity context injection",
-    type=float,
-    default=0.3,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="ENTITY_CONTEXT_TOP_K",
-    description="Number of top similar entities to inject into message context",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-)
-
-ConfigParam(
-    key="ENTITY_EXTRACTION_BATCH_LIMIT",
-    description="Max search logs processed per extraction cycle",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-)
-
-ConfigParam(
-    key="EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD",
-    description="Embedding similarity threshold for entity deduplication",
-    type=float,
-    default=0.85,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD",
-    description="Token containment ratio threshold for entity deduplication",
-    type=float,
-    default=0.6,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="EXTRACTION_ENTITY_SEMANTIC_THRESHOLD",
-    description="Cosine similarity threshold for semantic entity name validation",
-    type=float,
-    default=0.50,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD",
-    description="Embedding similarity threshold for fact deduplication",
-    type=float,
-    default=0.85,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="EXTRACTION_MIN_MESSAGE_LENGTH",
-    description="Minimum character length for messages to be processed for extraction",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-)
-
-ConfigParam(
-    key="EXTRACTION_PREFILTER_MIN_COUNT",
-    description="Minimum known-entity count before pre-filtering is applied",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-)
-
-ConfigParam(
-    key="EXTRACTION_PREFILTER_SIMILARITY_THRESHOLD",
-    description="Cosine similarity threshold for entity pre-filtering",
-    type=float,
-    default=0.2,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="IDLE_SECONDS",
-    description="Global idle threshold in seconds",
-    type=float,
-    default=60.0,
-    validator=_validate_positive_float,
+    group=GROUP_GLOBAL,
 )
 
 ConfigParam(
@@ -245,6 +118,7 @@ ConfigParam(
     type=float,
     default=15.0,
     validator=_validate_positive_float,
+    group=GROUP_GLOBAL,
 )
 
 ConfigParam(
@@ -253,14 +127,16 @@ ConfigParam(
     type=int,
     default=3,
     validator=_validate_positive_int,
+    group=GROUP_GLOBAL,
 )
 
 ConfigParam(
-    key="INTEREST_SCORE_HALF_LIFE_DAYS",
-    description="Half-life in days for interest score recency decay",
-    type=float,
-    default=30.0,
-    validator=_validate_positive_float,
+    key="EMAIL_BODY_MAX_LENGTH",
+    description="Max character length for email body content",
+    type=int,
+    default=4000,
+    validator=_validate_positive_int,
+    group=GROUP_GLOBAL,
 )
 
 ConfigParam(
@@ -269,70 +145,27 @@ ConfigParam(
     type=float,
     default=30.0,
     validator=_validate_positive_float,
+    group=GROUP_GLOBAL,
 )
 
 ConfigParam(
-    key="KNOWLEDGE_SUFFICIENT_MIN_FACTS",
-    description="Min facts for entity context to be considered sufficient",
+    key="EMBEDDING_BACKFILL_BATCH_LIMIT",
+    description="Max facts/entities per embedding backfill cycle",
     type=int,
-    default=3,
+    default=50,
     validator=_validate_positive_int,
+    group=GROUP_GLOBAL,
 )
 
+# ── Schedule ──────────────────────────────────────────────────────────────────
+
 ConfigParam(
-    key="KNOWLEDGE_SUFFICIENT_MIN_SCORE",
-    description="Min similarity score for entity context to be considered sufficient",
+    key="IDLE_SECONDS",
+    description="Global idle threshold in seconds",
     type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-)
-
-ConfigParam(
-    key="LEARN_ENRICHMENT_FACT_THRESHOLD",
-    description="Fact count below which an entity enters enrichment mode",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-)
-
-ConfigParam(
-    key="ENRICHMENT_INTERVAL",
-    description="Fixed interval in seconds between enrichment searches",
-    type=float,
-    default=900.0,
+    default=60.0,
     validator=_validate_positive_float,
-)
-
-ConfigParam(
-    key="ENRICHMENT_ENTITY_COOLDOWN",
-    description="Seconds an entity must wait after being enriched before it can be picked again",
-    type=float,
-    default=604800.0,
-    validator=_validate_positive_float,
-)
-
-ConfigParam(
-    key="LEARN_MIN_INTEREST_SCORE",
-    description="Minimum interest score for an entity to be considered for enrichment",
-    type=float,
-    default=0.3,
-    validator=_validate_positive_float,
-)
-
-ConfigParam(
-    key="LEARN_PROMPT_DEFAULT_SEARCHES",
-    description="Number of searches performed per /learn command",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-)
-
-ConfigParam(
-    key="LEARN_STATUS_DISPLAY_LIMIT",
-    description="Max learn prompts shown in /learn status",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
+    group=GROUP_SCHEDULE,
 )
 
 ConfigParam(
@@ -341,15 +174,212 @@ ConfigParam(
     type=float,
     default=10.0,
     validator=_validate_positive_float,
+    group=GROUP_SCHEDULE,
 )
 
+# ── Knowledge ─────────────────────────────────────────────────────────────────
+
 ConfigParam(
-    key="MESSAGE_MAX_STEPS",
-    description="Max agent loop steps per message",
+    key="ENTITY_CONTEXT_MAX_FACTS",
+    description="Max facts per entity in message context",
     type=int,
     default=5,
     validator=_validate_positive_int,
+    group=GROUP_KNOWLEDGE,
 )
+
+ConfigParam(
+    key="ENTITY_CONTEXT_THRESHOLD",
+    description="Cosine similarity threshold for entity context injection",
+    type=float,
+    default=0.3,
+    validator=_validate_unit_float,
+    group=GROUP_KNOWLEDGE,
+)
+
+ConfigParam(
+    key="ENTITY_CONTEXT_TOP_K",
+    description="Number of top similar entities to inject into message context",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_KNOWLEDGE,
+)
+
+ConfigParam(
+    key="KNOWLEDGE_SUFFICIENT_MIN_FACTS",
+    description="Min facts for entity context to be considered sufficient",
+    type=int,
+    default=3,
+    validator=_validate_positive_int,
+    group=GROUP_KNOWLEDGE,
+)
+
+ConfigParam(
+    key="KNOWLEDGE_SUFFICIENT_MIN_SCORE",
+    description="Min similarity score for entity context to be considered sufficient",
+    type=float,
+    default=0.5,
+    validator=_validate_unit_float,
+    group=GROUP_KNOWLEDGE,
+)
+
+ConfigParam(
+    key="INTEREST_SCORE_HALF_LIFE_DAYS",
+    description="Half-life in days for interest score recency decay",
+    type=float,
+    default=30.0,
+    validator=_validate_positive_float,
+    group=GROUP_KNOWLEDGE,
+)
+
+# ── Extraction ────────────────────────────────────────────────────────────────
+
+ConfigParam(
+    key="ENTITY_EXTRACTION_BATCH_LIMIT",
+    description="Max search logs processed per extraction cycle",
+    type=int,
+    default=10,
+    validator=_validate_positive_int,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="MESSAGE_EXTRACTION_BATCH_LIMIT",
+    description="Max messages/reactions processed per user per extraction cycle",
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="EXTRACTION_MIN_MESSAGE_LENGTH",
+    description="Minimum character length for messages to be processed for extraction",
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="EXTRACTION_PREFILTER_MIN_COUNT",
+    description="Minimum known-entity count before pre-filtering is applied",
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="EXTRACTION_PREFILTER_SIMILARITY_THRESHOLD",
+    description="Cosine similarity threshold for entity pre-filtering",
+    type=float,
+    default=0.2,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="EXTRACTION_ENTITY_SEMANTIC_THRESHOLD",
+    description="Cosine similarity threshold for semantic entity name validation",
+    type=float,
+    default=0.50,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD",
+    description="Embedding similarity threshold for entity deduplication",
+    type=float,
+    default=0.85,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD",
+    description="Token containment ratio threshold for entity deduplication",
+    type=float,
+    default=0.6,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD",
+    description="Embedding similarity threshold for fact deduplication",
+    type=float,
+    default=0.85,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL",
+    description="Engagement strength for normal emoji reactions",
+    type=float,
+    default=0.3,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE",
+    description="Engagement strength for proactive emoji reactions",
+    type=float,
+    default=0.5,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE",
+    description="Engagement strength for proactive negative emoji reactions",
+    type=float,
+    default=0.8,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT",
+    description="Engagement strength for explicit positive/negative statements",
+    type=float,
+    default=0.7,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION",
+    description="Engagement strength for follow-up questions",
+    type=float,
+    default=0.5,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="ENGAGEMENT_STRENGTH_USER_SEARCH",
+    description="Engagement strength for user-initiated searches (/learn and message searches)",
+    type=float,
+    default=1.0,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
+    key="ENGAGEMENT_STRENGTH_MESSAGE_MENTION",
+    description="Engagement strength for entity mentions in messages",
+    type=float,
+    default=0.2,
+    validator=_validate_unit_float,
+    group=GROUP_EXTRACTION,
+)
+
+# ── Notification ──────────────────────────────────────────────────────────────
 
 ConfigParam(
     key="NOTIFICATION_INITIAL_BACKOFF",
@@ -357,6 +387,7 @@ ConfigParam(
     type=float,
     default=300.0,
     validator=_validate_positive_float,
+    group=GROUP_NOTIFICATION,
 )
 
 ConfigParam(
@@ -365,6 +396,7 @@ ConfigParam(
     type=float,
     default=3600.0,
     validator=_validate_positive_float,
+    group=GROUP_NOTIFICATION,
 )
 
 ConfigParam(
@@ -373,6 +405,7 @@ ConfigParam(
     type=int,
     default=75,
     validator=_validate_positive_int,
+    group=GROUP_NOTIFICATION,
 )
 
 ConfigParam(
@@ -381,14 +414,65 @@ ConfigParam(
     type=float,
     default=86400.0,
     validator=_validate_positive_float,
+    group=GROUP_NOTIFICATION,
+)
+
+# ── Learn ─────────────────────────────────────────────────────────────────────
+
+ConfigParam(
+    key="LEARN_PROMPT_DEFAULT_SEARCHES",
+    description="Number of searches performed per /learn command",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_LEARN,
 )
 
 ConfigParam(
-    key="PREFERENCE_BATCH_LIMIT",
-    description="Max messages/reactions processed per user per extraction cycle",
+    key="LEARN_STATUS_DISPLAY_LIMIT",
+    description="Max learn prompts shown in /learn status",
     type=int,
-    default=20,
+    default=10,
     validator=_validate_positive_int,
+    group=GROUP_LEARN,
+)
+
+# ── Enrichment ────────────────────────────────────────────────────────────────
+
+ConfigParam(
+    key="ENRICHMENT_INTERVAL",
+    description="Fixed interval in seconds between enrichment searches",
+    type=float,
+    default=900.0,
+    validator=_validate_positive_float,
+    group=GROUP_ENRICHMENT,
+)
+
+ConfigParam(
+    key="ENRICHMENT_ENTITY_COOLDOWN",
+    description="Seconds an entity must wait after being enriched before it can be picked again",
+    type=float,
+    default=604800.0,
+    validator=_validate_positive_float,
+    group=GROUP_ENRICHMENT,
+)
+
+ConfigParam(
+    key="LEARN_ENRICHMENT_FACT_THRESHOLD",
+    description="Fact count below which an entity enters enrichment mode",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_ENRICHMENT,
+)
+
+ConfigParam(
+    key="LEARN_MIN_INTEREST_SCORE",
+    description="Minimum interest score for an entity to be considered for enrichment",
+    type=float,
+    default=0.3,
+    validator=_validate_positive_float,
+    group=GROUP_ENRICHMENT,
 )
 
 

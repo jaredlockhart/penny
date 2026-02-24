@@ -25,9 +25,9 @@ class EmailCommand(Command):
         "Ask a question about your email and Penny will search and read "
         "relevant messages to find the answer.\n\n"
         "Examples:\n"
-        "- /email what packages am I expecting\n"
-        "- /email when is my dentist appointment\n"
-        "- /email any emails from mom this week"
+        "• /email what packages am I expecting\n"
+        "• /email when is my dentist appointment\n"
+        "• /email any emails from mom this week"
     )
 
     def __init__(self, fastmail_api_token: str) -> None:

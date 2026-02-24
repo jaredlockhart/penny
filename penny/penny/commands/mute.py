@@ -16,8 +16,8 @@ class MuteCommand(Command):
         "Mute proactive notifications like fact discoveries and learn completion "
         "announcements. Scheduled tasks and replies to your messages are not affected.\n\n"
         "**Usage**:\n"
-        "- `/mute` — Mute notifications\n"
-        "- `/unmute` — Unmute notifications"
+        "• `/mute` — Mute notifications\n"
+        "• `/unmute` — Unmute notifications"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:

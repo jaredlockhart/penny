@@ -15,11 +15,11 @@ class UnlearnCommand(Command):
     help_text = (
         "Remove a past learn topic and delete all entities and facts discovered from it.\n\n"
         "**Usage**:\n"
-        "- `/unlearn` — List all past learn topics (numbered, most recent first)\n"
-        "- `/unlearn <number>` — Delete that topic and everything discovered from it\n\n"
+        "• `/unlearn` — List all past learn topics (numbered, most recent first)\n"
+        "• `/unlearn <number>` — Delete that topic and everything discovered from it\n\n"
         "**Examples**:\n"
-        "- `/unlearn`\n"
-        "- `/unlearn 3`"
+        "• `/unlearn`\n"
+        "• `/unlearn 3`"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:

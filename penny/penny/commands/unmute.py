@@ -15,7 +15,7 @@ class UnmuteCommand(Command):
     help_text = (
         "Re-enable proactive notifications after muting them with /mute.\n\n"
         "**Usage**:\n"
-        "- `/unmute` — Unmute notifications"
+        "• `/unmute` — Unmute notifications"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:

@@ -21,8 +21,8 @@ class IndexCommand(Command):
         "Lists all available commands with their descriptions, or shows detailed help "
         "for a specific command.\n\n"
         "**Usage**:\n"
-        "- `/commands` — List all available commands\n"
-        "- `/commands <command>` — Show detailed help for a specific command"
+        "• `/commands` — List all available commands\n"
+        "• `/commands <command>` — Show detailed help for a specific command"
     )
 
     def __init__(self, registry: CommandRegistry):
@@ -38,7 +38,7 @@ class IndexCommand(Command):
             commands = self._registry.list_all()
             lines = [PennyResponse.COMMANDS_HEADER, ""]
             for cmd in sorted(commands, key=lambda c: c.name):
-                lines.append(f"- **/{cmd.name}** — {cmd.description}")
+                lines.append(f"• **/{cmd.name}** — {cmd.description}")
             return CommandResult(text="\n".join(lines))
 
         # Otherwise, show help for specific command

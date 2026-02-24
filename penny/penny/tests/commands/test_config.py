@@ -15,8 +15,15 @@ async def test_config_list(signal_server, test_config, mock_ollama, running_penn
         # Wait for response
         response = await signal_server.wait_for_message(timeout=5.0)
 
-        # Should list all config parameters
+        # Should list all config parameters grouped by agent/feature
         assert "**Runtime Configuration**" in response["message"]
+        assert "**Global**" in response["message"]
+        assert "**Schedule**" in response["message"]
+        assert "**Knowledge**" in response["message"]
+        assert "**Extraction**" in response["message"]
+        assert "**Notification**" in response["message"]
+        assert "**Learn**" in response["message"]
+        assert "**Enrichment**" in response["message"]
         assert "MESSAGE_MAX_STEPS" in response["message"]
         assert "IDLE_SECONDS" in response["message"]
         assert "ENRICHMENT_INTERVAL" in response["message"]

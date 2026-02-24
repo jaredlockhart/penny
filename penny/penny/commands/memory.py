@@ -22,13 +22,13 @@ class MemoryCommand(Command):
     help_text = (
         "View what Penny has learned from searches, or manage stored knowledge.\n\n"
         "**Usage**:\n"
-        "- `/memory` — List all remembered entities ranked by interest\n"
-        "- `/memory <number>` — Show details for an entity\n"
-        "- `/memory <number> delete` — Delete an entity and its facts\n\n"
+        "• `/memory` — List all remembered entities ranked by interest\n"
+        "• `/memory <number>` — Show details for an entity\n"
+        "• `/memory <number> delete` — Delete an entity and its facts\n\n"
         "**Examples**:\n"
-        "- `/memory`\n"
-        "- `/memory 1`\n"
-        "- `/memory 3 delete`"
+        "• `/memory`\n"
+        "• `/memory 1`\n"
+        "• `/memory 3 delete`"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:

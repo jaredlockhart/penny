@@ -58,11 +58,12 @@ class PennyResponse:
     # ── Config ───────────────────────────────────────────────────────────────
 
     CONFIG_HEADER = "**Runtime Configuration**"
+    CONFIG_GROUP_HEADER = "**{group}**"
     CONFIG_FOOTER = "Use `/config <key> <value>` to change a setting."
     CONFIG_UNKNOWN_PARAM = (
         "Unknown config parameter: {key}\nUse /config to see all available parameters."
     )
-    CONFIG_PARAM_DISPLAY = "- **{key}**: {value} ({description})"
+    CONFIG_PARAM_DISPLAY = "• **{key}**: {value} ({description})"
     CONFIG_INVALID_VALUE = "Invalid value for {key}: {error}"
     CONFIG_UPDATED = "Ok, updated {key} to {value}"
 
@@ -168,10 +169,10 @@ class PennyResponse:
 """
     DEBUG_UPTIME = "{days} days, {hours} hours, {minutes} minutes"
     DEBUG_NO_SCHEDULER = "Unknown (no scheduler)"
-    DEBUG_TASK_NEVER = "- **{name}**: never run"
-    DEBUG_TASK_SECONDS = "- **{name}**: {seconds}s ago"
-    DEBUG_TASK_MINUTES = "- **{name}**: {minutes}m ago"
-    DEBUG_TASK_HOURS = "- **{name}**: {hours}h ago"
+    DEBUG_TASK_NEVER = "• **{name}**: never run"
+    DEBUG_TASK_SECONDS = "• **{name}**: {seconds}s ago"
+    DEBUG_TASK_MINUTES = "• **{name}**: {minutes}m ago"
+    DEBUG_TASK_HOURS = "• **{name}**: {hours}h ago"
 
     # ── Commands Index ───────────────────────────────────────────────────────
 
