@@ -379,10 +379,12 @@ class Penny:
             if not facts:
                 break
             try:
-                vecs = await self.embedding_model_client.embed([f.content for f in facts])
-                for fact, vec in zip(facts, vecs, strict=True):
+                fact_texts = [f.content for f in facts]
+                vecs = await self.embedding_model_client.embed(fact_texts)
+                for fact, vec, text in zip(facts, vecs, fact_texts, strict=True):
                     assert fact.id is not None
                     self.db.update_fact_embedding(fact.id, serialize_embedding(vec))
+                    logger.info("Embedded fact %d: %s", fact.id, text[:120])
                 total_facts += len(facts)
             except Exception as e:
                 logger.warning("Startup embedding backfill failed for facts: %s", e)
@@ -405,9 +407,10 @@ class Penny:
                         )
                     )
                 vecs = await self.embedding_model_client.embed(texts)
-                for entity, vec in zip(entities, vecs, strict=True):
+                for entity, vec, text in zip(entities, vecs, texts, strict=True):
                     assert entity.id is not None
                     self.db.update_entity_embedding(entity.id, serialize_embedding(vec))
+                    logger.info("Embedded entity %d: %s", entity.id, text[:120])
                 total_entities += len(entities)
             except Exception as e:
                 logger.warning("Startup embedding backfill failed for entities: %s", e)
