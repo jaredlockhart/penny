@@ -278,7 +278,7 @@ class ExtractionPipeline(Agent):
 
     async def _process_search_logs(self) -> bool:
         """Process unextracted SearchLog entries for entity/fact extraction."""
-        search_logs = self.db.get_unprocessed_search_logs(
+        search_logs = self.db.searches.get_unprocessed(
             limit=int(self.config.runtime.ENTITY_EXTRACTION_BATCH_LIMIT)
         )
         if not search_logs:
@@ -290,9 +290,9 @@ class ExtractionPipeline(Agent):
         for search_log in search_logs:
             assert search_log.id is not None
 
-            user = self.db.find_sender_for_timestamp(search_log.timestamp)
+            user = self.db.users.find_sender_for_timestamp(search_log.timestamp)
             if not user:
-                self.db.mark_search_extracted(search_log.id)
+                self.db.searches.mark_extracted(search_log.id)
                 continue
 
             allow_new = search_log.trigger != PennyConstants.SearchTrigger.PENNY_ENRICHMENT
@@ -305,7 +305,7 @@ class ExtractionPipeline(Agent):
             # Resolve learn prompt text for semantic relevance gate
             relevance_ref: str | None = None
             if search_log.learn_prompt_id is not None:
-                learn_prompt = self.db.get_learn_prompt(search_log.learn_prompt_id)
+                learn_prompt = self.db.learn_prompts.get(search_log.learn_prompt_id)
                 if learn_prompt:
                     relevance_ref = learn_prompt.prompt_text
 
@@ -338,7 +338,7 @@ class ExtractionPipeline(Agent):
                 if allow_new:
                     for entity in result.entities:
                         assert entity.id is not None
-                        self.db.add_engagement(
+                        self.db.engagements.add(
                             user=user,
                             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
                             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -346,7 +346,7 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                         )
 
-            self.db.mark_search_extracted(search_log.id)
+            self.db.searches.mark_extracted(search_log.id)
 
         return work_done
 
@@ -354,14 +354,14 @@ class ExtractionPipeline(Agent):
 
     async def _process_messages(self) -> bool:
         """Process unprocessed messages for entity/fact extraction."""
-        senders = self.db.get_all_senders()
+        senders = self.db.users.get_all_senders()
         if not senders:
             return False
 
         work_done = False
 
         for sender in senders:
-            messages = self.db.get_unprocessed_messages(
+            messages = self.db.messages.get_unprocessed(
                 sender, limit=int(self.config.runtime.MESSAGE_EXTRACTION_BATCH_LIMIT)
             )
 
@@ -399,7 +399,7 @@ class ExtractionPipeline(Agent):
                     }
                     for entity in result.entities:
                         assert entity.id is not None
-                        self.db.add_engagement(
+                        self.db.engagements.add(
                             user=sender,
                             engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
                             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -416,7 +416,7 @@ class ExtractionPipeline(Agent):
                         matched = entity_by_name.get(s.entity_name)
                         if not matched or matched.id is None:
                             continue
-                        self.db.add_engagement(
+                        self.db.engagements.add(
                             user=sender,
                             engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
                             valence=s.sentiment,
@@ -434,7 +434,7 @@ class ExtractionPipeline(Agent):
             # Mark messages as processed
             message_ids = [m.id for m in messages if m.id is not None]
             if message_ids:
-                self.db.mark_messages_processed(message_ids)
+                self.db.messages.mark_processed(message_ids)
 
             logger.info("Finished processing messages for %s", sender)
 
@@ -473,134 +473,36 @@ class ExtractionPipeline(Agent):
 
         Returns _ExtractionResult with all identified entities.
         """
-        existing_entities = self.db.get_user_entities(user)
-
-        # Collect all entities to process facts for
-        entities_to_process: list[Entity] = []
+        existing_entities = self.db.entities.get_for_user(user)
         existing_by_name = {e.name: e for e in existing_entities}
-
-        # Pre-filter entities by embedding similarity to reduce LLM prompt size
         filtered_entities = await self._prefilter_entities_by_similarity(existing_entities, content)
 
-        if allow_new_entities:
-            # Full mode: identify known + new entities
-            identified = await self._identify_entities(
-                filtered_entities, identification_prompt, context_label, context_value, content
-            )
-            if not identified:
-                return _ExtractionResult()
-
-            # Filter out fragment entities that are token-subsets of another
-            # candidate in the same batch (e.g., "totem" when "totem loon" is also present)
-            candidate_names = [e.name.lower().strip() for e in identified.new if e.name.strip()]
-            candidate_token_sets = {n: set(tokenize_entity_name(n)) for n in candidate_names}
-            subset_names: set[str] = set()
-            for name_a, tokens_a in candidate_token_sets.items():
-                if not tokens_a:
-                    continue
-                for name_b, tokens_b in candidate_token_sets.items():
-                    if name_a == name_b:
-                        continue
-                    if tokens_a < tokens_b:  # strict subset
-                        subset_names.add(name_a)
-                        break
-
-            # Filter and route new entities: dedup matches → entities_to_process,
-            # genuinely new → candidates (held in memory for post-fact pruning)
-            candidates: list[_EntityCandidate] = []
-            for new_entity in identified.new:
-                name = new_entity.name.lower().strip()
-                if not name:
-                    continue
-                if not _is_valid_entity_name(name):
-                    logger.info("Rejected entity '%s' (structural filter)", name)
-                    continue
-                if name in subset_names:
-                    logger.info("Rejected entity '%s' (token-subset of another candidate)", name)
-                    continue
-
-                # Check for duplicate against existing entities
-                duplicate: Entity | None = None
-                if existing_entities and self._embedding_model_client:
-                    try:
-                        vecs = await self._embedding_model_client.embed([name])
-                        duplicate = self._find_duplicate_entity(name, vecs[0], existing_entities)
-                    except Exception:
-                        logger.debug("Failed to embed candidate '%s'", name, exc_info=True)
-
-                if duplicate:
-                    entities_to_process.append(duplicate)
-                else:
-                    tagline = (
-                        new_entity.tagline.strip().lower().rstrip(".")
-                        if new_entity.tagline
-                        else None
-                    )
-                    if tagline and len(tagline.split()) > 10:
-                        tagline = None  # Reject overly long taglines
-                    candidates.append(_EntityCandidate(name=name, tagline=tagline or None))
-
-            # Look up known entities that were identified
-            for known_name in identified.known:
-                normalized = known_name.lower().strip()
-                if normalized in existing_by_name:
-                    entities_to_process.append(existing_by_name[normalized])
-                    logger.info("Known entity referenced: '%s'", normalized)
-        else:
-            # Known-only mode: only match against existing entities
-            known_result = await self._identify_known_entities(
-                filtered_entities, identification_prompt, context_label, context_value, content
-            )
-            if not known_result:
-                return _ExtractionResult()
-
-            for known_name in known_result.known:
-                normalized = known_name.lower().strip()
-                if normalized in existing_by_name:
-                    entities_to_process.append(existing_by_name[normalized])
-                    logger.info("Known entity referenced: '%s'", normalized)
+        # Pass 1: identify and route entities
+        result = await self._identify_and_route(
+            filtered_entities,
+            existing_entities,
+            existing_by_name,
+            identification_prompt,
+            context_label,
+            context_value,
+            content,
+            allow_new_entities,
+        )
+        if result is None:
+            return _ExtractionResult()
+        entities_to_process, candidates = result
 
         # Pass 2a: extract facts for existing entities (already in DB)
-        entities_with_new_facts: list[int] = []
-        for entity in entities_to_process:
-            assert entity.id is not None
-            existing_fact_rows = self.db.get_entity_facts(entity.id)
-            new_facts = await self._extract_facts(
-                entity.name,
-                existing_fact_rows,
-                fact_prompt,
-                context_label,
-                context_value,
-                content,
-            )
-            if not new_facts:
-                continue
-
-            new_fact_texts = await self._dedup_facts(new_facts, existing_fact_rows)
-            if not new_fact_texts:
-                continue
-
-            # Batch-embed all new facts at once
-            fact_embeddings: list[bytes | None] = [None] * len(new_fact_texts)
-            if self._embedding_model_client:
-                try:
-                    vecs = await self._embedding_model_client.embed(new_fact_texts)
-                    fact_embeddings = [serialize_embedding(v) for v in vecs]
-                except Exception as e:
-                    logger.warning("Failed to embed facts for '%s': %s", entity.name, e)
-
-            for fact_text, emb in zip(new_fact_texts, fact_embeddings, strict=True):
-                self.db.add_fact(
-                    entity_id=entity.id,
-                    content=fact_text,
-                    source_search_log_id=source_search_log_id,
-                    source_message_id=source_message_id,
-                    embedding=emb,
-                    notified_at=notified_at,
-                )
-                logger.info("  '%s' +fact: %s", entity.name, fact_text)
-
-            entities_with_new_facts.append(entity.id)
+        entities_with_new_facts = await self._extract_facts_for_existing(
+            entities_to_process,
+            fact_prompt,
+            context_label,
+            context_value,
+            content,
+            source_search_log_id,
+            source_message_id,
+            notified_at,
+        )
 
         # Regenerate entity embeddings for existing entities that got new facts
         if self._embedding_model_client and entities_with_new_facts:
@@ -610,18 +512,13 @@ class ExtractionPipeline(Agent):
 
         # Pass 2b: extract facts for new candidates (in memory)
         if allow_new_entities:
-            for candidate in candidates:
-                candidate.facts = await self._extract_facts(
-                    candidate.name,
-                    [],
-                    fact_prompt,
-                    context_label,
-                    context_value,
-                    content,
-                )
-
-            # Drop candidates with no facts (nothing to validate or store)
-            candidates = [c for c in candidates if c.facts]
+            candidates = await self._extract_candidate_facts(
+                candidates,
+                fact_prompt,
+                context_label,
+                context_value,
+                content,
+            )
 
         # Pass 3: semantic pruning + commit for new candidates
         if allow_new_entities and candidates:
@@ -639,6 +536,231 @@ class ExtractionPipeline(Agent):
 
         return _ExtractionResult(entities=entities_to_process)
 
+    async def _identify_and_route(
+        self,
+        filtered_entities: list[Entity],
+        existing_entities: list[Entity],
+        existing_by_name: dict[str, Entity],
+        identification_prompt: str,
+        context_label: str,
+        context_value: str,
+        content: str,
+        allow_new_entities: bool,
+    ) -> tuple[list[Entity], list[_EntityCandidate]] | None:
+        """Pass 1: identify entities and route to existing or candidate lists.
+
+        Returns (entities_to_process, candidates) or None if nothing identified.
+        """
+        if allow_new_entities:
+            identified = await self._identify_entities(
+                filtered_entities, identification_prompt, context_label, context_value, content
+            )
+            if not identified:
+                return None
+
+            subset_names = self._filter_subset_candidates(identified)
+            entities_to_process, candidates = await self._route_new_entities(
+                identified,
+                existing_entities,
+                existing_by_name,
+                subset_names,
+            )
+            self._route_known_entities(identified.known, existing_by_name, entities_to_process)
+            return entities_to_process, candidates
+
+        # Known-only mode
+        known_result = await self._identify_known_entities(
+            filtered_entities, identification_prompt, context_label, context_value, content
+        )
+        if not known_result:
+            return None
+
+        entities_to_process: list[Entity] = []
+        self._route_known_entities(known_result.known, existing_by_name, entities_to_process)
+        return entities_to_process, []
+
+    def _filter_subset_candidates(self, identified: IdentifiedEntities) -> set[str]:
+        """Find candidate names that are token-subsets of another candidate.
+
+        Filters out fragment entities (e.g. "totem" when "totem loon" is also present).
+        """
+        candidate_names = [e.name.lower().strip() for e in identified.new if e.name.strip()]
+        candidate_token_sets = {n: set(tokenize_entity_name(n)) for n in candidate_names}
+        subset_names: set[str] = set()
+        for name_a, tokens_a in candidate_token_sets.items():
+            if not tokens_a:
+                continue
+            for name_b, tokens_b in candidate_token_sets.items():
+                if name_a == name_b:
+                    continue
+                if tokens_a < tokens_b:  # strict subset
+                    subset_names.add(name_a)
+                    break
+        return subset_names
+
+    async def _route_new_entities(
+        self,
+        identified: IdentifiedEntities,
+        existing_entities: list[Entity],
+        existing_by_name: dict[str, Entity],
+        subset_names: set[str],
+    ) -> tuple[list[Entity], list[_EntityCandidate]]:
+        """Route new entities: dedup matches go to entities_to_process, rest to candidates."""
+        entities_to_process: list[Entity] = []
+        candidates: list[_EntityCandidate] = []
+        for new_entity in identified.new:
+            name = new_entity.name.lower().strip()
+            if not name or not _is_valid_entity_name(name):
+                if name:
+                    logger.info("Rejected entity '%s' (structural filter)", name)
+                continue
+            if name in subset_names:
+                logger.info("Rejected entity '%s' (token-subset of another candidate)", name)
+                continue
+
+            duplicate = await self._check_duplicate(name, existing_entities)
+            if duplicate:
+                entities_to_process.append(duplicate)
+            else:
+                candidate = self._build_candidate(name, new_entity.tagline)
+                candidates.append(candidate)
+        return entities_to_process, candidates
+
+    async def _check_duplicate(self, name: str, existing_entities: list[Entity]) -> Entity | None:
+        """Check if a candidate name is a duplicate of an existing entity via embedding."""
+        if not existing_entities or not self._embedding_model_client:
+            return None
+        try:
+            vecs = await self._embedding_model_client.embed([name])
+            return self._find_duplicate_entity(name, vecs[0], existing_entities)
+        except Exception:
+            logger.debug("Failed to embed candidate '%s'", name, exc_info=True)
+            return None
+
+    def _build_candidate(self, name: str, raw_tagline: str | None) -> _EntityCandidate:
+        """Build an _EntityCandidate with validated tagline."""
+        tagline = raw_tagline.strip().lower().rstrip(".") if raw_tagline else None
+        if tagline and len(tagline.split()) > 10:
+            tagline = None  # Reject overly long taglines
+        return _EntityCandidate(name=name, tagline=tagline or None)
+
+    def _route_known_entities(
+        self,
+        known_names: list[str],
+        existing_by_name: dict[str, Entity],
+        entities_to_process: list[Entity],
+    ) -> None:
+        """Look up known entity names and append matches to entities_to_process."""
+        for known_name in known_names:
+            normalized = known_name.lower().strip()
+            if normalized in existing_by_name:
+                entities_to_process.append(existing_by_name[normalized])
+                logger.info("Known entity referenced: '%s'", normalized)
+
+    async def _extract_facts_for_existing(
+        self,
+        entities_to_process: list[Entity],
+        fact_prompt: str,
+        context_label: str,
+        context_value: str,
+        content: str,
+        source_search_log_id: int | None,
+        source_message_id: int | None,
+        notified_at: datetime | None,
+    ) -> list[int]:
+        """Pass 2a: extract and store facts for existing entities. Returns IDs with new facts."""
+        entities_with_new_facts: list[int] = []
+        for entity in entities_to_process:
+            assert entity.id is not None
+            existing_fact_rows = self.db.facts.get_for_entity(entity.id)
+            new_facts = await self._extract_facts(
+                entity.name,
+                existing_fact_rows,
+                fact_prompt,
+                context_label,
+                context_value,
+                content,
+            )
+            if not new_facts:
+                continue
+
+            new_fact_texts = await self._dedup_facts(new_facts, existing_fact_rows)
+            if not new_fact_texts:
+                continue
+
+            await self._embed_and_store_facts(
+                entity.id,
+                entity.name,
+                new_fact_texts,
+                source_search_log_id,
+                source_message_id,
+                notified_at,
+            )
+            entities_with_new_facts.append(entity.id)
+        return entities_with_new_facts
+
+    async def _embed_and_store_facts(
+        self,
+        entity_id: int,
+        entity_name: str,
+        fact_texts: list[str],
+        source_search_log_id: int | None,
+        source_message_id: int | None,
+        notified_at: datetime | None,
+    ) -> None:
+        """Batch-embed facts and store them in the database for one entity."""
+        fact_embeddings: list[bytes | None] = [None] * len(fact_texts)
+        if self._embedding_model_client:
+            try:
+                vecs = await self._embedding_model_client.embed(fact_texts)
+                fact_embeddings = [serialize_embedding(v) for v in vecs]
+            except Exception as e:
+                logger.warning("Failed to embed facts for '%s': %s", entity_name, e)
+
+        for fact_text, emb in zip(fact_texts, fact_embeddings, strict=True):
+            self.db.facts.add(
+                entity_id=entity_id,
+                content=fact_text,
+                source_search_log_id=source_search_log_id,
+                source_message_id=source_message_id,
+                embedding=emb,
+                notified_at=notified_at,
+            )
+            logger.info("  '%s' +fact: %s", entity_name, fact_text)
+
+    async def _extract_candidate_facts(
+        self,
+        candidates: list[_EntityCandidate],
+        fact_prompt: str,
+        context_label: str,
+        context_value: str,
+        content: str,
+    ) -> list[_EntityCandidate]:
+        """Pass 2b: extract facts for new candidates (in memory). Returns candidates with facts."""
+        for candidate in candidates:
+            candidate.facts = await self._extract_facts(
+                candidate.name,
+                [],
+                fact_prompt,
+                context_label,
+                context_value,
+                content,
+            )
+        return [c for c in candidates if c.facts]
+
+    def _build_known_entities_context(self, existing_entities: list[Entity]) -> str:
+        """Build the known-entities context block shared by identification prompts."""
+        if not existing_entities:
+            return "\n\nKnown entities: none. Put all discovered entities in the 'new' list."
+
+        known_lines = []
+        for e in existing_entities:
+            if e.tagline:
+                known_lines.append(f"- {e.name} ({e.tagline})")
+            else:
+                known_lines.append(f"- {e.name}")
+        return "\n\nKnown entities (return any that appear in the text):\n" + "\n".join(known_lines)
+
     async def _identify_entities(
         self,
         existing_entities: list[Entity],
@@ -648,21 +770,7 @@ class ExtractionPipeline(Agent):
         content: str,
     ) -> IdentifiedEntities | None:
         """Pass 1: Identify which known entities appear in the text and any new entities."""
-        if existing_entities:
-            known_lines = []
-            for e in existing_entities:
-                if e.tagline:
-                    known_lines.append(f"- {e.name} ({e.tagline})")
-                else:
-                    known_lines.append(f"- {e.name}")
-            known_context = (
-                "\n\nKnown entities (return any that appear in the text):\n"
-                + "\n".join(known_lines)
-            )
-        else:
-            known_context = (
-                "\n\nKnown entities: none. Put all discovered entities in the 'new' list."
-            )
+        known_context = self._build_known_entities_context(existing_entities)
 
         prompt = (
             f"{identification_prompt}\n\n"
@@ -700,15 +808,7 @@ class ExtractionPipeline(Agent):
         if not existing_entities:
             return None
 
-        known_lines = []
-        for e in existing_entities:
-            if e.tagline:
-                known_lines.append(f"- {e.name} ({e.tagline})")
-            else:
-                known_lines.append(f"- {e.name}")
-        known_context = "\n\nKnown entities (return any that appear in the text):\n" + "\n".join(
-            known_lines
-        )
+        known_context = self._build_known_entities_context(existing_entities)
 
         prompt = (
             f"{identification_prompt}\n\n"
@@ -814,47 +914,7 @@ class ExtractionPipeline(Agent):
         if not candidates:
             return []
 
-        # Without an embedding model, accept all candidates
-        if not self._embedding_model_client:
-            survivors_with_scores = [(c, 0.0) for c in candidates]
-        else:
-            # Batch-embed tagline+facts (no name) + trigger text in one call.
-            # Entity names are omitted because ambiguous names (e.g. "genesis",
-            # "focus", "renaissance") pull the embedding away from the domain.
-            embed_texts = [_build_relevance_text(c.tagline, c.facts, c.name) for c in candidates]
-            embed_texts.append(trigger_text)
-
-            try:
-                vecs = await self._embedding_model_client.embed(embed_texts)
-            except Exception:
-                logger.warning(
-                    "Post-fact embedding failed, accepting all candidates", exc_info=True
-                )
-                survivors_with_scores = [(c, 0.0) for c in candidates]
-                vecs = None
-
-            if vecs is not None:
-                trigger_vec = vecs[-1]
-                threshold = self.config.runtime.EXTRACTION_ENTITY_SEMANTIC_THRESHOLD
-                survivors_with_scores = []
-
-                for candidate, entity_vec in zip(candidates, vecs[:-1], strict=True):
-                    score = round(cosine_similarity(entity_vec, trigger_vec), 2)
-                    if score >= threshold:
-                        logger.info(
-                            "Accepted entity '%s' (post-fact similarity %.2f >= %.2f)",
-                            candidate.name,
-                            score,
-                            threshold,
-                        )
-                        survivors_with_scores.append((candidate, score))
-                    else:
-                        logger.info(
-                            "Rejected entity '%s' (post-fact similarity %.2f < %.2f)",
-                            candidate.name,
-                            score,
-                            threshold,
-                        )
+        survivors_with_scores = await self._score_candidates_by_relevance(candidates, trigger_text)
 
         # Commit survivors sequentially: for each candidate, build its full
         # embedding (name + tagline + facts), check dedup against all existing
@@ -862,123 +922,192 @@ class ExtractionPipeline(Agent):
         # then either merge into the dupe or create a new entity.
         committed: list[Entity] = []
         for candidate, score in survivors_with_scores:
-            # Build full embed text and embedding for dedup comparison
-            candidate_embed_text = build_entity_embed_text(
-                candidate.name, candidate.facts, candidate.tagline
+            entity = await self._commit_candidate(
+                candidate,
+                score,
+                user,
+                source_search_log_id,
+                source_message_id,
+                notified_at,
+                record_discovery_score,
             )
-            candidate_embedding: list[float] | None = None
-            if self._embedding_model_client:
-                try:
-                    vecs = await self._embedding_model_client.embed([candidate_embed_text])
-                    candidate_embedding = vecs[0]
-                except Exception:
-                    logger.debug(
-                        "Failed to embed candidate '%s' for dedup", candidate.name, exc_info=True
-                    )
-
-            # Check dedup against all existing entities (refreshed each iteration
-            # to include entities committed earlier in this same loop)
-            existing_entities = self.db.get_user_entities(user)
-            duplicate = self._find_duplicate_entity(
-                candidate.name, candidate_embedding, existing_entities
-            )
-
-            if duplicate:
-                assert duplicate.id is not None
-                logger.info(
-                    "Post-fact dedup: '%s' merges into existing '%s'",
-                    candidate.name,
-                    duplicate.name,
-                )
-                # Merge facts into the existing entity (with fact-level dedup)
-                existing_facts = self.db.get_entity_facts(duplicate.id)
-                new_fact_texts = await self._dedup_facts(candidate.facts, existing_facts)
-
-                if new_fact_texts:
-                    fact_embeddings: list[bytes | None] = [None] * len(new_fact_texts)
-                    if self._embedding_model_client:
-                        try:
-                            fact_vecs = await self._embedding_model_client.embed(new_fact_texts)
-                            fact_embeddings = [serialize_embedding(v) for v in fact_vecs]
-                        except Exception as e:
-                            logger.warning("Failed to embed facts for '%s': %s", duplicate.name, e)
-
-                    for fact_text, emb in zip(new_fact_texts, fact_embeddings, strict=True):
-                        self.db.add_fact(
-                            entity_id=duplicate.id,
-                            content=fact_text,
-                            source_search_log_id=source_search_log_id,
-                            source_message_id=source_message_id,
-                            embedding=emb,
-                            notified_at=notified_at,
-                        )
-                        logger.info("  '%s' +fact (merged): %s", duplicate.name, fact_text)
-
-                    # Regenerate embedding for the merged entity
-                    if self._embedding_model_client:
-                        await self._update_entity_embeddings([duplicate])
-
-                committed.append(duplicate)
-
-                if record_discovery_score and score > 0.0:
-                    self.db.add_engagement(
-                        user=user,
-                        engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
-                        valence=PennyConstants.EngagementValence.POSITIVE,
-                        strength=score,
-                        entity_id=duplicate.id,
-                    )
-            else:
-                entity = self.db.get_or_create_entity(user, candidate.name)
-                if not entity or entity.id is None:
-                    continue
-                logger.info("New entity discovered: '%s'", candidate.name)
-
-                # Store tagline if available
-                if candidate.tagline and entity.tagline is None:
-                    self.db.update_entity_tagline(entity.id, candidate.tagline)
-                    entity.tagline = candidate.tagline
-                    logger.info("Tagline for '%s': '%s'", candidate.name, candidate.tagline)
-
-                # Embed and store facts
-                fact_embeddings = [None] * len(candidate.facts)
-                if self._embedding_model_client:
-                    try:
-                        fact_vecs = await self._embedding_model_client.embed(candidate.facts)
-                        fact_embeddings = [serialize_embedding(v) for v in fact_vecs]
-                    except Exception as e:
-                        logger.warning("Failed to embed facts for '%s': %s", candidate.name, e)
-
-                for fact_text, emb in zip(candidate.facts, fact_embeddings, strict=True):
-                    self.db.add_fact(
-                        entity_id=entity.id,
-                        content=fact_text,
-                        source_search_log_id=source_search_log_id,
-                        source_message_id=source_message_id,
-                        embedding=emb,
-                        notified_at=notified_at,
-                    )
-                    logger.info("  '%s' +fact: %s", candidate.name, fact_text)
-
-                # Compute and store entity embedding immediately so subsequent
-                # candidates in this batch can dedup against it
-                if self._embedding_model_client and candidate_embedding is not None:
-                    self.db.update_entity_embedding(
-                        entity.id, serialize_embedding(candidate_embedding)
-                    )
-
+            if entity:
                 committed.append(entity)
-
-                if record_discovery_score and score > 0.0:
-                    self.db.add_engagement(
-                        user=user,
-                        engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
-                        valence=PennyConstants.EngagementValence.POSITIVE,
-                        strength=score,
-                        entity_id=entity.id,
-                    )
-
         return committed
+
+    async def _score_candidates_by_relevance(
+        self,
+        candidates: list[_EntityCandidate],
+        trigger_text: str,
+    ) -> list[tuple[_EntityCandidate, float]]:
+        """Embed candidates and score against trigger text. Returns (candidate, score) pairs."""
+        if not self._embedding_model_client:
+            return [(c, 0.0) for c in candidates]
+
+        # Batch-embed tagline+facts (no name) + trigger text in one call.
+        # Entity names are omitted because ambiguous names (e.g. "genesis",
+        # "focus", "renaissance") pull the embedding away from the domain.
+        embed_texts = [_build_relevance_text(c.tagline, c.facts, c.name) for c in candidates]
+        embed_texts.append(trigger_text)
+
+        try:
+            vecs = await self._embedding_model_client.embed(embed_texts)
+        except Exception:
+            logger.warning("Post-fact embedding failed, accepting all candidates", exc_info=True)
+            return [(c, 0.0) for c in candidates]
+
+        trigger_vec = vecs[-1]
+        threshold = self.config.runtime.EXTRACTION_ENTITY_SEMANTIC_THRESHOLD
+        survivors: list[tuple[_EntityCandidate, float]] = []
+
+        for candidate, entity_vec in zip(candidates, vecs[:-1], strict=True):
+            score = round(cosine_similarity(entity_vec, trigger_vec), 2)
+            if score >= threshold:
+                logger.info(
+                    "Accepted entity '%s' (post-fact similarity %.2f >= %.2f)",
+                    candidate.name,
+                    score,
+                    threshold,
+                )
+                survivors.append((candidate, score))
+            else:
+                logger.info(
+                    "Rejected entity '%s' (post-fact similarity %.2f < %.2f)",
+                    candidate.name,
+                    score,
+                    threshold,
+                )
+        return survivors
+
+    async def _commit_candidate(
+        self,
+        candidate: _EntityCandidate,
+        score: float,
+        user: str,
+        source_search_log_id: int | None,
+        source_message_id: int | None,
+        notified_at: datetime | None,
+        record_discovery_score: bool,
+    ) -> Entity | None:
+        """Commit a single candidate: dedup check, then merge or create.
+
+        Returns the committed entity, or None if creation failed.
+        """
+        candidate_embed_text = build_entity_embed_text(
+            candidate.name, candidate.facts, candidate.tagline
+        )
+        candidate_embedding: list[float] | None = None
+        if self._embedding_model_client:
+            try:
+                vecs = await self._embedding_model_client.embed([candidate_embed_text])
+                candidate_embedding = vecs[0]
+            except Exception:
+                logger.debug(
+                    "Failed to embed candidate '%s' for dedup", candidate.name, exc_info=True
+                )
+
+        # Check dedup against all existing entities (refreshed each iteration
+        # to include entities committed earlier in this same loop)
+        existing_entities = self.db.entities.get_for_user(user)
+        duplicate = self._find_duplicate_entity(
+            candidate.name, candidate_embedding, existing_entities
+        )
+
+        if duplicate:
+            entity = await self._merge_into_existing(
+                candidate,
+                duplicate,
+                source_search_log_id,
+                source_message_id,
+                notified_at,
+            )
+        else:
+            entity = await self._create_new_entity(
+                candidate,
+                candidate_embedding,
+                user,
+                source_search_log_id,
+                source_message_id,
+                notified_at,
+            )
+
+        if entity and record_discovery_score and score > 0.0:
+            assert entity.id is not None
+            self.db.engagements.add(
+                user=user,
+                engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
+                valence=PennyConstants.EngagementValence.POSITIVE,
+                strength=score,
+                entity_id=entity.id,
+            )
+        return entity
+
+    async def _merge_into_existing(
+        self,
+        candidate: _EntityCandidate,
+        duplicate: Entity,
+        source_search_log_id: int | None,
+        source_message_id: int | None,
+        notified_at: datetime | None,
+    ) -> Entity:
+        """Merge a candidate's facts into an existing duplicate entity."""
+        assert duplicate.id is not None
+        logger.info(
+            "Post-fact dedup: '%s' merges into existing '%s'",
+            candidate.name,
+            duplicate.name,
+        )
+        existing_facts = self.db.facts.get_for_entity(duplicate.id)
+        new_fact_texts = await self._dedup_facts(candidate.facts, existing_facts)
+
+        if new_fact_texts:
+            await self._embed_and_store_facts(
+                duplicate.id,
+                duplicate.name,
+                new_fact_texts,
+                source_search_log_id,
+                source_message_id,
+                notified_at,
+            )
+            if self._embedding_model_client:
+                await self._update_entity_embeddings([duplicate])
+
+        return duplicate
+
+    async def _create_new_entity(
+        self,
+        candidate: _EntityCandidate,
+        candidate_embedding: list[float] | None,
+        user: str,
+        source_search_log_id: int | None,
+        source_message_id: int | None,
+        notified_at: datetime | None,
+    ) -> Entity | None:
+        """Create a new entity from a candidate and store its facts."""
+        entity = self.db.entities.get_or_create(user, candidate.name)
+        if not entity or entity.id is None:
+            return None
+        logger.info("New entity discovered: '%s'", candidate.name)
+
+        if candidate.tagline and entity.tagline is None:
+            self.db.entities.update_tagline(entity.id, candidate.tagline)
+            entity.tagline = candidate.tagline
+            logger.info("Tagline for '%s': '%s'", candidate.name, candidate.tagline)
+
+        await self._embed_and_store_facts(
+            entity.id,
+            candidate.name,
+            candidate.facts,
+            source_search_log_id,
+            source_message_id,
+            notified_at,
+        )
+
+        # Compute and store entity embedding immediately so subsequent
+        # candidates in this batch can dedup against it
+        if self._embedding_model_client and candidate_embedding is not None:
+            self.db.entities.update_embedding(entity.id, serialize_embedding(candidate_embedding))
+        return entity
 
     def _find_duplicate_entity(
         self,
@@ -1155,13 +1284,13 @@ class ExtractionPipeline(Agent):
         if not message.parent_id or not self._embedding_model_client:
             return False
 
-        parent_msg = self.db.get_message_by_id(message.parent_id)
+        parent_msg = self.db.messages.get_by_id(message.parent_id)
         if not parent_msg:
             return False
         if parent_msg.direction != PennyConstants.MessageDirection.OUTGOING:
             return False
 
-        entities = self.db.get_user_entities_with_embeddings(sender)
+        entities = self.db.entities.get_with_embeddings(sender)
         if not entities:
             return False
 
@@ -1182,7 +1311,7 @@ class ExtractionPipeline(Agent):
             )
 
             for entity_id, _score in matches:
-                self.db.add_engagement(
+                self.db.engagements.add(
                     user=sender,
                     engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
                     valence=PennyConstants.EngagementValence.POSITIVE,
@@ -1245,7 +1374,7 @@ class ExtractionPipeline(Agent):
         embed_texts: list[str] = []
         for entity in entities:
             assert entity.id is not None
-            facts = self.db.get_entity_facts(entity.id)
+            facts = self.db.facts.get_for_entity(entity.id)
             embed_texts.append(
                 build_entity_embed_text(entity.name, [f.content for f in facts], entity.tagline)
             )
@@ -1254,7 +1383,7 @@ class ExtractionPipeline(Agent):
             vecs = await self._embedding_model_client.embed(embed_texts)
             for entity, vec in zip(entities, vecs, strict=True):
                 assert entity.id is not None
-                self.db.update_entity_embedding(entity.id, serialize_embedding(vec))
+                self.db.entities.update_embedding(entity.id, serialize_embedding(vec))
                 logger.debug("Updated entity embedding for '%s'", entity.name)
         except Exception as e:
             logger.warning("Failed to update entity embeddings: %s", e)
@@ -1268,43 +1397,54 @@ class ExtractionPipeline(Agent):
             True if any embeddings were generated.
         """
         assert self._embedding_model_client is not None
-        work_done = False
         batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
 
-        # Backfill fact embeddings
-        facts = self.db.get_facts_without_embeddings(limit=batch_limit)
-        if facts:
-            fact_texts = [f.content for f in facts]
-            try:
-                vecs = await self._embedding_model_client.embed(fact_texts)
-                for fact, vec in zip(facts, vecs, strict=True):
-                    assert fact.id is not None
-                    self.db.update_fact_embedding(fact.id, serialize_embedding(vec))
-                logger.info("Backfilled embeddings for %d facts", len(facts))
-                work_done = True
-            except Exception as e:
-                logger.warning("Failed to backfill fact embeddings: %s", e)
+        facts_done = await self._backfill_fact_embeddings(batch_limit)
+        entities_done = await self._backfill_entity_embeddings(batch_limit)
+        return facts_done or entities_done
 
-        # Backfill entity embeddings
-        entities = self.db.get_entities_without_embeddings(limit=batch_limit)
-        if entities:
-            embed_texts: list[str] = []
-            for entity in entities:
-                assert entity.id is not None
-                facts_for_entity = self.db.get_entity_facts(entity.id)
-                embed_texts.append(
-                    build_entity_embed_text(
-                        entity.name, [f.content for f in facts_for_entity], entity.tagline
-                    )
+    async def _backfill_fact_embeddings(self, batch_limit: int) -> bool:
+        """Backfill embeddings for facts that don't have them."""
+        assert self._embedding_model_client is not None
+        facts = self.db.facts.get_without_embeddings(limit=batch_limit)
+        if not facts:
+            return False
+
+        fact_texts = [f.content for f in facts]
+        try:
+            vecs = await self._embedding_model_client.embed(fact_texts)
+            for fact, vec in zip(facts, vecs, strict=True):
+                assert fact.id is not None
+                self.db.facts.update_embedding(fact.id, serialize_embedding(vec))
+            logger.info("Backfilled embeddings for %d facts", len(facts))
+            return True
+        except Exception as e:
+            logger.warning("Failed to backfill fact embeddings: %s", e)
+            return False
+
+    async def _backfill_entity_embeddings(self, batch_limit: int) -> bool:
+        """Backfill embeddings for entities that don't have them."""
+        assert self._embedding_model_client is not None
+        entities = self.db.entities.get_without_embeddings(limit=batch_limit)
+        if not entities:
+            return False
+
+        embed_texts: list[str] = []
+        for entity in entities:
+            assert entity.id is not None
+            facts_for_entity = self.db.facts.get_for_entity(entity.id)
+            embed_texts.append(
+                build_entity_embed_text(
+                    entity.name, [f.content for f in facts_for_entity], entity.tagline
                 )
-            try:
-                vecs = await self._embedding_model_client.embed(embed_texts)
-                for entity, vec in zip(entities, vecs, strict=True):
-                    assert entity.id is not None
-                    self.db.update_entity_embedding(entity.id, serialize_embedding(vec))
-                logger.info("Backfilled embeddings for %d entities", len(entities))
-                work_done = True
-            except Exception as e:
-                logger.warning("Failed to backfill entity embeddings: %s", e)
-
-        return work_done
+            )
+        try:
+            vecs = await self._embedding_model_client.embed(embed_texts)
+            for entity, vec in zip(entities, vecs, strict=True):
+                assert entity.id is not None
+                self.db.entities.update_embedding(entity.id, serialize_embedding(vec))
+            logger.info("Backfilled embeddings for %d entities", len(entities))
+            return True
+        except Exception as e:
+            logger.warning("Failed to backfill entity embeddings: %s", e)
+            return False

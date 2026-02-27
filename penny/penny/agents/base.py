@@ -204,21 +204,10 @@ class Agent:
         max_steps: int | None = None,
         system_prompt: str | None = None,
     ) -> ControllerResponse:
-        """
-        Run the agent with a prompt.
+        """Run the agent — summary method.
 
-        For the no-tool path, delegates to _compose_user_facing.
-        For the tool path, runs the full agentic loop.
-
-        Args:
-            prompt: The user message/prompt to respond to
-            history: Optional conversation history as (role, content) tuples
-            use_tools: Whether to enable tools for this run (default: True)
-            max_steps: Override max_steps for this run (default: use agent's max_steps)
-            system_prompt: Override system prompt for this run (default: use agent's prompt)
-
-        Returns:
-            ControllerResponse with answer, thinking, and attachments
+        No-tool path delegates to _compose_user_facing.
+        Tool path runs the full agentic loop.
         """
         tools = self._tool_registry.get_ollama_tools() if use_tools else None
         logger.debug("Using %d tools", len(tools) if tools else 0)
@@ -227,117 +216,162 @@ class Agent:
             return await self._compose_user_facing(prompt, history, system_prompt)
 
         messages = self._build_messages(prompt, history, system_prompt)
+        steps = max_steps if max_steps is not None else self.max_steps
+        return await self._run_agentic_loop(messages, tools, steps)
 
+    async def _run_agentic_loop(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        steps: int,
+    ) -> ControllerResponse:
+        """Execute the step loop: call model, process tool calls, or return final answer."""
         attachments: list[str] = []
         source_urls: list[str] = []
         called_tools: set[str] = set()
         tool_call_records: list[ToolCallRecord] = []
 
-        max_xml_retries = 3
-        steps = max_steps if max_steps is not None else self.max_steps
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
 
-            # Retry the model call if it emits XML markup instead of using
-            # structured tool_calls. This doesn't consume an agentic loop step.
-            for xml_attempt in range(max_xml_retries):
-                try:
-                    response = await self._background_model_client.chat(
-                        messages=messages, tools=tools
-                    )
-                except Exception as e:
-                    logger.error("Error calling Ollama: %s", e)
-                    return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
-
-                if response.has_tool_calls:
-                    break
-
-                content = response.content.strip()
-                if not (tools and _has_xml_tags(content)):
-                    break
-
-                logger.warning(
-                    "Model emitted XML markup in content; retrying (attempt %d/%d)",
-                    xml_attempt + 1,
-                    max_xml_retries,
-                )
+            response = await self._call_model_with_xml_retry(messages, tools)
+            if response is None:
+                return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
 
             if response.has_tool_calls:
-                logger.info(
-                    "Model requested %d tool call(s)", len(response.message.tool_calls or [])
+                await self._process_tool_calls(
+                    response, messages, called_tools, tool_call_records, source_urls, attachments
                 )
-
-                messages.append(response.message.to_input_message())
-
-                for ollama_tool_call in response.message.tool_calls or []:
-                    tool_name = ollama_tool_call.function.name
-                    arguments = ollama_tool_call.function.arguments
-
-                    if not self.allow_repeat_tools and tool_name in called_tools:
-                        logger.info("Skipping repeat call to tool: %s", tool_name)
-                        result_str = (
-                            "Tool already called. DO NOT search again. Write your response NOW."
-                        )
-                        messages.append(
-                            ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict()
-                        )
-                        continue
-
-                    logger.info("Executing tool: %s", tool_name)
-                    called_tools.add(tool_name)
-                    tool_call_records.append(ToolCallRecord(tool=tool_name, arguments=arguments))
-
-                    tool_call = ToolCall(tool=tool_name, arguments=arguments)
-                    tool_result = await self._tool_executor.execute(tool_call)
-
-                    if tool_result.error:
-                        result_str = f"Error: {tool_result.error}"
-                    elif isinstance(tool_result.result, SearchResult):
-                        result_str = tool_result.result.text
-                        if tool_result.result.urls:
-                            source_urls.extend(tool_result.result.urls)
-                            result_str += f"\n\nSources:\n{'\n'.join(tool_result.result.urls)}"
-                        if tool_result.result.image_base64:
-                            attachments.append(tool_result.result.image_base64)
-                        result_str += (
-                            "\n\nDO NOT search again. Write your response NOW using these results."
-                        )
-                    else:
-                        result_str = str(tool_result.result)
-                    logger.debug("Tool result: %s", result_str[:200])
-
-                    messages.append(
-                        ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict()
-                    )
-
                 continue
 
-            # No tool calls — final answer
-            content = response.content.strip()
-
-            if not content:
-                logger.error("Model returned empty content!")
-                return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
-
-            thinking = response.thinking or response.message.thinking
-
-            if thinking:
-                logger.info("Extracted thinking text (length: %d)", len(thinking))
-
-            if source_urls and "http" not in content:
-                content += "\n\n" + source_urls[0]
-
-            logger.info("Got final answer (length: %d)", len(content))
-            return ControllerResponse(
-                answer=content,
-                thinking=thinking,
-                attachments=attachments,
-                tool_calls=tool_call_records,
-            )
+            return self._build_final_response(response, source_urls, attachments, tool_call_records)
 
         logger.warning("Max steps reached without final answer")
         return ControllerResponse(
-            answer=PennyResponse.AGENT_MAX_STEPS,
+            answer=PennyResponse.AGENT_MAX_STEPS, tool_calls=tool_call_records
+        )
+
+    async def _call_model_with_xml_retry(self, messages: list[dict], tools: list[dict]):
+        """Call the model, retrying if it emits XML markup instead of structured tool calls."""
+        max_xml_retries = 3
+        response = None
+
+        for xml_attempt in range(max_xml_retries):
+            try:
+                response = await self._background_model_client.chat(messages=messages, tools=tools)
+            except Exception as e:
+                logger.error("Error calling Ollama: %s", e)
+                return None
+
+            if response.has_tool_calls:
+                break
+
+            content = response.content.strip()
+            if not _has_xml_tags(content):
+                break
+
+            logger.warning(
+                "Model emitted XML markup in content; retrying (attempt %d/%d)",
+                xml_attempt + 1,
+                max_xml_retries,
+            )
+
+        return response
+
+    async def _process_tool_calls(
+        self,
+        response,
+        messages: list[dict],
+        called_tools: set[str],
+        tool_call_records: list[ToolCallRecord],
+        source_urls: list[str],
+        attachments: list[str],
+    ) -> None:
+        """Handle all tool calls from a single model response."""
+        logger.info("Model requested %d tool call(s)", len(response.message.tool_calls or []))
+        messages.append(response.message.to_input_message())
+
+        for ollama_tool_call in response.message.tool_calls or []:
+            tool_name = ollama_tool_call.function.name
+            arguments = ollama_tool_call.function.arguments
+
+            if not self.allow_repeat_tools and tool_name in called_tools:
+                logger.info("Skipping repeat call to tool: %s", tool_name)
+                repeat_msg = "Tool already called. DO NOT search again. Write your response NOW."
+                messages.append(ChatMessage(role=MessageRole.TOOL, content=repeat_msg).to_dict())
+                continue
+
+            result_str = await self._execute_single_tool(
+                tool_name, arguments, called_tools, tool_call_records, source_urls, attachments
+            )
+            messages.append(ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict())
+
+    async def _execute_single_tool(
+        self,
+        tool_name: str,
+        arguments: dict,
+        called_tools: set[str],
+        tool_call_records: list[ToolCallRecord],
+        source_urls: list[str],
+        attachments: list[str],
+    ) -> str:
+        """Execute one tool call, update tracking state, return result string."""
+        logger.info("Executing tool: %s", tool_name)
+        called_tools.add(tool_name)
+        tool_call_records.append(ToolCallRecord(tool=tool_name, arguments=arguments))
+
+        tool_call = ToolCall(tool=tool_name, arguments=arguments)
+        tool_result = await self._tool_executor.execute(tool_call)
+
+        if tool_result.error:
+            result_str = f"Error: {tool_result.error}"
+        elif isinstance(tool_result.result, SearchResult):
+            result_str = self._format_search_result(tool_result.result, source_urls, attachments)
+        else:
+            result_str = str(tool_result.result)
+
+        logger.debug("Tool result: %s", result_str[:200])
+        return result_str
+
+    def _format_search_result(
+        self, result: SearchResult, source_urls: list[str], attachments: list[str]
+    ) -> str:
+        """Format a SearchResult into a string, collecting URLs and images."""
+        text = result.text
+        if result.urls:
+            source_urls.extend(result.urls)
+            text += f"\n\nSources:\n{'\n'.join(result.urls)}"
+        if result.image_base64:
+            attachments.append(result.image_base64)
+        text += "\n\nDO NOT search again. Write your response NOW using these results."
+        return text
+
+    def _build_final_response(
+        self,
+        response,
+        source_urls: list[str],
+        attachments: list[str],
+        tool_call_records: list[ToolCallRecord],
+    ) -> ControllerResponse:
+        """Build the ControllerResponse from the model's final (non-tool) answer."""
+        content = response.content.strip()
+
+        if not content:
+            logger.error("Model returned empty content!")
+            return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
+
+        thinking = response.thinking or response.message.thinking
+        if thinking:
+            logger.info("Extracted thinking text (length: %d)", len(thinking))
+
+        if source_urls and "http" not in content:
+            content += "\n\n" + source_urls[0]
+
+        logger.info("Got final answer (length: %d)", len(content))
+        return ControllerResponse(
+            answer=content,
+            thinking=thinking,
+            attachments=attachments,
             tool_calls=tool_call_records,
         )
 

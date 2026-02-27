@@ -45,7 +45,7 @@ class MemoryCommand(Command):
             lines = [PennyResponse.MEMORY_LIST_HEADER, ""]
             for i, (score, entity) in enumerate(scored, 1):
                 assert entity.id is not None
-                facts = context.db.get_entity_facts(entity.id)
+                facts = context.db.facts.get_for_entity(entity.id)
                 sign = "+" if score > 0 else ""
                 facts_label = f"{len(facts)} fact{'s' if len(facts) != 1 else ''}"
                 tagline_suffix = f" — {entity.tagline}" if entity.tagline else ""
@@ -68,14 +68,14 @@ class MemoryCommand(Command):
 
         # Number + "delete" — delete entity
         if len(parts) >= 2 and parts[1].lower() == "delete":
-            facts = context.db.get_entity_facts(entity.id)
-            context.db.delete_entity(entity.id)
+            facts = context.db.facts.get_for_entity(entity.id)
+            context.db.entities.delete(entity.id)
             return CommandResult(
                 text=PennyResponse.MEMORY_DELETED.format(name=entity.name, count=len(facts))
             )
 
         # Number only — show entity details
-        facts = context.db.get_entity_facts(entity.id)
+        facts = context.db.facts.get_for_entity(entity.id)
         if not facts:
             return CommandResult(text=PennyResponse.MEMORY_NO_FACTS.format(name=entity.name))
 
@@ -99,11 +99,11 @@ class MemoryCommand(Command):
         for fact in facts:
             if fact.source_search_log_id is None:
                 continue
-            search_log = context.db.get_search_log(fact.source_search_log_id)
+            search_log = context.db.searches.get(fact.source_search_log_id)
             if search_log is None:
                 continue
             if search_log.learn_prompt_id is not None:
-                learn_prompt = context.db.get_learn_prompt(search_log.learn_prompt_id)
+                learn_prompt = context.db.learn_prompts.get(search_log.learn_prompt_id)
                 if learn_prompt is not None:
                     return f"/learn {learn_prompt.prompt_text}"
             return f"search: {search_log.query[:80]}"
@@ -112,11 +112,11 @@ class MemoryCommand(Command):
     @staticmethod
     def _scored_entities(context: CommandContext) -> list[tuple[float, Entity]]:
         """Return (score, entity) pairs sorted by absolute interest score descending."""
-        entities = context.db.get_user_entities(context.user)
+        entities = context.db.entities.get_for_user(context.user)
         if not entities:
             return []
 
-        all_engagements = context.db.get_user_engagements(context.user)
+        all_engagements = context.db.engagements.get_for_user(context.user)
         engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
         for eng in all_engagements:
             if eng.entity_id is not None:

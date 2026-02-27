@@ -59,9 +59,9 @@ class NotificationAgent(Agent):
         if not self._channel:
             return False
 
-        users = self.db.get_all_senders()
+        users = self.db.users.get_all_senders()
         for user in users:
-            if self.db.is_muted(user):
+            if self.db.users.is_muted(user):
                 continue
             # Learn completion announcements take priority and bypass backoff
             if await self._try_learn_completion(user):
@@ -83,17 +83,17 @@ class NotificationAgent(Agent):
         """
         assert self._channel is not None
 
-        learn_prompts = self.db.get_unannounced_completed_learn_prompts(user)
+        learn_prompts = self.db.learn_prompts.get_unannounced_completed(user)
         if not learn_prompts:
             return False
 
         for lp in learn_prompts:
             assert lp.id is not None
-            search_logs = self.db.get_search_logs_by_learn_prompt(lp.id)
+            search_logs = self.db.searches.get_by_learn_prompt(lp.id)
 
             if not search_logs:
                 # No searches were made (e.g., no search tool) — mark announced, skip
-                self.db.mark_learn_prompt_announced(lp.id)
+                self.db.learn_prompts.mark_announced(lp.id)
                 continue
 
             if not all(sl.extracted for sl in search_logs):
@@ -105,12 +105,12 @@ class NotificationAgent(Agent):
 
             # Mark remaining un-notified facts from this learn prompt as notified
             search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
-            facts = self.db.get_facts_by_search_log_ids(search_log_ids)
+            facts = self.db.facts.get_by_search_log_ids(search_log_ids)
             unnotified_ids = [f.id for f in facts if f.notified_at is None and f.id is not None]
             if unnotified_ids:
-                self.db.mark_facts_notified(unnotified_ids)
+                self.db.facts.mark_notified(unnotified_ids)
 
-            self.db.mark_learn_prompt_announced(lp.id)
+            self.db.learn_prompts.mark_announced(lp.id)
             return True
 
         return False
@@ -123,9 +123,7 @@ class NotificationAgent(Agent):
         assert self._channel is not None
         assert lp.id is not None
 
-        search_logs = self.db.get_search_logs_by_learn_prompt(lp.id)
-        search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
-        facts = self.db.get_facts_by_search_log_ids(search_log_ids)
+        facts = self._get_learn_prompt_facts(lp.id)
 
         if not facts:
             message = (
@@ -140,21 +138,54 @@ class NotificationAgent(Agent):
             )
             return True
 
-        # Group facts by entity, sorted by interest score
+        prompt = self._build_learn_completion_prompt(lp, facts, user)
+        result = await self._compose_user_facing(prompt, image_query=lp.prompt_text)
+        if not result.answer:
+            logger.warning("Failed to compose learn completion for '%s'", lp.prompt_text)
+            return False
+
+        await self._send_with_typing(user, result.answer, result.attachments)
+        logger.info(
+            "Learn completion announcement sent for '%s' to %s",
+            lp.prompt_text,
+            user,
+        )
+        return True
+
+    def _get_learn_prompt_facts(self, learn_prompt_id: int) -> list[Fact]:
+        """Fetch all facts associated with a learn prompt's search logs."""
+        search_logs = self.db.searches.get_by_learn_prompt(learn_prompt_id)
+        search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
+        return self.db.facts.get_by_search_log_ids(search_log_ids)
+
+    def _build_learn_completion_prompt(self, lp: LearnPrompt, facts: list[Fact], user: str) -> str:
+        """Build the LLM prompt for a learn completion announcement."""
+        entity_sections = self._group_facts_by_scored_entity(facts, user)
+        entity_sections.sort(key=lambda x: x[0], reverse=True)
+        all_sections = "\n\n".join(section for _, section in entity_sections)
+
+        return (
+            f"{Prompt.LEARN_COMPLETION_SUMMARY_PROMPT.format(topic=lp.prompt_text)}"
+            f"\n\nEntities and facts discovered:\n\n{all_sections}"
+        )
+
+    def _group_facts_by_scored_entity(
+        self, facts: list[Fact], user: str
+    ) -> list[tuple[float, str]]:
+        """Group facts by entity and score each group by interest."""
         facts_by_entity: dict[int, list[Fact]] = defaultdict(list)
         for fact in facts:
             facts_by_entity[fact.entity_id].append(fact)
 
-        all_engagements = self.db.get_user_engagements(user)
-        engagements_by_entity: dict[int, list] = defaultdict(list)
+        all_engagements = self.db.engagements.get_for_user(user)
+        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
         for eng in all_engagements:
             if eng.entity_id is not None:
                 engagements_by_entity[eng.entity_id].append(eng)
 
-        # Build entity sections with actual facts for the model
-        entity_sections: list[tuple[float, str]] = []
+        sections: list[tuple[float, str]] = []
         for entity_id, entity_facts in facts_by_entity.items():
-            entity = self.db.get_entity(entity_id)
+            entity = self.db.entities.get(entity_id)
             if entity is None:
                 continue
             score = compute_interest_score(
@@ -162,40 +193,9 @@ class NotificationAgent(Agent):
                 half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
             )
             facts_text = "\n".join(f"- {f.content}" for f in entity_facts)
-            section = f"{entity.name}:\n{facts_text}"
-            entity_sections.append((score, section))
+            sections.append((score, f"{entity.name}:\n{facts_text}"))
 
-        entity_sections.sort(key=lambda x: x[0], reverse=True)
-        all_sections = "\n\n".join(section for _, section in entity_sections)
-
-        prompt = (
-            f"{Prompt.LEARN_COMPLETION_SUMMARY_PROMPT.format(topic=lp.prompt_text)}"
-            f"\n\nEntities and facts discovered:\n\n{all_sections}"
-        )
-
-        result = await self._compose_user_facing(prompt, image_query=lp.prompt_text)
-        if not result.answer:
-            logger.warning("Failed to compose learn completion for '%s'", lp.prompt_text)
-            return False
-
-        typing_task = asyncio.create_task(self._channel._typing_loop(user))
-        try:
-            await self._channel.send_response(
-                user,
-                result.answer,
-                parent_id=None,
-                attachments=result.attachments or None,
-            )
-            logger.info(
-                "Learn completion announcement sent for '%s' to %s",
-                lp.prompt_text,
-                user,
-            )
-        finally:
-            typing_task.cancel()
-            await self._channel.send_typing(user, False)
-
-        return True
+        return sections
 
     # --- Fact discovery notifications ---
 
@@ -210,7 +210,7 @@ class NotificationAgent(Agent):
         if not self._should_send(user):
             return False
 
-        unnotified = self.db.get_unnotified_facts(user)
+        unnotified = self.db.facts.get_unnotified(user)
         if not unnotified:
             return False
 
@@ -229,7 +229,7 @@ class NotificationAgent(Agent):
         facts = facts_by_entity[entity.id]
 
         # Determine if this is a new entity (no previously-notified facts)
-        all_facts = self.db.get_entity_facts(entity.id)
+        all_facts = self.db.facts.get_for_entity(entity.id)
         is_new = all(f.notified_at is None for f in all_facts)
 
         # Compose and send
@@ -239,8 +239,8 @@ class NotificationAgent(Agent):
 
         # Mark these facts as notified + record entity notification time
         fact_ids = [f.id for f in facts if f.id is not None]
-        self.db.mark_facts_notified(fact_ids)
-        self.db.update_entity_last_notified_at(entity.id)
+        self.db.facts.mark_notified(fact_ids)
+        self.db.entities.update_last_notified_at(entity.id)
 
         # Track which learn prompt this notification came from (to suppress same-topic dedup)
         self._last_notified_learn_prompt_id[user] = self._get_learn_prompt_id(facts)
@@ -266,58 +266,8 @@ class NotificationAgent(Agent):
 
         Filters: per-entity cooldown, learn-topic dedup (same as before).
         """
-        cooldown = self.config.runtime.NOTIFICATION_ENTITY_COOLDOWN
         pool_size = self.config.runtime.NOTIFICATION_POOL_SIZE
-        now = datetime.now(UTC)
-
-        # Fetch all engagements once, group by entity
-        all_engagements = self.db.get_user_engagements(user)
-        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
-        for eng in all_engagements:
-            if eng.entity_id is not None:
-                engagements_by_entity[eng.entity_id].append(eng)
-
-        scored: list[tuple[float, Entity]] = []
-
-        for eid, facts in facts_by_entity.items():
-            entity = self.db.get_entity(eid)
-            if entity is None:
-                continue
-
-            # Check per-entity cooldown
-            if entity.last_notified_at is not None:
-                last = entity.last_notified_at
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=UTC)
-                elapsed = (now - last).total_seconds()
-                if elapsed < cooldown:
-                    logger.debug(
-                        "Notification: skipping '%s' (notified %.0fs ago, cooldown=%.0fs)",
-                        entity.name,
-                        elapsed,
-                        cooldown,
-                    )
-                    continue
-
-            # Skip if this entity's facts share the same learn topic as the last notification
-            if last_notified_learn_prompt_id is not None:
-                entity_learn_prompt_id = self._get_learn_prompt_id(facts)
-                if entity_learn_prompt_id == last_notified_learn_prompt_id:
-                    logger.debug(
-                        "Notification: skipping '%s' (same learn topic as last notification, "
-                        "learn_prompt_id=%d)",
-                        entity.name,
-                        last_notified_learn_prompt_id,
-                    )
-                    continue
-
-            interest = compute_interest_score(
-                engagements_by_entity.get(eid, []),
-                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-            )
-            unannounced_count = len(facts)
-            score = interest + math.log2(unannounced_count + 1)
-            scored.append((score, entity))
+        scored = self._score_eligible_entities(user, facts_by_entity, last_notified_learn_prompt_id)
 
         if not scored:
             return None
@@ -338,12 +288,81 @@ class NotificationAgent(Agent):
 
         return chosen
 
+    def _score_eligible_entities(
+        self,
+        user: str,
+        facts_by_entity: dict[int, list[Fact]],
+        last_notified_learn_prompt_id: int | None,
+    ) -> list[tuple[float, Entity]]:
+        """Score each entity by interest + enrichment volume, filtering ineligible ones."""
+        all_engagements = self.db.engagements.get_for_user(user)
+        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
+        for eng in all_engagements:
+            if eng.entity_id is not None:
+                engagements_by_entity[eng.entity_id].append(eng)
+
+        scored: list[tuple[float, Entity]] = []
+        for eid, facts in facts_by_entity.items():
+            entity = self.db.entities.get(eid)
+            if entity is None:
+                continue
+            if self._is_entity_on_cooldown(entity):
+                continue
+            if self._is_same_learn_topic(facts, last_notified_learn_prompt_id):
+                logger.debug(
+                    "Notification: skipping '%s' (same learn topic as last notification, "
+                    "learn_prompt_id=%d)",
+                    entity.name,
+                    last_notified_learn_prompt_id,
+                )
+                continue
+
+            interest = compute_interest_score(
+                engagements_by_entity.get(eid, []),
+                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+            )
+            score = interest + math.log2(len(facts) + 1)
+            scored.append((score, entity))
+
+        return scored
+
+    def _is_entity_on_cooldown(self, entity: Entity) -> bool:
+        """Check whether an entity was notified too recently."""
+        if entity.last_notified_at is None:
+            return False
+
+        cooldown = self.config.runtime.NOTIFICATION_ENTITY_COOLDOWN
+        now = datetime.now(UTC)
+        last = entity.last_notified_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        elapsed = (now - last).total_seconds()
+
+        if elapsed < cooldown:
+            logger.debug(
+                "Notification: skipping '%s' (notified %.0fs ago, cooldown=%.0fs)",
+                entity.name,
+                elapsed,
+                cooldown,
+            )
+            return True
+        return False
+
+    def _is_same_learn_topic(
+        self, facts: list[Fact], last_notified_learn_prompt_id: int | None
+    ) -> bool:
+        """Check if these facts share the same learn topic as the last notification."""
+        if last_notified_learn_prompt_id is None:
+            return False
+        entity_learn_prompt_id = self._get_learn_prompt_id(facts)
+        return entity_learn_prompt_id == last_notified_learn_prompt_id
+
     def _should_send(self, user: str) -> bool:
         """Check if we should send proactive notifications to this user."""
         state = self._backoff_state.get(user)
         if state is None:
             return True
-        latest = self.db.get_latest_user_interaction_time(user)
+        latest = self.db.messages.get_latest_interaction_time(user)
         return state.should_act(latest, self.config.runtime.NOTIFICATION_INITIAL_BACKOFF)
 
     def _mark_proactive_sent(self, user: str) -> None:
@@ -366,7 +385,7 @@ class NotificationAgent(Agent):
         for fact in facts:
             if fact.source_search_log_id is None:
                 continue
-            search_log = self.db.get_search_log(fact.source_search_log_id)
+            search_log = self.db.searches.get(fact.source_search_log_id)
             if search_log is None or search_log.learn_prompt_id is None:
                 continue
             return search_log.learn_prompt_id
@@ -381,10 +400,10 @@ class NotificationAgent(Agent):
         for fact in facts:
             if fact.source_search_log_id is None:
                 continue
-            search_log = self.db.get_search_log(fact.source_search_log_id)
+            search_log = self.db.searches.get(fact.source_search_log_id)
             if search_log is None or search_log.learn_prompt_id is None:
                 continue
-            learn_prompt = self.db.get_learn_prompt(search_log.learn_prompt_id)
+            learn_prompt = self.db.learn_prompts.get(search_log.learn_prompt_id)
             if learn_prompt is not None:
                 return learn_prompt.prompt_text
         return None
@@ -395,38 +414,10 @@ class NotificationAgent(Agent):
         """Compose and send a notification for one entity's new facts."""
         assert self._channel is not None
 
-        facts_text = "\n".join(f"- {fact.content}" for fact in facts)
-        learn_topic = self._get_learn_topic(facts)
-
-        if learn_topic:
-            if is_new:
-                prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_LEARN_PROMPT
-            else:
-                prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT
-            prompt_text = prompt_template.format(
-                entity_name=entity.name,
-                learn_topic=learn_topic,
-            )
-        else:
-            if is_new:
-                prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
-            else:
-                prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
-            prompt_text = prompt_template.format(entity_name=entity.name)
-
-        tagline = entity.tagline
-        if tagline:
-            prompt = (
-                f"{prompt_text}\nContext: {entity.name} is {tagline}.\n\nNew facts:\n{facts_text}"
-            )
-        else:
-            prompt = f"{prompt_text}\n\nNew facts:\n{facts_text}"
-
+        prompt = self._build_notification_prompt(entity, facts, is_new)
         image_query = f"{entity.name} {entity.tagline}" if entity.tagline else entity.name
-        result = await self._compose_user_facing(
-            prompt,
-            image_query=image_query,
-        )
+        result = await self._compose_user_facing(prompt, image_query=image_query)
+
         if not result.answer:
             return False
         if len(result.answer) < self.config.runtime.NOTIFICATION_MIN_LENGTH:
@@ -437,22 +428,56 @@ class NotificationAgent(Agent):
             )
             return False
 
+        await self._send_with_typing(user, result.answer, result.attachments)
+        logger.info(
+            "Notification sent for entity '%s' (%d facts) to %s",
+            entity.name,
+            len(facts),
+            user,
+        )
+        return True
+
+    def _build_notification_prompt(self, entity: Entity, facts: list[Fact], is_new: bool) -> str:
+        """Build the LLM prompt for a fact discovery notification."""
+        facts_text = "\n".join(f"- {fact.content}" for fact in facts)
+        learn_topic = self._get_learn_topic(facts)
+
+        if learn_topic:
+            template = (
+                Prompt.FACT_DISCOVERY_NEW_ENTITY_LEARN_PROMPT
+                if is_new
+                else Prompt.FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT
+            )
+            prompt_text = template.format(entity_name=entity.name, learn_topic=learn_topic)
+        else:
+            template = (
+                Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
+                if is_new
+                else Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
+            )
+            prompt_text = template.format(entity_name=entity.name)
+
+        if entity.tagline:
+            return (
+                f"{prompt_text}\nContext: {entity.name} is {entity.tagline}."
+                f"\n\nNew facts:\n{facts_text}"
+            )
+        return f"{prompt_text}\n\nNew facts:\n{facts_text}"
+
+    async def _send_with_typing(
+        self, user: str, text: str, attachments: list[str] | None = None
+    ) -> None:
+        """Send a message with a typing indicator active during delivery."""
+        assert self._channel is not None
+
         typing_task = asyncio.create_task(self._channel._typing_loop(user))
         try:
             await self._channel.send_response(
                 user,
-                result.answer,
+                text,
                 parent_id=None,
-                attachments=result.attachments or None,
-            )
-            logger.info(
-                "Notification sent for entity '%s' (%d facts) to %s",
-                entity.name,
-                len(facts),
-                user,
+                attachments=attachments or None,
             )
         finally:
             typing_task.cancel()
             await self._channel.send_typing(user, False)
-
-        return True

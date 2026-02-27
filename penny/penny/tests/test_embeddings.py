@@ -336,11 +336,11 @@ class TestDatabaseEmbeddingMethods:
 
     def test_add_fact_with_embedding(self, tmp_path):
         db = self._setup_db(tmp_path)
-        entity = db.get_or_create_entity("+1234", "test entity")
+        entity = db.entities.get_or_create("+1234", "test entity")
         assert entity is not None and entity.id is not None
 
         embedding = serialize_embedding([0.1, 0.2, 0.3])
-        fact = db.add_fact(entity.id, "test fact", embedding=embedding)
+        fact = db.facts.add(entity.id, "test fact", embedding=embedding)
 
         assert fact is not None
         assert fact.embedding == embedding
@@ -349,72 +349,72 @@ class TestDatabaseEmbeddingMethods:
 
     def test_add_fact_without_embedding(self, tmp_path):
         db = self._setup_db(tmp_path)
-        entity = db.get_or_create_entity("+1234", "test entity")
+        entity = db.entities.get_or_create("+1234", "test entity")
         assert entity is not None and entity.id is not None
 
-        fact = db.add_fact(entity.id, "test fact")
+        fact = db.facts.add(entity.id, "test fact")
         assert fact is not None
         assert fact.embedding is None
 
     def test_update_entity_embedding(self, tmp_path):
         db = self._setup_db(tmp_path)
-        entity = db.get_or_create_entity("+1234", "test entity")
+        entity = db.entities.get_or_create("+1234", "test entity")
         assert entity is not None and entity.id is not None
         assert entity.embedding is None
 
         embedding = serialize_embedding([0.1, 0.2, 0.3])
-        db.update_entity_embedding(entity.id, embedding)
+        db.entities.update_embedding(entity.id, embedding)
 
         # Verify update
-        entities = db.get_user_entities("+1234")
+        entities = db.entities.get_for_user("+1234")
         assert len(entities) == 1
         assert entities[0].embedding == embedding
 
     def test_update_fact_embedding(self, tmp_path):
         db = self._setup_db(tmp_path)
-        entity = db.get_or_create_entity("+1234", "test entity")
+        entity = db.entities.get_or_create("+1234", "test entity")
         assert entity is not None and entity.id is not None
 
-        fact = db.add_fact(entity.id, "test fact")
+        fact = db.facts.add(entity.id, "test fact")
         assert fact is not None and fact.id is not None
 
         embedding = serialize_embedding([0.7, 0.8])
-        db.update_fact_embedding(fact.id, embedding)
+        db.facts.update_embedding(fact.id, embedding)
 
-        facts = db.get_entity_facts(entity.id)
+        facts = db.facts.get_for_entity(entity.id)
         assert len(facts) == 1
         assert facts[0].embedding == embedding
 
     def test_get_entities_without_embeddings(self, tmp_path):
         db = self._setup_db(tmp_path)
         # Create two entities
-        e1 = db.get_or_create_entity("+1234", "entity a")
-        e2 = db.get_or_create_entity("+1234", "entity b")
+        e1 = db.entities.get_or_create("+1234", "entity a")
+        e2 = db.entities.get_or_create("+1234", "entity b")
         assert e1 is not None and e1.id is not None
         assert e2 is not None and e2.id is not None
 
         # Both should be returned (no embeddings)
-        without = db.get_entities_without_embeddings(limit=10)
+        without = db.entities.get_without_embeddings(limit=10)
         assert len(without) == 2
 
         # Give one an embedding
-        db.update_entity_embedding(e1.id, serialize_embedding([0.1]))
+        db.entities.update_embedding(e1.id, serialize_embedding([0.1]))
 
         # Only the other should be returned
-        without = db.get_entities_without_embeddings(limit=10)
+        without = db.entities.get_without_embeddings(limit=10)
         assert len(without) == 1
         assert without[0].name == "entity b"
 
     def test_get_facts_without_embeddings(self, tmp_path):
         db = self._setup_db(tmp_path)
-        entity = db.get_or_create_entity("+1234", "test")
+        entity = db.entities.get_or_create("+1234", "test")
         assert entity is not None and entity.id is not None
 
-        f1 = db.add_fact(entity.id, "fact one")
-        f2 = db.add_fact(entity.id, "fact two", embedding=serialize_embedding([0.1]))
+        f1 = db.facts.add(entity.id, "fact one")
+        f2 = db.facts.add(entity.id, "fact two", embedding=serialize_embedding([0.1]))
         assert f1 is not None and f2 is not None
 
-        without = db.get_facts_without_embeddings(limit=10)
+        without = db.facts.get_without_embeddings(limit=10)
         assert len(without) == 1
         assert without[0].content == "fact one"
 
@@ -437,18 +437,18 @@ class TestDatabaseEngagementMethods:
         from penny.constants import PennyConstants
 
         db = self._setup_db(tmp_path)
-        entity = db.get_or_create_entity("+1234", "kef ls50 meta")
+        entity = db.entities.get_or_create("+1234", "kef ls50 meta")
         assert entity is not None and entity.id is not None
 
         # Add two engagements for this entity
-        e1 = db.add_engagement(
+        e1 = db.engagements.add(
             user="+1234",
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.6,
             entity_id=entity.id,
         )
-        e2 = db.add_engagement(
+        e2 = db.engagements.add(
             user="+1234",
             engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -458,9 +458,9 @@ class TestDatabaseEngagementMethods:
         assert e1 is not None and e2 is not None
 
         # Add an engagement for a different entity
-        other = db.get_or_create_entity("+1234", "wharfedale linton")
+        other = db.entities.get_or_create("+1234", "wharfedale linton")
         assert other is not None and other.id is not None
-        db.add_engagement(
+        db.engagements.add(
             user="+1234",
             engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -469,7 +469,7 @@ class TestDatabaseEngagementMethods:
         )
 
         # get_entity_engagements should return only the two for kef
-        engagements = db.get_entity_engagements("+1234", entity.id)
+        engagements = db.engagements.get_for_entity("+1234", entity.id)
         assert len(engagements) == 2
         assert all(e.entity_id == entity.id for e in engagements)
 
@@ -477,18 +477,18 @@ class TestDatabaseEngagementMethods:
         from penny.constants import PennyConstants
 
         db = self._setup_db(tmp_path)
-        entity = db.get_or_create_entity("+1234", "test entity")
+        entity = db.entities.get_or_create("+1234", "test entity")
         assert entity is not None and entity.id is not None
 
         # Add engagements for two different users
-        db.add_engagement(
+        db.engagements.add(
             user="+1234",
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.6,
             entity_id=entity.id,
         )
-        db.add_engagement(
+        db.engagements.add(
             user="+5678",
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -497,11 +497,11 @@ class TestDatabaseEngagementMethods:
         )
 
         # get_user_engagements filters by user
-        user1_engagements = db.get_user_engagements("+1234")
+        user1_engagements = db.engagements.get_for_user("+1234")
         assert len(user1_engagements) == 1
         assert user1_engagements[0].user == "+1234"
 
-        user2_engagements = db.get_user_engagements("+5678")
+        user2_engagements = db.engagements.get_for_user("+5678")
         assert len(user2_engagements) == 1
         assert user2_engagements[0].user == "+5678"
 
@@ -509,17 +509,17 @@ class TestDatabaseEngagementMethods:
         from penny.constants import PennyConstants
 
         db = self._setup_db(tmp_path)
-        entity = db.get_or_create_entity("+1234", "test entity")
+        entity = db.entities.get_or_create("+1234", "test entity")
         assert entity is not None and entity.id is not None
 
-        db.add_engagement(
+        db.engagements.add(
             user="+1234",
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
         )
-        db.add_engagement(
+        db.engagements.add(
             user="+1234",
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -528,11 +528,11 @@ class TestDatabaseEngagementMethods:
         )
 
         # Verify engagements exist
-        assert len(db.get_entity_engagements("+1234", entity.id)) == 2
+        assert len(db.engagements.get_for_entity("+1234", entity.id)) == 2
 
         # Delete entity
-        deleted = db.delete_entity(entity.id)
+        deleted = db.entities.delete(entity.id)
         assert deleted is True
 
         # Engagements should be gone
-        assert len(db.get_entity_engagements("+1234", entity.id)) == 0
+        assert len(db.engagements.get_for_entity("+1234", entity.id)) == 0

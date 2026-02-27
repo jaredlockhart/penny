@@ -101,7 +101,7 @@ class OllamaClient:
 
                 # Log to database
                 if self.db:
-                    self.db.log_prompt(
+                    self.db.messages.log_prompt(
                         model=self.model,
                         messages=messages_snapshot,
                         response=raw_dict,

@@ -39,13 +39,13 @@ async def test_learn_gated_by_unextracted_search_logs(
 
     async with running_penny(config) as penny:
         # Create an active learn prompt
-        lp = penny.db.create_learn_prompt(
+        lp = penny.db.learn_prompts.create(
             user=TEST_SENDER, prompt_text="kef speakers", searches_remaining=3
         )
         assert lp is not None and lp.id is not None
 
         # Create an unextracted learn_command search log
-        penny.db.log_search(
+        penny.db.searches.log(
             query="kef speakers overview",
             response="KEF makes great speakers...",
             trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
@@ -59,7 +59,7 @@ async def test_learn_gated_by_unextracted_search_logs(
         assert result is False, "LearnAgent should skip when unextracted learn search logs exist"
 
         # Still only 1 search log (no new search created)
-        search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
+        search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
         assert len(search_logs) == 1
 
 
@@ -88,19 +88,19 @@ async def test_learn_proceeds_when_search_logs_extracted(
 
     async with running_penny(config) as penny:
         # Create an active learn prompt with an extracted search log
-        lp = penny.db.create_learn_prompt(
+        lp = penny.db.learn_prompts.create(
             user=TEST_SENDER, prompt_text="kef speakers", searches_remaining=2
         )
         assert lp is not None and lp.id is not None
 
-        penny.db.log_search(
+        penny.db.searches.log(
             query="kef speakers overview",
             response="KEF makes great speakers...",
             trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
             learn_prompt_id=lp.id,
         )
-        search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
-        penny.db.mark_search_extracted(search_logs[0].id)
+        search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
+        penny.db.searches.mark_extracted(search_logs[0].id)
 
         agent = _create_learn_agent(penny, config)
 
@@ -109,7 +109,7 @@ async def test_learn_proceeds_when_search_logs_extracted(
         assert result is True, "LearnAgent should proceed when all learn search logs are extracted"
 
         # Now 2 search logs (original + new)
-        search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
+        search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
         assert len(search_logs) == 2
 
 
@@ -138,15 +138,15 @@ async def test_learn_not_gated_by_user_message_search_logs(
 
     async with running_penny(config) as penny:
         # Create an unextracted user_message search log
-        penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
-        penny.db.log_search(
+        penny.db.messages.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
+        penny.db.searches.log(
             query="hello",
             response="Some results...",
             trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
         )
 
         # Create an active learn prompt (no learn search logs yet)
-        lp = penny.db.create_learn_prompt(
+        lp = penny.db.learn_prompts.create(
             user=TEST_SENDER, prompt_text="kef speakers", searches_remaining=3
         )
         assert lp is not None
@@ -172,30 +172,30 @@ async def test_has_unextracted_learn_search_logs_db_method(
 
     async with running_penny(config) as penny:
         # No search logs at all
-        assert penny.db.has_unextracted_learn_search_logs() is False
+        assert penny.db.searches.has_unextracted_learn_logs() is False
 
         # Add unextracted user_message search log — should still be False
-        penny.db.log_search(
+        penny.db.searches.log(
             query="test",
             response="result",
             trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
         )
-        assert penny.db.has_unextracted_learn_search_logs() is False
+        assert penny.db.searches.has_unextracted_learn_logs() is False
 
         # Add unextracted learn_command search log — now True
-        lp = penny.db.create_learn_prompt(
+        lp = penny.db.learn_prompts.create(
             user=TEST_SENDER, prompt_text="test topic", searches_remaining=3
         )
         assert lp is not None and lp.id is not None
-        penny.db.log_search(
+        penny.db.searches.log(
             query="test topic",
             response="result",
             trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
             learn_prompt_id=lp.id,
         )
-        assert penny.db.has_unextracted_learn_search_logs() is True
+        assert penny.db.searches.has_unextracted_learn_logs() is True
 
         # Mark it extracted — back to False
-        search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
-        penny.db.mark_search_extracted(search_logs[0].id)
-        assert penny.db.has_unextracted_learn_search_logs() is False
+        search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
+        penny.db.searches.mark_extracted(search_logs[0].id)
+        assert penny.db.searches.has_unextracted_learn_logs() is False

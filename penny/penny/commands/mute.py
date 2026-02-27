@@ -22,8 +22,8 @@ class MuteCommand(Command):
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Execute mute command."""
-        if context.db.is_muted(context.user):
+        if context.db.users.is_muted(context.user):
             return CommandResult(text=PennyResponse.MUTE_ALREADY)
 
-        context.db.set_muted(context.user)
+        context.db.users.set_muted(context.user)
         return CommandResult(text=PennyResponse.MUTE_ENABLED)

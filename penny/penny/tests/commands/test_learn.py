@@ -57,14 +57,14 @@ async def test_learn_iterative_search(
         # Wait for background searches to complete
         await wait_until(
             lambda: (
-                len(penny.db.get_user_learn_prompts(TEST_SENDER)) > 0
-                and penny.db.get_user_learn_prompts(TEST_SENDER)[0].status
+                len(penny.db.learn_prompts.get_for_user(TEST_SENDER)) > 0
+                and penny.db.learn_prompts.get_for_user(TEST_SENDER)[0].status
                 == PennyConstants.LearnPromptStatus.COMPLETED
             )
         )
 
         # Verify LearnPrompt was created and completed
-        learn_prompts = penny.db.get_user_learn_prompts(TEST_SENDER)
+        learn_prompts = penny.db.learn_prompts.get_for_user(TEST_SENDER)
         assert len(learn_prompts) == 1
         lp = learn_prompts[0]
         assert lp.prompt_text == "kef speakers"
@@ -73,7 +73,7 @@ async def test_learn_iterative_search(
         # Verify searches are linked to the LearnPrompt
         # 1 initial + 2 followups = 3 (LLM returned empty on 3rd followup)
         assert lp.id is not None
-        search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
+        search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
         assert len(search_logs) == 3
         for sl in search_logs:
             assert sl.trigger == PennyConstants.SearchTrigger.LEARN_COMMAND
@@ -94,7 +94,7 @@ async def test_learn_no_search_tool_creates_prompt_only(
         assert "kef ls50" in response["message"]
 
         # LearnPrompt created but no searches
-        learn_prompts = penny.db.get_user_learn_prompts(TEST_SENDER)
+        learn_prompts = penny.db.learn_prompts.get_for_user(TEST_SENDER)
         assert len(learn_prompts) == 1
         assert learn_prompts[0].prompt_text == "kef ls50"
 
@@ -104,16 +104,16 @@ async def test_learn_no_args_shows_status(signal_server, test_config, mock_ollam
     """Test /learn with no args shows provenance chain."""
     async with running_penny(test_config) as penny:
         # Create a completed LearnPrompt with linked data
-        lp = penny.db.create_learn_prompt(
+        lp = penny.db.learn_prompts.create(
             user=TEST_SENDER,
             prompt_text="find me stuff about speakers",
             searches_remaining=0,
         )
         assert lp is not None and lp.id is not None
-        penny.db.update_learn_prompt_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
+        penny.db.learn_prompts.update_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
 
         # Create a search log linked to the LearnPrompt
-        penny.db.log_search(
+        penny.db.searches.log(
             query="kef speakers overview",
             response="KEF makes great speakers...",
             trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
@@ -121,15 +121,15 @@ async def test_learn_no_args_shows_status(signal_server, test_config, mock_ollam
         )
 
         # Create an entity and a fact linked to that search log
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
 
         # Get the search log to link the fact
-        search_logs = penny.db.get_search_logs_by_learn_prompt(lp.id)
+        search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
         assert len(search_logs) == 1
         sl_id = search_logs[0].id
 
-        penny.db.add_fact(
+        penny.db.facts.add(
             entity_id=entity.id,
             content="Costs $1,599 per pair",
             source_search_log_id=sl_id,
@@ -146,7 +146,7 @@ async def test_learn_no_args_shows_status(signal_server, test_config, mock_ollam
         assert "1 fact" in response["message"]
 
         # Mark search log as extracted — should now show ✓
-        penny.db.mark_search_extracted(search_logs[0].id)
+        penny.db.searches.mark_extracted(search_logs[0].id)
         await signal_server.push_message(sender=TEST_SENDER, content="/learn")
         response = await signal_server.wait_for_message(timeout=5.0)
         assert "\u2713" in response["message"]
@@ -166,7 +166,7 @@ async def test_learn_no_args_empty(signal_server, test_config, mock_ollama, runn
 async def test_learn_status_shows_active(signal_server, test_config, mock_ollama, running_penny):
     """Test /learn status shows remaining search count for active LearnPrompts."""
     async with running_penny(test_config) as penny:
-        lp = penny.db.create_learn_prompt(
+        lp = penny.db.learn_prompts.create(
             user=TEST_SENDER,
             prompt_text="ai conferences in europe",
             searches_remaining=3,
@@ -186,7 +186,7 @@ async def test_learn_prompt_crud(signal_server, test_config, mock_ollama, runnin
     """LearnPrompt CRUD operations work correctly."""
     async with running_penny(test_config) as penny:
         # Create
-        lp = penny.db.create_learn_prompt(
+        lp = penny.db.learn_prompts.create(
             user=TEST_SENDER,
             prompt_text="find me stuff about speakers",
             searches_remaining=3,
@@ -197,23 +197,23 @@ async def test_learn_prompt_crud(signal_server, test_config, mock_ollama, runnin
         assert lp.searches_remaining == 3
 
         # Read
-        fetched = penny.db.get_learn_prompt(lp.id)
+        fetched = penny.db.learn_prompts.get(lp.id)
         assert fetched is not None
         assert fetched.prompt_text == "find me stuff about speakers"
 
         # Update status
-        penny.db.update_learn_prompt_status(lp.id, "completed")
-        updated = penny.db.get_learn_prompt(lp.id)
+        penny.db.learn_prompts.update_status(lp.id, "completed")
+        updated = penny.db.learn_prompts.get(lp.id)
         assert updated is not None
         assert updated.status == "completed"
 
         # Active list
-        lp2 = penny.db.create_learn_prompt(
+        lp2 = penny.db.learn_prompts.create(
             user=TEST_SENDER,
             prompt_text="ai conferences in europe",
             searches_remaining=3,
         )
-        active = penny.db.get_active_learn_prompts(TEST_SENDER)
+        active = penny.db.learn_prompts.get_active(TEST_SENDER)
         assert len(active) == 1  # Only lp2 is active; lp is completed
         assert active[0].id == lp2.id
 
@@ -223,16 +223,16 @@ async def test_learn_status_hides_announced(signal_server, test_config, mock_oll
     """Announced learn prompts are hidden from /learn status display."""
     async with running_penny(test_config) as penny:
         # Create two learn prompts: one announced, one not
-        lp1 = penny.db.create_learn_prompt(
+        lp1 = penny.db.learn_prompts.create(
             user=TEST_SENDER,
             prompt_text="announced topic",
             searches_remaining=0,
         )
         assert lp1 is not None and lp1.id is not None
-        penny.db.update_learn_prompt_status(lp1.id, PennyConstants.LearnPromptStatus.COMPLETED)
-        penny.db.mark_learn_prompt_announced(lp1.id)
+        penny.db.learn_prompts.update_status(lp1.id, PennyConstants.LearnPromptStatus.COMPLETED)
+        penny.db.learn_prompts.mark_announced(lp1.id)
 
-        lp2 = penny.db.create_learn_prompt(
+        lp2 = penny.db.learn_prompts.create(
             user=TEST_SENDER,
             prompt_text="active topic",
             searches_remaining=3,
@@ -253,14 +253,14 @@ async def test_learn_status_empty_when_all_announced(
 ):
     """When all learn prompts are announced, show the empty message."""
     async with running_penny(test_config) as penny:
-        lp = penny.db.create_learn_prompt(
+        lp = penny.db.learn_prompts.create(
             user=TEST_SENDER,
             prompt_text="finished topic",
             searches_remaining=0,
         )
         assert lp is not None and lp.id is not None
-        penny.db.update_learn_prompt_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
-        penny.db.mark_learn_prompt_announced(lp.id)
+        penny.db.learn_prompts.update_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
+        penny.db.learn_prompts.mark_announced(lp.id)
 
         await signal_server.push_message(sender=TEST_SENDER, content="/learn")
         response = await signal_server.wait_for_message(timeout=5.0)

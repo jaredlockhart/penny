@@ -59,8 +59,8 @@ class DebugCommand(Command):
         uptime_str = PennyResponse.DEBUG_UPTIME.format(days=days, hours=hours, minutes=minutes)
 
         # Database stats
-        total_messages = context.db.count_messages()
-        active_threads = context.db.count_active_threads()
+        total_messages = context.db.messages.count()
+        active_threads = context.db.messages.count_active_threads()
 
         # Background task status
         task_status = self._get_task_status(context)

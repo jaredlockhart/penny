@@ -30,7 +30,7 @@ from penny.scheduler import (
 )
 from penny.scheduler.schedule_runner import ScheduleExecutor
 from penny.startup import get_restart_message
-from penny.tools import SearchTool
+from penny.tools import SearchTool, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -39,108 +39,102 @@ class Penny:
     """AI agent powered by Ollama via an agent controller."""
 
     def __init__(self, config: Config, channel: MessageChannel | None = None):
-        """Initialize the agent with configuration."""
+        """Initialize Penny — summary method."""
         self.config = config
         self.start_time = datetime.now()
+        self._init_database(config)
+        self._init_ollama_clients(config)
+        self._init_agents(config)
+        self._init_commands(config)
+        self._init_channel(config, channel)
+        self._init_scheduler(config)
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
+    def _init_database(self, config: Config) -> None:
+        """Set up database, run migrations, and connect to runtime config."""
         self.db = Database(config.db_path)
         migrate(config.db_path)
         self.db.create_tables()
-
-        # Set database reference for runtime config lookups
         config.runtime._db = self.db
 
-        # Shared Ollama model clients: foreground (fast, user-facing) and background (smart)
-        self.foreground_model_client = OllamaClient(
-            api_url=config.ollama_api_url,
-            model=config.ollama_foreground_model,
+    def _create_ollama_client(self, model: str) -> OllamaClient:
+        """Create an OllamaClient with standard configuration."""
+        return OllamaClient(
+            api_url=self.config.ollama_api_url,
+            model=model,
             db=self.db,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
-        )
-        self.background_model_client = OllamaClient(
-            api_url=config.ollama_api_url,
-            model=config.ollama_background_model,
-            db=self.db,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
+            max_retries=self.config.ollama_max_retries,
+            retry_delay=self.config.ollama_retry_delay,
         )
 
-        # Optional model clients: vision (image understanding) and embedding (similarity)
-        self.vision_model_client: OllamaClient | None = None
-        if config.ollama_vision_model:
-            self.vision_model_client = OllamaClient(
-                api_url=config.ollama_api_url,
-                model=config.ollama_vision_model,
-                db=self.db,
-                max_retries=config.ollama_max_retries,
-                retry_delay=config.ollama_retry_delay,
-            )
+    def _init_ollama_clients(self, config: Config) -> None:
+        """Create shared Ollama model clients."""
+        self.foreground_model_client = self._create_ollama_client(config.ollama_foreground_model)
+        self.background_model_client = self._create_ollama_client(config.ollama_background_model)
+        self.vision_model_client = (
+            self._create_ollama_client(config.ollama_vision_model)
+            if config.ollama_vision_model
+            else None
+        )
+        self.embedding_model_client = (
+            self._create_ollama_client(config.ollama_embedding_model)
+            if config.ollama_embedding_model
+            else None
+        )
+        self.image_model_client = (
+            self._create_ollama_client(config.ollama_image_model)
+            if config.ollama_image_model
+            else None
+        )
 
-        self.embedding_model_client: OllamaClient | None = None
-        if config.ollama_embedding_model:
-            self.embedding_model_client = OllamaClient(
-                api_url=config.ollama_api_url,
-                model=config.ollama_embedding_model,
-                db=self.db,
-                max_retries=config.ollama_max_retries,
-                retry_delay=config.ollama_retry_delay,
-            )
-
-        self.image_model_client: OllamaClient | None = None
-        if config.ollama_image_model:
-            self.image_model_client = OllamaClient(
-                api_url=config.ollama_api_url,
-                model=config.ollama_image_model,
-                db=self.db,
-                max_retries=config.ollama_max_retries,
-                retry_delay=config.ollama_retry_delay,
-            )
-
-        def search_tools(db):
-            if config.perplexity_api_key:
-                return [
-                    SearchTool(
-                        perplexity_api_key=config.perplexity_api_key,
-                        db=db,
-                        serper_api_key=config.serper_api_key,
-                        image_max_results=int(config.runtime.IMAGE_MAX_RESULTS),
-                        image_download_timeout=config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
-                    )
-                ]
+    def _create_search_tools(self, db: Database) -> list[Tool]:
+        """Build search tools list for a given database."""
+        if not self.config.perplexity_api_key:
             return []
-
-        def create_message_agent(db):
-            """Factory for creating MessageAgent with a given database.
-
-            Creates its own OllamaClient because the /test command needs
-            prompt logging against a separate test database.
-            """
-            client = OllamaClient(
-                api_url=config.ollama_api_url,
-                model=config.ollama_foreground_model,
+        return [
+            SearchTool(
+                perplexity_api_key=self.config.perplexity_api_key,
                 db=db,
-                max_retries=config.ollama_max_retries,
-                retry_delay=config.ollama_retry_delay,
+                serper_api_key=self.config.serper_api_key,
+                image_max_results=int(self.config.runtime.IMAGE_MAX_RESULTS),
+                image_download_timeout=self.config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
             )
-            return MessageAgent(
-                system_prompt=Prompt.SEARCH_PROMPT,
-                background_model_client=client,
-                foreground_model_client=client,
-                tools=search_tools(db),
-                db=db,
-                config=config,
-                max_steps=int(config.runtime.MESSAGE_MAX_STEPS),
-                tool_timeout=config.tool_timeout,
-                vision_model_client=self.vision_model_client,
-                embedding_model_client=self.embedding_model_client,
-            )
+        ]
 
-        # Create message agent for production use
+    def _create_message_agent(self, db: Database) -> MessageAgent:
+        """Factory for creating MessageAgent with a given database.
+
+        Creates its own OllamaClient because the /test command needs
+        prompt logging against a separate test database.
+        """
+        client = OllamaClient(
+            api_url=self.config.ollama_api_url,
+            model=self.config.ollama_foreground_model,
+            db=db,
+            max_retries=self.config.ollama_max_retries,
+            retry_delay=self.config.ollama_retry_delay,
+        )
+        return MessageAgent(
+            system_prompt=Prompt.SEARCH_PROMPT,
+            background_model_client=client,
+            foreground_model_client=client,
+            tools=self._create_search_tools(db),
+            db=db,
+            config=self.config,
+            max_steps=int(self.config.runtime.MESSAGE_MAX_STEPS),
+            tool_timeout=self.config.tool_timeout,
+            vision_model_client=self.vision_model_client,
+            embedding_model_client=self.embedding_model_client,
+        )
+
+    def _init_agents(self, config: Config) -> None:
+        """Create message agent and background processing agents."""
         self.message_agent = MessageAgent(
             system_prompt=Prompt.SEARCH_PROMPT,
             background_model_client=self.foreground_model_client,
             foreground_model_client=self.foreground_model_client,
-            tools=search_tools(self.db),
+            tools=self._create_search_tools(self.db),
             db=self.db,
             config=config,
             max_steps=int(config.runtime.MESSAGE_MAX_STEPS),
@@ -148,140 +142,99 @@ class Penny:
             vision_model_client=self.vision_model_client,
             embedding_model_client=self.embedding_model_client,
         )
+        shared_search_tools = self._create_search_tools(self.db)
+        self._shared_search_tool = shared_search_tools[0] if shared_search_tools else None
+        self._init_background_agents(config)
 
-        # Initialize GitHub client if configured
-        github_api = None
-        if (
+    def _background_agent_kwargs(self, config: Config) -> dict:
+        """Common kwargs shared by all background processing agents."""
+        return {
+            "system_prompt": "",
+            "background_model_client": self.background_model_client,
+            "foreground_model_client": self.foreground_model_client,
+            "tools": [],
+            "db": self.db,
+            "max_steps": 1,
+            "tool_timeout": config.tool_timeout,
+            "config": config,
+        }
+
+    def _init_background_agents(self, config: Config) -> None:
+        """Create learn, extraction, notification, enrich, and schedule agents."""
+        kwargs = self._background_agent_kwargs(config)
+        search_tool = self._shared_search_tool
+        self.learn_agent = LearnAgent(search_tool=search_tool, **kwargs)
+        self.extraction_pipeline = ExtractionPipeline(
+            embedding_model_client=self.embedding_model_client, **kwargs
+        )
+        self.notification_agent = NotificationAgent(**kwargs)
+        self.enrich_agent = EnrichAgent(
+            search_tool=search_tool,
+            embedding_model_client=self.embedding_model_client,
+            **kwargs,
+        )
+        self.schedule_executor = ScheduleExecutor(**kwargs)
+
+    def _init_github_client(self, config: Config) -> Any:
+        """Initialize GitHub API client if configured. Returns GitHubAPI or None."""
+        if not (
             config.github_app_id
             and config.github_app_private_key_path
             and config.github_app_installation_id
         ):
-            try:
-                from pathlib import Path
+            return None
+        try:
+            from pathlib import Path
 
-                from github_api.api import GitHubAPI
-                from github_api.auth import GitHubAuth
+            from github_api.api import GitHubAPI
+            from github_api.auth import GitHubAuth
 
-                from penny.constants import PennyConstants
+            from penny.constants import PennyConstants
 
-                key_path = Path(config.github_app_private_key_path)
-                if not key_path.is_absolute():
-                    key_path = Path.cwd() / key_path
+            key_path = Path(config.github_app_private_key_path)
+            if not key_path.is_absolute():
+                key_path = Path.cwd() / key_path
+            github_auth = GitHubAuth(
+                app_id=int(config.github_app_id),
+                private_key_path=key_path,
+                installation_id=int(config.github_app_installation_id),
+            )
+            github_api = GitHubAPI(
+                github_auth.get_token,
+                PennyConstants.GITHUB_REPO_OWNER,
+                PennyConstants.GITHUB_REPO_NAME,
+            )
+            logger.info("GitHub API client initialized")
+            return github_api
+        except Exception:
+            logger.exception("Failed to initialize GitHub client")
+            return None
 
-                github_auth = GitHubAuth(
-                    app_id=int(config.github_app_id),
-                    private_key_path=key_path,
-                    installation_id=int(config.github_app_installation_id),
-                )
-                github_api = GitHubAPI(
-                    github_auth.get_token,
-                    PennyConstants.GITHUB_REPO_OWNER,
-                    PennyConstants.GITHUB_REPO_NAME,
-                )
-                logger.info("GitHub API client initialized")
-            except Exception:
-                logger.exception("Failed to initialize GitHub client")
-
-        # Shared search tool for commands and agents that call SearchTool directly
-        shared_search_tools = search_tools(self.db)
-        shared_search_tool = shared_search_tools[0] if shared_search_tools else None
-
-        # Create command registry with message agent factory for test command
+    def _init_commands(self, config: Config) -> None:
+        """Create command registry with GitHub client and message agent factory."""
+        github_api = self._init_github_client(config)
         self.command_registry = create_command_registry(
-            message_agent_factory=create_message_agent,
+            message_agent_factory=self._create_message_agent,
             github_api=github_api,
             image_model_client=self.image_model_client,
             fastmail_api_token=config.fastmail_api_token,
         )
 
-        # Learn agent processes /learn prompts one search step at a time.
-        # Scheduled after extraction; gated by unextracted learn search logs so topics
-        # flow through the pipeline one at a time (search → extract → notify).
-        self.learn_agent = LearnAgent(
-            search_tool=shared_search_tool,
-            system_prompt="",
-            background_model_client=self.background_model_client,
-            foreground_model_client=self.foreground_model_client,
-            tools=[],
-            db=self.db,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-            config=config,
-        )
-
-        self.extraction_pipeline = ExtractionPipeline(
-            system_prompt="",  # No agent-specific prompt; identity added by _build_messages
-            background_model_client=self.background_model_client,
-            foreground_model_client=self.foreground_model_client,
-            tools=[],
-            db=self.db,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-            embedding_model_client=self.embedding_model_client,
-            config=config,
-        )
-
-        self.notification_agent = NotificationAgent(
-            system_prompt="",  # No agent-specific prompt; identity added by _build_messages
-            background_model_client=self.background_model_client,
-            foreground_model_client=self.foreground_model_client,
-            tools=[],
-            db=self.db,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-            config=config,
-        )
-
-        # Enrich agent autonomously researches entities based on interest scores.
-        # Lowest priority — only runs when notification, extraction, and learn have no work.
-        self.enrich_agent = EnrichAgent(
-            search_tool=shared_search_tool,
-            system_prompt="",  # No agent-specific prompt; identity added by _build_messages
-            background_model_client=self.background_model_client,
-            foreground_model_client=self.foreground_model_client,
-            tools=[],
-            db=self.db,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-            embedding_model_client=self.embedding_model_client,
-            config=config,
-        )
-
-        self.schedule_executor = ScheduleExecutor(
-            system_prompt="",  # ScheduleExecutor delegates to message_agent.run()
-            background_model_client=self.background_model_client,
-            foreground_model_client=self.foreground_model_client,
-            tools=[],  # Schedule executor doesn't need tools itself
-            db=self.db,
-            config=config,
-            max_steps=1,  # Just executes schedules, doesn't need multi-step loop
-            tool_timeout=config.tool_timeout,
-        )
-
-        # Create channel (needs message_agent and db)
+    def _init_channel(self, config: Config, channel: MessageChannel | None) -> None:
+        """Create channel and connect agents that send proactive messages."""
         self.channel = channel or create_channel(
             config=config,
             message_agent=self.message_agent,
             db=self.db,
             command_registry=self.command_registry,
         )
-
-        # Connect agents that send proactive messages to channel
         self.notification_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
-        # Schedules (priority: schedule executor → notification → extraction → learn → enrich)
-        # Agents with no work are skipped, so lower-priority agents get a turn each tick.
-        # ScheduleExecutor runs every minute regardless of idle state
-        # NotificationAgent announces completed topics before new work starts
-        # ExtractionPipeline processes search logs before learn creates more
-        # LearnAgent runs gated by unextracted learn search logs
-        # EnrichAgent runs only when all higher-priority agents have no work
+    def _init_scheduler(self, config: Config) -> None:
+        """Create background scheduler with prioritized schedules."""
         schedules = [
-            AlwaysRunSchedule(
-                agent=self.schedule_executor,
-                interval=60.0,  # Check every minute for due schedules
-            ),
+            AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
                 agent=self.notification_agent,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
@@ -304,11 +257,11 @@ class Penny:
             idle_threshold=config.runtime.IDLE_SECONDS,
             tick_interval=config.scheduler_tick_interval,
         )
+        self._connect_scheduler(config)
 
-        # Connect scheduler to channel for message notifications
+    def _connect_scheduler(self, config: Config) -> None:
+        """Connect scheduler to channel and set command context."""
         self.channel.set_scheduler(self.scheduler)
-
-        # Set command context on channel (must be after scheduler initialization)
         self.channel.set_command_context(
             config=config,
             channel_type=config.channel_type,
@@ -317,9 +270,6 @@ class Penny:
             embedding_model_client=self.embedding_model_client,
             image_model_client=self.image_model_client,
         )
-
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
@@ -361,21 +311,25 @@ class Penny:
                 )
 
     async def _backfill_all_embeddings(self) -> None:
-        """Backfill all missing embeddings at startup.
-
-        Loops through facts and entities with null embeddings in batches
-        until none remain. This ensures a clean slate after switching
-        embedding models without waiting for the per-cycle backfill.
-        """
+        """Backfill all missing embeddings at startup."""
         if not self.embedding_model_client:
             return
-
         batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
+        total_facts = await self._backfill_fact_embeddings(batch_limit)
+        total_entities = await self._backfill_entity_embeddings(batch_limit)
+        if total_facts or total_entities:
+            logger.info(
+                "Startup embedding backfill complete: %d facts, %d entities",
+                total_facts,
+                total_entities,
+            )
 
-        # Backfill facts
-        total_facts = 0
+    async def _backfill_fact_embeddings(self, batch_limit: int) -> int:
+        """Backfill facts with missing embeddings. Returns count embedded."""
+        assert self.embedding_model_client is not None
+        total = 0
         while True:
-            facts = self.db.get_facts_without_embeddings(limit=batch_limit)
+            facts = self.db.facts.get_without_embeddings(limit=batch_limit)
             if not facts:
                 break
             try:
@@ -383,24 +337,27 @@ class Penny:
                 vecs = await self.embedding_model_client.embed(fact_texts)
                 for fact, vec, text in zip(facts, vecs, fact_texts, strict=True):
                     assert fact.id is not None
-                    self.db.update_fact_embedding(fact.id, serialize_embedding(vec))
+                    self.db.facts.update_embedding(fact.id, serialize_embedding(vec))
                     logger.info("Embedded fact %d: %s", fact.id, text[:120])
-                total_facts += len(facts)
+                total += len(facts)
             except Exception as e:
                 logger.warning("Startup embedding backfill failed for facts: %s", e)
                 break
+        return total
 
-        # Backfill entities
-        total_entities = 0
+    async def _backfill_entity_embeddings(self, batch_limit: int) -> int:
+        """Backfill entities with missing embeddings. Returns count embedded."""
+        assert self.embedding_model_client is not None
+        total = 0
         while True:
-            entities = self.db.get_entities_without_embeddings(limit=batch_limit)
+            entities = self.db.entities.get_without_embeddings(limit=batch_limit)
             if not entities:
                 break
             try:
                 texts = []
                 for entity in entities:
                     assert entity.id is not None
-                    entity_facts = self.db.get_entity_facts(entity.id)
+                    entity_facts = self.db.facts.get_for_entity(entity.id)
                     texts.append(
                         build_entity_embed_text(
                             entity.name, [f.content for f in entity_facts], entity.tagline
@@ -409,19 +366,13 @@ class Penny:
                 vecs = await self.embedding_model_client.embed(texts)
                 for entity, vec, text in zip(entities, vecs, texts, strict=True):
                     assert entity.id is not None
-                    self.db.update_entity_embedding(entity.id, serialize_embedding(vec))
+                    self.db.entities.update_embedding(entity.id, serialize_embedding(vec))
                     logger.info("Embedded entity %d: %s", entity.id, text[:120])
-                total_entities += len(entities)
+                total += len(entities)
             except Exception as e:
                 logger.warning("Startup embedding backfill failed for entities: %s", e)
                 break
-
-        if total_facts or total_entities:
-            logger.info(
-                "Startup embedding backfill complete: %d facts, %d entities",
-                total_facts,
-                total_entities,
-            )
+        return total
 
     async def run(self) -> None:
         """Run the agent."""
@@ -457,7 +408,7 @@ class Penny:
     async def _send_startup_announcement(self) -> None:
         """Send a startup announcement to all known recipients."""
         try:
-            senders = self.db.get_all_senders()
+            senders = self.db.users.get_all_senders()
             if not senders:
                 logger.info("No recipients found for startup announcement")
                 return
@@ -480,7 +431,7 @@ class Penny:
     async def _prompt_for_missing_profiles(self) -> None:
         """Prompt users who don't have a profile set up yet."""
         try:
-            senders = self.db.get_all_senders()
+            senders = self.db.users.get_all_senders()
             if not senders:
                 logger.info("No recipients to check for missing profiles")
                 return
@@ -494,7 +445,7 @@ class Penny:
 
             for sender in senders:
                 try:
-                    user_info = self.db.get_user_info(sender)
+                    user_info = self.db.users.get_info(sender)
                     if not user_info:
                         logger.info("User %s has no profile, sending prompt", sender)
                         try:

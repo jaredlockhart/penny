@@ -88,7 +88,7 @@ class GitHubIssueCommand(Command):
 
         # If this is a quote-reply, include metadata about the quoted message
         if context.message and context.message.quoted_text:
-            quoted_msg = context.db.find_outgoing_by_content(context.message.quoted_text)
+            quoted_msg = context.db.messages.find_outgoing_by_content(context.message.quoted_text)
             if quoted_msg:
                 quoted_timestamp = quoted_msg.timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
                 footer_parts.append(f"Refers to message sent at {quoted_timestamp}")

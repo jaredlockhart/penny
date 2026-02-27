@@ -7,6 +7,7 @@ import re
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
+from penny.database.models import Entity
 from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -36,34 +37,81 @@ class MessageAgent(Agent):
         Returns:
             Tuple of (parent_id for thread linking, ControllerResponse with answer)
         """
-        # Get thread context if quoted
-        parent_id = None
-        history = None
-        if quoted_text:
-            parent_id, history = self.db.get_thread_context(quoted_text)
+        parent_id, history = self._resolve_thread_context(quoted_text)
+        history = self._inject_profile_context(sender, history, content)
+        history, knowledge_sufficient = await self._inject_entity_context(content, sender, history)
+        content, has_images = await self._process_images(content, images)
+        system_prompt = self._select_system_prompt(has_images, knowledge_sufficient)
 
-        # Inject user profile context if available
+        prompt_label = (
+            "vision" if has_images else ("knowledge" if knowledge_sufficient else "search")
+        )
+        logger.info("Handling message from %s (prompt=%s)", sender, prompt_label)
+
+        response = await self.run(
+            prompt=content,
+            history=history,
+            use_tools=not has_images,
+            max_steps=1 if has_images else None,
+            system_prompt=system_prompt,
+        )
+
+        return parent_id, response
+
+    def _resolve_thread_context(
+        self, quoted_text: str | None
+    ) -> tuple[int | None, list[tuple[str, str]] | None]:
+        """Resolve thread context from a quoted message.
+
+        Returns (parent_id, history) — both None if no quoted text.
+        """
+        if not quoted_text:
+            return None, None
+        return self.db.messages.get_thread_context(quoted_text)
+
+    def _inject_profile_context(
+        self,
+        sender: str,
+        history: list[tuple[str, str]] | None,
+        content: str,
+    ) -> list[tuple[str, str]] | None:
+        """Prepend user profile context to history and configure search redaction.
+
+        Returns the updated history (unchanged if no profile is available).
+        """
         try:
-            user_info = self.db.get_user_info(sender)
-            if user_info:
-                profile_summary = f"The user's name is {user_info.name}."
-                # Prepend profile context to history
-                history = history or []
-                history = [(MessageRole.SYSTEM.value, profile_summary), *history]
-                logger.debug("Injected profile context for %s", sender)
+            user_info = self.db.users.get_info(sender)
+            if not user_info:
+                return history
 
-                # Redact user name from outbound search queries, but only
-                # if the user didn't use their own name in the message
-                name = user_info.name
-                user_said_name = bool(re.search(rf"\b{re.escape(name)}\b", content, re.IGNORECASE))
-                search_tool = self._tool_registry.get("search")
-                if isinstance(search_tool, SearchTool):
-                    search_tool.redact_terms = [] if user_said_name else [name]
+            profile_summary = f"The user's name is {user_info.name}."
+            history = history or []
+            history = [(MessageRole.SYSTEM.value, profile_summary), *history]
+            logger.debug("Injected profile context for %s", sender)
+
+            # Redact user name from outbound search queries, but only
+            # if the user didn't use their own name in the message
+            name = user_info.name
+            user_said_name = bool(re.search(rf"\b{re.escape(name)}\b", content, re.IGNORECASE))
+            search_tool = self._tool_registry.get("search")
+            if isinstance(search_tool, SearchTool):
+                search_tool.redact_terms = [] if user_said_name else [name]
         except Exception:
             # Silently skip if userinfo table doesn't exist (e.g., in test mode)
             pass
 
-        # Retrieve entity knowledge context
+        return history
+
+    async def _inject_entity_context(
+        self,
+        content: str,
+        sender: str,
+        history: list[tuple[str, str]] | None,
+    ) -> tuple[list[tuple[str, str]] | None, bool]:
+        """Retrieve entity knowledge and append it to history.
+
+        Returns (updated_history, knowledge_sufficient).
+        """
         knowledge_sufficient = False
         try:
             entity_context, knowledge_sufficient = await self._retrieve_entity_context(
@@ -76,42 +124,35 @@ class MessageAgent(Agent):
         except Exception:
             logger.warning("Entity context retrieval failed, proceeding without")
 
-        # Caption images with vision model, then build combined text prompt
-        has_images = bool(images)
-        if images:
-            captions = [await self.caption_image(img) for img in images]
-            caption = ", ".join(captions)
-            if content:
-                content = PennyResponse.VISION_IMAGE_CONTEXT.format(
-                    user_text=content, caption=caption
-                )
-            else:
-                content = PennyResponse.VISION_IMAGE_ONLY_CONTEXT.format(caption=caption)
-            logger.info("Built vision prompt: %s", content[:200])
+        return history, knowledge_sufficient
 
-        # Choose system prompt: vision > knowledge-sufficient > default search
-        if has_images:
-            system_prompt = Prompt.VISION_RESPONSE_PROMPT
-        elif knowledge_sufficient:
-            system_prompt = Prompt.KNOWLEDGE_PROMPT
+    async def _process_images(self, content: str, images: list[str] | None) -> tuple[str, bool]:
+        """Caption images with vision model and build combined text prompt.
+
+        Returns (updated_content, has_images).
+        """
+        if not images:
+            return content, False
+
+        captions = [await self.caption_image(img) for img in images]
+        caption = ", ".join(captions)
+        if content:
+            content = PennyResponse.VISION_IMAGE_CONTEXT.format(user_text=content, caption=caption)
         else:
-            system_prompt = Prompt.SEARCH_PROMPT
+            content = PennyResponse.VISION_IMAGE_ONLY_CONTEXT.format(caption=caption)
+        logger.info("Built vision prompt: %s", content[:200])
 
-        prompt_label = (
-            "vision" if has_images else ("knowledge" if knowledge_sufficient else "search")
-        )
-        logger.info("Handling message from %s (prompt=%s)", sender, prompt_label)
+        return content, True
 
-        # Run agent (for image messages: disable tools, single pass)
-        response = await self.run(
-            prompt=content,
-            history=history,
-            use_tools=not has_images,
-            max_steps=1 if has_images else None,
-            system_prompt=system_prompt,
-        )
+    def _select_system_prompt(self, has_images: bool, knowledge_sufficient: bool) -> str:
+        """Choose system prompt: vision > knowledge-sufficient > default search."""
+        if has_images:
+            return Prompt.VISION_RESPONSE_PROMPT
+        if knowledge_sufficient:
+            return Prompt.KNOWLEDGE_PROMPT
+        return Prompt.SEARCH_PROMPT
 
-        return parent_id, response
+    # ── Entity context retrieval ──────────────────────────────────────────────
 
     async def _retrieve_entity_context(self, content: str, sender: str) -> tuple[str | None, bool]:
         """
@@ -119,10 +160,6 @@ class MessageAgent(Agent):
 
         Embeds the message, finds similar entities via cosine similarity,
         and formats their facts as context text.
-
-        Args:
-            content: The user's message text
-            sender: The sender identifier
 
         Returns:
             Tuple of (context_text, is_sufficient) where:
@@ -133,37 +170,74 @@ class MessageAgent(Agent):
         if not self._embedding_model_client:
             return None, False
 
-        # Load user entities with embeddings
-        entities = self.db.get_user_entities(sender)
-        candidates: list[tuple[int, list[float]]] = []
-        for entity in entities:
-            if entity.embedding is None or entity.id is None:
-                continue
-            candidates.append((entity.id, deserialize_embedding(entity.embedding)))
-
+        candidates, entities = self._load_entity_candidates(sender)
         if not candidates:
             return None, False
 
-        # Embed the user's message
-        try:
-            vecs = await self._embedding_model_client.embed(content)
-            query_vec = vecs[0]
-        except Exception:
-            logger.warning("Failed to embed message for entity context, skipping")
+        query_vec = await self._embed_message(content)
+        if query_vec is None:
             return None, False
 
-        # Find similar entities
         matches = find_similar(
             query_vec,
             candidates,
             top_k=int(self.config.runtime.ENTITY_CONTEXT_TOP_K),
             threshold=self.config.runtime.ENTITY_CONTEXT_THRESHOLD,
         )
-
         if not matches:
             return None, False
 
-        # Build context from matched entities
+        context_text, total_facts = self._build_entity_context_text(matches, entities)
+        if context_text is None:
+            return None, False
+
+        is_sufficient = self._assess_knowledge_sufficiency(total_facts, matches[0][1])
+
+        logger.info(
+            "Entity context: %d matches, %d facts, top_score=%.2f, sufficient=%s",
+            len(matches),
+            total_facts,
+            matches[0][1],
+            is_sufficient,
+        )
+
+        return context_text, is_sufficient
+
+    def _load_entity_candidates(
+        self, sender: str
+    ) -> tuple[list[tuple[int, list[float]]], list[Entity]]:
+        """Load user entities with embeddings as (id, vector) pairs.
+
+        Returns (candidates, entities) — candidates may be empty.
+        """
+        entities = self.db.entities.get_for_user(sender)
+        candidates: list[tuple[int, list[float]]] = []
+        for entity in entities:
+            if entity.embedding is None or entity.id is None:
+                continue
+            candidates.append((entity.id, deserialize_embedding(entity.embedding)))
+        return candidates, entities
+
+    async def _embed_message(self, content: str) -> list[float] | None:
+        """Embed the user's message. Returns None on failure."""
+        if not self._embedding_model_client:
+            return None
+        try:
+            vecs = await self._embedding_model_client.embed(content)
+            return vecs[0]
+        except Exception:
+            logger.warning("Failed to embed message for entity context, skipping")
+            return None
+
+    def _build_entity_context_text(
+        self,
+        matches: list[tuple[int, float]],
+        entities: list[Entity],
+    ) -> tuple[str | None, int]:
+        """Build formatted context text from matched entities and their facts.
+
+        Returns (context_text, total_facts) — context_text is None if no facts found.
+        """
         entity_map = {e.id: e for e in entities if e.id is not None}
         context_lines: list[str] = []
         total_facts = 0
@@ -173,7 +247,7 @@ class MessageAgent(Agent):
             if not entity or entity.id is None:
                 continue
 
-            facts = self.db.get_entity_facts(entity.id)
+            facts = self.db.facts.get_for_entity(entity.id)
             if not facts:
                 continue
 
@@ -185,23 +259,14 @@ class MessageAgent(Agent):
             total_facts += len(fact_texts)
 
         if not context_lines:
-            return None, False
+            return None, 0
 
         context_text = "Relevant knowledge:\n" + "\n".join(context_lines)
+        return context_text, total_facts
 
-        # Knowledge is sufficient when we have enough facts from a high-confidence match
-        top_score = matches[0][1]
-        is_sufficient = (
+    def _assess_knowledge_sufficiency(self, total_facts: int, top_score: float) -> bool:
+        """Determine if retrieved knowledge is sufficient to skip search."""
+        return (
             total_facts >= self.config.runtime.KNOWLEDGE_SUFFICIENT_MIN_FACTS
             and top_score >= self.config.runtime.KNOWLEDGE_SUFFICIENT_MIN_SCORE
         )
-
-        logger.info(
-            "Entity context: %d entities, %d facts, top_score=%.2f, sufficient=%s",
-            len(context_lines),
-            total_facts,
-            top_score,
-            is_sufficient,
-        )
-
-        return context_text, is_sufficient

@@ -20,11 +20,11 @@ async def test_startup_announcement_with_commit(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Verify sender is in database
-        senders = penny.db.get_all_senders()
+        senders = penny.db.users.get_all_senders()
         assert TEST_SENDER in senders
 
         # Create user profile so they get startup announcements
-        penny.db.save_user_info(
+        penny.db.users.save_info(
             sender=TEST_SENDER,
             name="Test User",
             location="Seattle, WA",
@@ -78,11 +78,11 @@ async def test_startup_announcement_fallback_no_git(
         await signal_server.push_message(sender=TEST_SENDER, content="hey penny")
         await signal_server.wait_for_message(timeout=10.0)
 
-        senders = penny.db.get_all_senders()
+        senders = penny.db.users.get_all_senders()
         assert TEST_SENDER in senders
 
         # Create user profile so they get startup announcements
-        penny.db.save_user_info(
+        penny.db.users.save_info(
             sender=TEST_SENDER,
             name="Test User",
             location="Seattle, WA",
@@ -121,11 +121,11 @@ async def test_startup_announcement_fallback_llm_error(
         await signal_server.push_message(sender=TEST_SENDER, content="hey penny")
         await signal_server.wait_for_message(timeout=10.0)
 
-        senders = penny.db.get_all_senders()
+        senders = penny.db.users.get_all_senders()
         assert TEST_SENDER in senders
 
         # Create user profile so they get startup announcements
-        penny.db.save_user_info(
+        penny.db.users.save_info(
             sender=TEST_SENDER,
             name="Test User",
             location="Seattle, WA",
@@ -191,19 +191,19 @@ async def test_startup_announcement_multiple_recipients(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Verify both senders are in database
-        senders = penny.db.get_all_senders()
+        senders = penny.db.users.get_all_senders()
         assert sender1 in senders
         assert sender2 in senders
 
         # Create user profiles for both senders so they get startup announcements
-        penny.db.save_user_info(
+        penny.db.users.save_info(
             sender=sender1,
             name="Test User 1",
             location="Seattle, WA",
             timezone="America/Los_Angeles",
             date_of_birth="1990-01-01",
         )
-        penny.db.save_user_info(
+        penny.db.users.save_info(
             sender=sender2,
             name="Test User 2",
             location="New York, NY",

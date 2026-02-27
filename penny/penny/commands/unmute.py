@@ -20,8 +20,8 @@ class UnmuteCommand(Command):
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Execute unmute command."""
-        if not context.db.is_muted(context.user):
+        if not context.db.users.is_muted(context.user):
             return CommandResult(text=PennyResponse.UNMUTE_ALREADY)
 
-        context.db.set_unmuted(context.user)
+        context.db.users.set_unmuted(context.user)
         return CommandResult(text=PennyResponse.UNMUTE_ENABLED)

@@ -18,6 +18,99 @@ if TYPE_CHECKING:
     from penny.database import Database
 
 
+def _load_dotenv() -> None:
+    """Load .env file from project root or container path."""
+    env_paths = [
+        Path.cwd() / ".env",
+        Path("/penny/.env"),
+    ]
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(env_path)
+            break
+
+
+def _detect_channel_type() -> str:
+    """Detect or read channel type from environment."""
+    signal_number = os.getenv("SIGNAL_NUMBER")
+    discord_bot_token = os.getenv("DISCORD_BOT_TOKEN")
+    discord_channel_id = os.getenv("DISCORD_CHANNEL_ID")
+
+    channel_type = os.getenv("CHANNEL_TYPE", "").lower()
+    if channel_type:
+        return channel_type
+
+    has_discord = (
+        discord_bot_token and discord_bot_token != "your-bot-token-here" and discord_channel_id
+    )
+    has_signal = signal_number and signal_number != "+1234567890"
+
+    if has_discord and not has_signal:
+        return "discord"
+    if has_signal:
+        return "signal"
+    raise ValueError(
+        "No channel configured. Set either SIGNAL_NUMBER or "
+        "DISCORD_BOT_TOKEN + DISCORD_CHANNEL_ID in .env"
+    )
+
+
+def _validate_channel_config(channel_type: str) -> None:
+    """Validate required fields for the selected channel type."""
+    if channel_type == "signal" and not os.getenv("SIGNAL_NUMBER"):
+        raise ValueError("SIGNAL_NUMBER is required for Signal channel")
+    if channel_type == "discord":
+        discord_bot_token = os.getenv("DISCORD_BOT_TOKEN")
+        if not discord_bot_token or discord_bot_token == "your-bot-token-here":
+            raise ValueError(
+                "DISCORD_BOT_TOKEN is required for Discord channel. "
+                "Get your bot token from https://discord.com/developers/applications"
+            )
+        if not os.getenv("DISCORD_CHANNEL_ID"):
+            raise ValueError("DISCORD_CHANNEL_ID is required for Discord channel")
+
+
+def _collect_env_vars(channel_type: str) -> dict:
+    """Read all config environment variables and return as constructor kwargs."""
+    ollama_foreground_model = os.getenv("OLLAMA_FOREGROUND_MODEL", "gpt-oss:20b")
+    return {
+        "channel_type": channel_type,
+        "signal_number": os.getenv("SIGNAL_NUMBER"),
+        "signal_api_url": os.getenv("SIGNAL_API_URL", "http://localhost:8080"),
+        "discord_bot_token": os.getenv("DISCORD_BOT_TOKEN"),
+        "discord_channel_id": os.getenv("DISCORD_CHANNEL_ID"),
+        "ollama_api_url": os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434"),
+        "ollama_foreground_model": ollama_foreground_model,
+        "ollama_background_model": os.getenv("OLLAMA_BACKGROUND_MODEL", ollama_foreground_model),
+        "ollama_vision_model": os.getenv("OLLAMA_VISION_MODEL"),
+        "ollama_image_model": os.getenv("OLLAMA_IMAGE_MODEL"),
+        "ollama_embedding_model": os.getenv("OLLAMA_EMBEDDING_MODEL"),
+        "perplexity_api_key": os.getenv("PERPLEXITY_API_KEY"),
+        "serper_api_key": os.getenv("SERPER_API_KEY"),
+        "github_app_id": os.getenv("GITHUB_APP_ID"),
+        "github_app_private_key_path": os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
+        "github_app_installation_id": os.getenv("GITHUB_APP_INSTALLATION_ID"),
+        "log_level": os.getenv("LOG_LEVEL", "INFO"),
+        "db_path": os.getenv("DB_PATH", "/penny/data/penny/penny.db"),
+        "log_file": os.getenv("LOG_FILE"),
+        "log_max_bytes": int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024))),
+        "log_backup_count": int(os.getenv("LOG_BACKUP_COUNT", "5")),
+        "tool_timeout": float(os.getenv("TOOL_TIMEOUT", "60.0")),
+        "fastmail_api_token": os.getenv("FASTMAIL_API_TOKEN"),
+    }
+
+
+def _build_runtime_params(db: Database | None) -> RuntimeParams:
+    """Build runtime params with env overrides."""
+    env_overrides: dict[str, int | float] = {}
+    for key, param in RUNTIME_CONFIG_PARAMS.items():
+        env_val = os.getenv(key)
+        if env_val is not None:
+            with contextlib.suppress(ValueError):
+                env_overrides[key] = param.validator(env_val)
+    return RuntimeParams(db=db, env_overrides=env_overrides)
+
+
 @dataclass
 class Config:
     """Application configuration loaded from .env file."""
@@ -81,117 +174,10 @@ class Config:
     @classmethod
     def load(cls, db: Database | None = None) -> Config:
         """Load configuration from .env file."""
-        # Load .env file from project root or /penny/.env in container
-        env_paths = [
-            Path.cwd() / ".env",
-            Path("/penny/.env"),
-        ]
-
-        for env_path in env_paths:
-            if env_path.exists():
-                load_dotenv(env_path)
-                break
-
-        # Determine channel type based on which credentials are configured
-        signal_number = os.getenv("SIGNAL_NUMBER")
-        discord_bot_token = os.getenv("DISCORD_BOT_TOKEN")
-        discord_channel_id = os.getenv("DISCORD_CHANNEL_ID")
-
-        # Explicit channel type or auto-detect
-        channel_type = os.getenv("CHANNEL_TYPE", "").lower()
-        if not channel_type:
-            # Auto-detect based on which credentials are present
-            has_discord = (
-                discord_bot_token
-                and discord_bot_token != "your-bot-token-here"
-                and discord_channel_id
-            )
-            has_signal = signal_number and signal_number != "+1234567890"
-
-            if has_discord and not has_signal:
-                channel_type = "discord"
-            elif has_signal:
-                channel_type = "signal"
-            else:
-                raise ValueError(
-                    "No channel configured. Set either SIGNAL_NUMBER or "
-                    "DISCORD_BOT_TOKEN + DISCORD_CHANNEL_ID in .env"
-                )
-
-        # Validate required fields for the selected channel
-        if channel_type == "signal" and not signal_number:
-            raise ValueError("SIGNAL_NUMBER is required for Signal channel")
-        if channel_type == "discord":
-            if not discord_bot_token or discord_bot_token == "your-bot-token-here":
-                raise ValueError(
-                    "DISCORD_BOT_TOKEN is required for Discord channel. "
-                    "Get your bot token from https://discord.com/developers/applications"
-                )
-            if not discord_channel_id:
-                raise ValueError("DISCORD_CHANNEL_ID is required for Discord channel")
-
-        # Optional fields with defaults
-        signal_api_url = os.getenv("SIGNAL_API_URL", "http://localhost:8080")
-        ollama_api_url = os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434")
-        ollama_foreground_model = os.getenv("OLLAMA_FOREGROUND_MODEL", "gpt-oss:20b")
-        # Background model defaults to foreground model if not specified
-        ollama_background_model = os.getenv("OLLAMA_BACKGROUND_MODEL", ollama_foreground_model)
-        ollama_vision_model = os.getenv("OLLAMA_VISION_MODEL")  # Optional
-        ollama_image_model = os.getenv("OLLAMA_IMAGE_MODEL")  # Optional
-        ollama_embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL")  # Optional
-        perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")  # Optional
-        serper_api_key = os.getenv("SERPER_API_KEY")  # Optional (image search)
-        log_level = os.getenv("LOG_LEVEL", "INFO")
-        db_path = os.getenv("DB_PATH", "/penny/data/penny/penny.db")
-        log_file = os.getenv("LOG_FILE")  # Optional, defaults to None
-        log_max_bytes = int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024)))
-        log_backup_count = int(os.getenv("LOG_BACKUP_COUNT", "5"))
-
-        # GitHub App configuration (optional, needed for /bug command)
-        github_app_id = os.getenv("GITHUB_APP_ID")  # Optional
-        github_app_private_key_path = os.getenv("GITHUB_APP_PRIVATE_KEY_PATH")  # Optional
-        github_app_installation_id = os.getenv("GITHUB_APP_INSTALLATION_ID")  # Optional
-
-        # Fastmail JMAP configuration (optional, needed for /email command)
-        fastmail_api_token = os.getenv("FASTMAIL_API_TOKEN")  # Optional
-
-        # Tool execution timeout
-        tool_timeout = float(os.getenv("TOOL_TIMEOUT", "60.0"))
-
-        # Build env overrides for runtime params
-        env_overrides: dict[str, int | float] = {}
-        for key, param in RUNTIME_CONFIG_PARAMS.items():
-            env_val = os.getenv(key)
-            if env_val is not None:
-                with contextlib.suppress(ValueError):
-                    env_overrides[key] = param.validator(env_val)
-
-        return cls(
-            channel_type=channel_type,
-            signal_number=signal_number,
-            signal_api_url=signal_api_url,
-            discord_bot_token=discord_bot_token,
-            discord_channel_id=discord_channel_id,
-            ollama_api_url=ollama_api_url,
-            ollama_foreground_model=ollama_foreground_model,
-            ollama_background_model=ollama_background_model,
-            ollama_vision_model=ollama_vision_model,
-            ollama_image_model=ollama_image_model,
-            ollama_embedding_model=ollama_embedding_model,
-            perplexity_api_key=perplexity_api_key,
-            serper_api_key=serper_api_key,
-            github_app_id=github_app_id,
-            github_app_private_key_path=github_app_private_key_path,
-            github_app_installation_id=github_app_installation_id,
-            log_level=log_level,
-            db_path=db_path,
-            log_file=log_file,
-            log_max_bytes=log_max_bytes,
-            log_backup_count=log_backup_count,
-            tool_timeout=tool_timeout,
-            fastmail_api_token=fastmail_api_token,
-            runtime=RuntimeParams(db=db, env_overrides=env_overrides),
-        )
+        _load_dotenv()
+        channel_type = _detect_channel_type()
+        _validate_channel_config(channel_type)
+        return cls(**_collect_env_vars(channel_type), runtime=_build_runtime_params(db))
 
 
 def setup_logging(

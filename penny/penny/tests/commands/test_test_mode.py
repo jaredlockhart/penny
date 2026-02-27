@@ -187,7 +187,7 @@ async def test_test_mode_snapshot_created_at_startup(test_config, running_penny)
     prod_db = Database(test_config.db_path)
     migrate(test_config.db_path)
     prod_db.create_tables()
-    prod_db.log_message(
+    prod_db.messages.log_message(
         direction="incoming",
         sender=TEST_SENDER,
         content="production message",
@@ -208,7 +208,7 @@ async def test_test_mode_snapshot_created_at_startup(test_config, running_penny)
 
         # Verify test db is a copy of production db
         test_db = Database(str(test_db_path))
-        test_messages = test_db.get_user_messages(TEST_SENDER)
+        test_messages = test_db.messages.get_user_messages(TEST_SENDER)
         assert len(test_messages) == 1, "Test db should contain production message"
         assert test_messages[0].content == "production message"
 

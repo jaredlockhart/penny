@@ -111,7 +111,7 @@ async def test_basic_message_flow(
         assert len(signal_server.typing_events) >= 1, "Should have sent typing indicator"
 
         # Verify messages were logged to database
-        incoming_messages = penny.db.get_user_messages(TEST_SENDER)
+        incoming_messages = penny.db.messages.get_user_messages(TEST_SENDER)
         assert len(incoming_messages) >= 1, "Incoming message should be logged"
 
         with penny.db.get_session() as session:
@@ -257,12 +257,12 @@ async def test_entity_context_responds_from_knowledge(
 
     async with running_penny(config) as penny:
         # Seed entity with embedding and enough facts for sufficiency
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
-        penny.db.add_fact(entity.id, "Features Metamaterial Absorption Technology")
-        penny.db.add_fact(entity.id, "Made by KEF, a British audio company")
-        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.facts.add(entity.id, "Costs $1,599 per pair")
+        penny.db.facts.add(entity.id, "Features Metamaterial Absorption Technology")
+        penny.db.facts.add(entity.id, "Made by KEF, a British audio company")
+        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
 
         await signal_server.push_message(
             sender=TEST_SENDER, content="how much does the KEF LS50 cost?"
@@ -313,10 +313,10 @@ async def test_entity_context_searches_when_insufficient(
 
     async with running_penny(config) as penny:
         # Seed entity with embedding (orthogonal to message)
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
-        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.facts.add(entity.id, "Costs $1,599 per pair")
+        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
 
         await signal_server.push_message(sender=TEST_SENDER, content="what's the weather today?")
         await signal_server.wait_for_message(timeout=10.0)
@@ -352,10 +352,10 @@ async def test_entity_context_graceful_on_embed_failure(
 
     async with running_penny(config) as penny:
         # Seed entity with embedding
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "test entity")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
         assert entity is not None and entity.id is not None
-        penny.db.add_fact(entity.id, "some fact")
-        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.facts.add(entity.id, "some fact")
+        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
 
         await signal_server.push_message(sender=TEST_SENDER, content="tell me about test entity")
         response = await signal_server.wait_for_message(timeout=10.0)

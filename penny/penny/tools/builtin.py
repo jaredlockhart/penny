@@ -130,14 +130,22 @@ class SearchTool(Tool):
         trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
         learn_prompt_id: int | None = None,
     ) -> tuple[str, list[str]]:
-        """Search via Perplexity. Returns (text, urls)."""
+        """Search via Perplexity — summary method. Returns (text, urls)."""
         start = time.time()
+        response = await self._call_perplexity(query)
+        duration_ms = int((time.time() - start) * 1000)
+        raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
+        result = self._clean_text(raw_text)
+        urls = self._extract_urls(response)
+        self._log_search(query, result, duration_ms, trigger, learn_prompt_id)
+        return result, urls
 
+    async def _call_perplexity(self, query: str):
+        """Call Perplexity API with dated query prefix."""
         today = datetime.now(UTC).strftime("%B %d, %Y")
         dated_query = f"[Today is {today}] {query}"
-
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(
+        return await loop.run_in_executor(
             None,
             partial(
                 self.perplexity.responses.create,
@@ -146,11 +154,9 @@ class SearchTool(Tool):
             ),
         )
 
-        duration_ms = int((time.time() - start) * 1000)
-        raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
-        result = self._clean_text(raw_text)
-
-        # Extract the most-cited URL from response annotations
+    @staticmethod
+    def _extract_urls(response) -> list[str]:
+        """Extract the most-cited URLs from Perplexity response annotations."""
         url_counts: dict[str, int] = {}
         for output in response.output or []:
             if isinstance(output, SearchResultsOutputItem):
@@ -162,26 +168,32 @@ class SearchTool(Tool):
                     for ann in part.annotations or []:
                         if ann.url:
                             url_counts[ann.url] = url_counts.get(ann.url, 0) + 1
+        if not url_counts:
+            return []
+        filtered = {
+            u: c
+            for u, c in url_counts.items()
+            if not any(domain in u for domain in PennyConstants.URL_BLOCKLIST_DOMAINS)
+        }
+        return sorted(filtered, key=filtered.get, reverse=True)[:5]  # type: ignore[arg-type]
 
-        urls: list[str] = []
-        if url_counts:
-            filtered = {
-                u: c
-                for u, c in url_counts.items()
-                if not any(domain in u for domain in PennyConstants.URL_BLOCKLIST_DOMAINS)
-            }
-            urls = sorted(filtered, key=filtered.get, reverse=True)[:5]  # type: ignore[arg-type]
-
+    def _log_search(
+        self,
+        query: str,
+        result: str,
+        duration_ms: int,
+        trigger: str,
+        learn_prompt_id: int | None,
+    ) -> None:
+        """Log search to database if available."""
         if self.db:
-            self.db.log_search(
+            self.db.searches.log(
                 query=query,
                 response=result,
                 duration_ms=duration_ms,
                 trigger=trigger,
                 learn_prompt_id=learn_prompt_id,
             )
-
-        return result, urls
 
     async def _search_image(self, query: str) -> str | None:
         """Search for an image via Serper and return base64 data."""

@@ -26,7 +26,7 @@ class UnlearnCommand(Command):
         """Execute unlearn command."""
         args = args.strip()
 
-        learn_prompts = context.db.get_user_learn_prompts(context.user)
+        learn_prompts = context.db.learn_prompts.get_for_user(context.user)
         if not learn_prompts:
             return CommandResult(text=PennyResponse.UNLEARN_EMPTY)
 
@@ -50,7 +50,7 @@ class UnlearnCommand(Command):
         lp = learn_prompts[position - 1]
         assert lp.id is not None
 
-        deleted_entities = context.db.delete_learn_prompt(lp.id)
+        deleted_entities = context.db.learn_prompts.delete(lp.id)
 
         lines = [PennyResponse.UNLEARN_HEADER.format(topic=lp.prompt_text)]
         if deleted_entities:
