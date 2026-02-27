@@ -56,7 +56,7 @@ flowchart TD
 - **Ollama**: Local LLM inference (default model: gpt-oss:20b)
 - **Vision**: Optional vision model (e.g., qwen3-vl) for processing image attachments from Signal
 - **Image Generation**: Optional image model (e.g., x/z-image-turbo) for generating images via `/draw` command
-- **Embedding Model**: Optional dedicated embedding model (e.g., nomic-embed-text) for semantic validation, dedup, and entity context injection
+- **Embedding Model**: Optional dedicated embedding model (e.g., embeddinggemma) for semantic validation, dedup, and entity context injection
 - **Perplexity**: Web search — Penny always searches before answering, never uses model knowledge alone
 - **Serper**: Image search (Google Images) — runs in parallel with Perplexity, attaches a relevant image to every response
 - **SQLite**: Logs all prompts, searches, and messages; stores thread history via parent-child links

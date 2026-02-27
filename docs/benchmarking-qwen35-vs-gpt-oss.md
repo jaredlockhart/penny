@@ -172,3 +172,28 @@ For our agentic workload, **qwen3.5:35b is not a viable replacement for gpt-oss:
 The fundamental tension: qwen3.5 needs thinking tokens for accuracy on complex prompts, but its thinking mode is too slow and produces disconnected output. gpt-oss:20b's moderate thinking (300-8k chars) hits the sweet spot — enough reasoning for correctness without blowing up latency.
 
 We'll check back when Ollama's qwen3.5 integration matures (format enforcement, thinking stability), but for now gpt-oss:20b remains our production model.
+
+## Addendum: Ollama 0.17.3 retest (February 26, 2026)
+
+Ollama 0.17.3 shipped a fix for "tool calls in the Qwen 3 and Qwen 3.5 model families not being parsed correctly if emitted during thinking." We retested the known entity matching benchmark (#2) — one of the tasks qwen3.5:35b previously failed — with thinking re-enabled. We also tested `qwen3.5:27b`, the dense (non-MoE) variant.
+
+### Results (known entity matching, thinking enabled)
+
+| Model | Time | Thinking | Output tokens | Correct? |
+|-------|------|----------|---------------|----------|
+| gpt-oss:20b | 11.8s | 1,108 chars | 18 | Yes |
+| qwen3.5:35b | 103.7s | 6,666 chars | 41 | Yes |
+| qwen3.5:27b | 578.6s | 12,089 chars | 21 | Yes |
+
+All three models now return the correct answer: `["ragnarök (swedish progressive rock band)"]`. Previously, qwen3.5:35b with thinking disabled returned 4 entities including 3 hallucinated ones not in the known list.
+
+### Key observations
+
+- **Thinking fixes correctness for qwen3.5**, but the speed penalty is prohibitive. The 35b MoE model is 9x slower than gpt-oss; the 27b dense model is 49x slower.
+- **qwen3.5:27b is not viable on Apple Silicon**: 188s warmup, 578s for a single prompt, 12k chars of thinking to reach the same answer gpt-oss gets in 1.1k chars.
+- **Thinking efficiency matters more than model size**: gpt-oss needs 6x less thinking to reach the correct answer. The qwen models reason correctly but verbosely — lots of "let me re-check" cycles that don't improve the output.
+- **Benchmark scores vs real-world performance**: qwen3.5 benchmarks well on MMLU/HumanEval/GPQA, but these test raw capability in free-form output. They don't test constrained generation (JSON schema + list cross-referencing simultaneously), which is our primary workload. Training objective and inference architecture matter more than benchmark rankings for local deployment.
+
+### Decision
+
+No change — gpt-oss:20b remains our production model. The Ollama 0.17.3 fix makes qwen3.5 *correct* with thinking enabled, but not *practical* for latency-sensitive local inference.

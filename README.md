@@ -239,7 +239,7 @@ Penny auto-detects which channel to use based on configured credentials:
 - `OLLAMA_BACKGROUND_MODEL`: Smarter model for background tasks (default: same as foreground)
 - `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional
 - `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables `/draw`
-- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model (e.g., nomic-embed-text). Optional; if unset, uses background model
+- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model (e.g., embeddinggemma). Optional; if unset, uses background model
 - `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
 - `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 
