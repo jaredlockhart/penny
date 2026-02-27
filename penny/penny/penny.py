@@ -10,6 +10,7 @@ from typing import Any
 from penny.agents import (
     Agent,
     EnrichAgent,
+    EventAgent,
     ExtractionPipeline,
     LearnAgent,
     MessageAgent,
@@ -31,6 +32,7 @@ from penny.scheduler import (
 from penny.scheduler.schedule_runner import ScheduleExecutor
 from penny.startup import get_restart_message
 from penny.tools import SearchTool, Tool
+from penny.tools.news import NewsTool
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +162,7 @@ class Penny:
         }
 
     def _init_background_agents(self, config: Config) -> None:
-        """Create learn, extraction, notification, enrich, and schedule agents."""
+        """Create learn, extraction, notification, enrich, event, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
         search_tool = self._shared_search_tool
         self.learn_agent = LearnAgent(search_tool=search_tool, **kwargs)
@@ -173,7 +175,18 @@ class Penny:
             embedding_model_client=self.embedding_model_client,
             **kwargs,
         )
+        self.event_agent = EventAgent(
+            news_tool=self._create_news_tool(config),
+            embedding_model_client=self.embedding_model_client,
+            **kwargs,
+        )
         self.schedule_executor = ScheduleExecutor(**kwargs)
+
+    def _create_news_tool(self, config: Config) -> NewsTool | None:
+        """Create NewsTool if NEWS_API_KEY is configured."""
+        if not config.news_api_key:
+            return None
+        return NewsTool(api_key=config.news_api_key)
 
     def _init_github_client(self, config: Config) -> Any:
         """Initialize GitHub API client if configured. Returns GitHubAPI or None."""
@@ -242,6 +255,10 @@ class Penny:
             ),
             PeriodicSchedule(
                 agent=self.extraction_pipeline,
+                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
+            ),
+            PeriodicSchedule(
+                agent=self.event_agent,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
             PeriodicSchedule(

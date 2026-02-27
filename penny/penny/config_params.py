@@ -20,6 +20,7 @@ GROUP_EXTRACTION = "Extraction"
 GROUP_NOTIFICATION = "Notification"
 GROUP_LEARN = "Learn"
 GROUP_ENRICHMENT = "Enrichment"
+GROUP_EVENTS = "Events"
 
 # Ordered list for display
 CONFIG_GROUPS: list[str] = [
@@ -30,6 +31,7 @@ CONFIG_GROUPS: list[str] = [
     GROUP_NOTIFICATION,
     GROUP_LEARN,
     GROUP_ENRICHMENT,
+    GROUP_EVENTS,
 ]
 
 
@@ -482,6 +484,36 @@ ConfigParam(
     default=0.3,
     validator=_validate_positive_float,
     group=GROUP_ENRICHMENT,
+)
+
+
+# ── Events ───────────────────────────────────────────────────────────────────
+
+ConfigParam(
+    key="EVENT_POLL_INTERVAL",
+    description="Minimum seconds between event agent polls",
+    type=float,
+    default=3600.0,
+    validator=_validate_positive_float,
+    group=GROUP_EVENTS,
+)
+
+ConfigParam(
+    key="EVENT_DEDUP_SIMILARITY_THRESHOLD",
+    description="Embedding cosine similarity threshold for headline dedup",
+    type=float,
+    default=0.90,
+    validator=_validate_positive_float,
+    group=GROUP_EVENTS,
+)
+
+ConfigParam(
+    key="EVENT_DEDUP_WINDOW_DAYS",
+    description="Number of days to look back for dedup comparison",
+    type=int,
+    default=7,
+    validator=_validate_positive_int,
+    group=GROUP_EVENTS,
 )
 
 

@@ -292,6 +292,17 @@ Examples:
         "Return only the JSON object, no explanations."
     )
 
+    # Event agent: extract entity names from a news article
+    EVENT_ENTITY_EXTRACTION_PROMPT = (
+        "Identify named entities mentioned in the following news article.\n"
+        "Return a JSON object with a single key 'entities': a list of entity names.\n\n"
+        "ENTITY NAME RULES:\n"
+        "- Use short canonical names (1-5 words)\n"
+        "- Include: products, people, organizations, scientific concepts, software\n"
+        "- Exclude: vague concepts, dates, locations, article titles\n\n"
+        "Return only the JSON object, no explanations."
+    )
+
     MESSAGE_SENTIMENT_EXTRACTION_PROMPT = (
         "Analyze the user's sentiment toward each named entity in their message.\n\n"
         "Return ONLY entities where the user expresses a clear opinion:\n"
