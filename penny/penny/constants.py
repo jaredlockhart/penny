@@ -64,5 +64,11 @@ class PennyConstants:
     GITHUB_REPO_OWNER = "jaredlockhart"
     GITHUB_REPO_NAME = "penny"
 
+    class EventSourceType(StrEnum):
+        """Source that produced an event."""
+
+        NEWS_API = "news_api"
+        SEARCH = "search"
+
     # Vision constants
     VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
