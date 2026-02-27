@@ -218,6 +218,7 @@ class Penny:
             github_api=github_api,
             image_model_client=self.image_model_client,
             fastmail_api_token=config.fastmail_api_token,
+            news_api_key=config.news_api_key,
         )
 
     def _init_channel(self, config: Config, channel: MessageChannel | None) -> None:

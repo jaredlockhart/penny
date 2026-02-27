@@ -37,6 +37,7 @@ def create_command_registry(
     github_api: GitHubAPI | None = None,
     image_model_client: OllamaClient | None = None,
     fastmail_api_token: str | None = None,
+    news_api_key: str | None = None,
 ) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
@@ -46,6 +47,7 @@ def create_command_registry(
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
         image_model_client: Optional image generation OllamaClient (required for draw command)
+        news_api_key: Optional NewsAPI key (required for events command)
 
     Returns:
         CommandRegistry with all builtin commands registered
@@ -90,5 +92,11 @@ def create_command_registry(
         from penny.commands.email import EmailCommand
 
         registry.register(EmailCommand(fastmail_api_token))
+
+    # Register events command if NEWS_API_KEY is configured
+    if news_api_key:
+        from penny.commands.events import EventsCommand
+
+        registry.register(EventsCommand())
 
     return registry
