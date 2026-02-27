@@ -1,8 +1,8 @@
 """Notification agent — owns all proactive messaging to users.
 
 Decoupled from extraction: the extraction pipeline stores facts silently,
-and this agent selects the entity with the newest un-notified facts to
-surface on each cycle, gated by per-user exponential backoff and a
+and this agent scores entities by interest + enrichment volume, then randomly
+selects from the top-N pool — gated by per-user exponential backoff and a
 per-entity cooldown.
 """
 
@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import random
 from collections import defaultdict
 from datetime import UTC, datetime
 
 from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
-from penny.database.models import Entity, Fact, LearnPrompt
+from penny.database.models import Engagement, Entity, Fact, LearnPrompt
 from penny.interest import compute_interest_score
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -25,11 +27,11 @@ logger = logging.getLogger(__name__)
 
 
 class NotificationAgent(Agent):
-    """Background agent that sends recency-ranked fact discovery notifications.
+    """Background agent that sends interest-ranked fact discovery notifications.
 
-    Queries for un-notified facts, picks the entity with the newest facts
-    (respecting a per-entity cooldown), composes a message, and sends
-    it — one notification per cycle.
+    Scores entities by interest + enrichment volume, randomly selects from
+    the top-N pool (respecting per-entity cooldown), composes a message,
+    and sends it — one notification per cycle.
 
     Also sends learn completion announcements when a /learn topic finishes
     extraction, summarizing discovered entities with fact counts and interest scores.
@@ -200,8 +202,9 @@ class NotificationAgent(Agent):
     async def _try_notify_user(self, user: str) -> bool:
         """Attempt to send one notification to this user.
 
-        Picks the entity with the newest unnotified fact (respecting per-entity
-        cooldown), announces all unnotified facts for that entity.
+        Scores entities by interest + enrichment volume, randomly picks from
+        the top-N pool (respecting per-entity cooldown and learn-topic dedup),
+        and announces all unnotified facts for the selected entity.
         Returns True if a notification was sent.
         """
         if not self._should_send(user):
@@ -216,9 +219,9 @@ class NotificationAgent(Agent):
         for fact in unnotified:
             facts_by_entity[fact.entity_id].append(fact)
 
-        # Pick entity with newest unnotified fact, respecting cooldown and learn topic dedup
+        # Score and randomly select from top-N pool
         last_learn_prompt_id = self._last_notified_learn_prompt_id.get(user)
-        entity = self._pick_newest_entity(unnotified, facts_by_entity, last_learn_prompt_id)
+        entity = self._pick_scored_entity(user, facts_by_entity, last_learn_prompt_id)
         if entity is None:
             return False
         assert entity.id is not None
@@ -247,31 +250,36 @@ class NotificationAgent(Agent):
 
         return True
 
-    def _pick_newest_entity(
+    def _pick_scored_entity(
         self,
-        unnotified: list[Fact],
+        user: str,
         facts_by_entity: dict[int, list[Fact]],
         last_notified_learn_prompt_id: int | None = None,
     ) -> Entity | None:
-        """Pick the entity with the newest unnotified fact, respecting cooldown.
+        """Score entities by interest + enrichment volume, pick randomly from top-N.
 
-        Facts are ordered by learned_at DESC, so the first entity encountered
-        that is not in cooldown wins.
+        Score formula: interest + log2(unannounced_count + 1)
+        - Interest pulls high-engagement entities toward the top
+        - log2(unannounced_count) rewards entities with more new material
+        - Random selection from the top pool prevents stagnation
+        - Per-entity cooldown ensures no entity dominates
 
-        Also skips entities whose unnotified facts all share the same learn_prompt_id
-        as the last-sent notification — to avoid sending back-to-back notifications
-        for entities from the same /learn topic.
+        Filters: per-entity cooldown, learn-topic dedup (same as before).
         """
         cooldown = self.config.runtime.NOTIFICATION_ENTITY_COOLDOWN
+        pool_size = self.config.runtime.NOTIFICATION_POOL_SIZE
         now = datetime.now(UTC)
-        seen: set[int] = set()
 
-        for fact in unnotified:
-            eid = fact.entity_id
-            if eid in seen:
-                continue
-            seen.add(eid)
+        # Fetch all engagements once, group by entity
+        all_engagements = self.db.get_user_engagements(user)
+        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
+        for eng in all_engagements:
+            if eng.entity_id is not None:
+                engagements_by_entity[eng.entity_id].append(eng)
 
+        scored: list[tuple[float, Entity]] = []
+
+        for eid, facts in facts_by_entity.items():
             entity = self.db.get_entity(eid)
             if entity is None:
                 continue
@@ -293,7 +301,7 @@ class NotificationAgent(Agent):
 
             # Skip if this entity's facts share the same learn topic as the last notification
             if last_notified_learn_prompt_id is not None:
-                entity_learn_prompt_id = self._get_learn_prompt_id(facts_by_entity[eid])
+                entity_learn_prompt_id = self._get_learn_prompt_id(facts)
                 if entity_learn_prompt_id == last_notified_learn_prompt_id:
                     logger.debug(
                         "Notification: skipping '%s' (same learn topic as last notification, "
@@ -303,9 +311,32 @@ class NotificationAgent(Agent):
                     )
                     continue
 
-            return entity
+            interest = compute_interest_score(
+                engagements_by_entity.get(eid, []),
+                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+            )
+            unannounced_count = len(facts)
+            score = interest + math.log2(unannounced_count + 1)
+            scored.append((score, entity))
 
-        return None
+        if not scored:
+            return None
+
+        # Sort descending by score, take top-N, pick randomly
+        scored.sort(key=lambda x: x[0], reverse=True)
+        pool = scored[:pool_size]
+        _, chosen = random.choice(pool)
+
+        logger.info(
+            "Notification: picked '%s' (score=%.2f) from pool of %d (top-%d of %d eligible)",
+            chosen.name,
+            next(s for s, e in pool if e is chosen),
+            len(pool),
+            pool_size,
+            len(scored),
+        )
+
+        return chosen
 
     def _should_send(self, user: str) -> bool:
         """Check if we should send proactive notifications to this user."""
@@ -359,7 +390,7 @@ class NotificationAgent(Agent):
         return None
 
     async def _send_notification(
-        self, user: str, entity: object, facts: list[Fact], is_new: bool
+        self, user: str, entity: Entity, facts: list[Fact], is_new: bool
     ) -> bool:
         """Compose and send a notification for one entity's new facts."""
         assert self._channel is not None
@@ -373,7 +404,7 @@ class NotificationAgent(Agent):
             else:
                 prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT
             prompt_text = prompt_template.format(
-                entity_name=entity.name,  # type: ignore[union-attr]
+                entity_name=entity.name,
                 learn_topic=learn_topic,
             )
         else:
@@ -381,15 +412,17 @@ class NotificationAgent(Agent):
                 prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
             else:
                 prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
-            prompt_text = prompt_template.format(entity_name=entity.name)  # type: ignore[union-attr]
+            prompt_text = prompt_template.format(entity_name=entity.name)
 
-        prompt = f"{prompt_text}\n\nNew facts:\n{facts_text}"
+        tagline = entity.tagline
+        if tagline:
+            prompt = (
+                f"{prompt_text}\nContext: {entity.name} is {tagline}.\n\nNew facts:\n{facts_text}"
+            )
+        else:
+            prompt = f"{prompt_text}\n\nNew facts:\n{facts_text}"
 
-        image_query = (
-            f"{entity.name} {entity.tagline}"  # type: ignore[union-attr]
-            if entity.tagline  # type: ignore[union-attr]
-            else entity.name  # type: ignore[union-attr]
-        )
+        image_query = f"{entity.name} {entity.tagline}" if entity.tagline else entity.name
         result = await self._compose_user_facing(
             prompt,
             image_query=image_query,
@@ -414,7 +447,7 @@ class NotificationAgent(Agent):
             )
             logger.info(
                 "Notification sent for entity '%s' (%d facts) to %s",
-                entity.name,  # type: ignore[union-attr]
+                entity.name,
                 len(facts),
                 user,
             )

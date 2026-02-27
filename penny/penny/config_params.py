@@ -275,7 +275,7 @@ ConfigParam(
     key="EXTRACTION_PREFILTER_SIMILARITY_THRESHOLD",
     description="Cosine similarity threshold for entity pre-filtering",
     type=float,
-    default=0.2,
+    default=0.4,
     validator=_validate_unit_float,
     group=GROUP_EXTRACTION,
 )
@@ -414,6 +414,15 @@ ConfigParam(
     type=float,
     default=86400.0,
     validator=_validate_positive_float,
+    group=GROUP_NOTIFICATION,
+)
+
+ConfigParam(
+    key="NOTIFICATION_POOL_SIZE",
+    description="Number of top-scored entities to randomly select from for notifications",
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
     group=GROUP_NOTIFICATION,
 )
 
