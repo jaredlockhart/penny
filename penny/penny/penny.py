@@ -21,6 +21,7 @@ from penny.config import Config, setup_logging
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
+from penny.ollama.embeddings import build_entity_embed_text, serialize_embedding
 from penny.prompts import Prompt
 from penny.scheduler import (
     AlwaysRunSchedule,
@@ -359,6 +360,69 @@ class Penny:
                     model_name,
                 )
 
+    async def _backfill_all_embeddings(self) -> None:
+        """Backfill all missing embeddings at startup.
+
+        Loops through facts and entities with null embeddings in batches
+        until none remain. This ensures a clean slate after switching
+        embedding models without waiting for the per-cycle backfill.
+        """
+        if not self.embedding_model_client:
+            return
+
+        batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
+
+        # Backfill facts
+        total_facts = 0
+        while True:
+            facts = self.db.get_facts_without_embeddings(limit=batch_limit)
+            if not facts:
+                break
+            try:
+                fact_texts = [f.content for f in facts]
+                vecs = await self.embedding_model_client.embed(fact_texts)
+                for fact, vec, text in zip(facts, vecs, fact_texts, strict=True):
+                    assert fact.id is not None
+                    self.db.update_fact_embedding(fact.id, serialize_embedding(vec))
+                    logger.info("Embedded fact %d: %s", fact.id, text[:120])
+                total_facts += len(facts)
+            except Exception as e:
+                logger.warning("Startup embedding backfill failed for facts: %s", e)
+                break
+
+        # Backfill entities
+        total_entities = 0
+        while True:
+            entities = self.db.get_entities_without_embeddings(limit=batch_limit)
+            if not entities:
+                break
+            try:
+                texts = []
+                for entity in entities:
+                    assert entity.id is not None
+                    entity_facts = self.db.get_entity_facts(entity.id)
+                    texts.append(
+                        build_entity_embed_text(
+                            entity.name, [f.content for f in entity_facts], entity.tagline
+                        )
+                    )
+                vecs = await self.embedding_model_client.embed(texts)
+                for entity, vec, text in zip(entities, vecs, texts, strict=True):
+                    assert entity.id is not None
+                    self.db.update_entity_embedding(entity.id, serialize_embedding(vec))
+                    logger.info("Embedded entity %d: %s", entity.id, text[:120])
+                total_entities += len(entities)
+            except Exception as e:
+                logger.warning("Startup embedding backfill failed for entities: %s", e)
+                break
+
+        if total_facts or total_entities:
+            logger.info(
+                "Startup embedding backfill complete: %d facts, %d entities",
+                total_facts,
+                total_entities,
+            )
+
     async def run(self) -> None:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
@@ -377,6 +441,7 @@ class Penny:
             await validate_fn()
 
         await self._validate_optional_models()
+        await self._backfill_all_embeddings()
 
         await self._send_startup_announcement()
         await self._prompt_for_missing_profiles()
