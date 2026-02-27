@@ -390,7 +390,7 @@ class NotificationAgent(Agent):
         return None
 
     async def _send_notification(
-        self, user: str, entity: object, facts: list[Fact], is_new: bool
+        self, user: str, entity: Entity, facts: list[Fact], is_new: bool
     ) -> bool:
         """Compose and send a notification for one entity's new facts."""
         assert self._channel is not None
@@ -404,7 +404,7 @@ class NotificationAgent(Agent):
             else:
                 prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT
             prompt_text = prompt_template.format(
-                entity_name=entity.name,  # type: ignore[union-attr]
+                entity_name=entity.name,
                 learn_topic=learn_topic,
             )
         else:
@@ -412,19 +412,17 @@ class NotificationAgent(Agent):
                 prompt_template = Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
             else:
                 prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
-            prompt_text = prompt_template.format(entity_name=entity.name)  # type: ignore[union-attr]
+            prompt_text = prompt_template.format(entity_name=entity.name)
 
-        tagline = entity.tagline  # type: ignore[union-attr]
+        tagline = entity.tagline
         if tagline:
-            prompt = f"{prompt_text}\nContext: {entity.name} is {tagline}.\n\nNew facts:\n{facts_text}"
+            prompt = (
+                f"{prompt_text}\nContext: {entity.name} is {tagline}.\n\nNew facts:\n{facts_text}"
+            )
         else:
             prompt = f"{prompt_text}\n\nNew facts:\n{facts_text}"
 
-        image_query = (
-            f"{entity.name} {entity.tagline}"  # type: ignore[union-attr]
-            if entity.tagline  # type: ignore[union-attr]
-            else entity.name  # type: ignore[union-attr]
-        )
+        image_query = f"{entity.name} {entity.tagline}" if entity.tagline else entity.name
         result = await self._compose_user_facing(
             prompt,
             image_query=image_query,
@@ -449,7 +447,7 @@ class NotificationAgent(Agent):
             )
             logger.info(
                 "Notification sent for entity '%s' (%d facts) to %s",
-                entity.name,  # type: ignore[union-attr]
+                entity.name,
                 len(facts),
                 user,
             )
