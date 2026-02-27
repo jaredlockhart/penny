@@ -47,7 +47,7 @@ def create_command_registry(
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
         image_model_client: Optional image generation OllamaClient (required for draw command)
-        news_api_key: Optional NewsAPI key (required for events command)
+        news_api_key: Optional NewsAPI key (required for event-related commands)
 
     Returns:
         CommandRegistry with all builtin commands registered
@@ -93,10 +93,14 @@ def create_command_registry(
 
         registry.register(EmailCommand(fastmail_api_token))
 
-    # Register events command if NEWS_API_KEY is configured
+    # Register event-related commands if NEWS_API_KEY is configured
     if news_api_key:
         from penny.commands.events import EventsCommand
+        from penny.commands.follow import FollowCommand
+        from penny.commands.unfollow import UnfollowCommand
 
         registry.register(EventsCommand())
+        registry.register(FollowCommand())
+        registry.register(UnfollowCommand())
 
     return registry
