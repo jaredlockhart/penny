@@ -277,6 +277,21 @@ Examples:
         "- If no genuinely new facts are found, return an empty list"
     )
 
+    # /follow command: generate search query terms from a user topic
+    FOLLOW_QUERY_TERMS_PROMPT = (
+        "Generate search query terms for monitoring news about the given topic.\n"
+        "Return a JSON object with a single key 'query_terms': a list of 2-4 short search phrases "
+        "that would find relevant news articles.\n\n"
+        "The terms should cover different angles or synonyms to maximize coverage.\n"
+        "Each term should be 1-4 words.\n\n"
+        "Example:\n"
+        'Topic: "artificial intelligence safety"\n'
+        "Response: "
+        '{{"query_terms": ["AI safety", "AI risk", "AI alignment"]}}\n\n'
+        "Topic: {topic}\n"
+        "Return only the JSON object, no explanations."
+    )
+
     MESSAGE_SENTIMENT_EXTRACTION_PROMPT = (
         "Analyze the user's sentiment toward each named entity in their message.\n\n"
         "Return ONLY entities where the user expresses a clear opinion:\n"

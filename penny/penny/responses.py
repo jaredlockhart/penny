@@ -196,6 +196,17 @@ class PennyResponse:
     UNMUTE_ENABLED = "Notifications unmuted."
     UNMUTE_ALREADY = "Notifications aren't muted."
 
+    # ── Follow ────────────────────────────────────────────────────────────────
+
+    FOLLOW_ACKNOWLEDGED = "Got it, I'll keep track of **{topic}** for you."
+    FOLLOW_EMPTY = (
+        "You're not following anything yet. Use `/follow <topic>` to start monitoring something."
+    )
+    FOLLOW_LIST_HEADER = "**Following**"
+    FOLLOW_CANCELLED = "Stopped following **{topic}**."
+    FOLLOW_NOT_FOUND = "#{number} doesn't match any follow. Use /follow to see the list."
+    FOLLOW_QUERY_TERMS_ERROR = "Sorry, I couldn't generate search terms for that topic."
+
     # ── Events ─────────────────────────────────────────────────────────────────
 
     EVENTS_EMPTY = "No recent events. Use `/follow <topic>` to start tracking."
