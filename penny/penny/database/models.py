@@ -170,3 +170,29 @@ class Fact(SQLModel, table=True):
     learned_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     notified_at: datetime | None = None  # When this fact was communicated to user
     embedding: bytes | None = None  # Serialized float32 embedding vector
+
+
+class Event(SQLModel, table=True):
+    """A time-stamped occurrence that can involve multiple entities."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)  # Signal number or Discord user ID
+    headline: str  # Short event title
+    summary: str  # Event description/body
+    occurred_at: datetime = Field(index=True)  # When the event happened
+    discovered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    source_url: str | None = None  # Article URL
+    source_type: str = Field(index=True)  # EventSourceType enum value
+    external_id: str | None = Field(default=None, index=True)  # Article URL for dedup
+    notified_at: datetime | None = None  # When user was told
+    embedding: bytes | None = None  # Serialized float32 embedding vector
+
+
+class EventEntity(SQLModel, table=True):
+    """Junction table linking events to entities (M2M)."""
+
+    __tablename__ = "event_entity"
+
+    id: int | None = Field(default=None, primary_key=True)
+    event_id: int = Field(foreign_key="event.id", index=True)
+    entity_id: int = Field(foreign_key="entity.id", index=True)
