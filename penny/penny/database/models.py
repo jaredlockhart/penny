@@ -196,3 +196,18 @@ class EventEntity(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     event_id: int = Field(foreign_key="event.id", index=True)
     entity_id: int = Field(foreign_key="entity.id", index=True)
+
+
+class FollowPrompt(SQLModel, table=True):
+    """An ongoing monitoring subscription for event tracking."""
+
+    __tablename__ = "followprompt"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)  # Signal number or Discord user ID
+    prompt_text: str  # User's natural language topic (e.g., "AI news")
+    status: str = Field(default="active", index=True)  # FollowPromptStatus enum value
+    query_terms: str = ""  # LLM-generated search terms (JSON list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_polled_at: datetime | None = None  # When this subscription was last checked

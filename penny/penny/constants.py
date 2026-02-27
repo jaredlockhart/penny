@@ -70,5 +70,11 @@ class PennyConstants:
         NEWS_API = "news_api"
         SEARCH = "search"
 
+    class FollowPromptStatus(StrEnum):
+        """Status of a FollowPrompt lifecycle."""
+
+        ACTIVE = "active"
+        CANCELLED = "cancelled"
+
     # Vision constants
     VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
