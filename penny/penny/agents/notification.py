@@ -414,7 +414,11 @@ class NotificationAgent(Agent):
                 prompt_template = Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
             prompt_text = prompt_template.format(entity_name=entity.name)  # type: ignore[union-attr]
 
-        prompt = f"{prompt_text}\n\nNew facts:\n{facts_text}"
+        tagline = entity.tagline  # type: ignore[union-attr]
+        if tagline:
+            prompt = f"{prompt_text}\nContext: {entity.name} is {tagline}.\n\nNew facts:\n{facts_text}"
+        else:
+            prompt = f"{prompt_text}\n\nNew facts:\n{facts_text}"
 
         image_query = (
             f"{entity.name} {entity.tagline}"  # type: ignore[union-attr]
