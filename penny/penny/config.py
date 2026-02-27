@@ -97,6 +97,7 @@ def _collect_env_vars(channel_type: str) -> dict:
         "log_backup_count": int(os.getenv("LOG_BACKUP_COUNT", "5")),
         "tool_timeout": float(os.getenv("TOOL_TIMEOUT", "60.0")),
         "fastmail_api_token": os.getenv("FASTMAIL_API_TOKEN"),
+        "news_api_key": os.getenv("NEWS_API_KEY"),
     }
 
 
@@ -167,6 +168,9 @@ class Config:
     # Fastmail JMAP configuration (optional, enables /email command)
     fastmail_api_token: str | None = None
     email_max_steps: int = 5
+
+    # News API configuration (optional, enables /follow command and event monitoring)
+    news_api_key: str | None = None
 
     # Runtime-configurable params (DB override → env override → default)
     runtime: RuntimeParams = field(default_factory=RuntimeParams)
