@@ -417,6 +417,15 @@ ConfigParam(
     group=GROUP_NOTIFICATION,
 )
 
+ConfigParam(
+    key="NOTIFICATION_POOL_SIZE",
+    description="Number of top-scored entities to randomly select from for notifications",
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
+    group=GROUP_NOTIFICATION,
+)
+
 # ── Learn ─────────────────────────────────────────────────────────────────────
 
 ConfigParam(

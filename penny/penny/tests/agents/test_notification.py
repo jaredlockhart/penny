@@ -26,7 +26,7 @@ def _create_notification_agent(penny, config):
 
 
 @pytest.mark.asyncio
-async def test_notification_sends_newest_entity(
+async def test_notification_prefers_higher_interest_entity(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -34,8 +34,12 @@ async def test_notification_sends_newest_entity(
     test_user_info,
     running_penny,
 ):
-    """Notification agent picks the entity with the newest unnotified fact."""
-    config = make_config()
+    """Notification agent scores entities by interest + enrichment volume.
+
+    With pool_size=1, selection is deterministic (always picks highest score).
+    An entity with user engagement should outscore one without.
+    """
+    config = make_config(notification_pool_size=1)
 
     captured_prompts: list[str] = []
 
@@ -46,7 +50,7 @@ async def test_notification_sends_newest_entity(
         if "came across" in prompt:
             return mock_ollama._make_text_response(
                 request,
-                "Hey, I came across **newer entity** recently and found some"
+                "Hey, I came across **interesting entity** recently and found some"
                 " really interesting stuff worth sharing!",
             )
         return mock_ollama._make_text_response(request, "ok")
@@ -57,25 +61,34 @@ async def test_notification_sends_newest_entity(
         msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
         penny.db.mark_messages_processed([msg_id])
 
-        # Create two entities — one with an older fact, one with a newer fact
-        older_entity = penny.db.get_or_create_entity(TEST_SENDER, "older entity")
-        newer_entity = penny.db.get_or_create_entity(TEST_SENDER, "newer entity")
-        assert older_entity is not None and older_entity.id is not None
-        assert newer_entity is not None and newer_entity.id is not None
+        # Create two entities — one with interest (engagement), one without
+        boring_entity = penny.db.get_or_create_entity(TEST_SENDER, "boring entity")
+        interesting_entity = penny.db.get_or_create_entity(TEST_SENDER, "interesting entity")
+        assert boring_entity is not None and boring_entity.id is not None
+        assert interesting_entity is not None and interesting_entity.id is not None
 
-        # Add fact to older entity first, then newer entity
-        penny.db.add_fact(older_entity.id, "Older fact")
-        penny.db.add_fact(newer_entity.id, "Newer fact")
+        # Give interesting_entity a positive engagement to boost its interest score
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=interesting_entity.id,
+        )
+
+        # Both get one fact (same enrichment volume)
+        penny.db.add_fact(boring_entity.id, "Boring fact")
+        penny.db.add_fact(interesting_entity.id, "Interesting fact")
 
         agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
         result = await agent.execute()
         assert result is True
 
-        # Should notify about the newer entity (most recent unnotified fact)
+        # Should notify about the interesting entity (higher interest score)
         msgs = signal_server.outgoing_messages
         assert len(msgs) == 1
-        assert "newer entity" in msgs[0]["message"]
+        assert "interesting entity" in msgs[0]["message"]
 
         # Prompt sent to model should instruct it to synthesize, not echo raw facts
         assert any("Synthesize" in p for p in captured_prompts)
@@ -138,8 +151,9 @@ async def test_notification_entity_cooldown(
     running_penny,
 ):
     """After notifying about an entity, it enters cooldown and other entities are picked instead."""
-    # Use small initial_backoff (50ms) so the second notification fires quickly after user message
-    config = make_config(notification_initial_backoff=0.05)
+    # Use small initial_backoff (50ms) so the second notification fires quickly after user message.
+    # pool_size=1 makes selection deterministic (always picks highest score).
+    config = make_config(notification_initial_backoff=0.05, notification_pool_size=1)
 
     def handler(request: dict, count: int) -> dict:
         return mock_ollama._make_text_response(
@@ -153,19 +167,26 @@ async def test_notification_entity_cooldown(
         msg_id = penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="hello")
         penny.db.mark_messages_processed([msg_id])
 
-        # Create two entities with facts
+        # Create two entities — give entity A higher interest so it's picked first
         entity_a = penny.db.get_or_create_entity(TEST_SENDER, "entity alpha")
         entity_b = penny.db.get_or_create_entity(TEST_SENDER, "entity beta")
         assert entity_a is not None and entity_a.id is not None
         assert entity_b is not None and entity_b.id is not None
 
-        # Entity A gets a newer fact (will be picked first)
-        penny.db.add_fact(entity_b.id, "Older fact for beta")
-        penny.db.add_fact(entity_a.id, "Newer fact for alpha")
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=entity_a.id,
+        )
+
+        penny.db.add_fact(entity_b.id, "Fact for beta")
+        penny.db.add_fact(entity_a.id, "Fact for alpha")
 
         agent = _create_notification_agent(penny, config)
 
-        # Cycle 1: entity A picked (newest fact)
+        # Cycle 1: entity A picked (highest interest score)
         signal_server.outgoing_messages.clear()
         result1 = await agent.execute()
         assert result1 is True
@@ -175,7 +196,7 @@ async def test_notification_entity_cooldown(
         entity_a_refreshed = penny.db.get_entity(entity_a.id)
         assert entity_a_refreshed is not None and entity_a_refreshed.last_notified_at is not None
 
-        # Add new facts to both — entity A gets a newer fact again
+        # Add new facts to both
         penny.db.add_fact(entity_b.id, "Another beta fact")
         penny.db.add_fact(entity_a.id, "Another alpha fact")
 
@@ -845,13 +866,14 @@ async def test_notification_skips_same_learn_topic_after_notifying(
     test_user_info,
     running_penny,
 ):
-    """After notifying about entity A from learn topic X, skip entity B from same topic X.
+    """After notifying about entity B from learn topic X, skip entity A from same topic X.
 
     When two entities share the same learn_prompt_id, notifying about one should
     suppress notifications for the other on the very next cycle — the learn completion
     announcement will surface all entities from the topic together.
     """
-    config = make_config(notification_initial_backoff=0.05)
+    # pool_size=1 makes selection deterministic (always picks highest score)
+    config = make_config(notification_initial_backoff=0.05, notification_pool_size=1)
 
     def handler(request: dict, count: int) -> dict:
         return mock_ollama._make_text_response(
@@ -883,29 +905,36 @@ async def test_notification_skips_same_learn_topic_after_notifying(
         assert len(search_logs) == 1
         sl_id = search_logs[0].id
 
-        # Entity A: older fact from this learn topic
+        # Entity A: from this learn topic
         entity_a = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
         assert entity_a is not None and entity_a.id is not None
         penny.db.add_fact(
             entity_a.id, "KEF LS50 Meta uses MAT technology", source_search_log_id=sl_id
         )
 
-        # Entity B: newer fact from the SAME learn topic
+        # Entity B: from the SAME learn topic, with higher interest so it's picked first
         entity_b = penny.db.get_or_create_entity(TEST_SENDER, "focal clear mg")
         assert entity_b is not None and entity_b.id is not None
+        penny.db.add_engagement(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=entity_b.id,
+        )
         penny.db.add_fact(
             entity_b.id, "Focal Clear MG uses magnesium drivers", source_search_log_id=sl_id
         )
 
         agent = _create_notification_agent(penny, config)
 
-        # Cycle 1: entity B picked (newest fact) and notified
+        # Cycle 1: entity B picked (highest interest score) and notified
         signal_server.outgoing_messages.clear()
         result1 = await agent.execute()
         assert result1 is True
         assert len(signal_server.outgoing_messages) == 1
 
-        # Verify entity B was the one notified (newest fact)
+        # Verify entity B was the one notified (highest score)
         facts_b = penny.db.get_entity_facts(entity_b.id)
         assert any(f.notified_at is not None for f in facts_b)
 
