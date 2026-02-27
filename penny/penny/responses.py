@@ -196,6 +196,12 @@ class PennyResponse:
     UNMUTE_ENABLED = "Notifications unmuted."
     UNMUTE_ALREADY = "Notifications aren't muted."
 
+    # ── Events ─────────────────────────────────────────────────────────────────
+
+    EVENTS_EMPTY = "No recent events. Use `/follow <topic>` to start tracking."
+    EVENTS_LIST_HEADER = "**Recent Events**"
+    EVENTS_NOT_FOUND = "#{number} doesn't match any event. Use /events to see the list."
+
     # ── Search ───────────────────────────────────────────────────────────────
 
     NO_RESULTS_TEXT = "No results found"
