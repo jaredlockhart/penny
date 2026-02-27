@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
-from penny.database.models import Engagement, Entity, Fact, LearnPrompt
+from penny.database.models import Engagement, Entity, Event, Fact, LearnPrompt
 from penny.interest import compute_interest_score
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -27,14 +27,14 @@ logger = logging.getLogger(__name__)
 
 
 class NotificationAgent(Agent):
-    """Background agent that sends interest-ranked fact discovery notifications.
+    """Background agent that sends proactive notifications to users.
 
-    Scores entities by interest + enrichment volume, randomly selects from
-    the top-N pool (respecting per-entity cooldown), composes a message,
-    and sends it — one notification per cycle.
+    Three notification streams, checked in priority order:
+    1. Learn completion announcements (bypass backoff)
+    2. Event notifications — news about followed topics (respect backoff)
+    3. Fact discovery notifications — enrichment findings (respect backoff)
 
-    Also sends learn completion announcements when a /learn topic finishes
-    extraction, summarizing discovered entities with fact counts and interest scores.
+    One notification per cycle maximum.
     """
 
     def __init__(self, **kwargs: object) -> None:
@@ -65,6 +65,9 @@ class NotificationAgent(Agent):
                 continue
             # Learn completion announcements take priority and bypass backoff
             if await self._try_learn_completion(user):
+                return True
+            # Event notifications (news about followed topics)
+            if await self._try_event_notification(user):
                 return True
             if await self._try_notify_user(user):
                 return True
@@ -196,6 +199,131 @@ class NotificationAgent(Agent):
             sections.append((score, f"{entity.name}:\n{facts_text}"))
 
         return sections
+
+    # --- Event notifications ---
+
+    async def _try_event_notification(self, user: str) -> bool:
+        """Check for unnotified events and send one notification.
+
+        Scores events by linked entity interest + timeliness decay, picks
+        the highest-scoring event, composes a message, and sends it.
+        Respects per-user backoff. Returns True if sent.
+        """
+        if not self._should_send(user):
+            return False
+
+        unnotified = self.db.events.get_unnotified(user)
+        if not unnotified:
+            return False
+
+        event = self._pick_best_event(user, unnotified)
+        if event is None:
+            return False
+
+        sent = await self._send_event_notification(user, event)
+        if not sent:
+            return False
+
+        assert event.id is not None
+        self.db.events.mark_notified([event.id])
+        self._mark_proactive_sent(user)
+        return True
+
+    def _pick_best_event(self, user: str, events: list[Event]) -> Event | None:
+        """Score events by entity interest + timeliness, return the best one."""
+        all_engagements = self.db.engagements.get_for_user(user)
+        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
+        for eng in all_engagements:
+            if eng.entity_id is not None:
+                engagements_by_entity[eng.entity_id].append(eng)
+
+        scored: list[tuple[float, Event]] = []
+        for event in events:
+            score = self._score_event(event, engagements_by_entity)
+            scored.append((score, event))
+
+        if not scored:
+            return None
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        best_score, best_event = scored[0]
+
+        logger.info(
+            "Event notification: picked '%s' (score=%.2f) from %d unnotified",
+            best_event.headline[:50],
+            best_score,
+            len(scored),
+        )
+        return best_event
+
+    def _score_event(
+        self,
+        event: Event,
+        engagements_by_entity: dict[int, list[Engagement]],
+    ) -> float:
+        """Score an event: sum of linked entity interest + timeliness bonus."""
+        assert event.id is not None
+
+        # Entity interest component
+        linked_entities = self.db.events.get_entities_for_event(event.id)
+        interest_total = 0.0
+        for entity in linked_entities:
+            assert entity.id is not None
+            interest_total += compute_interest_score(
+                engagements_by_entity.get(entity.id, []),
+                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+            )
+
+        # Timeliness component: 2^(-hours_since / half_life)
+        timeliness = self._compute_timeliness(event)
+
+        return interest_total + timeliness
+
+    def _compute_timeliness(self, event: Event) -> float:
+        """Compute timeliness decay: 2^(-hours_since / half_life)."""
+        half_life = self.config.runtime.EVENT_TIMELINESS_HALF_LIFE_HOURS
+        occurred = event.occurred_at
+        if occurred.tzinfo is None:
+            occurred = occurred.replace(tzinfo=UTC)
+        hours_since = (datetime.now(UTC) - occurred).total_seconds() / 3600.0
+        if hours_since < 0:
+            hours_since = 0.0
+        return math.pow(2.0, -hours_since / half_life)
+
+    async def _send_event_notification(self, user: str, event: Event) -> bool:
+        """Compose and send a notification about an event."""
+        assert self._channel is not None
+
+        prompt = self._build_event_prompt(event)
+        result = await self._compose_user_facing(prompt)
+
+        if not result.answer:
+            return False
+        if len(result.answer) < self.config.runtime.NOTIFICATION_MIN_LENGTH:
+            logger.debug(
+                "Skipping short event notification (%d chars): %r",
+                len(result.answer),
+                result.answer,
+            )
+            return False
+
+        await self._send_with_typing(user, result.answer, result.attachments)
+        logger.info(
+            "Event notification sent for '%s' to %s",
+            event.headline[:50],
+            user,
+        )
+        return True
+
+    def _build_event_prompt(self, event: Event) -> str:
+        """Build the LLM prompt for an event notification."""
+        parts = [Prompt.EVENT_NOTIFICATION_PROMPT, ""]
+        parts.append(f"Headline: {event.headline}")
+        if event.summary:
+            parts.append(f"Summary: {event.summary}")
+        if event.source_url:
+            parts.append(f"Source: {event.source_url}")
+        return "\n".join(parts)
 
     # --- Fact discovery notifications ---
 

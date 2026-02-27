@@ -986,3 +986,172 @@ async def test_notification_skips_same_learn_topic_after_notifying(
         # Entity A still has unnotified facts (it was skipped, not notified)
         facts_a = penny.db.facts.get_for_entity(entity_a.id)
         assert all(f.notified_at is None for f in facts_a)
+
+
+@pytest.mark.asyncio
+async def test_event_notification_sends_and_marks_notified(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Unnotified events trigger a notification and get marked as notified."""
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Heads up — **SpaceX** just launched their Starship rocket today!"
+            " Pretty cool development worth keeping an eye on.",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        # Create an unnotified event
+        event = penny.db.events.add(
+            user=TEST_SENDER,
+            headline="SpaceX launches Starship",
+            summary="SpaceX successfully launched its Starship rocket today.",
+            occurred_at=datetime.now(UTC),
+            source_type=PennyConstants.EventSourceType.NEWS_API,
+            source_url="https://example.com/spacex",
+            external_id="https://example.com/spacex",
+        )
+        assert event is not None and event.id is not None
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+
+        assert result is True
+        assert len(signal_server.outgoing_messages) == 1
+        assert "SpaceX" in signal_server.outgoing_messages[0]["message"]
+
+        # Event should be marked as notified
+        updated = penny.db.events.get(event.id)
+        assert updated is not None
+        assert updated.notified_at is not None
+
+
+@pytest.mark.asyncio
+async def test_event_notification_respects_backoff(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Event notifications respect per-user backoff — suppressed after first send."""
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Here's a heads up about some interesting news I saw recently!"
+            " This looks like something you'd want to know about.",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        agent = _create_notification_agent(penny, config)
+
+        # Create and send first event notification
+        penny.db.events.add(
+            user=TEST_SENDER,
+            headline="Event one",
+            summary="First event.",
+            occurred_at=datetime.now(UTC),
+            source_type=PennyConstants.EventSourceType.NEWS_API,
+            source_url="https://example.com/1",
+            external_id="https://example.com/1",
+        )
+
+        signal_server.outgoing_messages.clear()
+        result1 = await agent.execute()
+        assert result1 is True
+
+        # Second event — should be suppressed by backoff
+        penny.db.events.add(
+            user=TEST_SENDER,
+            headline="Event two",
+            summary="Second event.",
+            occurred_at=datetime.now(UTC),
+            source_type=PennyConstants.EventSourceType.NEWS_API,
+            source_url="https://example.com/2",
+            external_id="https://example.com/2",
+        )
+
+        signal_server.outgoing_messages.clear()
+        result2 = await agent.execute()
+        assert result2 is False
+
+
+@pytest.mark.asyncio
+async def test_event_notification_priority_over_fact_notification(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Event notifications take priority over fact discovery notifications."""
+    config = make_config()
+
+    captured_prompts: list[str] = []
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+        captured_prompts.append(prompt)
+        return mock_ollama._make_text_response(
+            request,
+            "Here's what I noticed — some really interesting recent news about this topic!"
+            " Thought you'd want to know about these developments.",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        # Create both: an unnotified event AND an unnotified fact
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
+        assert entity is not None and entity.id is not None
+        penny.db.facts.add(entity.id, "Some new fact about test entity")
+
+        penny.db.events.add(
+            user=TEST_SENDER,
+            headline="Breaking: test entity news",
+            summary="Something happened about test entity.",
+            occurred_at=datetime.now(UTC),
+            source_type=PennyConstants.EventSourceType.NEWS_API,
+            source_url="https://example.com/event",
+            external_id="https://example.com/event",
+        )
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+
+        assert result is True
+        # The event notification prompt contains "Headline:" (event format)
+        assert any("Headline:" in p for p in captured_prompts)

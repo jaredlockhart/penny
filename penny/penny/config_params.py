@@ -428,6 +428,15 @@ ConfigParam(
     group=GROUP_NOTIFICATION,
 )
 
+ConfigParam(
+    key="EVENT_TIMELINESS_HALF_LIFE_HOURS",
+    description="Half-life in hours for event timeliness decay (newer events score higher)",
+    type=float,
+    default=24.0,
+    validator=_validate_positive_float,
+    group=GROUP_NOTIFICATION,
+)
+
 # ── Learn ─────────────────────────────────────────────────────────────────────
 
 ConfigParam(
