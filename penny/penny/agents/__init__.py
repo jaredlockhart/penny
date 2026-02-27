@@ -2,6 +2,7 @@
 
 from penny.agents.base import Agent
 from penny.agents.enrich import EnrichAgent
+from penny.agents.event import EventAgent
 from penny.agents.extraction import ExtractionPipeline
 from penny.agents.learn import LearnAgent
 from penny.agents.message import MessageAgent
@@ -17,6 +18,7 @@ __all__ = [
     "ChatMessage",
     "ControllerResponse",
     "EnrichAgent",
+    "EventAgent",
     "ExtractionPipeline",
     "LearnAgent",
     "MessageAgent",
