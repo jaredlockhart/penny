@@ -125,7 +125,7 @@ async def test_bug_api_failure(mock_github_api, bug_context):
 async def test_bug_with_quoted_message(mock_github_api, bug_context, bug_db):
     """Test /bug with a quote-reply includes quoted message timestamp."""
     # Store an outgoing message that can be found by quote lookup
-    bug_db.log_message(
+    bug_db.messages.log_message(
         sender="penny",
         content="Here is a response that will be quoted",
         direction="outgoing",

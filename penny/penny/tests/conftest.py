@@ -154,7 +154,7 @@ def test_user_info(test_config):
     migrate(test_config.db_path)
 
     # Now create the test user
-    db.save_user_info(
+    db.users.save_info(
         sender=TEST_SENDER,
         name="Test User",
         location="Seattle, WA",

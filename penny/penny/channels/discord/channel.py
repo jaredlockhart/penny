@@ -83,97 +83,99 @@ class DiscordChannel(MessageChannel):
 
         @self.client.event
         async def on_ready() -> None:
-            """Called when the bot is ready."""
-            logger.info("Discord bot logged in as %s", self.client.user)
-
-            # Log available guilds and channels for debugging
-            logger.info("Bot is in %d guild(s)", len(self.client.guilds))
-            for guild in self.client.guilds:
-                logger.info("  Guild: %s (ID: %s)", guild.name, guild.id)
-                for ch in guild.text_channels[:5]:  # Log first 5 channels
-                    logger.info("    Channel: %s (ID: %s)", ch.name, ch.id)
-
-            # Get the target channel
-            channel = self.client.get_channel(int(self.channel_id))
-            if channel and isinstance(channel, discord.TextChannel):
-                self._channel = channel
-                logger.info("Connected to channel: %s", channel.name)
-            else:
-                logger.error(
-                    "Could not find channel with ID: %s. "
-                    "Make sure the bot is invited to the server and has access to this channel.",
-                    self.channel_id,
-                )
-
-            self._ready.set()
+            await self._on_ready()
 
         @self.client.event
         async def on_message(message: discord.Message) -> None:
-            """Called when a message is received."""
-            # Ignore messages from the bot itself
-            if message.author == self.client.user:
-                return
-
-            # Only process messages from the configured channel
-            if str(message.channel.id) != self.channel_id:
-                return
-
-            logger.debug(
-                "Received Discord message from %s: %s",
-                message.author.name,
-                message.content[:100],
-            )
-
-            # Build structured message via Pydantic model
-            author = DiscordUser(
-                id=str(message.author.id),
-                username=message.author.name,
-                discriminator=getattr(message.author, "discriminator", ""),
-                bot=message.author.bot,
-                global_name=getattr(message.author, "global_name", None),
-            )
-            discord_message = DiscordMessage(
-                id=str(message.id),
-                channel_id=str(message.channel.id),
-                author=author,
-                content=message.content,
-                timestamp=message.created_at.isoformat(),
-                guild_id=str(message.guild.id) if message.guild else None,
-            )
-            raw_data = discord_message.model_dump(by_alias=True)
-
-            # Dispatch to message handler
-            await self.handle_message(raw_data)
+            await self._on_message(message)
 
         @self.client.event
         async def on_reaction_add(reaction: discord.Reaction, user: discord.User) -> None:
-            """Called when a reaction is added to a message."""
-            # Ignore reactions from the bot itself
-            if user == self.client.user:
-                return
+            await self._on_reaction_add(reaction, user)
 
-            # Only process reactions in the configured channel
-            if str(reaction.message.channel.id) != self.channel_id:
-                return
+    async def _on_ready(self) -> None:
+        """Handle the bot ready event — resolve target channel."""
+        logger.info("Discord bot logged in as %s", self.client.user)
+        self._log_guilds()
 
-            logger.debug(
-                "Received Discord reaction from %s: %s on message %s",
-                user.name,
-                str(reaction.emoji),
-                reaction.message.id,
+        channel = self.client.get_channel(int(self.channel_id))
+        if channel and isinstance(channel, discord.TextChannel):
+            self._channel = channel
+            logger.info("Connected to channel: %s", channel.name)
+        else:
+            logger.error(
+                "Could not find channel with ID: %s. "
+                "Make sure the bot is invited to the server and has access to this channel.",
+                self.channel_id,
             )
 
-            # Create IncomingMessage for the reaction
-            sender = f"{user.name}#{user.id}"
-            incoming = IncomingMessage(
-                sender=sender,
-                content=str(reaction.emoji),
-                is_reaction=True,
-                reacted_to_external_id=str(reaction.message.id),
-            )
+        self._ready.set()
 
-            # Handle the reaction via the base channel handler
-            await self._handle_reaction(incoming)
+    def _log_guilds(self) -> None:
+        """Log available guilds and channels for debugging."""
+        logger.info("Bot is in %d guild(s)", len(self.client.guilds))
+        for guild in self.client.guilds:
+            logger.info("  Guild: %s (ID: %s)", guild.name, guild.id)
+            for ch in guild.text_channels[:5]:
+                logger.info("    Channel: %s (ID: %s)", ch.name, ch.id)
+
+    async def _on_message(self, message: discord.Message) -> None:
+        """Handle an incoming Discord message."""
+        if message.author == self.client.user:
+            return
+        if str(message.channel.id) != self.channel_id:
+            return
+
+        logger.debug(
+            "Received Discord message from %s: %s",
+            message.author.name,
+            message.content[:100],
+        )
+
+        raw_data = self._build_message_data(message)
+        await self.handle_message(raw_data)
+
+    def _build_message_data(self, message: discord.Message) -> dict:
+        """Build a Pydantic-validated dict from a Discord message."""
+        author = DiscordUser(
+            id=str(message.author.id),
+            username=message.author.name,
+            discriminator=getattr(message.author, "discriminator", ""),
+            bot=message.author.bot,
+            global_name=getattr(message.author, "global_name", None),
+        )
+        discord_message = DiscordMessage(
+            id=str(message.id),
+            channel_id=str(message.channel.id),
+            author=author,
+            content=message.content,
+            timestamp=message.created_at.isoformat(),
+            guild_id=str(message.guild.id) if message.guild else None,
+        )
+        return discord_message.model_dump(by_alias=True)
+
+    async def _on_reaction_add(self, reaction: discord.Reaction, user: discord.User) -> None:
+        """Handle a reaction added to a message."""
+        if user == self.client.user:
+            return
+        if str(reaction.message.channel.id) != self.channel_id:
+            return
+
+        logger.debug(
+            "Received Discord reaction from %s: %s on message %s",
+            user.name,
+            str(reaction.emoji),
+            reaction.message.id,
+        )
+
+        sender = f"{user.name}#{user.id}"
+        incoming = IncomingMessage(
+            sender=sender,
+            content=str(reaction.emoji),
+            is_reaction=True,
+            reacted_to_external_id=str(reaction.message.id),
+        )
+        await self._handle_reaction(incoming)
 
     async def listen(self) -> None:
         """Start listening for messages via Discord gateway."""
@@ -208,25 +210,14 @@ class DiscordChannel(MessageChannel):
             Discord message ID on success, None on failure
         """
         try:
-            # Wait for client to be ready
             await self._ready.wait()
 
             if not self._channel:
                 logger.error("Discord channel not available")
                 return None
 
-            sent_message = None
-            # Discord has a 2000 character limit per message
-            if len(message) > 2000:
-                # Split into chunks
-                chunks = [message[i : i + 2000] for i in range(0, len(message), 2000)]
-                for chunk in chunks:
-                    sent_message = await self._channel.send(chunk)
-            else:
-                sent_message = await self._channel.send(message)
-
+            sent_message = await self._send_discord_message(self._channel, message)
             logger.info("Sent message to Discord channel (length: %d)", len(message))
-            # Return Discord message ID for reaction lookup
             return int(sent_message.id) if sent_message else None
 
         except discord.HTTPException as e:
@@ -235,6 +226,21 @@ class DiscordChannel(MessageChannel):
         except Exception as e:
             logger.error("Unexpected error sending Discord message: %s", e)
             return None
+
+    def _chunk_message(self, text: str, limit: int = 2000) -> list[str]:
+        """Split text into chunks that fit within Discord's character limit."""
+        if len(text) <= limit:
+            return [text]
+        return [text[i : i + limit] for i in range(0, len(text), limit)]
+
+    async def _send_discord_message(
+        self, channel: discord.TextChannel, text: str
+    ) -> discord.Message | None:
+        """Send a message to a Discord channel, chunking if necessary."""
+        sent_message: discord.Message | None = None
+        for chunk in self._chunk_message(text):
+            sent_message = await channel.send(chunk)
+        return sent_message
 
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """

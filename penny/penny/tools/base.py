@@ -116,53 +116,51 @@ class ToolExecutor:
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call."""
         tool = self.registry.get(tool_call.tool)
-
         if tool is None:
-            logger.error("Tool not found: %s", tool_call.tool)
-            available_tools = [t.name for t in self.registry.get_all()]
-            available_list = ", ".join(available_tools) if available_tools else "none"
-            error_message = (
+            return self._tool_not_found_result(tool_call)
+        validation_error = self._validate_arguments(tool, tool_call.arguments)
+        if validation_error:
+            return self._validation_error_result(tool_call, validation_error)
+        return await self._execute_with_timeout(tool, tool_call)
+
+    def _tool_not_found_result(self, tool_call: ToolCall) -> ToolResult:
+        """Build error result when the requested tool doesn't exist."""
+        logger.error("Tool not found: %s", tool_call.tool)
+        available_tools = [t.name for t in self.registry.get_all()]
+        available_list = ", ".join(available_tools) if available_tools else "none"
+        return ToolResult(
+            tool=tool_call.tool,
+            result=None,
+            error=(
                 f"Tool '{tool_call.tool}' not found. "
                 f"Available tools: {available_list}. "
                 f"You must ONLY use the tools listed above."
-            )
-            return ToolResult(
-                tool=tool_call.tool,
-                result=None,
-                error=error_message,
-                id=tool_call.id,
-            )
+            ),
+            id=tool_call.id,
+        )
 
-        # Validate that all required parameters are present
-        validation_error = self._validate_arguments(tool, tool_call.arguments)
-        if validation_error:
-            logger.error("Tool call validation failed: %s - %s", tool_call.tool, validation_error)
-            return ToolResult(
-                tool=tool_call.tool,
-                result=None,
-                error=validation_error,
-                id=tool_call.id,
-            )
+    def _validation_error_result(self, tool_call: ToolCall, error: str) -> ToolResult:
+        """Build error result for argument validation failure."""
+        logger.error("Tool call validation failed: %s - %s", tool_call.tool, error)
+        return ToolResult(
+            tool=tool_call.tool,
+            result=None,
+            error=error,
+            id=tool_call.id,
+        )
 
+    async def _execute_with_timeout(self, tool: Tool, tool_call: ToolCall) -> ToolResult:
+        """Execute tool with timeout and error handling."""
         try:
             logger.info("Executing tool: %s", tool_call.tool)
             logger.debug("Tool arguments: %s", tool_call.arguments)
-
             result = await asyncio.wait_for(
                 tool.execute(**tool_call.arguments),
                 timeout=self.timeout,
             )
-
             logger.info("Tool executed successfully: %s", tool_call.tool)
             logger.debug("Tool result: %s", result)
-
-            return ToolResult(
-                tool=tool_call.tool,
-                result=result,
-                error=None,
-                id=tool_call.id,
-            )
-
+            return ToolResult(tool=tool_call.tool, result=result, error=None, id=tool_call.id)
         except TimeoutError:
             logger.error("Tool execution timeout: %s", tool_call.tool)
             return ToolResult(
@@ -171,7 +169,6 @@ class ToolExecutor:
                 error=f"Tool execution timeout after {self.timeout}s",
                 id=tool_call.id,
             )
-
         except Exception as e:
             logger.exception("Tool execution error: %s", tool_call.tool)
             return ToolResult(

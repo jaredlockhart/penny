@@ -95,16 +95,16 @@ async def test_extraction_processes_search_log(
 
         # Mark messages as processed so phase 1 (messages) is a no-op
         # and the mock handler sequence matches phase 2 (search logs)
-        msgs = penny.db.get_unprocessed_messages(TEST_SENDER, limit=100)
+        msgs = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
         if msgs:
-            penny.db.mark_messages_processed([m.id for m in msgs if m.id is not None])
+            penny.db.messages.mark_processed([m.id for m in msgs if m.id is not None])
 
         # Run ExtractionPipeline directly
         work_done = await penny.extraction_pipeline.execute()
         assert work_done, "ExtractionPipeline should have processed the search log"
 
         # Verify entity was stored
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         assert len(entities) >= 1
         entity = next(e for e in entities if e.name == "kef ls50 meta")
 
@@ -112,7 +112,7 @@ async def test_extraction_processes_search_log(
         assert entity.tagline == "bookshelf speaker by kef"
 
         # Verify facts stored as individual Fact rows
-        facts = penny.db.get_entity_facts(entity.id)
+        facts = penny.db.facts.get_for_entity(entity.id)
         fact_contents = [f.content for f in facts]
         assert "Costs $1,599 per pair" in fact_contents
         assert "Features Metamaterial Absorption Technology" in fact_contents
@@ -121,7 +121,7 @@ async def test_extraction_processes_search_log(
         assert all(f.source_search_log_id == search_logs[0].id for f in facts)
 
         # Verify USER_SEARCH engagement was created
-        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
         search_engagements = [
             e for e in engagements if e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
         ]
@@ -283,9 +283,9 @@ async def test_extraction_known_and_new_entities(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
+        penny.db.facts.add(entity.id, "Costs $1,599 per pair")
 
         await signal_server.push_message(
             sender=TEST_SENDER, content="compare KEF LS50 Meta vs Wharfedale Linton"
@@ -295,16 +295,16 @@ async def test_extraction_known_and_new_entities(
         work_done = await penny.extraction_pipeline.execute()
         assert work_done
 
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         assert len(entities) == 2
 
         kef = next(e for e in entities if e.name == "kef ls50 meta")
-        kef_facts = [f.content for f in penny.db.get_entity_facts(kef.id)]
+        kef_facts = [f.content for f in penny.db.facts.get_for_entity(kef.id)]
         assert "Costs $1,599 per pair" in kef_facts
         assert "Won What Hi-Fi 2024 award" in kef_facts
 
         wharfedale = next(e for e in entities if e.name == "wharfedale linton")
-        wharfedale_facts = [f.content for f in penny.db.get_entity_facts(wharfedale.id)]
+        wharfedale_facts = [f.content for f in penny.db.facts.get_for_entity(wharfedale.id)]
         assert "Heritage design with modern drivers" in wharfedale_facts
         assert "Costs $1,199 per pair" in wharfedale_facts
 
@@ -355,7 +355,7 @@ async def test_extraction_empty_results(
             assert len(search_logs) >= 1
             assert all(sl.extracted for sl in search_logs)
 
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         assert len(entities) == 0
 
 
@@ -401,9 +401,9 @@ async def test_extraction_handles_empty_llm_response(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Mark messages processed so only search log phase runs
-        msgs = penny.db.get_unprocessed_messages(TEST_SENDER, limit=100)
+        msgs = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
         if msgs:
-            penny.db.mark_messages_processed([m.id for m in msgs if m.id is not None])
+            penny.db.messages.mark_processed([m.id for m in msgs if m.id is not None])
 
         # Should not raise — empty response is handled gracefully
         work_done = await penny.extraction_pipeline.execute()
@@ -416,7 +416,7 @@ async def test_extraction_handles_empty_llm_response(
             assert all(sl.extracted for sl in search_logs)
 
         # No entities should be created
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         assert len(entities) == 0
 
 
@@ -449,17 +449,17 @@ async def test_extraction_handles_empty_llm_response_known_only(
 
     async with running_penny(config) as penny:
         # Pre-seed a known entity
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
+        penny.db.facts.add(entity.id, "Costs $1,599 per pair")
 
         # Seed a recent incoming message so find_sender_for_timestamp works
-        penny.db.log_message(
+        penny.db.messages.log_message(
             direction="incoming", sender=TEST_SENDER, content="tell me more about speakers"
         )
 
         # Create a penny_enrichment SearchLog (triggers known-only identification)
-        penny.db.log_search(
+        penny.db.searches.log(
             query="kef ls50 meta latest",
             response="KEF LS50 Meta latest news.",
             trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
@@ -475,7 +475,7 @@ async def test_extraction_handles_empty_llm_response_known_only(
             assert all(sl.extracted for sl in search_logs)
 
         # No new facts should be added (empty response → no known entities identified)
-        facts = penny.db.get_entity_facts(entity.id)
+        facts = penny.db.facts.get_for_entity(entity.id)
         fact_contents = [f.content for f in facts]
         assert fact_contents == ["Costs $1,599 per pair"]
 
@@ -525,9 +525,9 @@ async def test_extraction_generates_embeddings(
         work_done = await penny.extraction_pipeline.execute()
         assert work_done
 
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         entity = next(e for e in entities if e.name == "kef ls50 meta")
-        facts = penny.db.get_entity_facts(entity.id)
+        facts = penny.db.facts.get_for_entity(entity.id)
         assert len(facts) == 2
         for fact in facts:
             assert fact.embedding is not None, f"Fact '{fact.content}' should have embedding"
@@ -537,8 +537,8 @@ async def test_extraction_generates_embeddings(
         assert entity.embedding is not None, "Entity should have embedding"
 
         assert len(mock_ollama.embed_requests) >= 2
-        assert len(penny.db.get_facts_without_embeddings(limit=10)) == 0
-        assert len(penny.db.get_entities_without_embeddings(limit=10)) == 0
+        assert len(penny.db.facts.get_without_embeddings(limit=10)) == 0
+        assert len(penny.db.entities.get_without_embeddings(limit=10)) == 0
 
 
 @pytest.mark.asyncio
@@ -563,19 +563,19 @@ async def test_extraction_backfills_all_embeddings(
 
     async with running_penny(config) as penny:
         # Pre-seed entity and facts WITHOUT embeddings
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "test entity")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
         assert entity is not None and entity.id is not None
-        penny.db.add_fact(entity.id, "fact one")
-        penny.db.add_fact(entity.id, "fact two")
+        penny.db.facts.add(entity.id, "fact one")
+        penny.db.facts.add(entity.id, "fact two")
 
-        assert len(penny.db.get_facts_without_embeddings(limit=10)) == 2
-        assert len(penny.db.get_entities_without_embeddings(limit=10)) == 1
+        assert len(penny.db.facts.get_without_embeddings(limit=10)) == 2
+        assert len(penny.db.entities.get_without_embeddings(limit=10)) == 1
 
         work_done = await penny.extraction_pipeline.execute()
         assert work_done, "Backfill should count as work done"
 
-        assert len(penny.db.get_facts_without_embeddings(limit=10)) == 0
-        assert len(penny.db.get_entities_without_embeddings(limit=10)) == 0
+        assert len(penny.db.facts.get_without_embeddings(limit=10)) == 0
+        assert len(penny.db.entities.get_without_embeddings(limit=10)) == 0
 
 
 # --- Message entity extraction (new functionality) ---
@@ -641,25 +641,25 @@ async def test_extraction_processes_messages_for_entities(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Pre-mark search logs so only message processing runs
-        for sl in penny.db.get_unprocessed_search_logs(limit=100):
-            penny.db.mark_search_extracted(sl.id)
+        for sl in penny.db.searches.get_unprocessed(limit=100):
+            penny.db.searches.mark_extracted(sl.id)
 
         work_done = await penny.extraction_pipeline.execute()
         assert work_done
 
         # Verify entity was extracted from the message
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         assert any(e.name == "kef ls50 meta" for e in entities)
 
         entity = next(e for e in entities if e.name == "kef ls50 meta")
 
         # Verify facts have source_message_id set (not source_search_log_id)
-        facts = penny.db.get_entity_facts(entity.id)
+        facts = penny.db.facts.get_for_entity(entity.id)
         message_sourced_facts = [f for f in facts if f.source_message_id is not None]
         assert len(message_sourced_facts) >= 1
 
         # Verify MESSAGE_MENTION engagement was created
-        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
         mention_engagements = [
             e
             for e in engagements
@@ -705,13 +705,13 @@ async def test_extraction_creates_follow_up_engagements(
 
     async with running_penny(config) as penny:
         # Seed entity with embedding
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
-        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
+        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.facts.add(entity.id, "Costs $1,599 per pair")
 
         # Simulate Penny's outgoing message about the entity
-        outgoing_id = penny.db.log_message(
+        outgoing_id = penny.db.messages.log_message(
             direction="outgoing",
             sender="penny",
             content="the KEF LS50 Meta costs $1,599 and uses Metamaterial Absorption Technology!",
@@ -719,7 +719,7 @@ async def test_extraction_creates_follow_up_engagements(
         assert outgoing_id is not None
 
         # User replies with a short follow-up (< 20 chars, skipped by entity extraction)
-        incoming_id = penny.db.log_message(
+        incoming_id = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="how much?",  # 9 chars — below MIN_EXTRACTION_MESSAGE_LENGTH
@@ -731,7 +731,7 @@ async def test_extraction_creates_follow_up_engagements(
         assert work_done, "Follow-up detection should count as work done"
 
         # Verify FOLLOW_UP_QUESTION engagement was created
-        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
         follow_up_engagements = [
             e
             for e in engagements
@@ -765,21 +765,21 @@ async def test_extraction_no_follow_up_for_reply_to_user(
     mock_ollama.set_embed_handler(embed_handler)
 
     async with running_penny(config) as penny:
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "test entity")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
         assert entity is not None and entity.id is not None
-        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
 
         # Parent is an incoming message (user's own message, not Penny's)
-        parent_id = penny.db.log_message(
+        parent_id = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="I love this test entity so much!",
         )
         assert parent_id is not None
-        penny.db.mark_messages_processed([parent_id])
+        penny.db.messages.mark_processed([parent_id])
 
         # Reply to own message
-        reply_id = penny.db.log_message(
+        reply_id = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="actually let me tell you more about it",
@@ -789,7 +789,7 @@ async def test_extraction_no_follow_up_for_reply_to_user(
 
         await penny.extraction_pipeline.execute()
 
-        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
         follow_up_engagements = [
             e
             for e in engagements
@@ -814,7 +814,7 @@ async def test_extraction_skips_short_messages(
 
     async with running_penny(config) as penny:
         # Insert a short message directly
-        msg_id = penny.db.log_message(
+        msg_id = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="hi",  # < 20 chars
@@ -826,7 +826,7 @@ async def test_extraction_skips_short_messages(
         assert work_done is False
 
         # Message should be marked as processed
-        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=20)
+        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=20)
         assert len(unprocessed) == 0
 
 
@@ -843,7 +843,7 @@ async def test_extraction_skips_commands(
     config = make_config()
 
     async with running_penny(config) as penny:
-        msg_id = penny.db.log_message(
+        msg_id = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="/like espresso machines",  # command
@@ -853,7 +853,7 @@ async def test_extraction_skips_commands(
         work_done = await penny.extraction_pipeline.execute()
         assert work_done is False
 
-        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=20)
+        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=20)
         assert len(unprocessed) == 0
 
 
@@ -873,25 +873,25 @@ async def test_extraction_skips_processed_messages(
     config = make_config()
 
     async with running_penny(config) as penny:
-        msg_id = penny.db.log_message(
+        msg_id = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="I love jazz music",
         )
         assert msg_id is not None
-        penny.db.mark_messages_processed([msg_id])
+        penny.db.messages.mark_processed([msg_id])
 
-        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=20)
+        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=20)
         assert len(unprocessed) == 0
 
-        msg_id2 = penny.db.log_message(
+        msg_id2 = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="I also like rock music",
         )
         assert msg_id2 is not None
 
-        unprocessed = penny.db.get_unprocessed_messages(TEST_SENDER, limit=20)
+        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=20)
         assert len(unprocessed) == 1
         assert unprocessed[0].id == msg_id2
 
@@ -939,17 +939,17 @@ async def test_extraction_penny_enrichment_known_only(
 
     async with running_penny(config) as penny:
         # Pre-seed known entity with a fact
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.add_fact(entity.id, "Costs $1,599 per pair")
+        penny.db.facts.add(entity.id, "Costs $1,599 per pair")
 
         # Seed a recent incoming message so find_sender_for_timestamp works
-        penny.db.log_message(
+        penny.db.messages.log_message(
             direction="incoming", sender=TEST_SENDER, content="tell me more about speakers"
         )
 
         # Create a SearchLog with penny_enrichment trigger
-        penny.db.log_search(
+        penny.db.searches.log(
             query="kef ls50 meta latest",
             response="The KEF LS50 Meta won the What Hi-Fi 2024 award.",
             trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
@@ -959,18 +959,18 @@ async def test_extraction_penny_enrichment_known_only(
         assert work_done, "Should have extracted facts for the known entity"
 
         # Verify known entity got new facts
-        facts = penny.db.get_entity_facts(entity.id)
+        facts = penny.db.facts.get_for_entity(entity.id)
         fact_contents = [f.content for f in facts]
         assert "Won What Hi-Fi 2024 award" in fact_contents
 
         # Verify NO new entities were created
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         assert len(entities) == 1, (
             f"Expected only 1 entity, got {len(entities)}: {[e.name for e in entities]}"
         )
 
         # Verify NO USER_SEARCH engagements
-        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
         search_engagements = [
             e for e in engagements if e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
         ]
@@ -1136,10 +1136,12 @@ async def test_semantic_entity_name_validation(
 
     async with running_penny(config) as penny:
         # Seed a recent incoming message so find_sender_for_timestamp works
-        penny.db.log_message(direction="incoming", sender=TEST_SENDER, content="best speakers?")
+        penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="best speakers?"
+        )
 
         # Create a SearchLog about speakers
-        penny.db.log_search(
+        penny.db.searches.log(
             query="best bookshelf speakers",
             response="The KEF LS50 Meta is excellent. "
             "Also, Random Conference Sponsor attended CES.",
@@ -1149,7 +1151,7 @@ async def test_semantic_entity_name_validation(
         work_done = await penny.extraction_pipeline.execute()
         assert work_done
 
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         entity_names = [e.name for e in entities]
 
         # KEF should be created (entity+facts embeds close to "best bookshelf speakers")
@@ -1163,7 +1165,7 @@ async def test_semantic_entity_name_validation(
         # SEARCH_DISCOVERY engagement should be created with the post-fact similarity score
         kef_entity = next(e for e in entities if e.name == "kef ls50 meta")
         assert kef_entity.id is not None
-        engagements = penny.db.get_entity_engagements(TEST_SENDER, kef_entity.id)
+        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, kef_entity.id)
         discovery_engagements = [
             e
             for e in engagements
@@ -1251,29 +1253,29 @@ async def test_extraction_prefilters_entities_by_embedding(
 
     async with running_penny(config) as penny:
         # Create 2 speaker-related entities with similar embeddings
-        kef = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        kef = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert kef is not None and kef.id is not None
-        penny.db.update_entity_embedding(kef.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
-        penny.db.add_fact(kef.id, "Costs $1,599")
+        penny.db.entities.update_embedding(kef.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.facts.add(kef.id, "Costs $1,599")
 
-        sonos = penny.db.get_or_create_entity(TEST_SENDER, "sonos era 300")
+        sonos = penny.db.entities.get_or_create(TEST_SENDER, "sonos era 300")
         assert sonos is not None and sonos.id is not None
-        penny.db.update_entity_embedding(sonos.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
-        penny.db.add_fact(sonos.id, "Spatial audio speaker")
+        penny.db.entities.update_embedding(sonos.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.facts.add(sonos.id, "Spatial audio speaker")
 
         # Create 23 unrelated entities with orthogonal embeddings (total 25 > threshold 20)
         for i in range(23):
-            entity = penny.db.get_or_create_entity(TEST_SENDER, f"unrelated entity {i}")
+            entity = penny.db.entities.get_or_create(TEST_SENDER, f"unrelated entity {i}")
             assert entity is not None and entity.id is not None
-            penny.db.update_entity_embedding(entity.id, serialize_embedding([0.0, 1.0, 0.0, 0.0]))
+            penny.db.entities.update_embedding(entity.id, serialize_embedding([0.0, 1.0, 0.0, 0.0]))
 
-        assert len(penny.db.get_user_entities(TEST_SENDER)) == 25
+        assert len(penny.db.entities.get_for_user(TEST_SENDER)) == 25
 
         # Seed message and search log about speakers
-        penny.db.log_message(
+        penny.db.messages.log_message(
             direction="incoming", sender=TEST_SENDER, content="tell me about speakers"
         )
-        penny.db.log_search(
+        penny.db.searches.log(
             query="best bookshelf speakers 2025",
             response="The KEF LS50 Meta remains a top pick for bookshelf speakers.",
             trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
@@ -1290,7 +1292,7 @@ async def test_extraction_prefilters_entities_by_embedding(
 
         # Dedup still works: kef ls50 meta not duplicated
         kef_entities = [
-            e for e in penny.db.get_user_entities(TEST_SENDER) if e.name == "kef ls50 meta"
+            e for e in penny.db.entities.get_for_user(TEST_SENDER) if e.name == "kef ls50 meta"
         ]
         assert len(kef_entities) == 1
 
@@ -1354,20 +1356,20 @@ async def test_extraction_deduplicates_entities_at_insertion_time(
 
     async with running_penny(config) as penny:
         # Pre-seed "stanford" with embedding
-        stanford = penny.db.get_or_create_entity(TEST_SENDER, "stanford")
+        stanford = penny.db.entities.get_or_create(TEST_SENDER, "stanford")
         assert stanford is not None and stanford.id is not None
-        penny.db.add_fact(stanford.id, "Founded in 1885")
-        penny.db.update_entity_embedding(stanford.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.facts.add(stanford.id, "Founded in 1885")
+        penny.db.entities.update_embedding(stanford.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
 
         # Seed message and search log
-        msg_id = penny.db.log_message(
+        msg_id = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="tell me about stanford physics",
         )
-        penny.db.mark_messages_processed([msg_id])
+        penny.db.messages.mark_processed([msg_id])
 
-        penny.db.log_search(
+        penny.db.searches.log(
             query="stanford physics department",
             response="Stanford University has a renowned physics department.",
             trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
@@ -1377,7 +1379,7 @@ async def test_extraction_deduplicates_entities_at_insertion_time(
 
         # Verify NO new entity was created — "stanford_university" should be deduped
         # (underscore normalized to space in tokenization → TCR = 1.0 vs "stanford")
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         entity_names = [e.name for e in entities]
         assert "stanford" in entity_names
         assert "stanford_university" not in entity_names, (
@@ -1386,7 +1388,7 @@ async def test_extraction_deduplicates_entities_at_insertion_time(
         assert len(entities) == 1
 
         # Verify the new fact was attached to the existing "stanford" entity
-        facts = penny.db.get_entity_facts(stanford.id)
+        facts = penny.db.facts.get_for_entity(stanford.id)
         fact_contents = [f.content for f in facts]
         assert "Founded in 1885" in fact_contents
         assert "Located in California" in fact_contents
@@ -1440,14 +1442,14 @@ async def test_extraction_discards_fragment_entities(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        msg_id = penny.db.log_message(
+        msg_id = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="tell me about totem loon speakers",
         )
-        penny.db.mark_messages_processed([msg_id])
+        penny.db.messages.mark_processed([msg_id])
 
-        penny.db.log_search(
+        penny.db.searches.log(
             query="totem loon speakers",
             response="The Totem Loon is an excellent bookshelf speaker.",
             trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
@@ -1455,7 +1457,7 @@ async def test_extraction_discards_fragment_entities(
 
         await penny.extraction_pipeline.execute()
 
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         entity_names = [e.name for e in entities]
         assert "totem loon" in entity_names
         assert "totem" not in entity_names, (
@@ -1549,14 +1551,14 @@ async def test_extraction_deduplicates_acronym_entity_in_same_batch(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        msg_id = penny.db.log_message(
+        msg_id = penny.db.messages.log_message(
             direction="incoming",
             sender=TEST_SENDER,
             content="tell me about commercial lunar payload services",
         )
-        penny.db.mark_messages_processed([msg_id])
+        penny.db.messages.mark_processed([msg_id])
 
-        penny.db.log_search(
+        penny.db.searches.log(
             query="commercial lunar payload services",
             response="CLPS is a NASA program for commercial lunar deliveries.",
             trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
@@ -1565,7 +1567,7 @@ async def test_extraction_deduplicates_acronym_entity_in_same_batch(
         await penny.extraction_pipeline.execute()
 
         # Only one entity should exist — "clps" should be merged into the full name
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         entity_names = [e.name for e in entities]
         assert "commercial lunar payload services" in entity_names
         assert "clps" not in entity_names, (
@@ -1576,7 +1578,7 @@ async def test_extraction_deduplicates_acronym_entity_in_same_batch(
         # Both facts should be on the single entity
         clps_entity = next(e for e in entities if e.name == "commercial lunar payload services")
         assert clps_entity.id is not None
-        facts = penny.db.get_entity_facts(clps_entity.id)
+        facts = penny.db.facts.get_for_entity(clps_entity.id)
         fact_contents = [f.content for f in facts]
         assert "NASA program for lunar deliveries" in fact_contents
         assert "Intuitive Machines and Astrobotic are contracted providers" in fact_contents
@@ -1623,12 +1625,12 @@ async def test_extraction_does_not_send_notifications(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        msg_id = penny.db.log_message(
+        msg_id = penny.db.messages.log_message(
             direction="incoming", sender=TEST_SENDER, content="hello there friend"
         )
-        penny.db.mark_messages_processed([msg_id])
+        penny.db.messages.mark_processed([msg_id])
 
-        penny.db.log_search(
+        penny.db.searches.log(
             query="test query",
             response="Info about silent entity 1.",
             trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
@@ -1644,16 +1646,16 @@ async def test_extraction_does_not_send_notifications(
         )
 
         # But facts should be stored with notified_at=NULL (eligible for notification)
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         assert any(e.name == "silent entity 1" for e in entities)
         entity = next(e for e in entities if e.name == "silent entity 1")
         assert entity.id is not None
-        facts = penny.db.get_entity_facts(entity.id)
+        facts = penny.db.facts.get_for_entity(entity.id)
         assert len(facts) >= 1
         assert all(f.notified_at is None for f in facts)
 
         # Verify USER_SEARCH engagement was created for learn-triggered search
-        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
         search_engagements = [
             e for e in engagements if e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
         ]
@@ -1696,13 +1698,13 @@ async def test_extraction_user_message_facts_pre_marked_notified(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        msg_id = penny.db.log_message(
+        msg_id = penny.db.messages.log_message(
             direction="incoming", sender=TEST_SENDER, content="tell me about speakers"
         )
-        penny.db.mark_messages_processed([msg_id])
+        penny.db.messages.mark_processed([msg_id])
 
         # USER_MESSAGE trigger — facts should be pre-marked as notified
-        penny.db.log_search(
+        penny.db.searches.log(
             query="speakers",
             response="Speaker info.",
             trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
@@ -1710,10 +1712,10 @@ async def test_extraction_user_message_facts_pre_marked_notified(
 
         await penny.extraction_pipeline.execute()
 
-        entities = penny.db.get_user_entities(TEST_SENDER)
+        entities = penny.db.entities.get_for_user(TEST_SENDER)
         entity = next((e for e in entities if e.name == "user entity"), None)
         assert entity is not None and entity.id is not None
-        facts = penny.db.get_entity_facts(entity.id)
+        facts = penny.db.facts.get_for_entity(entity.id)
         assert len(facts) >= 1
         assert all(f.notified_at is not None for f in facts)
 
@@ -1762,18 +1764,18 @@ async def test_enrichment_runs_independently(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Mark all existing search logs as extracted
-        for sl in penny.db.get_unprocessed_search_logs(limit=100):
-            penny.db.mark_search_extracted(sl.id)
+        for sl in penny.db.searches.get_unprocessed(limit=100):
+            penny.db.searches.mark_extracted(sl.id)
 
         # Mark all messages as processed
-        msgs = penny.db.get_unprocessed_messages(TEST_SENDER, limit=100)
+        msgs = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
         if msgs:
-            penny.db.mark_messages_processed([m.id for m in msgs if m.id is not None])
+            penny.db.messages.mark_processed([m.id for m in msgs if m.id is not None])
 
         # Create entity with positive interest (needed for enrichment candidate scoring)
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -1788,7 +1790,7 @@ async def test_enrichment_runs_independently(
         # Verify enrichment created a penny_enrichment search log
         enrichment_logs = [
             sl
-            for sl in penny.db.get_unprocessed_search_logs(limit=100)
+            for sl in penny.db.searches.get_unprocessed(limit=100)
             if sl.trigger == PennyConstants.SearchTrigger.PENNY_ENRICHMENT
         ]
         assert len(enrichment_logs) >= 1, "Enrichment should have created a search log"

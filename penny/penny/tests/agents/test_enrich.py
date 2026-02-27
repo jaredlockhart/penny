@@ -38,9 +38,9 @@ async def test_learn_enrichment(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Create entity with positive interest
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -68,14 +68,14 @@ async def test_learn_enrichment(
         assert result is True
 
         # Verify facts were stored with notified_at=NULL (notification agent's job)
-        facts = penny.db.get_entity_facts(entity.id)
+        facts = penny.db.facts.get_for_entity(entity.id)
         assert len(facts) >= 1
         fact_texts = [f.content for f in facts]
         assert any("1,599" in t for t in fact_texts)
         assert all(f.notified_at is None for f in facts)
 
         # Verify search was tagged as penny_enrichment
-        search_logs = penny.db.get_unprocessed_search_logs(limit=10)
+        search_logs = penny.db.searches.get_unprocessed(limit=10)
         assert len(search_logs) >= 1
         assert search_logs[0].trigger == PennyConstants.SearchTrigger.PENNY_ENRICHMENT
 
@@ -102,9 +102,9 @@ async def test_learn_skips_negative_interest(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Create entity with negative interest (thumbs down on notification)
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "sports")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "sports")
         assert entity is not None and entity.id is not None
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
             valence=PennyConstants.EngagementValence.NEGATIVE,
@@ -226,14 +226,14 @@ async def test_learn_dedup_facts(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Create entity with existing fact and positive interest
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        existing_fact = penny.db.add_fact(
+        existing_fact = penny.db.facts.add(
             entity_id=entity.id, content="Costs $1,599 per pair", notified_at=datetime.now(UTC)
         )
         assert existing_fact is not None
 
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -266,7 +266,7 @@ async def test_learn_dedup_facts(
         assert "Costs $1,599 per pair" in search_query
 
         # Should have 2 facts total (1 existing + 1 new), not 3
-        facts = penny.db.get_entity_facts(entity.id)
+        facts = penny.db.facts.get_for_entity(entity.id)
         assert len(facts) == 2
         fact_texts = [f.content for f in facts]
         assert "Costs $1,599 per pair" in fact_texts
@@ -301,13 +301,13 @@ async def test_learn_semantic_interest_priority(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Create two entities with identical USER_SEARCH engagement
-        entity_a = penny.db.get_or_create_entity(TEST_SENDER, "aamas")
-        entity_b = penny.db.get_or_create_entity(TEST_SENDER, "coral beach hotel")
+        entity_a = penny.db.entities.get_or_create(TEST_SENDER, "aamas")
+        entity_b = penny.db.entities.get_or_create(TEST_SENDER, "coral beach hotel")
         assert entity_a is not None and entity_a.id is not None
         assert entity_b is not None and entity_b.id is not None
 
         for eid in (entity_a.id, entity_b.id):
-            penny.db.add_engagement(
+            penny.db.engagements.add(
                 user=TEST_SENDER,
                 engagement_type=PennyConstants.EngagementType.USER_SEARCH,
                 valence=PennyConstants.EngagementValence.POSITIVE,
@@ -316,14 +316,14 @@ async def test_learn_semantic_interest_priority(
             )
 
         # Entity A gets high semantic relevance, entity B gets low
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.9,
             entity_id=entity_a.id,
         )
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -332,12 +332,12 @@ async def test_learn_semantic_interest_priority(
         )
 
         # Both get one announced fact so they're eligible for enrichment
-        penny.db.add_fact(
+        penny.db.facts.add(
             entity_id=entity_a.id,
             content="AAMAS 2026 is held in Cyprus",
             notified_at=datetime.now(UTC),
         )
-        penny.db.add_fact(
+        penny.db.facts.add(
             entity_id=entity_b.id,
             content="Coral Beach Hotel hosts AAMAS 2026",
             notified_at=datetime.now(UTC),
@@ -363,8 +363,8 @@ async def test_learn_semantic_interest_priority(
         # Entity A (aamas) should be selected because its SEARCH_DISCOVERY
         # engagement has higher strength (0.9 vs 0.6).
         # Verify by checking which entity got new facts stored.
-        facts_a = penny.db.get_entity_facts(entity_a.id)
-        facts_b = penny.db.get_entity_facts(entity_b.id)
+        facts_a = penny.db.facts.get_for_entity(entity_a.id)
+        facts_b = penny.db.facts.get_for_entity(entity_b.id)
         assert len(facts_a) > 1, (
             f"Expected entity A (aamas) to receive new facts from enrichment, "
             f"but it still has {len(facts_a)} fact(s)"
@@ -406,9 +406,9 @@ async def test_learn_enrichment_fixed_interval(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Create entity with positive interest
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "interval test entity")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "interval test entity")
         assert entity is not None and entity.id is not None
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -440,8 +440,8 @@ async def test_learn_enrichment_fixed_interval(
         # Simulate time passing by resetting the timer, and mark facts as
         # announced (as the notification agent would) so the entity stays eligible
         agent._last_enrich_time = None
-        facts = penny.db.get_entity_facts(entity.id)
-        penny.db.mark_facts_notified([f.id for f in facts if f.id is not None])
+        facts = penny.db.facts.get_for_entity(entity.id)
+        penny.db.facts.mark_notified([f.id for f in facts if f.id is not None])
 
         # Third execute: timer reset, should succeed
         result = await agent.execute()
@@ -479,9 +479,9 @@ async def test_enrich_entity_rotation_cooldown(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Entity A: higher interest
-        entity_a = penny.db.get_or_create_entity(TEST_SENDER, "entity alpha")
+        entity_a = penny.db.entities.get_or_create(TEST_SENDER, "entity alpha")
         assert entity_a is not None and entity_a.id is not None
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -490,9 +490,9 @@ async def test_enrich_entity_rotation_cooldown(
         )
 
         # Entity B: lower interest but still eligible
-        entity_b = penny.db.get_or_create_entity(TEST_SENDER, "entity beta")
+        entity_b = penny.db.entities.get_or_create(TEST_SENDER, "entity beta")
         assert entity_b is not None and entity_b.id is not None
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -515,19 +515,19 @@ async def test_enrich_entity_rotation_cooldown(
         # First cycle: entity A wins (higher interest, no cooldown yet)
         result = await agent.execute()
         assert result is True
-        facts_a_after_first = penny.db.get_entity_facts(entity_a.id)
+        facts_a_after_first = penny.db.facts.get_for_entity(entity_a.id)
         assert len(facts_a_after_first) >= 1, "Entity A should have been enriched first"
 
         # Reset the fixed interval timer to allow immediate re-execution
         agent._last_enrich_time = None
 
-        facts_b_before = penny.db.get_entity_facts(entity_b.id)
+        facts_b_before = penny.db.facts.get_for_entity(entity_b.id)
 
         # Second cycle: entity A is in cooldown + has unannounced facts,
         # entity B should be picked
         result = await agent.execute()
         assert result is True
-        facts_b_after = penny.db.get_entity_facts(entity_b.id)
+        facts_b_after = penny.db.facts.get_for_entity(entity_b.id)
         assert len(facts_b_after) > len(facts_b_before), (
             "Entity B should have been enriched on the second cycle "
             "while entity A is in its cooldown window"
@@ -552,9 +552,9 @@ async def test_enrich_skips_entity_with_unannounced_facts(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Create entity with positive interest and an unannounced fact
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "unannounced test entity")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "unannounced test entity")
         assert entity is not None and entity.id is not None
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -562,7 +562,7 @@ async def test_enrich_skips_entity_with_unannounced_facts(
             entity_id=entity.id,
         )
         # Fact with notified_at=None (unannounced)
-        penny.db.add_fact(entity_id=entity.id, content="Some unannounced fact")
+        penny.db.facts.add(entity_id=entity.id, content="Some unannounced fact")
 
         agent = EnrichAgent(
             search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
@@ -611,10 +611,10 @@ async def test_learn_enrichment_includes_tagline_in_extraction_prompt(
         await signal_server.wait_for_message(timeout=10.0)
 
         # Create entity with a tagline to disambiguate
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "genesis")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "genesis")
         assert entity is not None and entity.id is not None
-        penny.db.update_entity_tagline(entity.id, "british progressive rock band")
-        penny.db.add_engagement(
+        penny.db.entities.update_tagline(entity.id, "british progressive rock band")
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,

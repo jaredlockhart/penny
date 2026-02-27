@@ -22,15 +22,15 @@ async def test_memory_list_ranked_by_interest(
     """Test /memory lists entities ranked by interest score with scores displayed."""
     async with running_penny(test_config) as penny:
         # Create entities with different engagement levels
-        entity1 = penny.db.get_or_create_entity(TEST_SENDER, "nvidia jetson")
-        penny.db.add_fact(entity1.id, "Edge AI compute module")
+        entity1 = penny.db.entities.get_or_create(TEST_SENDER, "nvidia jetson")
+        penny.db.facts.add(entity1.id, "Edge AI compute module")
 
-        entity2 = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
-        penny.db.add_fact(entity2.id, "Costs $1,599 per pair")
-        penny.db.add_fact(entity2.id, "Uses MAT driver")
+        entity2 = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
+        penny.db.facts.add(entity2.id, "Costs $1,599 per pair")
+        penny.db.facts.add(entity2.id, "Uses MAT driver")
 
         # Strong engagement for entity2 (user_search = 1.0)
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.USER_SEARCH,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -39,7 +39,7 @@ async def test_memory_list_ranked_by_interest(
         )
 
         # Weaker engagement for entity1 (message_mention = 0.2)
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
@@ -68,10 +68,10 @@ async def test_memory_list_ranked_by_interest(
 async def test_memory_shows_negative_scores(signal_server, test_config, mock_ollama, running_penny):
     """Test /memory shows entities with negative interest scores."""
     async with running_penny(test_config) as penny:
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "sports")
-        penny.db.add_fact(entity.id, "Various athletic activities")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "sports")
+        penny.db.facts.add(entity.id, "Various athletic activities")
 
-        penny.db.add_engagement(
+        penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
             valence=PennyConstants.EngagementValence.NEGATIVE,
@@ -101,9 +101,9 @@ async def test_memory_delete(signal_server, test_config, mock_ollama, running_pe
     """Test /memory <number> delete removes entity."""
     async with running_penny(test_config) as penny:
         # Seed entity
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "wharfedale linton")
-        penny.db.add_fact(entity.id, "Classic heritage speaker")
-        penny.db.add_fact(entity.id, "3-way design")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "wharfedale linton")
+        penny.db.facts.add(entity.id, "Classic heritage speaker")
+        penny.db.facts.add(entity.id, "3-way design")
 
         # Delete it
         await signal_server.push_message(sender=TEST_SENDER, content="/memory 1 delete")

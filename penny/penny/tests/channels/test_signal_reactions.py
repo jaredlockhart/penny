@@ -91,7 +91,7 @@ async def test_signal_reaction_message(
         assert reaction.is_reaction is True
 
         # No embedding model configured → no engagements created
-        engagements = penny.db.get_user_engagements(TEST_SENDER)
+        engagements = penny.db.engagements.get_for_user(TEST_SENDER)
         reaction_engagements = [
             e
             for e in engagements
@@ -100,7 +100,7 @@ async def test_signal_reaction_message(
         assert len(reaction_engagements) == 0, "No engagements without embedding model"
 
         # Verify thread is no longer a leaf (has reaction as child)
-        leaves = penny.db.get_conversation_leaves()
+        leaves = penny.db.messages.get_conversation_leaves()
         # The original outgoing message should not be in leaves anymore
         # because it now has a reaction child
         leaf_ids = [leaf.id for leaf in leaves]
@@ -232,9 +232,9 @@ async def test_reaction_creates_entity_engagements(
 
     async with running_penny(config) as penny:
         # Seed entity with matching embedding
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "kef ls50 meta")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
 
         # Send message and get response
         await signal_server.push_message(sender=TEST_SENDER, content="tell me about speakers")
@@ -259,7 +259,7 @@ async def test_reaction_creates_entity_engagements(
 
         # Wait for engagement to be created
         def engagement_exists():
-            engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+            engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
             return any(
                 e.engagement_type == PennyConstants.EngagementType.EMOJI_REACTION
                 for e in engagements
@@ -268,7 +268,7 @@ async def test_reaction_creates_entity_engagements(
         await wait_until(engagement_exists)
 
         # Verify engagement details
-        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
         reaction_engagements = [
             e
             for e in engagements
@@ -305,12 +305,12 @@ async def test_negative_reaction_on_proactive_message(
 
     async with running_penny(config) as penny:
         # Seed entity with matching embedding
-        entity = penny.db.get_or_create_entity(TEST_SENDER, "sports news")
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "sports news")
         assert entity is not None and entity.id is not None
-        penny.db.update_entity_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
 
         # Insert a proactive outgoing message directly (simulates discovery/research)
-        proactive_msg_id = penny.db.log_message(
+        proactive_msg_id = penny.db.messages.log_message(
             PennyConstants.MessageDirection.OUTGOING,
             penny.channel.sender_id,
             "hey! the latest sports news is really exciting today! 🏈",
@@ -319,7 +319,7 @@ async def test_negative_reaction_on_proactive_message(
         assert proactive_msg_id is not None
         # Set an external_id so the reaction can target it
         external_id = str(int(time.time() * 1000))
-        penny.db.set_external_id(proactive_msg_id, external_id)
+        penny.db.messages.set_external_id(proactive_msg_id, external_id)
 
         # React with thumbs down to the proactive message
         await signal_server.push_reaction(
@@ -330,7 +330,7 @@ async def test_negative_reaction_on_proactive_message(
 
         # Wait for engagement to be created
         def engagement_exists():
-            engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+            engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
             return any(
                 e.engagement_type == PennyConstants.EngagementType.EMOJI_REACTION
                 for e in engagements
@@ -339,7 +339,7 @@ async def test_negative_reaction_on_proactive_message(
         await wait_until(engagement_exists)
 
         # Verify engagement details — strong negative engagement
-        engagements = penny.db.get_entity_engagements(TEST_SENDER, entity.id)
+        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
         reaction_engagements = [
             e
             for e in engagements

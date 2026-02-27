@@ -249,7 +249,7 @@ class MessageChannel(ABC):
         # Apply channel-specific formatting
         # We log the prepared content so quote matching works correctly
         prepared = self.prepare_outgoing(content)
-        message_id = self._db.log_message(
+        message_id = self._db.messages.log_message(
             PennyConstants.MessageDirection.OUTGOING,
             self.sender_id,
             prepared,
@@ -258,7 +258,7 @@ class MessageChannel(ABC):
         external_id = await self.send_message(recipient, prepared, attachments, quote_message)
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
-            self._db.set_external_id(message_id, str(external_id))
+            self._db.messages.set_external_id(message_id, str(external_id))
         logger.info("Sent response to %s (%d chars)", recipient, len(content))
         return message_id if external_id is not None else None
 
@@ -273,114 +273,128 @@ class MessageChannel(ABC):
             if message is None:
                 return
 
-            # Handle reactions specially - log as message but don't respond
             if message.is_reaction:
                 await self._handle_reaction(message)
                 return
 
-            # Fetch image attachments if the channel supports them
             message = await self._fetch_attachments(message, envelope_data)
 
-            # Handle vision: check if images are present
-            if message.images:
-                vision_model = self._config.ollama_vision_model if self._config else None
-                if not vision_model:
-                    await self.send_status_message(
-                        message.sender, PennyResponse.VISION_NOT_CONFIGURED_MESSAGE
-                    )
-                    return
-
-            # Only reset idle timers for real messages, not receipts/sync messages
-            if self._scheduler:
-                self._scheduler.notify_message()
-
-            logger.info("Received message from %s: %s", message.sender, message.content)
-
-            # Check if message is a command
-            if message.content.strip().startswith("/"):
-                # Most commands don't support quote-replies, but some do (e.g., /bug)
-                # Extract command name to check if it supports quote-replies
-                command_name = message.content.strip()[1:].split(maxsplit=1)[0].lower()
-                logger.info("Command detected: /%s from %s", command_name, message.sender)
-                commands_supporting_quotes = {"bug"}  # Commands that can use quote-reply metadata
-
-                if message.quoted_text and command_name not in commands_supporting_quotes:
-                    prepared = self.prepare_outgoing(PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS)
-                    await self.send_message(
-                        message.sender, prepared, attachments=None, quote_message=None
-                    )
-                    return
-                await self._handle_command(message)
+            if not await self._validate_message(message):
                 return
 
-            # Check if thread-replying to a command (quoted text is a command)
-            if message.quoted_text and message.quoted_text.strip().startswith("/"):
-                prepared = self.prepare_outgoing(PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS)
-                await self.send_message(
-                    message.sender, prepared, attachments=None, quote_message=None
-                )
+            if await self._dispatch_command(message):
                 return
 
-            # Check if thread-replying to a test mode response
-            if message.quoted_text and message.quoted_text.strip().startswith(
-                PennyResponse.TEST_MODE_PREFIX
-            ):
-                await self.send_status_message(
-                    message.sender, PennyResponse.THREADING_NOT_SUPPORTED_TEST
-                )
+            if await self._reject_unsupported_thread(message):
                 return
 
-            typing_task = asyncio.create_task(self._typing_loop(message.sender))
-            try:
-                # Notify scheduler that foreground work is starting
-                if self._scheduler:
-                    self._scheduler.notify_foreground_start()
-
-                # Agent handles context preparation internally
-                logger.info("Dispatching to message agent for %s", message.sender)
-                parent_id, response = await self._message_agent.handle(
-                    content=message.content,
-                    sender=message.sender,
-                    quoted_text=message.quoted_text,
-                    images=message.images or None,
-                )
-
-                # Log incoming message linked to parent
-                incoming_id = self._db.log_message(
-                    PennyConstants.MessageDirection.INCOMING,
-                    message.sender,
-                    message.content,
-                    parent_id=parent_id,
-                    signal_timestamp=message.signal_timestamp,
-                )
-
-                answer = (
-                    response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
-                )
-                # Quote-reply to the user's incoming message
-                incoming_log = MessageLog(
-                    id=incoming_id,
-                    direction=PennyConstants.MessageDirection.INCOMING,
-                    sender=message.sender,
-                    content=message.content,
-                    signal_timestamp=message.signal_timestamp,
-                )
-                await self.send_response(
-                    message.sender,
-                    answer,
-                    parent_id=incoming_id,
-                    attachments=response.attachments or None,
-                    quote_message=incoming_log,
-                )
-            finally:
-                typing_task.cancel()
-                await self.send_typing(message.sender, False)
-                # Notify scheduler that foreground work is complete
-                if self._scheduler:
-                    self._scheduler.notify_foreground_end()
+            await self._dispatch_to_agent(message)
 
         except Exception as e:
             logger.exception("Error handling message: %s", e)
+
+    async def _validate_message(self, message: IncomingMessage) -> bool:
+        """Check vision config and notify scheduler. Returns False if message should be dropped."""
+        if message.images:
+            vision_model = self._config.ollama_vision_model if self._config else None
+            if not vision_model:
+                await self.send_status_message(
+                    message.sender, PennyResponse.VISION_NOT_CONFIGURED_MESSAGE
+                )
+                return False
+
+        if self._scheduler:
+            self._scheduler.notify_message()
+
+        logger.info("Received message from %s: %s", message.sender, message.content)
+        return True
+
+    async def _dispatch_command(self, message: IncomingMessage) -> bool:
+        """Detect and route slash commands. Returns True if message was a command."""
+        if not message.content.strip().startswith("/"):
+            return False
+
+        command_name = message.content.strip()[1:].split(maxsplit=1)[0].lower()
+        logger.info("Command detected: /%s from %s", command_name, message.sender)
+        commands_supporting_quotes = {"bug"}
+
+        if message.quoted_text and command_name not in commands_supporting_quotes:
+            prepared = self.prepare_outgoing(PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS)
+            await self.send_message(message.sender, prepared, attachments=None, quote_message=None)
+            return True
+
+        await self._handle_command(message)
+        return True
+
+    def _is_thread_reply_to_command(self, message: IncomingMessage) -> bool:
+        """Check if the message is a thread reply to a slash command."""
+        return bool(message.quoted_text and message.quoted_text.strip().startswith("/"))
+
+    def _is_thread_reply_to_test(self, message: IncomingMessage) -> bool:
+        """Check if the message is a thread reply to a test mode response."""
+        return bool(
+            message.quoted_text
+            and message.quoted_text.strip().startswith(PennyResponse.TEST_MODE_PREFIX)
+        )
+
+    async def _reject_unsupported_thread(self, message: IncomingMessage) -> bool:
+        """Reject thread replies to commands or test mode. Returns True if rejected."""
+        if self._is_thread_reply_to_command(message):
+            prepared = self.prepare_outgoing(PennyResponse.THREADING_NOT_SUPPORTED_COMMANDS)
+            await self.send_message(message.sender, prepared, attachments=None, quote_message=None)
+            return True
+
+        if self._is_thread_reply_to_test(message):
+            await self.send_status_message(
+                message.sender, PennyResponse.THREADING_NOT_SUPPORTED_TEST
+            )
+            return True
+
+        return False
+
+    async def _dispatch_to_agent(self, message: IncomingMessage) -> None:
+        """Run the message through the agent loop with typing indicators."""
+        typing_task = asyncio.create_task(self._typing_loop(message.sender))
+        try:
+            if self._scheduler:
+                self._scheduler.notify_foreground_start()
+
+            logger.info("Dispatching to message agent for %s", message.sender)
+            parent_id, response = await self._message_agent.handle(
+                content=message.content,
+                sender=message.sender,
+                quoted_text=message.quoted_text,
+                images=message.images or None,
+            )
+
+            incoming_id = self._db.messages.log_message(
+                PennyConstants.MessageDirection.INCOMING,
+                message.sender,
+                message.content,
+                parent_id=parent_id,
+                signal_timestamp=message.signal_timestamp,
+            )
+
+            answer = response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
+            incoming_log = MessageLog(
+                id=incoming_id,
+                direction=PennyConstants.MessageDirection.INCOMING,
+                sender=message.sender,
+                content=message.content,
+                signal_timestamp=message.signal_timestamp,
+            )
+            await self.send_response(
+                message.sender,
+                answer,
+                parent_id=incoming_id,
+                attachments=response.attachments or None,
+                quote_message=incoming_log,
+            )
+        finally:
+            typing_task.cancel()
+            await self.send_typing(message.sender, False)
+            if self._scheduler:
+                self._scheduler.notify_foreground_end()
 
     async def _handle_reaction(self, message: IncomingMessage) -> None:
         """
@@ -393,7 +407,7 @@ class MessageChannel(ABC):
             return
 
         # Look up the message that was reacted to
-        reacted_msg = self._db.find_message_by_external_id(message.reacted_to_external_id)
+        reacted_msg = self._db.messages.find_by_external_id(message.reacted_to_external_id)
         if not reacted_msg or not reacted_msg.id:
             logger.warning(
                 "Could not find message with external_id=%s for reaction",
@@ -402,7 +416,7 @@ class MessageChannel(ABC):
             return
 
         # Log the reaction as an incoming message with is_reaction=True
-        self._db.log_message(
+        self._db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING,
             message.sender,
             message.content,  # The emoji
@@ -428,65 +442,69 @@ class MessageChannel(ABC):
         """
         if message.parent_id is None:
             return True
-        parent = self._db.get_message_by_id(message.parent_id)
+        parent = self._db.messages.get_by_id(message.parent_id)
         return bool(parent and parent.direction == PennyConstants.MessageDirection.OUTGOING)
+
+    def _classify_reaction_emoji(self, emoji: str) -> str | None:
+        """Map an emoji to a valence string, or None if unrecognized."""
+        if emoji in PennyConstants.LIKE_REACTIONS:
+            return PennyConstants.EngagementValence.POSITIVE
+        if emoji in PennyConstants.DISLIKE_REACTIONS:
+            return PennyConstants.EngagementValence.NEGATIVE
+        return None
+
+    def _determine_reaction_strength(self, valence: str, is_proactive: bool) -> float:
+        """Compute engagement strength based on valence and whether message was proactive."""
+        assert self._config is not None
+        if valence == PennyConstants.EngagementValence.NEGATIVE and is_proactive:
+            return self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE
+        if is_proactive:
+            return self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE
+        return self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL
+
+    async def _find_entities_in_message(self, sender: str, content: str) -> list[tuple[int, float]]:
+        """Find entities matching message content via embedding similarity."""
+        assert self._embedding_model_client is not None
+        assert self._config is not None
+
+        entities = self._db.entities.get_with_embeddings(sender)
+        if not entities:
+            return []
+
+        vecs = await self._embedding_model_client.embed(content)
+        query_embedding = vecs[0]
+
+        candidates = []
+        for entity in entities:
+            assert entity.id is not None
+            assert entity.embedding is not None
+            candidates.append((entity.id, deserialize_embedding(entity.embedding)))
+
+        return find_similar(
+            query_embedding,
+            candidates,
+            top_k=int(self._config.runtime.ENTITY_CONTEXT_TOP_K),
+            threshold=self._config.runtime.ENTITY_CONTEXT_THRESHOLD,
+        )
 
     async def _extract_reaction_engagements(
         self, sender: str, emoji: str, reacted_msg: MessageLog
     ) -> None:
-        """Create engagement records for entities mentioned in the reacted-to message.
+        """Create engagement records for entities mentioned in the reacted-to message."""
+        valence = self._classify_reaction_emoji(emoji)
+        if valence is None:
+            return
 
-        Maps the emoji to positive/negative valence and adjusts strength based on
-        whether the reacted-to message was proactive or user-initiated.
-        """
-        # Classify emoji
-        if emoji in PennyConstants.LIKE_REACTIONS:
-            valence = PennyConstants.EngagementValence.POSITIVE
-        elif emoji in PennyConstants.DISLIKE_REACTIONS:
-            valence = PennyConstants.EngagementValence.NEGATIVE
-        else:
-            return  # Unrecognized emoji — skip
-
-        # Need embedding model client and config for entity matching
         if not self._embedding_model_client or not self._config:
             return
 
         try:
             is_proactive = self._is_proactive_message(reacted_msg)
-
-            # Determine strength based on valence and proactive status
-            if valence == PennyConstants.EngagementValence.NEGATIVE and is_proactive:
-                strength = (
-                    self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE
-                )
-            elif is_proactive:
-                strength = self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE
-            else:
-                strength = self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL
-
-            # Find entities in the reacted-to message via embedding similarity
-            entities = self._db.get_user_entities_with_embeddings(sender)
-            if not entities:
-                return
-
-            vecs = await self._embedding_model_client.embed(reacted_msg.content)
-            query_embedding = vecs[0]
-
-            candidates = []
-            for entity in entities:
-                assert entity.id is not None
-                assert entity.embedding is not None
-                candidates.append((entity.id, deserialize_embedding(entity.embedding)))
-
-            matches = find_similar(
-                query_embedding,
-                candidates,
-                top_k=int(self._config.runtime.ENTITY_CONTEXT_TOP_K),
-                threshold=self._config.runtime.ENTITY_CONTEXT_THRESHOLD,
-            )
+            strength = self._determine_reaction_strength(valence, is_proactive)
+            matches = await self._find_entities_in_message(sender, reacted_msg.content)
 
             for entity_id, _score in matches:
-                self._db.add_engagement(
+                self._db.engagements.add(
                     user=sender,
                     engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
                     valence=valence,
@@ -497,65 +515,32 @@ class MessageChannel(ABC):
         except Exception:
             logger.debug("Reaction engagement extraction failed", exc_info=True)
 
-    async def _handle_command(self, message: IncomingMessage) -> None:
-        """
-        Handle a command message.
-
-        Args:
-            message: The incoming command message
-        """
-        if not self._command_registry:
-            logger.warning("Command received but no registry configured")
-            return
-
-        # Parse command name and args
-        text = message.content.strip()
-        parts = text[1:].split(maxsplit=1)  # Skip leading /
+    def _parse_command(self, text: str) -> tuple[str, str]:
+        """Parse command name and arguments from a slash command string."""
+        parts = text.strip()[1:].split(maxsplit=1)  # Skip leading /
         command_name = parts[0].lower()
         command_args = parts[1] if len(parts) > 1 else ""
+        return command_name, command_args
 
-        # Look up command
-        command = self._command_registry.get(command_name)
-        if not command:
-            response = PennyResponse.UNKNOWN_COMMAND.format(command_name=command_name)
-            prepared = self.prepare_outgoing(response)
-            await self.send_message(message.sender, prepared, attachments=None, quote_message=None)
-            self._db.log_command(
-                user=message.sender,
-                channel_type=self._command_context.channel_type,
-                command_name=command_name,
-                command_args=command_args,
-                response=response,
-                error="unknown command",
-            )
-            return
-
-        # Execute command with typing indicator
+    async def _execute_command(
+        self, message: IncomingMessage, command_name: str, command_args: str
+    ) -> None:
+        """Execute a known command with typing indicator and send the result."""
+        command = self._command_registry.get(command_name)  # type: ignore[union-attr]
         typing_task = asyncio.create_task(self._typing_loop(message.sender))
         try:
-            # Update context with current user and message
             context = self._command_context
             context.user = message.sender
             context.message = message
 
-            result = await command.execute(command_args, context)
+            result = await command.execute(command_args, context)  # type: ignore[union-attr]
             response = result.text
 
-            # Send response — commands skip personality transforms
             prepared = self.prepare_outgoing(response) if response else ""
             await self.send_message(
                 message.sender, prepared, attachments=result.attachments, quote_message=None
             )
-
-            # Log command execution
-            self._db.log_command(
-                user=message.sender,
-                channel_type=context.channel_type,
-                command_name=command_name,
-                command_args=command_args,
-                response=response,
-            )
-
+            self._log_command_result(message.sender, command_name, command_args, response)
             logger.info("Executed command /%s for %s", command_name, message.sender)
 
         except Exception as e:
@@ -563,14 +548,47 @@ class MessageChannel(ABC):
             error_response = PennyResponse.COMMAND_ERROR.format(error=e)
             prepared = self.prepare_outgoing(error_response)
             await self.send_message(message.sender, prepared, attachments=None, quote_message=None)
-            self._db.log_command(
-                user=message.sender,
-                channel_type=self._command_context.channel_type,
-                command_name=command_name,
-                command_args=command_args,
-                response=error_response,
-                error=str(e),
+            self._log_command_result(
+                message.sender, command_name, command_args, error_response, error=str(e)
             )
         finally:
             typing_task.cancel()
             await self.send_typing(message.sender, False)
+
+    def _log_command_result(
+        self,
+        sender: str,
+        command_name: str,
+        command_args: str,
+        response: str,
+        error: str | None = None,
+    ) -> None:
+        """Log a command execution to the database."""
+        self._db.messages.log_command(
+            user=sender,
+            channel_type=self._command_context.channel_type,
+            command_name=command_name,
+            command_args=command_args,
+            response=response,
+            error=error,
+        )
+
+    async def _handle_command(self, message: IncomingMessage) -> None:
+        """Handle a command message: parse, look up, and execute."""
+        if not self._command_registry:
+            logger.warning("Command received but no registry configured")
+            return
+
+        command_name, command_args = self._parse_command(message.content)
+        command = self._command_registry.get(command_name)
+
+        if not command:
+            response = PennyResponse.UNKNOWN_COMMAND.format(command_name=command_name)
+            prepared = self.prepare_outgoing(response)
+            await self.send_message(message.sender, prepared, attachments=None, quote_message=None)
+            self._log_command_result(
+                message.sender, command_name, command_args, response, error="unknown command"
+            )
+            return
+
+        await self._execute_command(message, command_name, command_args)

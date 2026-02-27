@@ -106,7 +106,7 @@ class EnrichAgent(Agent):
         logger.info("Enrichment done, next in %.0fs", self.config.runtime.ENRICHMENT_INTERVAL)
 
     async def execute(self) -> bool:
-        """Run one cycle of the learn agent.
+        """Run one cycle of the enrich agent.
 
         Returns:
             True if work was done, False if nothing to research.
@@ -118,42 +118,51 @@ class EnrichAgent(Agent):
         if not self._should_enrich():
             return False
 
-        # Score all entities and pick the highest-priority one
+        candidate = self._select_candidate()
+        if candidate is None:
+            return False
+
+        did_work = await self._research_entity(candidate)
+        if did_work:
+            self._mark_enrichment_done()
+        return did_work
+
+    def _select_candidate(self) -> _ScoredEntity | None:
+        """Score all entities and return the highest-priority candidate, or None."""
         candidates = self._score_candidates()
         if not candidates:
             logger.debug("EnrichAgent: no candidates to research")
-            return False
+            return None
+        return max(candidates, key=lambda c: c.priority)
 
-        candidate = max(candidates, key=lambda c: c.priority)
+    async def _research_entity(self, candidate: _ScoredEntity) -> bool:
+        """Search, extract facts, and store results for the selected entity.
 
+        Returns:
+            True if search succeeded, False if search failed.
+        """
         entity = candidate.entity
-        user = candidate.user
         assert entity.id is not None
 
-        # Determine mode
         is_enrichment = candidate.fact_count < self.config.runtime.LEARN_ENRICHMENT_FACT_THRESHOLD
-
         mode_label = "enrichment" if is_enrichment else "briefing"
         logger.info(
             "Learn: %s mode for '%s' (user=%s, interest=%.2f, facts=%d, priority=%.3f)",
             mode_label,
             entity.name,
-            user,
+            candidate.user,
             candidate.interest,
             candidate.fact_count,
             candidate.priority,
         )
 
-        # Build search query
         query = self._build_query(entity.name, is_enrichment, candidate.facts, entity.tagline)
         logger.info("Learn search query: '%s'", query)
 
-        # Execute search
         search_result = await self._search(query)
         if search_result is None:
             return False
 
-        # Extract and deduplicate facts
         new_facts, confirmed_fact_ids = await self._extract_and_dedup_facts(
             entity, candidate.facts, search_result
         )
@@ -164,102 +173,111 @@ class EnrichAgent(Agent):
             entity.name,
         )
 
-        # Store new facts
         stored_facts = await self._store_new_facts(entity, new_facts, search_result)
 
-        # Update entity embedding if we added facts
         if stored_facts and self._embedding_model_client:
             await self._update_entity_embedding(entity)
             logger.info("Updated entity embedding for '%s'", entity.name)
 
-        # Record enrichment time so this entity enters its cooldown window
-        self.db.update_entity_last_enriched_at(entity.id)
-
-        self._mark_enrichment_done()
+        self.db.entities.update_last_enriched_at(entity.id)
         return True
 
     def _score_candidates(self) -> list[_ScoredEntity]:
         """Score all entities across all users by behavioral interest.
 
         Returns candidates above the minimum interest threshold, sorted by priority.
-        Semantic interest scores are applied separately in _apply_semantic_scores().
         """
-        users = self.db.get_all_senders()
+        users = self.db.users.get_all_senders()
         if not users:
             return []
 
         candidates: list[_ScoredEntity] = []
+        cooldown = self.config.runtime.ENRICHMENT_ENTITY_COOLDOWN
+        now = datetime.now(UTC)
 
         for user in users:
-            entities = self.db.get_user_entities(user)
+            entities = self.db.entities.get_for_user(user)
             if not entities:
                 continue
 
-            all_engagements = self.db.get_user_engagements(user)
+            all_engagements = self.db.engagements.get_for_user(user)
             engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
             for eng in all_engagements:
                 if eng.entity_id is not None:
                     engagements_by_entity[eng.entity_id].append(eng)
 
-            cooldown = self.config.runtime.ENRICHMENT_ENTITY_COOLDOWN
-            now = datetime.now(UTC)
-
             for entity in entities:
                 assert entity.id is not None
-
-                # Skip entities enriched within the cooldown window to ensure rotation
-                if entity.last_enriched_at is not None:
-                    last = entity.last_enriched_at
-                    if last.tzinfo is None:
-                        last = last.replace(tzinfo=UTC)
-                    elapsed = (now - last).total_seconds()
-                    if elapsed < cooldown:
-                        logger.debug(
-                            "EnrichAgent: skipping '%s' (enriched %.0fs ago, cooldown=%.0fs)",
-                            entity.name,
-                            elapsed,
-                            cooldown,
-                        )
-                        continue
-
-                entity_engagements = engagements_by_entity.get(entity.id, [])
-                interest = compute_interest_score(
-                    entity_engagements,
-                    half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-                )
-
-                if interest < self.config.runtime.LEARN_MIN_INTEREST_SCORE:
+                if not self._is_entity_enrichment_eligible(entity, now, cooldown):
                     continue
-
-                facts = self.db.get_entity_facts(entity.id)
-                fact_count = len(facts)
-
-                # Skip entities with unannounced facts — notification hasn't
-                # surfaced them yet, so don't pile on more.
-                if any(f.notified_at is None for f in facts):
-                    logger.debug(
-                        "EnrichAgent: skipping '%s' (has unannounced facts)",
-                        entity.name,
-                    )
-                    continue
-
-                # Log-diminishing returns: high-interest entities stay on top,
-                # but gradually yield as facts accumulate, allowing rotation.
-                # log2(0+2)=1.0, log2(3+2)=2.3, log2(7+2)=3.2, log2(15+2)=4.1
-                priority = interest / math.log2(fact_count + 2)
-
-                candidates.append(
-                    _ScoredEntity(
-                        entity=entity,
-                        user=user,
-                        interest=interest,
-                        fact_count=fact_count,
-                        facts=facts,
-                        priority=priority,
-                    )
-                )
+                scored = self._compute_entity_priority(entity, engagements_by_entity, user)
+                if scored is not None:
+                    candidates.append(scored)
 
         return candidates
+
+    def _is_entity_enrichment_eligible(
+        self, entity: Entity, now: datetime, cooldown: float
+    ) -> bool:
+        """Check if an entity is eligible for enrichment (not in cooldown window)."""
+        if entity.last_enriched_at is None:
+            return True
+        last = entity.last_enriched_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        elapsed = (now - last).total_seconds()
+        if elapsed < cooldown:
+            logger.debug(
+                "EnrichAgent: skipping '%s' (enriched %.0fs ago, cooldown=%.0fs)",
+                entity.name,
+                elapsed,
+                cooldown,
+            )
+            return False
+        return True
+
+    def _compute_entity_priority(
+        self,
+        entity: Entity,
+        engagements_by_entity: dict[int, list[Engagement]],
+        user: str,
+    ) -> _ScoredEntity | None:
+        """Compute priority score for an entity. Returns None if ineligible."""
+        assert entity.id is not None
+
+        entity_engagements = engagements_by_entity.get(entity.id, [])
+        interest = compute_interest_score(
+            entity_engagements,
+            half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+        )
+        if interest < self.config.runtime.LEARN_MIN_INTEREST_SCORE:
+            return None
+
+        facts = self.db.facts.get_for_entity(entity.id)
+        fact_count = len(facts)
+
+        # Skip entities with unannounced facts — notification hasn't
+        # surfaced them yet, so don't pile on more.
+        if any(f.notified_at is None for f in facts):
+            logger.debug(
+                "EnrichAgent: skipping '%s' (has unannounced facts)",
+                entity.name,
+            )
+            return None
+
+        # Log-diminishing returns: high-interest entities stay on top,
+        # but gradually yield as facts accumulate, allowing rotation.
+        # log2(0+2)=1.0, log2(3+2)=2.3, log2(7+2)=3.2, log2(15+2)=4.1
+        priority = interest / math.log2(fact_count + 2)
+
+        return _ScoredEntity(
+            entity=entity,
+            user=user,
+            interest=interest,
+            fact_count=fact_count,
+            facts=facts,
+            priority=priority,
+        )
 
     def _build_query(
         self,
@@ -314,9 +332,24 @@ class EnrichAgent(Agent):
         Returns:
             Tuple of (new_fact_texts, confirmed_existing_fact_ids)
         """
+        candidate_facts = await self._extract_raw_facts(entity, existing_facts, search_text)
+        if not candidate_facts:
+            return [], []
+
+        new_facts, confirmed_ids = self._string_dedup_facts(candidate_facts, existing_facts)
+        if not new_facts:
+            return [], confirmed_ids
+
+        deduped, embed_confirmed = await self._embedding_dedup_facts(new_facts, existing_facts)
+        confirmed_ids.extend(embed_confirmed)
+        return deduped, confirmed_ids
+
+    async def _extract_raw_facts(
+        self, entity: Entity, existing_facts: list[Fact], search_text: str
+    ) -> list[str]:
+        """Call LLM to extract facts from search text for the given entity."""
         assert entity.id is not None
 
-        # Build extraction prompt
         existing_context = ""
         if existing_facts:
             facts_text = "\n".join(f"- {f.content}" for f in existing_facts)
@@ -342,17 +375,21 @@ class EnrichAgent(Agent):
                 logger.warning(
                     "Empty LLM response from fact extraction for '%s' — skipping", entity.name
                 )
-                return [], []
+                return []
             extracted = ExtractedFacts.model_validate_json(response.content)
-            candidate_facts = extracted.facts
+            return extracted.facts
         except Exception as e:
             logger.error("Failed to extract facts for '%s': %s", entity.name, e)
-            return [], []
+            return []
 
-        if not candidate_facts:
-            return [], []
+    def _string_dedup_facts(
+        self, candidate_facts: list[str], existing_facts: list[Fact]
+    ) -> tuple[list[str], list[int]]:
+        """Fast pass: deduplicate candidates against existing facts by normalized string match.
 
-        # Fast pass: normalized string dedup
+        Returns:
+            Tuple of (new_facts not matching existing, confirmed_existing_fact_ids)
+        """
         existing_normalized = {_normalize_fact(f.content): f for f in existing_facts}
         new_facts: list[str] = []
         confirmed_ids: list[int] = []
@@ -368,17 +405,24 @@ class EnrichAgent(Agent):
             seen_normalized.add(normalized)
 
             if normalized in existing_normalized:
-                # Exact match → confirm existing fact
                 existing_fact = existing_normalized[normalized]
                 if existing_fact.id is not None:
                     confirmed_ids.append(existing_fact.id)
                 continue
             new_facts.append(fact_text)
 
-        if not new_facts:
-            return [], confirmed_ids
+        return new_facts, confirmed_ids
 
-        # Slow pass: embedding similarity dedup
+    async def _embedding_dedup_facts(
+        self, new_facts: list[str], existing_facts: list[Fact]
+    ) -> tuple[list[str], list[int]]:
+        """Slow pass: deduplicate via embedding similarity (paraphrase detection).
+
+        Returns:
+            Tuple of (deduped_facts, confirmed_existing_fact_ids)
+        """
+        confirmed_ids: list[int] = []
+
         if not self._embedding_model_client:
             return new_facts, confirmed_ids
 
@@ -403,7 +447,6 @@ class EnrichAgent(Agent):
                     threshold=self.config.runtime.EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD,
                 )
                 if matches:
-                    # Paraphrase match → confirm the existing fact
                     matched_idx = matches[0][0]
                     matched_fact = facts_with_embeddings[matched_idx]
                     if matched_fact.id is not None:
@@ -437,7 +480,7 @@ class EnrichAgent(Agent):
 
         stored: list[str] = []
         for fact_text, emb in zip(new_fact_texts, fact_embeddings, strict=True):
-            fact = self.db.add_fact(
+            fact = self.db.facts.add(
                 entity_id=entity.id,
                 content=fact_text,
                 embedding=emb,
@@ -453,9 +496,9 @@ class EnrichAgent(Agent):
         assert entity.id is not None
         try:
             assert self._embedding_model_client is not None
-            facts = self.db.get_entity_facts(entity.id)
+            facts = self.db.facts.get_for_entity(entity.id)
             text = build_entity_embed_text(entity.name, [f.content for f in facts], entity.tagline)
             vecs = await self._embedding_model_client.embed(text)
-            self.db.update_entity_embedding(entity.id, serialize_embedding(vecs[0]))
+            self.db.entities.update_embedding(entity.id, serialize_embedding(vecs[0]))
         except Exception as e:
             logger.warning("Failed to update entity embedding for '%s': %s", entity.name, e)

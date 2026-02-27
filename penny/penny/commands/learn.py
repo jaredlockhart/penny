@@ -40,7 +40,7 @@ class LearnCommand(Command):
 
     def _show_status(self, context: CommandContext) -> CommandResult:
         """Show LearnPrompt status with provenance chain."""
-        learn_prompts = context.db.get_user_learn_prompts(context.user)
+        learn_prompts = context.db.learn_prompts.get_for_user(context.user)
         # Hide announced learn prompts — their completion summary was already sent
         learn_prompts = [lp for lp in learn_prompts if lp.announced_at is None]
         if not learn_prompts:
@@ -54,7 +54,7 @@ class LearnCommand(Command):
             assert lp.id is not None
 
             # Fetch search logs first — used for both status and provenance
-            search_logs = context.db.get_search_logs_by_learn_prompt(lp.id)
+            search_logs = context.db.searches.get_by_learn_prompt(lp.id)
 
             if lp.status != PennyConstants.LearnPromptStatus.COMPLETED:
                 status_text = f"(searching, {lp.searches_remaining} left)"
@@ -70,7 +70,7 @@ class LearnCommand(Command):
                 continue
 
             search_log_ids = [sl.id for sl in search_logs if sl.id is not None]
-            facts = context.db.get_facts_by_search_log_ids(search_log_ids)
+            facts = context.db.facts.get_by_search_log_ids(search_log_ids)
             if not facts:
                 lines.append("")
                 continue
@@ -90,7 +90,7 @@ class LearnCommand(Command):
 
     async def _learn_topic(self, topic: str, context: CommandContext) -> CommandResult:
         """Create LearnPrompt and acknowledge. Research happens via scheduled worker."""
-        context.db.create_learn_prompt(
+        context.db.learn_prompts.create(
             user=context.user,
             prompt_text=topic,
             searches_remaining=int(context.config.runtime.LEARN_PROMPT_DEFAULT_SEARCHES),
@@ -115,4 +115,4 @@ def _build_entity_lines(entity_fact_counts: dict[int, int], context: CommandCont
 
 def _get_entity_cached(entity_id: int, context: CommandContext) -> Entity | None:
     """Get an entity by ID. Uses the database directly."""
-    return context.db.get_entity(entity_id)
+    return context.db.entities.get(entity_id)

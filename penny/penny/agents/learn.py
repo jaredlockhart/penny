@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from penny.agents.base import Agent
 from penny.agents.models import GeneratedQuery
 from penny.constants import PennyConstants
+from penny.database.models import LearnPrompt
 from penny.prompts import Prompt
 from penny.tools.models import SearchResult
 
@@ -48,32 +49,43 @@ class LearnAgent(Agent):
         time (search → extract → notify) rather than all searches completing
         before extraction starts.
         """
-        if not self._search_tool:
-            return False
-
-        # Gate: wait for all previous learn searches to be extracted
-        if self.db.has_unextracted_learn_search_logs():
-            return False
-
-        learn_prompt = self.db.get_next_active_learn_prompt()
+        learn_prompt = self._check_preconditions()
         if learn_prompt is None:
             return False
 
         assert learn_prompt.id is not None
+        completed_early = await self._execute_search_step(learn_prompt)
+        if not completed_early:
+            self._check_completion(learn_prompt)
+        return True
+
+    def _check_preconditions(self) -> LearnPrompt | None:
+        """Check if we should run: tool available, no unextracted logs, active prompt.
+
+        Returns the next active LearnPrompt, or None to skip this tick.
+        """
+        if not self._search_tool:
+            return None
+
+        if self.db.searches.has_unextracted_learn_logs():
+            return None
+
+        return self.db.learn_prompts.get_next_active()
+
+    async def _execute_search_step(self, learn_prompt: LearnPrompt) -> bool:
+        """Generate a query and execute one search. Returns True if LLM ended research early."""
+        assert learn_prompt.id is not None
         topic = learn_prompt.prompt_text
 
-        # Reconstruct previous search results from DB
-        search_logs = self.db.get_search_logs_by_learn_prompt(learn_prompt.id)
+        search_logs = self.db.searches.get_by_learn_prompt(learn_prompt.id)
         previous_results = [sl.response for sl in search_logs if sl.response]
 
-        # Generate query: initial if no previous searches, followup otherwise
         if not previous_results:
             query = await self._generate_initial_query(topic)
         else:
             query = await self._generate_followup_query(topic, previous_results)
             if query is None:
-                # LLM decided research is complete
-                self.db.update_learn_prompt_status(
+                self.db.learn_prompts.update_status(
                     learn_prompt.id, PennyConstants.LearnPromptStatus.COMPLETED
                 )
                 logger.info(
@@ -83,20 +95,22 @@ class LearnAgent(Agent):
                 )
                 return True
 
-        # Execute search
         await self._search(query, learn_prompt.id)
-        self.db.decrement_learn_prompt_searches(learn_prompt.id)
+        self.db.learn_prompts.decrement_searches(learn_prompt.id)
+        return False
 
-        # Check if this was the last search
-        refreshed = self.db.get_learn_prompt(learn_prompt.id)
+    def _check_completion(self, learn_prompt: LearnPrompt) -> None:
+        """Mark the learn prompt as completed if no searches remain."""
+        assert learn_prompt.id is not None
+        topic = learn_prompt.prompt_text
+
+        refreshed = self.db.learn_prompts.get(learn_prompt.id)
         if refreshed and refreshed.searches_remaining <= 0:
-            self.db.update_learn_prompt_status(
+            self.db.learn_prompts.update_status(
                 learn_prompt.id, PennyConstants.LearnPromptStatus.COMPLETED
             )
-            search_count = len(search_logs) + 1
-            logger.info("Learn research completed for '%s': %d searches", topic, search_count)
-
-        return True
+            search_logs = self.db.searches.get_by_learn_prompt(learn_prompt.id)
+            logger.info("Learn research completed for '%s': %d searches", topic, len(search_logs))
 
     async def _generate_initial_query(self, topic: str) -> str:
         """Generate the first search query for a topic via LLM."""

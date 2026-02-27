@@ -134,7 +134,7 @@ class ProfileCommand(Command):
 
         # No args - show current profile
         if not args:
-            user_info = context.db.get_user_info(context.user)
+            user_info = context.db.users.get_info(context.user)
             if not user_info:
                 return CommandResult(text=PennyResponse.PROFILE_NO_PROFILE)
 
@@ -153,7 +153,7 @@ class ProfileCommand(Command):
             ]
             return CommandResult(text="\n".join(lines))
 
-        user_info = context.db.get_user_info(context.user)
+        user_info = context.db.users.get_info(context.user)
 
         # NEW PROFILE CREATION (no existing profile)
         if not user_info:
@@ -181,7 +181,7 @@ class ProfileCommand(Command):
                 )
 
             # Save new profile
-            context.db.save_user_info(
+            context.db.users.save_info(
                 sender=context.user,
                 name=parsed.name,
                 location=parsed.location,
@@ -213,7 +213,7 @@ class ProfileCommand(Command):
             timezone = user_info.timezone
 
         # Update database
-        context.db.save_user_info(
+        context.db.users.save_info(
             sender=context.user,
             name=new_name,
             location=new_location,

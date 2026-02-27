@@ -121,7 +121,14 @@ penny/
       channel.py      — DiscordChannel: discord.py bot integration
       models.py       — DiscordMessage, DiscordUser Pydantic models
   database/
-    database.py       — Database: SQLite via SQLModel, thread walking, entity storage
+    database.py       — Database facade: thin wrapper creating domain stores
+    entity_store.py   — EntityStore: get, get_or_create, get_for_user, embeddings
+    fact_store.py     — FactStore: add, get_for_entity, embeddings, notification marking
+    message_store.py  — MessageStore: log_message, log_prompt, log_command, threads
+    learn_prompt_store.py — LearnPromptStore: create, get, delete, lifecycle
+    search_store.py   — SearchStore: log, get, get_by_learn_prompt, mark_extracted
+    engagement_store.py — EngagementStore: add, get_for_entity, get_for_user
+    user_store.py     — UserStore: get_info, save_info, mute/unmute
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
     migrations/       — Numbered migration files (0001–0023)
@@ -423,7 +430,7 @@ The NotificationAgent also sends learn completion announcements when all searche
 
 - Quote-replying continues a conversation thread
 - `MessageLog.parent_id` creates a chain of messages
-- `Database.get_thread_context()` walks the chain (up to 20 messages)
+- `db.messages.get_thread_context()` walks the chain (up to 20 messages)
 
 ## Key Design Decisions
 

@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import socket
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import httpx
@@ -17,7 +17,9 @@ from pydantic import ValidationError
 
 from penny.channels.base import IncomingMessage, MessageChannel
 from penny.channels.signal.models import (
+    DataMessage,
     HttpMethod,
+    Reaction,
     SendMessageRequest,
     SendMessageResponse,
     SignalEnvelope,
@@ -141,60 +143,53 @@ class SignalChannel(MessageChannel):
         while self._running:
             try:
                 logger.info("Connecting to channel: %s", connection_url)
-
                 async with websockets.connect(connection_url) as websocket:
                     logger.info("Connected to Signal WebSocket")
-
-                    while self._running:
-                        try:
-                            message = await asyncio.wait_for(
-                                websocket.recv(),
-                                timeout=30.0,
-                            )
-
-                            logger.debug("Received raw WebSocket message: %s", message[:200])
-
-                            envelope = json.loads(message)
-                            logger.info("Parsed envelope with keys: %s", envelope.keys())
-
-                            asyncio.create_task(self.handle_message(envelope))
-
-                        except TimeoutError:
-                            continue
-
-                        except json.JSONDecodeError as e:
-                            logger.warning("Failed to parse message JSON: %s", e)
-                            continue
+                    await self._receive_websocket_messages(websocket)
 
             except (
                 websockets.exceptions.ConnectionClosedError,
                 websockets.exceptions.ConnectionClosedOK,
             ) as e:
-                logger.info("WebSocket connection closed: %s - reconnecting in 5 seconds...", e)
-                if self._running:
-                    await asyncio.sleep(5)
+                await self._handle_reconnect("WebSocket connection closed", e)
 
             except (socket.gaierror, OSError, ConnectionError) as e:
-                logger.info(
-                    "Network/DNS error connecting to Signal API: %s - reconnecting in 5s...",
-                    e,
-                )
-                if self._running:
-                    await asyncio.sleep(5)
+                await self._handle_reconnect("Network/DNS error connecting to Signal API", e)
 
             except websockets.exceptions.WebSocketException as e:
                 logger.error("Unexpected WebSocket error: %s", e)
-                if self._running:
-                    logger.info("Reconnecting in 5 seconds...")
-                    await asyncio.sleep(5)
+                await self._handle_reconnect("Unexpected WebSocket error", e)
 
             except Exception as e:
                 logger.exception("Unexpected error in message listener: %s", e)
-                if self._running:
-                    logger.info("Reconnecting in 5 seconds...")
-                    await asyncio.sleep(5)
+                await self._handle_reconnect("Unexpected error in message listener", e)
 
         logger.info("Message listener stopped")
+
+    async def _receive_websocket_messages(self, websocket: Any) -> None:
+        """Receive and dispatch messages from an open WebSocket connection."""
+        while self._running:
+            try:
+                message = await asyncio.wait_for(websocket.recv(), timeout=30.0)
+                logger.debug("Received raw WebSocket message: %s", message[:200])
+
+                envelope = json.loads(message)
+                logger.info("Parsed envelope with keys: %s", envelope.keys())
+
+                asyncio.create_task(self.handle_message(envelope))
+
+            except TimeoutError:
+                continue
+
+            except json.JSONDecodeError as e:
+                logger.warning("Failed to parse message JSON: %s", e)
+                continue
+
+    async def _handle_reconnect(self, context: str, error: Exception) -> None:
+        """Log a reconnection message and sleep before retrying."""
+        logger.info("%s: %s - reconnecting in 5 seconds...", context, error)
+        if self._running:
+            await asyncio.sleep(5)
 
     # Regex pattern for markdown tables: header | separator | data rows
     _TABLE_PATTERN = re.compile(
@@ -260,37 +255,54 @@ class SignalChannel(MessageChannel):
         - ~strikethrough~ for strikethrough (single tilde, not double)
         - `monospace` for monospace
         """
-        # Convert markdown tables to bullet points
         text = self._table_to_bullets(text)
-        # Protect fenced code blocks from all formatting processing
+        text, code_blocks, urls = self._protect_blocks(text)
+        text = self._sanitize_tildes(text)
+        text = self._sanitize_asterisks(text)
+        text = self._strip_markdown_elements(text)
+        text = self._restore_blocks(text, code_blocks, urls)
+        # Collapse multiple blank lines
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    @staticmethod
+    def _protect_blocks(text: str) -> tuple[str, list[str], list[str]]:
+        """Protect fenced code blocks and URLs from formatting changes."""
         code_blocks: list[str] = []
+        urls: list[str] = []
 
         def _protect_code(m: re.Match[str]) -> str:
             code_blocks.append(m.group(0))
             return f"\x00CODE{len(code_blocks) - 1}\x00"
 
-        text = re.sub(r"```[\s\S]*?```", _protect_code, text)
-        # Protect URLs from tilde/asterisk mangling
-        urls: list[str] = []
-
         def _protect_url(m: re.Match[str]) -> str:
             urls.append(m.group(0))
             return f"\x00URL{len(urls) - 1}\x00"
 
+        text = re.sub(r"```[\s\S]*?```", _protect_code, text)
         text = re.sub(r"https?://[^\s<>)]+", _protect_url, text)
-        # Use placeholder for intentional strikethrough to protect during escaping
+        return text, code_blocks, urls
+
+    @staticmethod
+    def _sanitize_tildes(text: str) -> str:
+        """Convert ~~strikethrough~~ to Signal format, escape stray tildes."""
         placeholder = "\x00STRIKE\x00"
         # Convert ~~strikethrough~~ to placeholder (markdown uses double tilde)
         text = re.sub(r"~~(.+?)~~", rf"{placeholder}\1{placeholder}", text)
-        # Replace remaining tildes with tilde operator (U+223C) to prevent accidental strikethrough
-        # (e.g., "~50" meaning "approximately 50" shouldn't become strikethrough)
-        # Zero-width space doesn't work - Signal ignores invisible characters
+        # Replace remaining tildes with tilde operator (U+223C) to prevent accidental
+        # strikethrough (e.g., "~50" meaning "approximately 50")
         text = text.replace("~", "\u223c")
         # Restore intentional strikethrough as single tilde (Signal format)
         text = text.replace(placeholder, "~")
-        # Remove stray asterisks that aren't part of bold/italic pairs.
-        # A lone * (e.g., footnote "$950*") cascades through Signal's parser,
-        # breaking **bold** markers and creating random italic spans.
+        return text
+
+    @staticmethod
+    def _sanitize_asterisks(text: str) -> str:
+        """Protect bold/italic pairs and remove stray asterisks.
+
+        A lone * (e.g., footnote "$950*") cascades through Signal's parser,
+        breaking **bold** markers and creating random italic spans.
+        """
         bold_ph = "\x00BOLD\x00"
         italic_ph = "\x00ITALIC\x00"
         text = re.sub(r"\*\*(.+?)\*\*", rf"{bold_ph}\1{bold_ph}", text)
@@ -298,6 +310,11 @@ class SignalChannel(MessageChannel):
         text = text.replace("*", "")
         text = text.replace(bold_ph, "**")
         text = text.replace(italic_ph, "*")
+        return text
+
+    @staticmethod
+    def _strip_markdown_elements(text: str) -> str:
+        """Remove markdown headings, horizontal rules, blockquotes, BR tags, and links."""
         # Remove markdown headings (keep the text)
         text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
         # Remove horizontal rules (--- or more dashes on a line by themselves)
@@ -308,15 +325,16 @@ class SignalChannel(MessageChannel):
         text = re.sub(r"<br\s*/?>", "\n", text)
         # Convert markdown links [text](url) to just text (url)
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
-        # Restore protected URLs
+        return text
+
+    @staticmethod
+    def _restore_blocks(text: str, code_blocks: list[str], urls: list[str]) -> str:
+        """Restore previously protected code blocks and URLs."""
         for i, url in enumerate(urls):
             text = text.replace(f"\x00URL{i}\x00", url)
-        # Restore protected code blocks
         for i, block in enumerate(code_blocks):
             text = text.replace(f"\x00CODE{i}\x00", block)
-        # Collapse multiple blank lines
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
+        return text
 
     async def send_message(
         self,
@@ -330,22 +348,27 @@ class SignalChannel(MessageChannel):
         Returns:
             Signal timestamp (ms since epoch) on success, None on failure
         """
-        # Validate message is not empty (unless attachments are provided)
         if (not message or not message.strip()) and not attachments:
             logger.error("Attempted to send empty message to %s", recipient)
             raise ValueError("Cannot send empty or whitespace-only message")
 
-        url = f"{self.api_url}/v2/send"
+        request = self._build_send_request(recipient, message, attachments, quote_message)
+        return await self._post_message(request, recipient, message)
 
-        # Build quote fields if quote_message provided
+    def _build_send_request(
+        self,
+        recipient: str,
+        message: str,
+        attachments: list[str] | None,
+        quote_message: MessageLog | None,
+    ) -> SendMessageRequest:
+        """Build a SendMessageRequest with optional quote fields."""
         quote_timestamp = None
         quote_author = None
         quote_text = None
+
         if quote_message:
-            # Get the Signal timestamp for the quoted message:
-            # - For incoming messages: use signal_timestamp field
-            # - For outgoing messages: use external_id (set after send_message completes)
-            # - Fallback: convert database timestamp to ms
+            # Signal timestamp priority: signal_timestamp > external_id > db timestamp
             if quote_message.signal_timestamp:
                 quote_timestamp = quote_message.signal_timestamp
             elif quote_message.external_id:
@@ -355,7 +378,7 @@ class SignalChannel(MessageChannel):
             quote_author = quote_message.sender
             quote_text = quote_message.content
 
-        request = SendMessageRequest(
+        return SendMessageRequest(
             message=message,
             number=self.phone_number,
             recipients=[recipient],
@@ -365,50 +388,29 @@ class SignalChannel(MessageChannel):
             quote_message=quote_text,
         )
 
+    async def _post_message(
+        self, request: SendMessageRequest, recipient: str, message: str
+    ) -> int | None:
+        """Post a message to the Signal API with retry on transient errors."""
+        url = f"{self.api_url}/v2/send"
         logger.debug("Sending to %s: %s", url, request)
 
         delay = self.retry_delay
         for attempt in range(self.max_retries + 1):
             try:
                 response = await self.http_client.post(
-                    url,
-                    json=request.model_dump(exclude_none=True),
+                    url, json=request.model_dump(exclude_none=True)
                 )
                 response.raise_for_status()
-
-                # Parse response to get the timestamp
-                send_response = SendMessageResponse.model_validate(response.json())
-                timestamp = send_response.timestamp
-
-                logger.info(
-                    "Sent message to %s (length: %d, timestamp: %s), status: %d",
-                    recipient,
-                    len(message),
-                    timestamp,
-                    response.status_code,
-                )
-                logger.debug("Response: %s", response.text)
-                return timestamp
+                return self._handle_send_response(response, recipient, message)
 
             except (httpx.ConnectError, httpx.NetworkError) as e:
                 logger.info("Network or DNS error sending Signal message: %s", e)
                 return None
 
             except httpx.HTTPStatusError as e:
-                resp = e.response
-                body = resp.text
-                logger.error(
-                    "Failed to send Signal message: %s — status: %d, body: %s",
-                    e,
-                    resp.status_code,
-                    body,
-                )
-                # Only retry on 400s that signal a transient signal-cli transport failure
-                # (e.g., SocketException). Other 4xx/5xx errors are not retried.
-                is_transient = resp.status_code == 400 and any(
-                    indicator in body for indicator in _TRANSIENT_ERROR_INDICATORS
-                )
-                if is_transient and attempt < self.max_retries:
+                self._log_send_error(e)
+                if self._is_transient_error(e) and attempt < self.max_retries:
                     logger.info(
                         "Transient signal-cli error — retrying in %.2fs (attempt %d/%d)",
                         delay,
@@ -425,6 +427,40 @@ class SignalChannel(MessageChannel):
                 return None
 
         return None
+
+    def _handle_send_response(
+        self, response: httpx.Response, recipient: str, message: str
+    ) -> int | None:
+        """Parse a successful send response and return the timestamp."""
+        send_response = SendMessageResponse.model_validate(response.json())
+        timestamp = send_response.timestamp
+
+        logger.info(
+            "Sent message to %s (length: %d, timestamp: %s), status: %d",
+            recipient,
+            len(message),
+            timestamp,
+            response.status_code,
+        )
+        logger.debug("Response: %s", response.text)
+        return timestamp
+
+    @staticmethod
+    def _log_send_error(error: httpx.HTTPStatusError) -> None:
+        """Log details of an HTTP send error."""
+        logger.error(
+            "Failed to send Signal message: %s — status: %d, body: %s",
+            error,
+            error.response.status_code,
+            error.response.text,
+        )
+
+    @staticmethod
+    def _is_transient_error(error: httpx.HTTPStatusError) -> bool:
+        """Check if an HTTP error is a transient signal-cli transport failure."""
+        return error.response.status_code == 400 and any(
+            indicator in error.response.text for indicator in _TRANSIENT_ERROR_INDICATORS
+        )
 
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """Send a typing indicator via Signal."""
@@ -453,52 +489,58 @@ class SignalChannel(MessageChannel):
 
     def extract_message(self, raw_data: dict) -> IncomingMessage | None:
         """Extract a message from a Signal WebSocket envelope."""
-        # Parse envelope
         envelope = self._parse_envelope(raw_data)
         if envelope is None:
             return None
 
         logger.debug("Processing envelope from: %s", envelope.envelope.source)
 
-        # Check if this is a data message
         if envelope.envelope.dataMessage is None:
             logger.debug("Ignoring non-data message")
             return None
 
         sender = envelope.envelope.source
 
-        # Check if this is a reaction
+        # Reactions take priority — check before text messages
         if envelope.envelope.dataMessage.reaction:
-            reaction = envelope.envelope.dataMessage.reaction
-            if reaction.isRemove:
-                logger.debug("Ignoring reaction removal from %s", sender)
-                return None
+            return self._extract_reaction(sender, envelope.envelope.dataMessage.reaction)
 
-            # Handle both string and ReactionEmoji object formats
-            emoji = reaction.emoji if isinstance(reaction.emoji, str) else reaction.emoji.value
+        return self._extract_data_message(sender, envelope.envelope.dataMessage)
 
-            logger.info(
-                "Extracted reaction - sender: %s, emoji: %s, target: %s",
-                sender,
-                emoji,
-                reaction.targetSentTimestamp,
-            )
-            return IncomingMessage(
-                sender=sender,
-                content=emoji,
-                is_reaction=True,
-                reacted_to_external_id=str(reaction.targetSentTimestamp),
-            )
+    def _extract_reaction(self, sender: str, reaction: Reaction) -> IncomingMessage | None:
+        """Extract a reaction message, or None if it's a removal."""
+        if reaction.isRemove:
+            logger.debug("Ignoring reaction removal from %s", sender)
+            return None
 
-        # Check for text and/or attachments
-        has_text = envelope.envelope.dataMessage.message is not None
-        has_attachments = bool(envelope.envelope.dataMessage.attachments)
+        # Handle both string and ReactionEmoji object formats
+        emoji = reaction.emoji if isinstance(reaction.emoji, str) else reaction.emoji.value
+
+        logger.info(
+            "Extracted reaction - sender: %s, emoji: %s, target: %s",
+            sender,
+            emoji,
+            reaction.targetSentTimestamp,
+        )
+        return IncomingMessage(
+            sender=sender,
+            content=emoji,
+            is_reaction=True,
+            reacted_to_external_id=str(reaction.targetSentTimestamp),
+        )
+
+    def _extract_data_message(
+        self, sender: str, data_message: DataMessage
+    ) -> IncomingMessage | None:
+        """Extract a text/attachment message from a Signal data message."""
+        has_text = data_message.message is not None
+        has_attachments = bool(data_message.attachments)
 
         if not has_text and not has_attachments:
             logger.debug("Ignoring message with no text and no attachments from %s", sender)
             return None
 
-        content = (envelope.envelope.dataMessage.message or "").strip()
+        content = (data_message.message or "").strip()
 
         if not content and not has_attachments:
             logger.debug("Ignoring empty message from %s", sender)
@@ -506,14 +548,8 @@ class SignalChannel(MessageChannel):
 
         logger.info("Extracted - sender: %s, content: '%s'", sender, content)
 
-        # Extract quoted text if this is a reply
-        quoted_text = None
-        if envelope.envelope.dataMessage.quote and envelope.envelope.dataMessage.quote.text:
-            quoted_text = envelope.envelope.dataMessage.quote.text
-            logger.info("Message includes quote: '%s'", quoted_text[:100])
-
-        # Extract the Signal timestamp for quote reply support
-        signal_timestamp = envelope.envelope.dataMessage.timestamp
+        quoted_text = self._extract_quoted_text(data_message)
+        signal_timestamp = data_message.timestamp
 
         return IncomingMessage(
             sender=sender,
@@ -521,6 +557,15 @@ class SignalChannel(MessageChannel):
             quoted_text=quoted_text,
             signal_timestamp=signal_timestamp,
         )
+
+    @staticmethod
+    def _extract_quoted_text(data_message: DataMessage) -> str | None:
+        """Extract quoted text from a reply message, if present."""
+        if data_message.quote and data_message.quote.text:
+            quoted_text = data_message.quote.text
+            logger.info("Message includes quote: '%s'", quoted_text[:100])
+            return quoted_text
+        return None
 
     async def _fetch_attachments(self, message: IncomingMessage, raw_data: dict) -> IncomingMessage:
         """Download image attachments from Signal API and add to message."""
