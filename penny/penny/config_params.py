@@ -275,7 +275,7 @@ ConfigParam(
     key="EXTRACTION_PREFILTER_SIMILARITY_THRESHOLD",
     description="Cosine similarity threshold for entity pre-filtering",
     type=float,
-    default=0.2,
+    default=0.4,
     validator=_validate_unit_float,
     group=GROUP_EXTRACTION,
 )
