@@ -1,0 +1,113 @@
+"""Follow prompt store — lifecycle management for event monitoring subscriptions."""
+
+import logging
+from datetime import UTC, datetime
+
+from sqlmodel import Session, select
+
+from penny.database.models import FollowPrompt
+
+logger = logging.getLogger(__name__)
+
+
+class FollowPromptStore:
+    """Manages FollowPrompt records: creation, polling, cancellation."""
+
+    def __init__(self, engine):
+        self.engine = engine
+
+    def _session(self) -> Session:
+        return Session(self.engine)
+
+    def create(self, user: str, prompt_text: str, query_terms: str) -> FollowPrompt | None:
+        """Create a new follow prompt. Returns the created FollowPrompt, or None on failure."""
+        try:
+            with self._session() as session:
+                prompt = FollowPrompt(
+                    user=user,
+                    prompt_text=prompt_text,
+                    query_terms=query_terms,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
+                session.add(prompt)
+                session.commit()
+                session.refresh(prompt)
+                logger.debug("Created follow prompt for user %s: %s", user, prompt_text[:50])
+                return prompt
+        except Exception as e:
+            logger.error("Failed to create follow prompt: %s", e)
+            return None
+
+    def get(self, follow_prompt_id: int) -> FollowPrompt | None:
+        """Get a follow prompt by ID."""
+        with self._session() as session:
+            return session.get(FollowPrompt, follow_prompt_id)
+
+    def get_active(self, user: str) -> list[FollowPrompt]:
+        """Get all active follow prompts for a user."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(FollowPrompt)
+                    .where(FollowPrompt.user == user, FollowPrompt.status == "active")
+                    .order_by(FollowPrompt.created_at.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
+    def get_next_to_poll(self) -> FollowPrompt | None:
+        """Get the active prompt that was polled longest ago (round-robin fairness)."""
+        with self._session() as session:
+            never_polled = session.exec(
+                select(FollowPrompt).where(
+                    FollowPrompt.status == "active",
+                    FollowPrompt.last_polled_at == None,  # noqa: E711
+                )
+            ).first()
+            if never_polled:
+                return never_polled
+            return session.exec(
+                select(FollowPrompt)
+                .where(FollowPrompt.status == "active")
+                .order_by(FollowPrompt.last_polled_at.asc())  # type: ignore[unresolved-attribute]
+            ).first()
+
+    def update_last_polled(self, follow_prompt_id: int) -> None:
+        """Record that a follow prompt was just polled."""
+        try:
+            with self._session() as session:
+                prompt = session.get(FollowPrompt, follow_prompt_id)
+                if prompt:
+                    prompt.last_polled_at = datetime.now(UTC)
+                    prompt.updated_at = datetime.now(UTC)
+                    session.add(prompt)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update follow prompt %d last_polled: %s", follow_prompt_id, e)
+
+    def cancel(self, follow_prompt_id: int) -> bool:
+        """Cancel a follow prompt. Returns True if cancelled, False if not found."""
+        try:
+            with self._session() as session:
+                prompt = session.get(FollowPrompt, follow_prompt_id)
+                if not prompt:
+                    return False
+                prompt.status = "cancelled"
+                prompt.updated_at = datetime.now(UTC)
+                session.add(prompt)
+                session.commit()
+                return True
+        except Exception as e:
+            logger.error("Failed to cancel follow prompt %d: %s", follow_prompt_id, e)
+            return False
+
+    def get_for_user(self, user: str) -> list[FollowPrompt]:
+        """Get all follow prompts for a user (including cancelled)."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(FollowPrompt)
+                    .where(FollowPrompt.user == user)
+                    .order_by(FollowPrompt.created_at.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
