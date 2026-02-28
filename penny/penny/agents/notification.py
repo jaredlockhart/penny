@@ -784,6 +784,7 @@ class NotificationAgent(Agent):
         """Build the LLM prompt for a fact discovery notification."""
         facts_text = "\n".join(f"- {fact.content}" for fact in facts)
         learn_topic = self._get_learn_topic(facts)
+        descriptor = f" ({entity.tagline})" if entity.tagline else ""
 
         if learn_topic:
             template = (
@@ -791,20 +792,19 @@ class NotificationAgent(Agent):
                 if is_new
                 else Prompt.FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT
             )
-            prompt_text = template.format(entity_name=entity.name, learn_topic=learn_topic)
+            prompt_text = template.format(
+                entity_name=entity.name,
+                learn_topic=learn_topic,
+                descriptor=descriptor,
+            )
         else:
             template = (
                 Prompt.FACT_DISCOVERY_NEW_ENTITY_PROMPT
                 if is_new
                 else Prompt.FACT_DISCOVERY_KNOWN_ENTITY_PROMPT
             )
-            prompt_text = template.format(entity_name=entity.name)
+            prompt_text = template.format(entity_name=entity.name, descriptor=descriptor)
 
-        if entity.tagline:
-            return (
-                f"{prompt_text}\nContext: {entity.name} is {entity.tagline}."
-                f"\n\nNew facts:\n{facts_text}"
-            )
         return f"{prompt_text}\n\nNew facts:\n{facts_text}"
 
     async def _send_with_typing(
