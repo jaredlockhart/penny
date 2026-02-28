@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 from penny.commands.base import Command, CommandRegistry
 from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
+from penny.commands.events import EventsCommand
+from penny.commands.follow import FollowCommand
 from penny.commands.index import IndexCommand
 from penny.commands.learn import LearnCommand
 from penny.commands.memory import MemoryCommand
@@ -14,6 +16,7 @@ from penny.commands.mute import MuteCommand
 from penny.commands.profile import ProfileCommand
 from penny.commands.schedule import ScheduleCommand
 from penny.commands.test import TestCommand
+from penny.commands.unfollow import UnfollowCommand
 from penny.commands.unlearn import UnlearnCommand
 from penny.commands.unmute import UnmuteCommand
 
@@ -37,7 +40,6 @@ def create_command_registry(
     github_api: GitHubAPI | None = None,
     image_model_client: OllamaClient | None = None,
     fastmail_api_token: str | None = None,
-    news_api_key: str | None = None,
 ) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
@@ -47,7 +49,6 @@ def create_command_registry(
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
         image_model_client: Optional image generation OllamaClient (required for draw command)
-        news_api_key: Optional NewsAPI key (required for event-related commands)
 
     Returns:
         CommandRegistry with all builtin commands registered
@@ -68,6 +69,9 @@ def create_command_registry(
     registry.register(MuteCommand())
     registry.register(UnlearnCommand())
     registry.register(UnmuteCommand())
+    registry.register(EventsCommand())
+    registry.register(FollowCommand())
+    registry.register(UnfollowCommand())
 
     # Register test command if factory provided
     if message_agent_factory:
@@ -92,15 +96,5 @@ def create_command_registry(
         from penny.commands.email import EmailCommand
 
         registry.register(EmailCommand(fastmail_api_token))
-
-    # Register event-related commands if NEWS_API_KEY is configured
-    if news_api_key:
-        from penny.commands.events import EventsCommand
-        from penny.commands.follow import FollowCommand
-        from penny.commands.unfollow import UnfollowCommand
-
-        registry.register(EventsCommand())
-        registry.register(FollowCommand())
-        registry.register(UnfollowCommand())
 
     return registry
