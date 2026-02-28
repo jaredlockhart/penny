@@ -198,6 +198,10 @@ class PennyResponse:
 
     # ── Follow ────────────────────────────────────────────────────────────────
 
+    NEWS_NOT_CONFIGURED = (
+        "Event tracking requires a NewsAPI.org key. Set NEWS_API_KEY in your .env and restart."
+    )
+
     FOLLOW_ACKNOWLEDGED = "Got it, I'll keep track of **{topic}** for you."
     FOLLOW_EMPTY = (
         "You're not following anything yet. Use `/follow <topic>` to start monitoring something."

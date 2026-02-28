@@ -38,6 +38,9 @@ class FollowCommand(Command):
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Route to list or create based on args."""
+        if not context.config.news_api_key:
+            return CommandResult(text=PennyResponse.NEWS_NOT_CONFIGURED)
+
         topic = args.strip()
 
         if not topic:
