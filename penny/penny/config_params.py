@@ -579,6 +579,15 @@ ConfigParam(
     group=GROUP_EVENTS,
 )
 
+ConfigParam(
+    key="EVENT_RELEVANCE_THRESHOLD",
+    description="Cosine similarity threshold for article-to-topic relevance",
+    type=float,
+    default=0.40,
+    validator=_validate_positive_float,
+    group=GROUP_EVENTS,
+)
+
 
 class RuntimeParams:
     """Accessor for runtime-configurable parameters.

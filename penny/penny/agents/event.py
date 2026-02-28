@@ -35,10 +35,11 @@ class EventAgent(Agent):
     1. Checks preconditions (news tool, poll interval)
     2. Gets next FollowPrompt to poll (round-robin)
     3. Fetches articles from NewsAPI
-    4. Deduplicates (URL → headline → embedding similarity)
-    5. Creates Event records for new articles
-    6. Links events to entities (full mode — creates new entities)
-    7. Updates last_polled_at
+    4. Filters by relevance (embedding similarity to topic)
+    5. Deduplicates (URL → headline → embedding similarity)
+    6. Creates Event records for new articles
+    7. Links events to entities (full mode — creates new entities)
+    8. Updates last_polled_at
     """
 
     def __init__(self, news_tool: NewsTool | None = None, **kwargs: object) -> None:
@@ -58,6 +59,7 @@ class EventAgent(Agent):
 
         assert follow_prompt.id is not None
         articles = await self._fetch_articles(follow_prompt)
+        articles = await self._filter_relevant(articles, follow_prompt)
         new_articles = await self._deduplicate(articles, follow_prompt)
         events_created = await self._create_events(new_articles, follow_prompt)
         self.db.follow_prompts.update_last_polled(follow_prompt.id)
@@ -108,6 +110,33 @@ class EventAgent(Agent):
         from_date = datetime.now(UTC) - timedelta(days=window_days)
         return await self._news_tool.search(query_terms, from_date=from_date)
 
+    # --- Relevance ---
+
+    async def _filter_relevant(
+        self, articles: list[NewsArticle], follow_prompt: FollowPrompt
+    ) -> list[NewsArticle]:
+        """Filter articles by embedding similarity to the follow prompt topic."""
+        topic_vec = await self._embed_text(follow_prompt.prompt_text)
+        if topic_vec is None:
+            return articles  # No embedding model — pass all through
+
+        threshold = self.config.runtime.EVENT_RELEVANCE_THRESHOLD
+        relevant: list[NewsArticle] = []
+        for article in articles:
+            article_vec = await self._embed_text(article.title)
+            if article_vec is None or cosine_similarity(article_vec, topic_vec) >= threshold:
+                relevant.append(article)
+            else:
+                logger.debug("Relevance: rejected '%s' (below %.2f)", article.title[:60], threshold)
+
+        logger.debug(
+            "Relevance: %d articles → %d relevant for '%s'",
+            len(articles),
+            len(relevant),
+            follow_prompt.prompt_text,
+        )
+        return relevant
+
     # --- Dedup ---
 
     async def _deduplicate(
@@ -148,18 +177,12 @@ class EventAgent(Agent):
         self, article: NewsArticle, recent_events: list[Event]
     ) -> bool:
         """Check embedding similarity against recent events."""
-        if not self._embedding_model_client:
-            return False
-
         events_with_embeddings = [e for e in recent_events if e.embedding is not None]
         if not events_with_embeddings:
             return False
 
-        try:
-            vectors = await self._embedding_model_client.embed(article.title)
-            article_vec = vectors[0]
-        except Exception as e:
-            logger.warning("Failed to embed article for dedup: %s", e)
+        article_vec = await self._embed_text(article.title)
+        if article_vec is None:
             return False
 
         threshold = self.config.runtime.EVENT_DEDUP_SIMILARITY_THRESHOLD
@@ -170,6 +193,17 @@ class EventAgent(Agent):
                 return True
 
         return False
+
+    async def _embed_text(self, text: str) -> list[float] | None:
+        """Embed text using the embedding model. Returns None if unavailable."""
+        if not self._embedding_model_client:
+            return None
+        try:
+            vectors = await self._embedding_model_client.embed(text)
+            return vectors[0]
+        except Exception as e:
+            logger.warning("Failed to embed text: %s", e)
+            return None
 
     # --- Event creation ---
 
@@ -201,13 +235,11 @@ class EventAgent(Agent):
 
     async def _store_embedding(self, event: Event, article: NewsArticle) -> None:
         """Compute and store headline embedding for future dedup."""
-        if not self._embedding_model_client or event.id is None:
+        if event.id is None:
             return
-        try:
-            vectors = await self._embedding_model_client.embed(article.title)
-            self.db.events.update_embedding(event.id, serialize_embedding(vectors[0]))
-        except Exception as e:
-            logger.warning("Failed to embed event headline: %s", e)
+        vec = await self._embed_text(article.title)
+        if vec is not None:
+            self.db.events.update_embedding(event.id, serialize_embedding(vec))
 
     async def _link_entities(self, event: Event, article: NewsArticle, user: str) -> None:
         """Extract entity names from article and link to event (full mode)."""
