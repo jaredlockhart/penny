@@ -469,11 +469,11 @@ class NotificationAgent(Agent):
         facts_by_entity: dict[int, list[Fact]],
         last_notified_learn_prompt_id: int | None = None,
     ) -> Entity | None:
-        """Score entities by interest + enrichment volume, pick randomly from top-N.
+        """Score entities by interest * enrichment volume, pick randomly from top-N.
 
-        Score formula: interest + log2(unannounced_count + 1)
-        - Interest pulls high-engagement entities toward the top
-        - log2(unannounced_count) rewards entities with more new material
+        Score formula: interest * log2(unannounced_count + 1)
+        - Interest gates: zero engagement means zero score (no chaff)
+        - log2(unannounced_count) amplifies entities with more new material
         - Random selection from the top pool prevents stagnation
         - Per-entity cooldown ensures no entity dominates
 
@@ -509,7 +509,7 @@ class NotificationAgent(Agent):
     ) -> list[tuple[float, Entity]]:
         """Score entities by explicit user signals + neighbor boost.
 
-        Base: (filtered_interest + log2(fact_count + 1)) / fatigue
+        Base: filtered_interest * log2(fact_count + 1) / fatigue
         Neighbor boost: base * (1 + factor * mean_neighbor_interest)
         """
         engagements_by_entity = self._build_engagement_map(user)
@@ -593,7 +593,11 @@ class NotificationAgent(Agent):
         facts: list[Fact],
         engagements_by_entity: dict[int, list[Engagement]],
     ) -> float:
-        """Compute base score: (filtered_interest + log2(fact_count + 1)) / fatigue."""
+        """Compute base score: filtered_interest * log2(fact_count + 1) / fatigue.
+
+        Multiplicative: zero interest means zero score, so discovery-only
+        entities (no explicit user engagement) are never surfaced.
+        """
         notification_engs = [
             eng
             for eng in engagements_by_entity.get(eid, [])
@@ -603,8 +607,10 @@ class NotificationAgent(Agent):
             notification_engs,
             half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
         )
+        if interest == 0.0:
+            return 0.0
         fatigue = self._compute_notification_fatigue(eid)
-        return (interest + math.log2(len(facts) + 1)) / fatigue
+        return interest * math.log2(len(facts) + 1) / fatigue
 
     def _compute_neighbor_boost(
         self,
