@@ -301,7 +301,7 @@ class NotificationAgent(Agent):
         assert self._channel is not None
 
         prompt = self._build_event_prompt(event)
-        result = await self._compose_user_facing(prompt)
+        result = await self._compose_user_facing(prompt, image_query=event.headline)
 
         if not result.answer:
             return False
