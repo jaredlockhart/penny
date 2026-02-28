@@ -73,10 +73,4 @@ class EventsCommand(Command):
             lines.append("")
             lines.append(event.source_url)
 
-        entities = context.db.events.get_entities_for_event(event.id)
-        if entities:
-            lines.append("")
-            entity_names = ", ".join(f"**{e.name}**" for e in entities)
-            lines.append(f"Linked to: {entity_names}")
-
         return CommandResult(text="\n".join(lines))

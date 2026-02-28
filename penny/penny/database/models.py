@@ -191,16 +191,6 @@ class Event(SQLModel, table=True):
     )  # Which follow prompt generated this event
 
 
-class EventEntity(SQLModel, table=True):
-    """Junction table linking events to entities (M2M)."""
-
-    __tablename__ = "event_entity"
-
-    id: int | None = Field(default=None, primary_key=True)
-    event_id: int = Field(foreign_key="event.id", index=True)
-    entity_id: int = Field(foreign_key="entity.id", index=True)
-
-
 class FollowPrompt(SQLModel, table=True):
     """An ongoing monitoring subscription for event tracking."""
 

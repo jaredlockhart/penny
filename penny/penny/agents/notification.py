@@ -313,16 +313,10 @@ class NotificationAgent(Agent):
         return elapsed_since_firing / period if period > 0 else float("inf")
 
     def _pick_best_event(self, user: str, events: list[Event]) -> Event | None:
-        """Score events by entity interest + timeliness, return the best one."""
-        all_engagements = self.db.engagements.get_for_user(user)
-        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
-        for eng in all_engagements:
-            if eng.entity_id is not None:
-                engagements_by_entity[eng.entity_id].append(eng)
-
+        """Pick the most timely event to notify about."""
         scored: list[tuple[float, Event]] = []
         for event in events:
-            score = self._score_event(event, engagements_by_entity)
+            score = self._compute_timeliness(event)
             scored.append((score, event))
 
         if not scored:
@@ -338,29 +332,6 @@ class NotificationAgent(Agent):
             len(scored),
         )
         return best_event
-
-    def _score_event(
-        self,
-        event: Event,
-        engagements_by_entity: dict[int, list[Engagement]],
-    ) -> float:
-        """Score an event: sum of linked entity interest + timeliness bonus."""
-        assert event.id is not None
-
-        # Entity interest component
-        linked_entities = self.db.events.get_entities_for_event(event.id)
-        interest_total = 0.0
-        for entity in linked_entities:
-            assert entity.id is not None
-            interest_total += compute_notification_interest(
-                engagements_by_entity.get(entity.id, []),
-                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-            )
-
-        # Timeliness component: 2^(-hours_since / half_life)
-        timeliness = self._compute_timeliness(event)
-
-        return interest_total + timeliness
 
     def _compute_timeliness(self, event: Event) -> float:
         """Compute timeliness decay: 2^(-hours_since / half_life)."""

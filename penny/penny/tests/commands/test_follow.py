@@ -185,9 +185,6 @@ async def test_unfollow_cancels(signal_server, mock_ollama, make_config, running
                 follow_prompt_id=fp.id,
             )
             assert event is not None and event.id is not None
-            entity = penny.db.entities.get_or_create(TEST_SENDER, "quantum computing")
-            assert entity is not None and entity.id is not None
-            penny.db.events.link_entity(event.id, entity.id)
 
         await signal_server.push_message(sender=TEST_SENDER, content="/unfollow 1")
         response = await signal_server.wait_for_message(timeout=5.0)
@@ -199,7 +196,7 @@ async def test_unfollow_cancels(signal_server, mock_ollama, make_config, running
         active = penny.db.follow_prompts.get_active(TEST_SENDER)
         assert len(active) == 0
 
-        # Verify related events and entity links deleted
+        # Verify related events deleted
         events = penny.db.events.get_for_user(TEST_SENDER)
         assert len(events) == 0
 
