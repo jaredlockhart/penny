@@ -13,7 +13,12 @@ from pydantic import BaseModel, Field
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
 from penny.database.models import Event, FollowPrompt
-from penny.ollama.embeddings import cosine_similarity, deserialize_embedding, serialize_embedding
+from penny.ollama.embeddings import (
+    cosine_similarity,
+    deserialize_embedding,
+    serialize_embedding,
+    token_containment_ratio,
+)
 from penny.prompts import Prompt
 from penny.tools.news import NewsArticle, NewsTool
 
@@ -142,7 +147,7 @@ class EventAgent(Agent):
     async def _deduplicate(
         self, articles: list[NewsArticle], follow_prompt: FollowPrompt
     ) -> list[NewsArticle]:
-        """Three-layer dedup: URL → normalized headline → embedding similarity."""
+        """Three-layer dedup: URL → normalized headline → semantic (TCR OR embedding)."""
         window_days = int(self.config.runtime.EVENT_DEDUP_WINDOW_DAYS)
         recent_events = self.db.events.get_recent(follow_prompt.user, days=window_days)
         new_articles: list[NewsArticle] = []
@@ -152,7 +157,7 @@ class EventAgent(Agent):
                 continue
             if self._is_headline_duplicate(article, recent_events):
                 continue
-            if await self._is_embedding_duplicate(article, recent_events):
+            if await self._is_semantic_duplicate(article, recent_events):
                 continue
             new_articles.append(article)
 
@@ -173,23 +178,26 @@ class EventAgent(Agent):
         normalized = _normalize_headline(article.title)
         return any(_normalize_headline(e.headline) == normalized for e in recent_events)
 
-    async def _is_embedding_duplicate(
+    async def _is_semantic_duplicate(
         self, article: NewsArticle, recent_events: list[Event]
     ) -> bool:
-        """Check embedding similarity against recent events."""
-        events_with_embeddings = [e for e in recent_events if e.embedding is not None]
-        if not events_with_embeddings:
-            return False
+        """Check TCR OR embedding similarity against recent events."""
+        tcr_threshold = self.config.runtime.EVENT_DEDUP_TCR_THRESHOLD
+        embed_threshold = self.config.runtime.EVENT_DEDUP_SIMILARITY_THRESHOLD
+
+        for event in recent_events:
+            if token_containment_ratio(article.title, event.headline) >= tcr_threshold:
+                return True
 
         article_vec = await self._embed_text(article.title)
         if article_vec is None:
             return False
 
-        threshold = self.config.runtime.EVENT_DEDUP_SIMILARITY_THRESHOLD
-        for event in events_with_embeddings:
-            assert event.embedding is not None
+        for event in recent_events:
+            if event.embedding is None:
+                continue
             event_vec = deserialize_embedding(event.embedding)
-            if cosine_similarity(article_vec, event_vec) >= threshold:
+            if cosine_similarity(article_vec, event_vec) >= embed_threshold:
                 return True
 
         return False
