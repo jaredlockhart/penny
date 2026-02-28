@@ -52,8 +52,12 @@ class PennyResponse:
     MEMORY_LIST_HEADER = "**Your Memory**"
     MEMORY_ENTITY_NOT_FOUND = "#{number} doesn't match any memory. Use /memory to see the list."
     MEMORY_NO_FACTS = "I know about {name}, but I don't have any specific facts stored yet."
-    MEMORY_DELETED = "Deleted '{name}' and {count} fact(s)."
-    MEMORY_DELETE_USAGE = "Use `/memory {number} delete` to delete a memory."
+
+    # ── Forget ───────────────────────────────────────────────────────────────
+
+    FORGET_USAGE = "Use `/forget <number>` to delete a memory. Run `/memory` to see the list."
+    FORGET_NOT_FOUND = "#{number} doesn't match any memory. Use /memory to see the list."
+    FORGET_DELETED = "Deleted '{name}' and {count} fact(s)."
 
     # ── Config ───────────────────────────────────────────────────────────────
 
