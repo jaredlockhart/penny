@@ -644,3 +644,232 @@ async def test_learn_enrichment_includes_tagline_in_extraction_prompt(
         extraction_prompts = [p for p in captured_prompts if "Extract specific" in p]
         assert len(extraction_prompts) >= 1
         assert "genesis (british progressive rock band)" in extraction_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_enrichment_discovers_related_entities(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Enrichment discovers new entities related to the enriching entity.
+
+    When enriching "kef ls50 meta", the search results mention "uni-q driver"
+    which passes the relevance gate (cosine sim to enriching entity > 0.4)
+    and dedup gate (not a duplicate of existing entities). A new entity is
+    created with facts and a SEARCH_DISCOVERY engagement.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    # Embedding handler: return different vectors for the discovered entity
+    # vs everything else. Cosine sim between [1,0,0,0] and [0.6,0.8,0,0]
+    # is 0.6 — above relevance threshold (0.4), below dedup threshold (0.85).
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        result = []
+        for text in texts:
+            if "uni-q" in text.lower():
+                result.append([0.6, 0.8, 0.0, 0.0])
+            else:
+                result.append([1.0, 0.0, 0.0, 0.0])
+        return result
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+
+        if "Identify notable entities RELATED TO" in prompt:
+            # Entity discovery call
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {
+                        "entities": [
+                            {"name": "Uni-Q driver", "tagline": "coaxial driver array by kef"}
+                        ]
+                    }
+                ),
+            )
+        if "uni-q" in prompt.lower() and "Extract specific" in prompt:
+            # Fact extraction for discovered entity
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {
+                        "facts": [
+                            "The Uni-Q driver places a tweeter at the acoustic center of a woofer"
+                        ]
+                    }
+                ),
+            )
+        # Fact extraction for enriching entity
+        return mock_ollama._make_text_response(
+            request,
+            json.dumps({"facts": ["Costs $1,599 per pair"]}),
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Create sender
+        await signal_server.push_message(sender=TEST_SENDER, content="hello")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Create enriching entity with positive interest
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
+        assert entity is not None and entity.id is not None
+        penny.db.engagements.add(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=entity.id,
+        )
+
+        mock_ollama.requests.clear()
+
+        agent = EnrichAgent(
+            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
+            system_prompt="",
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
+            embedding_model_client=penny.embedding_model_client,
+            tools=[],
+            db=penny.db,
+            config=config,
+            max_steps=1,
+            tool_timeout=config.tool_timeout,
+        )
+
+        result = await agent.execute()
+        assert result is True
+
+        # Enriching entity got its facts
+        enriching_facts = penny.db.facts.get_for_entity(entity.id)
+        assert any("1,599" in f.content for f in enriching_facts)
+
+        # Discovered entity was created
+        discovered = penny.db.entities.get_or_create(TEST_SENDER, "uni-q driver")
+        assert discovered is not None and discovered.id is not None
+        assert discovered.tagline == "coaxial driver array by kef"
+
+        # Discovered entity has facts
+        discovered_facts = penny.db.facts.get_for_entity(discovered.id)
+        assert len(discovered_facts) >= 1
+        assert any("tweeter" in f.content.lower() for f in discovered_facts)
+        # Discovered facts should be unnotified (notification agent's job)
+        assert all(f.notified_at is None for f in discovered_facts)
+
+        # Discovered entity has SEARCH_DISCOVERY engagement
+        engagements = penny.db.engagements.get_for_user(TEST_SENDER)
+        discovery_engs = [
+            e
+            for e in engagements
+            if e.entity_id == discovered.id
+            and e.engagement_type == PennyConstants.EngagementType.SEARCH_DISCOVERY
+        ]
+        assert len(discovery_engs) == 1
+        assert discovery_engs[0].strength > 0.0
+
+
+@pytest.mark.asyncio
+async def test_enrichment_discovery_respects_budget(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Entity discovery respects the ENRICHMENT_MAX_NEW_ENTITIES budget.
+
+    When the LLM returns 3 candidates but budget is 1, only 1 entity is created.
+    """
+    config = make_config(
+        ollama_embedding_model="test-embed-model",
+        enrichment_max_new_entities=1,
+    )
+
+    # Each candidate gets a distinct embedding that's similar to the enriching
+    # entity (above relevance 0.4) but not a duplicate of any other entity
+    # (below dedup 0.85). Enriching entity gets [1,0,0,0].
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        result = []
+        for text in texts:
+            lower = text.lower()
+            if "alpha" in lower:
+                result.append([0.7, 0.7, 0.0, 0.0])
+            elif "beta" in lower:
+                result.append([0.7, 0.0, 0.7, 0.0])
+            elif "gamma" in lower:
+                result.append([0.7, 0.0, 0.0, 0.7])
+            else:
+                result.append([1.0, 0.0, 0.0, 0.0])
+        return result
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+
+        if "Identify notable entities RELATED TO" in prompt:
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {
+                        "entities": [
+                            {"name": "Entity Alpha", "tagline": "first entity"},
+                            {"name": "Entity Beta", "tagline": "second entity"},
+                            {"name": "Entity Gamma", "tagline": "third entity"},
+                        ]
+                    }
+                ),
+            )
+        return mock_ollama._make_text_response(
+            request,
+            json.dumps({"facts": ["Some interesting fact about this topic"]}),
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        await signal_server.push_message(sender=TEST_SENDER, content="hello")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
+        assert entity is not None and entity.id is not None
+        penny.db.engagements.add(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            entity_id=entity.id,
+        )
+
+        agent = EnrichAgent(
+            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
+            system_prompt="",
+            background_model_client=penny.background_model_client,
+            foreground_model_client=penny.foreground_model_client,
+            embedding_model_client=penny.embedding_model_client,
+            tools=[],
+            db=penny.db,
+            config=config,
+            max_steps=1,
+            tool_timeout=config.tool_timeout,
+        )
+
+        result = await agent.execute()
+        assert result is True
+
+        # Only 1 entity should be created despite 3 candidates
+        all_entities = penny.db.entities.get_for_user(TEST_SENDER)
+        # Original entity + 1 discovered = 2 total
+        assert len(all_entities) == 2
