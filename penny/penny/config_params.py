@@ -553,15 +553,6 @@ ConfigParam(
 # ── Events ───────────────────────────────────────────────────────────────────
 
 ConfigParam(
-    key="EVENT_POLL_INTERVAL",
-    description="Minimum seconds between event agent polls",
-    type=float,
-    default=3600.0,
-    validator=_validate_positive_float,
-    group=GROUP_EVENTS,
-)
-
-ConfigParam(
     key="EVENT_DEDUP_SIMILARITY_THRESHOLD",
     description="Embedding cosine similarity threshold for headline dedup",
     type=float,

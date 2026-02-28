@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
 
 from penny.agents.event import EventAgent, _normalize_headline
 from penny.constants import PennyConstants
+from penny.database.models import FollowPrompt
 from penny.tests.conftest import TEST_SENDER
 from penny.tools.news import NewsArticle
 
@@ -368,6 +369,79 @@ async def test_event_agent_dedup_by_tcr(
         assert result is False
         events = penny.db.events.get_recent(TEST_SENDER, days=7)
         assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_event_agent_polls_hourly_skips_daily(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Cadence-aware polling: hourly follow is due, daily follow is skipped."""
+    config = make_config()
+    articles = [_make_article(url="https://example.com/hourly-article")]
+    news_tool = _make_mock_news_tool(articles)
+
+    mock_ollama.set_response_handler(
+        lambda req, count: mock_ollama._make_text_response(req, json.dumps({"entities": []}))
+    )
+
+    async with running_penny(config) as penny:
+        # Daily follow polled 2 hours ago — not due (needs 24h)
+        daily = penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="daily topic",
+            query_terms='["daily"]',
+            cadence="daily",
+        )
+        assert daily is not None and daily.id is not None
+        penny.db.follow_prompts.update_last_polled(daily.id)
+        # Backdate last_polled_at to 2 hours ago
+        with penny.db.get_session() as session:
+            row = session.get(FollowPrompt, daily.id)
+            assert row is not None
+            row.last_polled_at = datetime.now(UTC) - timedelta(hours=2)
+            session.add(row)
+            session.commit()
+
+        # Hourly follow polled 2 hours ago — due (needs 1h)
+        hourly = penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="hourly topic",
+            query_terms='["hourly"]',
+            cadence="hourly",
+        )
+        assert hourly is not None and hourly.id is not None
+        penny.db.follow_prompts.update_last_polled(hourly.id)
+        with penny.db.get_session() as session:
+            row = session.get(FollowPrompt, hourly.id)
+            assert row is not None
+            row.last_polled_at = datetime.now(UTC) - timedelta(hours=2)
+            session.add(row)
+            session.commit()
+
+        agent = _create_event_agent(penny, config, news_tool=news_tool)
+        result = await agent.execute()
+
+        assert result is True
+
+        # Only the hourly follow was polled — check its last_polled_at updated
+        updated_hourly = penny.db.follow_prompts.get(hourly.id)
+        updated_daily = penny.db.follow_prompts.get(daily.id)
+        assert updated_hourly is not None and updated_daily is not None
+        assert updated_hourly.last_polled_at is not None
+        assert updated_daily.last_polled_at is not None
+        # Hourly was re-polled (recent), daily was not (still 2h ago)
+        # SQLite returns naive datetimes — add UTC for comparison
+        hourly_polled = updated_hourly.last_polled_at.replace(tzinfo=UTC)
+        daily_polled = updated_daily.last_polled_at.replace(tzinfo=UTC)
+        hourly_elapsed = (datetime.now(UTC) - hourly_polled).total_seconds()
+        daily_elapsed = (datetime.now(UTC) - daily_polled).total_seconds()
+        assert hourly_elapsed < 10  # just polled
+        assert daily_elapsed > PennyConstants.FOLLOW_CADENCE_SECONDS["hourly"]  # still ~2h ago
 
 
 def test_normalize_headline():

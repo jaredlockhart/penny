@@ -80,24 +80,23 @@ class EventAgent(Agent):
     # --- Preconditions ---
 
     def _check_preconditions(self) -> FollowPrompt | None:
-        """Check tool availability and poll interval. Returns next prompt or None."""
+        """Check tool availability and find the next due prompt. Returns prompt or None."""
         if not self._news_tool:
             return None
 
-        prompt = self.db.follow_prompts.get_next_to_poll()
-        if prompt is None:
-            return None
-
-        if not self._poll_interval_elapsed(prompt):
-            return None
-
-        return prompt
+        for prompt in self.db.follow_prompts.get_active_by_poll_priority():
+            if self._poll_interval_elapsed(prompt):
+                return prompt
+        return None
 
     def _poll_interval_elapsed(self, prompt: FollowPrompt) -> bool:
-        """Check if enough time has passed since the last poll."""
+        """Check if the prompt's cadence interval has elapsed since last poll."""
         if prompt.last_polled_at is None:
             return True
-        interval = self.config.runtime.EVENT_POLL_INTERVAL
+        interval = PennyConstants.FOLLOW_CADENCE_SECONDS.get(
+            prompt.cadence,
+            PennyConstants.FOLLOW_CADENCE_SECONDS[PennyConstants.FOLLOW_DEFAULT_CADENCE],
+        )
         last = prompt.last_polled_at
         if last.tzinfo is None:
             last = last.replace(tzinfo=UTC)
