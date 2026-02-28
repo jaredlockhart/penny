@@ -1571,3 +1571,81 @@ async def test_notification_neighbor_boost_shifts_selection(
         msgs = signal_server.outgoing_messages
         assert len(msgs) == 1
         assert "boosted entity" in msgs[0]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_event_notification_prompt_includes_grounding_constraint(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Event notification prompt must instruct the model not to fabricate details.
+
+    The EVENT_NOTIFICATION_PROMPT must include explicit grounding language so the
+    model is constrained to only use the provided headline and summary, preventing
+    hallucination of dates, names, or facts not present in the source article.
+    """
+    config = make_config()
+
+    captured_prompts: list[str] = []
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        user_msg = messages[-1]["content"] if messages else ""
+        captured_prompts.append(user_msg)
+        return mock_ollama._make_text_response(
+            request,
+            "Here's an update on **space exploration**: Moon Mission Alpha launched. Full story at the link.",  # noqa: E501
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        # Create a follow prompt (last_notified_at=None → always due)
+        follow = penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="space exploration",
+            query_terms='["space exploration"]',
+        )
+        assert follow is not None and follow.id is not None
+
+        # Create an event linked to that follow prompt
+        event = penny.db.events.add(
+            user=TEST_SENDER,
+            headline="Moon Mission Alpha Launches Successfully",
+            summary="The Moon Mission Alpha spacecraft launched from Kennedy Space Center on schedule.",  # noqa: E501
+            occurred_at=datetime.now(UTC),
+            source_type="news_api",
+            source_url="https://example.com/moon-mission",
+            follow_prompt_id=follow.id,
+        )
+        assert event is not None
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is True
+
+        # Verify a message was sent
+        assert len(signal_server.outgoing_messages) == 1
+
+        # The prompt sent to the model for the event notification must include
+        # grounding instructions that prevent hallucination
+        event_prompts = [
+            p for p in captured_prompts if "Moon Mission" in p or "space exploration" in p
+        ]
+        assert event_prompts, "No event notification prompt was captured by mock Ollama"
+
+        event_prompt = event_prompts[0]
+        assert "only use information" in event_prompt.lower(), (
+            "EVENT_NOTIFICATION_PROMPT must instruct the model to only use provided data "
+            "to prevent hallucination of facts not present in the source article"
+        )
