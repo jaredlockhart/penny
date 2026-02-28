@@ -303,6 +303,15 @@ Examples:
         "Return only the JSON object, no explanations."
     )
 
+    # Event notification prompt (for proactive event announcements)
+    EVENT_NOTIFICATION_PROMPT = (
+        "You just saw a news headline relevant to the user's interests. "
+        "Write a short, casual heads-up message about it. "
+        "Synthesize the headline and summary into a natural message. "
+        "Use **bold** for key names and topics. "
+        "Keep it concise — one short paragraph."
+    )
+
     MESSAGE_SENTIMENT_EXTRACTION_PROMPT = (
         "Analyze the user's sentiment toward each named entity in their message.\n\n"
         "Return ONLY entities where the user expresses a clear opinion:\n"
