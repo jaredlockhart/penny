@@ -103,6 +103,8 @@ Examples:
     FACT_DISCOVERY_NEW_ENTITY_PROMPT = (
         "You just came across a new topic: {entity_name}. "
         "Write a short, casual message sharing what you found. "
+        "If context is provided, briefly describe what {entity_name} is "
+        "so the user understands the notification. "
         "Synthesize the facts below into natural sentences — don't just list them verbatim. "
         "Use **bold** for the topic name."
     )
@@ -110,6 +112,8 @@ Examples:
     FACT_DISCOVERY_KNOWN_ENTITY_PROMPT = (
         "You just came across some new information about {entity_name}. "
         "Write a short, casual message sharing what's new. "
+        "If context is provided, briefly describe what {entity_name} is "
+        "so the user understands the notification. "
         "Synthesize the facts below into natural sentences — don't just list them verbatim. "
         "Use **bold** for the topic name."
     )
@@ -120,6 +124,8 @@ Examples:
         "you came across a new topic: {entity_name}. "
         "Write a short, casual message sharing what you found. "
         "Mention that you found this while looking into {learn_topic}. "
+        "If context is provided, briefly describe what {entity_name} is "
+        "so the user understands the notification. "
         "Synthesize the facts below into natural sentences — don't just list them verbatim. "
         "Use **bold** for topic names."
     )
@@ -129,6 +135,8 @@ Examples:
         "you came across some new information about {entity_name}. "
         "Write a short, casual message sharing what's new. "
         "Mention that you found this while looking into {learn_topic}. "
+        "If context is provided, briefly describe what {entity_name} is "
+        "so the user understands the notification. "
         "Synthesize the facts below into natural sentences — don't just list them verbatim. "
         "Use **bold** for topic names."
     )
@@ -305,8 +313,9 @@ Examples:
 
     # Event notification prompt (for proactive event announcements)
     EVENT_NOTIFICATION_PROMPT = (
-        "You just saw a news headline relevant to the user's interests. "
+        "You just saw a news headline relevant to the user's follow topic. "
         "Write a short, casual heads-up message about it. "
+        "Frame the message around the follow topic so the user knows why they're getting it. "
         "Synthesize the headline and summary into a natural message. "
         "Use **bold** for key names and topics. "
         "Keep it concise — one short paragraph. "

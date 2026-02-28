@@ -232,7 +232,7 @@ class NotificationAgent(Agent):
         if event is None:
             return False
 
-        sent = await self._send_event_notification(user, event)
+        sent = await self._send_event_notification(user, event, prompt.prompt_text)
         if not sent:
             return False
 
@@ -349,11 +349,11 @@ class NotificationAgent(Agent):
             hours_since = 0.0
         return math.pow(2.0, -hours_since / half_life)
 
-    async def _send_event_notification(self, user: str, event: Event) -> bool:
+    async def _send_event_notification(self, user: str, event: Event, follow_topic: str) -> bool:
         """Compose and send a notification about an event."""
         assert self._channel is not None
 
-        prompt = self._build_event_prompt(event)
+        prompt = self._build_event_prompt(event, follow_topic)
         result = await self._compose_user_facing(prompt, image_query=event.headline)
 
         if not result.answer:
@@ -374,9 +374,10 @@ class NotificationAgent(Agent):
         )
         return True
 
-    def _build_event_prompt(self, event: Event) -> str:
+    def _build_event_prompt(self, event: Event, follow_topic: str) -> str:
         """Build the LLM prompt for an event notification."""
         parts = [Prompt.EVENT_NOTIFICATION_PROMPT, ""]
+        parts.append(f"Follow topic: {follow_topic}")
         parts.append(f"Headline: {event.headline}")
         if event.summary:
             parts.append(f"Summary: {event.summary}")
