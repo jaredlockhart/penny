@@ -211,7 +211,10 @@ class FollowPrompt(SQLModel, table=True):
     prompt_text: str  # User's natural language topic (e.g., "AI news")
     status: str = Field(default="active", index=True)  # FollowPromptStatus enum value
     query_terms: str = ""  # LLM-generated search terms (JSON list)
-    cadence: str = Field(default="daily")  # FollowCadence enum value
+    cadence: str = Field(default="daily")  # Legacy — kept for backward compat
+    cron_expression: str = Field(default="0 9 * * *")  # 5-field cron schedule
+    timing_description: str = Field(default="daily")  # Human-readable timing
+    user_timezone: str = Field(default="UTC")  # IANA timezone for cron evaluation
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_polled_at: datetime | None = None  # When this subscription was last checked

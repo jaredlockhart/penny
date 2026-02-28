@@ -202,7 +202,13 @@ class PennyResponse:
         "Event tracking requires a NewsAPI.org key. Set NEWS_API_KEY in your .env and restart."
     )
 
-    FOLLOW_ACKNOWLEDGED = "Got it, I'll keep track of **{topic}** for you ({cadence} updates)."
+    FOLLOW_ACKNOWLEDGED = "Got it, I'll keep track of **{topic}** for you ({timing} updates)."
+    FOLLOW_NEED_TIMEZONE = (
+        "I need to know your timezone first. Send me your location or tell me your city \U0001f4cd"
+    )
+    FOLLOW_PARSE_ERROR = (
+        "Sorry, I couldn't understand that. Try something like: /follow daily 9:30am usa news"
+    )
     FOLLOW_EMPTY = (
         "You're not following anything yet. Use `/follow <topic>` to start monitoring something."
     )

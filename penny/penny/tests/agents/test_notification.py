@@ -1220,7 +1220,7 @@ async def test_event_notification_sends_and_marks_notified(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        # Create a follow prompt — events need one for per-prompt cadence
+        # Create a follow prompt — events need one for per-prompt scheduling
         fp = penny.db.follow_prompts.create(
             user=TEST_SENDER,
             prompt_text="space launches",
@@ -1287,12 +1287,13 @@ async def test_event_notification_respects_cadence(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        # Create follow prompt with daily cadence
+        # Create follow prompt with daily cron schedule
         fp = penny.db.follow_prompts.create(
             user=TEST_SENDER,
             prompt_text="tech news",
             query_terms='["tech"]',
-            cadence="daily",
+            cron_expression="0 9 * * *",
+            timing_description="daily",
         )
         assert fp is not None and fp.id is not None
 
@@ -1314,7 +1315,7 @@ async def test_event_notification_respects_cadence(
         result1 = await agent.execute()
         assert result1 is True
 
-        # Second event — should be suppressed by cadence (daily = 86400s)
+        # Second event — should be suppressed by cron (next firing ~24h away)
         penny.db.events.add(
             user=TEST_SENDER,
             headline="Event two",
