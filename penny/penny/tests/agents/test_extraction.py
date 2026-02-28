@@ -1792,3 +1792,102 @@ async def test_enrichment_runs_independently(
             if sl.trigger == PennyConstants.SearchTrigger.PENNY_ENRICHMENT
         ]
         assert len(enrichment_logs) >= 1, "Enrichment should have created a search log"
+
+
+@pytest.mark.asyncio
+async def test_extraction_deduplicates_facts_across_sibling_entities(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """
+    When the LLM identifies multiple known entities from the same content and
+    extracts the same facts for each, cross-entity dedup ensures the facts are
+    only stored under the first entity processed — preventing duplicate
+    notifications about the same information.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    # Both entities get similar embeddings (both contain "cyberia")
+    def embed_handler(model, input_text):
+        texts = [input_text] if isinstance(input_text, str) else input_text
+        vecs = []
+        for text in texts:
+            if "cyberia" in text.lower():
+                vecs.append([1.0, 0.0, 0.0, 0.0])
+            else:
+                vecs.append([0.0, 1.0, 0.0, 0.0])
+        return vecs
+
+    mock_ollama.set_embed_handler(embed_handler)
+
+    call_count = [0]
+
+    def handler(request: dict, count: int) -> dict:
+        call_count[0] += 1
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+        if "Entity:" in prompt:
+            # LLM extracts the same facts for both entities
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps(
+                    {
+                        "facts": [
+                            "The bootleg vinyl includes track A1.",
+                            "The bootleg vinyl includes track B1.",
+                        ]
+                    }
+                ),
+            )
+        elif "topics" in prompt.lower():
+            return mock_ollama._make_text_response(request, '{"topics": []}')
+        else:
+            # LLM identifies both as known entities
+            return mock_ollama._make_text_response(
+                request,
+                json.dumps({"known": ["cyberia mix", "cyberia"], "new": []}),
+            )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Pre-seed two entities with embeddings
+        e1 = penny.db.entities.get_or_create(TEST_SENDER, "cyberia mix")
+        e2 = penny.db.entities.get_or_create(TEST_SENDER, "cyberia")
+        assert e1 is not None and e1.id is not None
+        assert e2 is not None and e2.id is not None
+        penny.db.entities.update_embedding(e1.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.entities.update_embedding(e2.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+
+        # Seed a search log with content mentioning both
+        msg_id = penny.db.messages.log_message(
+            direction="incoming",
+            sender=TEST_SENDER,
+            content="tell me about cyberia vinyl",
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        penny.db.searches.log(
+            query="cyberia mix bootleg vinyl",
+            response="The bootleg vinyl includes track A1. The bootleg vinyl includes track B1.",
+            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
+        )
+
+        await penny.extraction_pipeline.execute()
+
+        # First entity should have the facts
+        e1_facts = penny.db.facts.get_for_entity(e1.id)
+        e1_contents = [f.content for f in e1_facts]
+        assert "The bootleg vinyl includes track A1." in e1_contents
+        assert "The bootleg vinyl includes track B1." in e1_contents
+
+        # Second entity should have NO new facts (cross-entity dedup)
+        e2_facts = penny.db.facts.get_for_entity(e2.id)
+        assert len(e2_facts) == 0, (
+            f"Cross-entity dedup should prevent duplicate facts, "
+            f"but entity 'cyberia' got: {[f.content for f in e2_facts]}"
+        )
