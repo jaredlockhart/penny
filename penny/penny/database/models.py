@@ -186,6 +186,9 @@ class Event(SQLModel, table=True):
     external_id: str | None = Field(default=None, index=True)  # Article URL for dedup
     notified_at: datetime | None = None  # When user was told
     embedding: bytes | None = None  # Serialized float32 embedding vector
+    follow_prompt_id: int | None = Field(
+        default=None, foreign_key="followprompt.id", index=True
+    )  # Which follow prompt generated this event
 
 
 class EventEntity(SQLModel, table=True):
@@ -208,6 +211,8 @@ class FollowPrompt(SQLModel, table=True):
     prompt_text: str  # User's natural language topic (e.g., "AI news")
     status: str = Field(default="active", index=True)  # FollowPromptStatus enum value
     query_terms: str = ""  # LLM-generated search terms (JSON list)
+    cadence: str = Field(default="daily")  # FollowCadence enum value
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_polled_at: datetime | None = None  # When this subscription was last checked
+    last_notified_at: datetime | None = None  # When this prompt last triggered a notification

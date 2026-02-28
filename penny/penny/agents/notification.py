@@ -22,7 +22,7 @@ from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
 from penny.constants import PennyConstants
-from penny.database.models import Engagement, Entity, Event, Fact, LearnPrompt
+from penny.database.models import Engagement, Entity, Event, Fact, FollowPrompt, LearnPrompt
 from penny.interest import compute_interest_score
 from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.prompts import Prompt
@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 class NotificationAgent(Agent):
     """Background agent that sends proactive notifications to users.
 
-    Three notification streams, checked in priority order:
-    1. Learn completion announcements (bypass backoff)
-    2. Event notifications — news about followed topics (respect backoff)
-    3. Fact discovery notifications — enrichment findings (respect backoff)
+    Three notification streams:
+    1. Learn completion announcements — exclusive, bypass backoff
+    2. Event notifications — per-follow-prompt cadence (independent loop)
+    3. Fact discovery notifications — per-user exponential backoff (independent loop)
 
-    One notification per cycle maximum.
+    Event and fact notifications run independently so events don't starve facts.
     """
 
     def __init__(self, **kwargs: object) -> None:
@@ -58,13 +58,16 @@ class NotificationAgent(Agent):
         self._channel = channel
 
     async def execute(self) -> bool:
-        """Send at most one notification across all users.
+        """Run notification loops for all users.
 
-        Returns True if a notification was sent.
+        Learn completions are exclusive (return immediately). Event and fact
+        notifications run independently — both can fire in the same cycle.
+        Returns True if any notification was sent.
         """
         if not self._channel:
             return False
 
+        any_sent = False
         users = self.db.users.get_all_senders()
         for user in users:
             if self.db.users.is_muted(user):
@@ -72,13 +75,13 @@ class NotificationAgent(Agent):
             # Learn completion announcements take priority and bypass backoff
             if await self._try_learn_completion(user):
                 return True
-            # Event notifications (news about followed topics)
+            # Event and fact notifications run independently
             if await self._try_event_notification(user):
-                return True
+                any_sent = True
             if await self._try_notify_user(user):
-                return True
+                any_sent = True
 
-        return False
+        return any_sent
 
     # --- Learn completion announcements ---
 
@@ -209,16 +212,19 @@ class NotificationAgent(Agent):
     # --- Event notifications ---
 
     async def _try_event_notification(self, user: str) -> bool:
-        """Check for unnotified events and send one notification.
+        """Check for a due follow prompt and send one event notification.
 
-        Scores events by linked entity interest + timeliness decay, picks
-        the highest-scoring event, composes a message, and sends it.
-        Respects per-user backoff. Returns True if sent.
+        Each follow prompt has its own cadence (hourly/daily/weekly). Finds
+        the most overdue prompt, picks the best unnotified event for it,
+        sends the notification, and updates the prompt's last_notified_at.
+        Independent of fact notification backoff.
         """
-        if not self._should_send(user):
+        prompt = self._find_due_follow_prompt(user)
+        if prompt is None:
             return False
 
-        unnotified = self.db.events.get_unnotified(user)
+        assert prompt.id is not None
+        unnotified = self.db.events.get_unnotified_for_follow_prompt(prompt.id)
         if not unnotified:
             return False
 
@@ -232,8 +238,55 @@ class NotificationAgent(Agent):
 
         assert event.id is not None
         self.db.events.mark_notified([event.id])
-        self._mark_proactive_sent(user)
+        self.db.follow_prompts.update_last_notified(prompt.id)
         return True
+
+    def _find_due_follow_prompt(self, user: str) -> FollowPrompt | None:
+        """Find the most overdue follow prompt for a user.
+
+        Iterates active follow prompts, checks if enough time has elapsed
+        since last_notified_at based on each prompt's cadence. Returns the
+        prompt with the greatest overdue ratio, or None if none are due.
+        """
+        follows = self.db.follow_prompts.get_active(user)
+        if not follows:
+            return None
+
+        best: FollowPrompt | None = None
+        best_overdue = 0.0
+
+        default_seconds = PennyConstants.FOLLOW_CADENCE_SECONDS[
+            PennyConstants.FOLLOW_DEFAULT_CADENCE
+        ]
+
+        for fp in follows:
+            cadence_seconds = PennyConstants.FOLLOW_CADENCE_SECONDS.get(fp.cadence, default_seconds)
+
+            if fp.last_notified_at is None:
+                # Never notified — always due immediately
+                overdue_ratio = float("inf")
+            else:
+                last = fp.last_notified_at
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=UTC)
+                elapsed = (datetime.now(UTC) - last).total_seconds()
+                if elapsed < cadence_seconds:
+                    continue
+                overdue_ratio = elapsed / cadence_seconds
+
+            if overdue_ratio > best_overdue:
+                best_overdue = overdue_ratio
+                best = fp
+
+        if best is not None:
+            logger.debug(
+                "Event notification: follow prompt '%s' is due (%.1fx overdue, cadence=%s)",
+                best.prompt_text[:50],
+                best_overdue,
+                best.cadence,
+            )
+
+        return best
 
     def _pick_best_event(self, user: str, events: list[Event]) -> Event | None:
         """Score events by entity interest + timeliness, return the best one."""

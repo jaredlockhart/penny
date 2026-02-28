@@ -48,7 +48,7 @@ class UnfollowCommand(Command):
         lines = [PennyResponse.FOLLOW_LIST_HEADER, ""]
         for i, fp in enumerate(follows, 1):
             date = fp.created_at.strftime("%Y-%m-%d")
-            lines.append(f"{i}. **{fp.prompt_text}** — since {date}")
+            lines.append(f"{i}. **{fp.prompt_text}** ({fp.cadence}) — since {date}")
 
         return CommandResult(text="\n".join(lines))
 

@@ -1220,7 +1220,15 @@ async def test_event_notification_sends_and_marks_notified(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        # Create an unnotified event
+        # Create a follow prompt — events need one for per-prompt cadence
+        fp = penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="space launches",
+            query_terms='["spacex"]',
+        )
+        assert fp is not None and fp.id is not None
+
+        # Create an unnotified event linked to the follow prompt
         event = penny.db.events.add(
             user=TEST_SENDER,
             headline="SpaceX launches Starship",
@@ -1229,6 +1237,7 @@ async def test_event_notification_sends_and_marks_notified(
             source_type=PennyConstants.EventSourceType.NEWS_API,
             source_url="https://example.com/spacex",
             external_id="https://example.com/spacex",
+            follow_prompt_id=fp.id,
         )
         assert event is not None and event.id is not None
 
@@ -1245,9 +1254,14 @@ async def test_event_notification_sends_and_marks_notified(
         assert updated is not None
         assert updated.notified_at is not None
 
+        # Follow prompt's last_notified_at should be set
+        updated_fp = penny.db.follow_prompts.get(fp.id)
+        assert updated_fp is not None
+        assert updated_fp.last_notified_at is not None
+
 
 @pytest.mark.asyncio
-async def test_event_notification_respects_backoff(
+async def test_event_notification_respects_cadence(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -1255,7 +1269,7 @@ async def test_event_notification_respects_backoff(
     test_user_info,
     running_penny,
 ):
-    """Event notifications respect per-user backoff — suppressed after first send."""
+    """Event notifications respect per-prompt cadence — suppressed until cadence elapses."""
     config = make_config()
 
     def handler(request: dict, count: int) -> dict:
@@ -1273,6 +1287,15 @@ async def test_event_notification_respects_backoff(
         )
         penny.db.messages.mark_processed([msg_id])
 
+        # Create follow prompt with daily cadence
+        fp = penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="tech news",
+            query_terms='["tech"]',
+            cadence="daily",
+        )
+        assert fp is not None and fp.id is not None
+
         agent = _create_notification_agent(penny, config)
 
         # Create and send first event notification
@@ -1284,13 +1307,14 @@ async def test_event_notification_respects_backoff(
             source_type=PennyConstants.EventSourceType.NEWS_API,
             source_url="https://example.com/1",
             external_id="https://example.com/1",
+            follow_prompt_id=fp.id,
         )
 
         signal_server.outgoing_messages.clear()
         result1 = await agent.execute()
         assert result1 is True
 
-        # Second event — should be suppressed by backoff
+        # Second event — should be suppressed by cadence (daily = 86400s)
         penny.db.events.add(
             user=TEST_SENDER,
             headline="Event two",
@@ -1299,15 +1323,18 @@ async def test_event_notification_respects_backoff(
             source_type=PennyConstants.EventSourceType.NEWS_API,
             source_url="https://example.com/2",
             external_id="https://example.com/2",
+            follow_prompt_id=fp.id,
         )
 
         signal_server.outgoing_messages.clear()
         result2 = await agent.execute()
+        # Event notification suppressed, but fact notification may or may not fire
+        # (there are no unnotified facts here, so it's False)
         assert result2 is False
 
 
 @pytest.mark.asyncio
-async def test_event_notification_priority_over_fact_notification(
+async def test_event_and_fact_notifications_independent(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -1315,15 +1342,10 @@ async def test_event_notification_priority_over_fact_notification(
     test_user_info,
     running_penny,
 ):
-    """Event notifications take priority over fact discovery notifications."""
+    """Event and fact notifications fire independently in the same cycle."""
     config = make_config()
 
-    captured_prompts: list[str] = []
-
     def handler(request: dict, count: int) -> dict:
-        messages = request.get("messages", [])
-        prompt = messages[-1]["content"] if messages else ""
-        captured_prompts.append(prompt)
         return mock_ollama._make_text_response(
             request,
             "Here's what I noticed — some really interesting recent news about this topic!"
@@ -1338,10 +1360,13 @@ async def test_event_notification_priority_over_fact_notification(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        # Create both: an unnotified event AND an unnotified fact
-        entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
-        assert entity is not None and entity.id is not None
-        penny.db.facts.add(entity.id, "Some new fact about test entity")
+        # Create a follow prompt with an unnotified event
+        fp = penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="tech news",
+            query_terms='["tech"]',
+        )
+        assert fp is not None and fp.id is not None
 
         penny.db.events.add(
             user=TEST_SENDER,
@@ -1351,15 +1376,21 @@ async def test_event_notification_priority_over_fact_notification(
             source_type=PennyConstants.EventSourceType.NEWS_API,
             source_url="https://example.com/event",
             external_id="https://example.com/event",
+            follow_prompt_id=fp.id,
         )
+
+        # Also create an unnotified fact
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
+        assert entity is not None and entity.id is not None
+        penny.db.facts.add(entity.id, "Some new fact about test entity")
 
         agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
         result = await agent.execute()
 
         assert result is True
-        # The event notification prompt contains "Headline:" (event format)
-        assert any("Headline:" in p for p in captured_prompts)
+        # Both event and fact notifications should fire independently
+        assert len(signal_server.outgoing_messages) == 2
 
 
 @pytest.mark.asyncio

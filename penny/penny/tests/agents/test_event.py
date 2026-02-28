@@ -140,9 +140,13 @@ async def test_event_agent_creates_events_and_links_entities(
 
         assert result is True
 
-        # Two events created
+        # Two events created, each linked to the follow prompt
         events = penny.db.events.get_recent(TEST_SENDER, days=7)
         assert len(events) == 2
+        follows = penny.db.follow_prompts.get_active(TEST_SENDER)
+        assert follows[0].id is not None
+        for event in events:
+            assert event.follow_prompt_id == follows[0].id
 
         # Entities created (names are lowercased by entity store)
         all_entities = penny.db.entities.get_for_user(TEST_SENDER)

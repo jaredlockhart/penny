@@ -90,5 +90,20 @@ class PennyConstants:
         ACTIVE = "active"
         CANCELLED = "cancelled"
 
+    class FollowCadence(StrEnum):
+        """Notification frequency for a follow prompt."""
+
+        HOURLY = "hourly"
+        DAILY = "daily"
+        WEEKLY = "weekly"
+
+    FOLLOW_DEFAULT_CADENCE = FollowCadence.DAILY
+
+    FOLLOW_CADENCE_SECONDS: dict[str, int] = {
+        FollowCadence.HOURLY: 3600,
+        FollowCadence.DAILY: 86400,
+        FollowCadence.WEEKLY: 604800,
+    }
+
     # Vision constants
     VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")

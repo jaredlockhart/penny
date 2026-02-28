@@ -29,6 +29,7 @@ class EventStore:
         source_url: str | None = None,
         external_id: str | None = None,
         embedding: bytes | None = None,
+        follow_prompt_id: int | None = None,
     ) -> Event | None:
         """Create a new event. Returns the created Event, or None on failure."""
         try:
@@ -42,6 +43,7 @@ class EventStore:
                     source_url=source_url,
                     external_id=external_id,
                     embedding=embedding,
+                    follow_prompt_id=follow_prompt_id,
                 )
                 session.add(event)
                 session.commit()
@@ -93,6 +95,20 @@ class EventStore:
                 session.exec(
                     select(Event)
                     .where(Event.user == user, Event.notified_at == None)  # noqa: E711
+                    .order_by(Event.occurred_at.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
+    def get_unnotified_for_follow_prompt(self, follow_prompt_id: int) -> list[Event]:
+        """Get unnotified events for a specific follow prompt."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Event)
+                    .where(
+                        Event.follow_prompt_id == follow_prompt_id,
+                        Event.notified_at == None,  # noqa: E711
+                    )
                     .order_by(Event.occurred_at.desc())  # type: ignore[unresolved-attribute]
                 ).all()
             )

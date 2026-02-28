@@ -26,16 +26,44 @@ async def test_follow_creates_prompt(signal_server, mock_ollama, make_config, ru
 
         assert "keep track of" in response["message"]
         assert "AI safety" in response["message"]
+        assert "daily" in response["message"]
 
         follows = penny.db.follow_prompts.get_active(TEST_SENDER)
         assert len(follows) == 1
         assert follows[0].prompt_text == "AI safety"
+        assert follows[0].cadence == "daily"
         assert json.loads(follows[0].query_terms) == ["AI safety", "AI alignment"]
 
 
 @pytest.mark.asyncio
+async def test_follow_with_cadence(signal_server, mock_ollama, make_config, running_penny):
+    """/follow hourly <topic> creates a prompt with hourly cadence."""
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            json.dumps({"query_terms": ["AI safety", "AI alignment"]}),
+        )
+
+    mock_ollama.set_response_handler(handler)
+    config = make_config(news_api_key="test-key")
+
+    async with running_penny(config) as penny:
+        await signal_server.push_message(sender=TEST_SENDER, content="/follow hourly AI safety")
+        response = await signal_server.wait_for_message(timeout=5.0)
+
+        assert "keep track of" in response["message"]
+        assert "hourly" in response["message"]
+
+        follows = penny.db.follow_prompts.get_active(TEST_SENDER)
+        assert len(follows) == 1
+        assert follows[0].prompt_text == "AI safety"
+        assert follows[0].cadence == "hourly"
+
+
+@pytest.mark.asyncio
 async def test_follow_no_args_lists_active(signal_server, mock_ollama, make_config, running_penny):
-    """/follow with no args shows active subscriptions."""
+    """/follow with no args shows active subscriptions with cadence."""
     config = make_config(news_api_key="test-key")
 
     async with running_penny(config) as penny:
@@ -50,6 +78,7 @@ async def test_follow_no_args_lists_active(signal_server, mock_ollama, make_conf
 
         assert "Following" in response["message"]
         assert "spacex launches" in response["message"]
+        assert "daily" in response["message"]
 
 
 @pytest.mark.asyncio

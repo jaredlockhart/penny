@@ -239,6 +239,7 @@ class EventAgent(Agent):
             source_type=PennyConstants.EventSourceType.NEWS_API,
             source_url=article.url,
             external_id=article.url,
+            follow_prompt_id=follow_prompt.id,
         )
 
     async def _store_embedding(self, event: Event, article: NewsArticle) -> None:
