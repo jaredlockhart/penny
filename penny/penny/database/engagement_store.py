@@ -1,6 +1,9 @@
 """Engagement store — recording and querying user engagement signals."""
 
+from __future__ import annotations
+
 import logging
+from datetime import datetime
 
 from sqlmodel import Session, select
 
@@ -74,3 +77,16 @@ class EngagementStore:
                     .order_by(Engagement.created_at.desc())  # type: ignore[unresolved-attribute]
                 ).all()
             )
+
+    def has_engagement_since(self, entity_id: int, since: datetime) -> bool:
+        """Check if any engagement exists for an entity created after a timestamp."""
+        with self._session() as session:
+            result = session.exec(
+                select(Engagement)
+                .where(
+                    Engagement.entity_id == entity_id,
+                    Engagement.created_at > since,  # type: ignore[unresolved-attribute]
+                )
+                .limit(1)
+            ).first()
+            return result is not None

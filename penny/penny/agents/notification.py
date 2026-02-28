@@ -1,9 +1,12 @@
 """Notification agent — owns all proactive messaging to users.
 
 Decoupled from extraction: the extraction pipeline stores facts silently,
-and this agent scores entities by interest + enrichment volume, then randomly
-selects from the top-N pool — gated by per-user exponential backoff and a
-per-entity cooldown.
+and this agent scores entities by explicit user signals (emoji reactions,
+follow-up questions, mentions) — filtering out noisy batch signals from
+/learn sessions. Entities with negative emoji reactions are hard-vetoed,
+and notification fatigue penalizes over-notified entities.
+
+Gated by per-user exponential backoff and a per-entity cooldown.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from datetime import UTC, datetime
 from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
+from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Event, Fact, LearnPrompt
 from penny.interest import compute_interest_score
 from penny.prompts import Prompt
@@ -42,6 +46,7 @@ class NotificationAgent(Agent):
         self._channel: MessageChannel | None = None
         self._backoff_state: dict[str, BackoffState] = {}
         self._last_notified_learn_prompt_id: dict[str, int | None] = {}
+        self._last_notification: dict[str, tuple[int, datetime]] = {}  # user → (entity_id, sent_at)
 
     @property
     def name(self) -> str:
@@ -330,13 +335,16 @@ class NotificationAgent(Agent):
     async def _try_notify_user(self, user: str) -> bool:
         """Attempt to send one notification to this user.
 
-        Scores entities by interest + enrichment volume, randomly picks from
-        the top-N pool (respecting per-entity cooldown and learn-topic dedup),
-        and announces all unnotified facts for the selected entity.
+        Scores entities by explicit user signals, randomly picks from the
+        top-N pool (respecting emoji veto, fatigue, cooldown, and learn-topic
+        dedup), and announces all unnotified facts for the selected entity.
         Returns True if a notification was sent.
         """
         if not self._should_send(user):
             return False
+
+        # Auto-tuning: record ignored notification before picking the next one
+        self._record_ignored_notification(user)
 
         unnotified = self.db.facts.get_unnotified(user)
         if not unnotified:
@@ -372,6 +380,9 @@ class NotificationAgent(Agent):
 
         # Track which learn prompt this notification came from (to suppress same-topic dedup)
         self._last_notified_learn_prompt_id[user] = self._get_learn_prompt_id(facts)
+
+        # Track this notification for auto-tuning outcome check
+        self._last_notification[user] = (entity.id, datetime.now(UTC))
 
         # Update backoff
         self._mark_proactive_sent(user)
@@ -422,7 +433,13 @@ class NotificationAgent(Agent):
         facts_by_entity: dict[int, list[Fact]],
         last_notified_learn_prompt_id: int | None,
     ) -> list[tuple[float, Entity]]:
-        """Score each entity by interest + enrichment volume, filtering ineligible ones."""
+        """Score entities by explicit user signals, filtering ineligible ones.
+
+        Scoring formula: (filtered_interest + log2(fact_count + 1)) / fatigue
+        - filtered_interest: only explicit signals (emoji, statement, mention)
+        - fatigue: log2(total_notified_facts + 2) — penalizes over-notified
+        - Hard veto: any negative emoji_reaction → entity excluded entirely
+        """
         all_engagements = self.db.engagements.get_for_user(user)
         engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
         for eng in all_engagements:
@@ -433,6 +450,8 @@ class NotificationAgent(Agent):
         for eid, facts in facts_by_entity.items():
             entity = self.db.entities.get(eid)
             if entity is None:
+                continue
+            if self._is_vetoed_by_emoji(eid, engagements_by_entity):
                 continue
             if self._is_entity_on_cooldown(entity):
                 continue
@@ -445,14 +464,38 @@ class NotificationAgent(Agent):
                 )
                 continue
 
+            notification_engs = [
+                eng
+                for eng in engagements_by_entity.get(eid, [])
+                if eng.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
+            ]
             interest = compute_interest_score(
-                engagements_by_entity.get(eid, []),
+                notification_engs,
                 half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
             )
-            score = interest + math.log2(len(facts) + 1)
+            fatigue = self._compute_notification_fatigue(eid)
+            score = (interest + math.log2(len(facts) + 1)) / fatigue
             scored.append((score, entity))
 
         return scored
+
+    def _is_vetoed_by_emoji(
+        self, entity_id: int, engagements_by_entity: dict[int, list[Engagement]]
+    ) -> bool:
+        """Check if an entity has any negative emoji reaction (hard veto)."""
+        for eng in engagements_by_entity.get(entity_id, []):
+            if (
+                eng.engagement_type == PennyConstants.EngagementType.EMOJI_REACTION
+                and eng.valence == PennyConstants.EngagementValence.NEGATIVE
+            ):
+                logger.debug("Notification: vetoed '%d' (negative emoji reaction)", entity_id)
+                return True
+        return False
+
+    def _compute_notification_fatigue(self, entity_id: int) -> float:
+        """Compute fatigue divisor based on how many facts have been notified."""
+        total_notified = self.db.facts.count_notified(entity_id)
+        return math.log2(total_notified + 2)
 
     def _is_entity_on_cooldown(self, entity: Entity) -> bool:
         """Check whether an entity was notified too recently."""
@@ -484,6 +527,37 @@ class NotificationAgent(Agent):
             return False
         entity_learn_prompt_id = self._get_learn_prompt_id(facts)
         return entity_learn_prompt_id == last_notified_learn_prompt_id
+
+    def _record_ignored_notification(self, user: str) -> None:
+        """Check if the previous notification was ignored and record a negative signal.
+
+        If the last notification for this user received no engagement (no emoji,
+        no follow-up, no mention), create a NOTIFICATION_IGNORED engagement to
+        gradually suppress uninteresting entities.
+        """
+        prev = self._last_notification.get(user)
+        if prev is None:
+            return
+
+        entity_id, sent_at = prev
+        if self.db.engagements.has_engagement_since(entity_id, sent_at):
+            return
+
+        strength = self.config.runtime.NOTIFICATION_IGNORE_STRENGTH
+        self.db.engagements.add(
+            user=user,
+            engagement_type=PennyConstants.EngagementType.NOTIFICATION_IGNORED,
+            valence=PennyConstants.EngagementValence.NEGATIVE,
+            strength=strength,
+            entity_id=entity_id,
+        )
+        entity = self.db.entities.get(entity_id)
+        entity_name = entity.name if entity else str(entity_id)
+        logger.info(
+            "Auto-tuning: recorded ignored notification for '%s' (strength=%.2f)",
+            entity_name,
+            strength,
+        )
 
     def _should_send(self, user: str) -> bool:
         """Check if we should send proactive notifications to this user."""

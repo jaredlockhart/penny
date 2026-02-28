@@ -22,6 +22,20 @@ class PennyConstants:
         FOLLOW_UP_QUESTION = "follow_up_question"
         MESSAGE_MENTION = "message_mention"
         SEARCH_DISCOVERY = "search_discovery"
+        NOTIFICATION_IGNORED = "notification_ignored"
+
+    # Engagement types that count for notification entity scoring.
+    # Excludes user_search and search_discovery (noisy batch signals from /learn)
+    # but includes notification_ignored (auto-tuning soft-veto).
+    NOTIFICATION_ENGAGEMENT_TYPES = frozenset(
+        {
+            EngagementType.EMOJI_REACTION,
+            EngagementType.EXPLICIT_STATEMENT,
+            EngagementType.FOLLOW_UP_QUESTION,
+            EngagementType.MESSAGE_MENTION,
+            EngagementType.NOTIFICATION_IGNORED,
+        }
+    )
 
     class EngagementValence(StrEnum):
         """Sentiment direction of an engagement."""
