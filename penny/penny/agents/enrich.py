@@ -558,13 +558,22 @@ class EnrichAgent(Agent):
         if not candidates:
             return []
 
+        scored = await self._score_discovery_candidates(candidates, enriching_vec, existing_names)
+        scored.sort(key=lambda s: s[1], reverse=True)
+
         budget = int(self.config.runtime.ENRICHMENT_MAX_NEW_ENTITIES)
         created: list[Entity] = []
-        for candidate in candidates:
+        for candidate, relevance_score, candidate_vec in scored:
             if len(created) >= budget:
                 break
-            new_entity = await self._process_discovery_candidate(
-                candidate, enriching_vec, existing_entities, existing_names, user, search_text
+            new_entity = await self._create_if_not_duplicate(
+                candidate,
+                relevance_score,
+                candidate_vec,
+                existing_entities,
+                existing_names,
+                user,
+                search_text,
             )
             if new_entity:
                 created.append(new_entity)
@@ -606,31 +615,53 @@ class EnrichAgent(Agent):
             logger.error("Failed to identify entity candidates: %s", e)
             return []
 
-    async def _process_discovery_candidate(
+    async def _score_discovery_candidates(
+        self,
+        candidates: list[_DiscoveredEntity],
+        enriching_vec: list[float],
+        existing_names: set[str],
+    ) -> list[tuple[_DiscoveredEntity, float, list[float]]]:
+        """Validate and score all candidates by relevance.
+
+        Returns list of (candidate_with_cleaned_name, relevance_score, candidate_vec).
+        Only candidates that pass name validation and the relevance gate are included.
+        """
+        scored: list[tuple[_DiscoveredEntity, float, list[float]]] = []
+        for candidate in candidates:
+            name = candidate.name.lower().strip()
+            if not name or not _is_valid_entity_name(name):
+                continue
+            if name in existing_names:
+                continue
+            candidate.name = name
+            candidate.tagline = self._clean_tagline(candidate.tagline) or ""
+
+            relevance = await self._check_candidate_relevance(name, enriching_vec)
+            if relevance is not None:
+                scored.append((candidate, relevance[0], relevance[1]))
+        return scored
+
+    async def _create_if_not_duplicate(
         self,
         candidate: _DiscoveredEntity,
-        enriching_vec: list[float],
+        relevance_score: float,
+        candidate_vec: list[float],
         existing_entities: list[Entity],
         existing_names: set[str],
         user: str,
         search_text: str,
     ) -> Entity | None:
-        """Validate, gate by relevance, dedup, and create a single discovered entity."""
-        name = candidate.name.lower().strip()
-        if not name or not _is_valid_entity_name(name):
+        """Check dedup and create entity if not a duplicate."""
+        if self._is_discovery_duplicate(candidate.name, candidate_vec, existing_entities):
             return None
-        if name in existing_names:
-            return None
-
-        tagline = self._clean_tagline(candidate.tagline)
-        relevance = await self._check_candidate_relevance(name, enriching_vec)
-        if relevance is None:
-            return None
-
-        if self._is_discovery_duplicate(name, relevance[1], existing_entities):
-            return None
-
-        return await self._create_discovered_entity(name, tagline, relevance[0], user, search_text)
+        tagline = candidate.tagline or None
+        return await self._create_discovered_entity(
+            candidate.name,
+            tagline,
+            relevance_score,
+            user,
+            search_text,
+        )
 
     def _clean_tagline(self, raw: str) -> str | None:
         """Normalize tagline: lowercase, strip trailing period, reject if too long."""
