@@ -10,6 +10,17 @@ from penny.ollama.embeddings import serialize_embedding
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
+def _add_notifiable_engagement(penny, entity_id):
+    """Add a notification-eligible engagement so the entity scores > 0."""
+    penny.db.engagements.add(
+        user=TEST_SENDER,
+        engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
+        valence=PennyConstants.EngagementValence.POSITIVE,
+        strength=0.2,
+        entity_id=entity_id,
+    )
+
+
 def _create_notification_agent(penny, config):
     """Create a NotificationAgent wired to penny's DB and channel."""
     agent = NotificationAgent(
@@ -35,10 +46,10 @@ async def test_notification_prefers_higher_interest_entity(
     test_user_info,
     running_penny,
 ):
-    """Notification agent scores entities by interest + enrichment volume.
+    """Notification agent scores entities by interest * enrichment volume.
 
     With pool_size=1, selection is deterministic (always picks highest score).
-    An entity with user engagement should outscore one without.
+    An entity with user engagement should outscore one with less.
     """
     config = make_config(notification_pool_size=1)
 
@@ -268,6 +279,10 @@ async def test_notification_auto_tuning_records_ignored(
         assert entity_a is not None and entity_a.id is not None
         assert entity_b is not None and entity_b.id is not None
 
+        # Both need notification-eligible engagement to score > 0
+        _add_notifiable_engagement(penny, entity_a.id)
+        _add_notifiable_engagement(penny, entity_b.id)
+
         penny.db.facts.add(entity_a.id, "Fact for A")
         penny.db.facts.add(entity_b.id, "Fact for B")
 
@@ -330,6 +345,7 @@ async def test_notification_marks_facts_notified(
 
         entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
         assert entity is not None and entity.id is not None
+        _add_notifiable_engagement(penny, entity.id)
         penny.db.facts.add(entity.id, "Fact one")
         penny.db.facts.add(entity.id, "Fact two")
 
@@ -384,13 +400,16 @@ async def test_notification_entity_cooldown(
         assert entity_a is not None and entity_a.id is not None
         assert entity_b is not None and entity_b.id is not None
 
+        # Entity A: higher interest so it's picked first (pool_size=1)
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=1.0,
+            strength=0.5,
             entity_id=entity_a.id,
         )
+        # Entity B: lower interest, picked when A is on cooldown
+        _add_notifiable_engagement(penny, entity_b.id)
 
         penny.db.facts.add(entity_b.id, "Fact for beta")
         penny.db.facts.add(entity_a.id, "Fact for alpha")
@@ -463,6 +482,8 @@ async def test_notification_one_per_cycle(
         e2 = penny.db.entities.get_or_create(TEST_SENDER, "entity two")
         assert e1 is not None and e1.id is not None
         assert e2 is not None and e2.id is not None
+        _add_notifiable_engagement(penny, e1.id)
+        _add_notifiable_engagement(penny, e2.id)
         penny.db.facts.add(e1.id, "Fact for entity one")
         penny.db.facts.add(e2.id, "Fact for entity two")
 
@@ -556,6 +577,7 @@ async def test_notification_mentions_learn_topic(
 
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
+        _add_notifiable_engagement(penny, entity.id)
         penny.db.facts.add(
             entity.id,
             "KEF LS50 Meta uses Metamaterial Absorption Technology",
@@ -606,6 +628,7 @@ async def test_notification_backoff_and_reset(
         # --- Cycle 1: notification sent (no backoff — never acted before) ---
         e1 = penny.db.entities.get_or_create(TEST_SENDER, "backoff entity 1")
         assert e1 is not None and e1.id is not None
+        _add_notifiable_engagement(penny, e1.id)
         penny.db.facts.add(e1.id, "Fact for backoff test 1")
 
         signal_server.outgoing_messages.clear()
@@ -616,6 +639,7 @@ async def test_notification_backoff_and_reset(
         # --- Cycle 2: suppressed (backoff active, no user reply) ---
         e2 = penny.db.entities.get_or_create(TEST_SENDER, "backoff entity 2")
         assert e2 is not None and e2.id is not None
+        _add_notifiable_engagement(penny, e2.id)
         penny.db.facts.add(e2.id, "Fact for backoff test 2")
 
         signal_server.outgoing_messages.clear()
@@ -675,6 +699,7 @@ async def test_notification_fires_after_initial_backoff_from_user_message(
         # --- Cycle 1: first notification fires (no prior state) ---
         e1 = penny.db.entities.get_or_create(TEST_SENDER, "entity for initial backoff test")
         assert e1 is not None and e1.id is not None
+        _add_notifiable_engagement(penny, e1.id)
         penny.db.facts.add(e1.id, "Fact for initial backoff test")
 
         signal_server.outgoing_messages.clear()
@@ -690,6 +715,7 @@ async def test_notification_fires_after_initial_backoff_from_user_message(
         # Add another entity/fact to notify about
         e2 = penny.db.entities.get_or_create(TEST_SENDER, "entity for initial backoff test 2")
         assert e2 is not None and e2.id is not None
+        _add_notifiable_engagement(penny, e2.id)
         penny.db.facts.add(e2.id, "Fact for initial backoff test 2")
 
         # Immediately after interaction: suppressed (initial_backoff of 50ms not yet elapsed)
@@ -738,6 +764,7 @@ async def test_notification_command_does_not_reset_backoff(
         # --- Cycle 1: notification sent (no backoff) ---
         e1 = penny.db.entities.get_or_create(TEST_SENDER, "command backoff entity 1")
         assert e1 is not None and e1.id is not None
+        _add_notifiable_engagement(penny, e1.id)
         penny.db.facts.add(e1.id, "Fact for command backoff test 1")
 
         signal_server.outgoing_messages.clear()
@@ -747,6 +774,7 @@ async def test_notification_command_does_not_reset_backoff(
         # --- Cycle 2: suppressed (backoff active) ---
         e2 = penny.db.entities.get_or_create(TEST_SENDER, "command backoff entity 2")
         assert e2 is not None and e2.id is not None
+        _add_notifiable_engagement(penny, e2.id)
         penny.db.facts.add(e2.id, "Fact for command backoff test 2")
 
         signal_server.outgoing_messages.clear()
@@ -1144,9 +1172,10 @@ async def test_notification_skips_same_learn_topic_after_notifying(
         assert len(search_logs) == 1
         sl_id = search_logs[0].id
 
-        # Entity A: from this learn topic
+        # Entity A: from this learn topic (lower interest)
         entity_a = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity_a is not None and entity_a.id is not None
+        _add_notifiable_engagement(penny, entity_a.id)
         penny.db.facts.add(
             entity_a.id, "KEF LS50 Meta uses MAT technology", source_search_log_id=sl_id
         )
@@ -1156,9 +1185,9 @@ async def test_notification_skips_same_learn_topic_after_notifying(
         assert entity_b is not None and entity_b.id is not None
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=1.0,
+            strength=0.5,
             entity_id=entity_b.id,
         )
         penny.db.facts.add(
@@ -1405,9 +1434,8 @@ async def test_notification_neighbor_boost_shifts_selection(
 ):
     """Embedding neighbor boost lifts entities near positively-engaged neighbors.
 
-    Entity A has low base interest but its embedding is close to a neighbor
-    entity with strong positive engagement. Entity B has slightly higher base
-    interest but no engaged neighbors. With neighbor boost, A should outscore B.
+    Both entities have the same base interest, but entity A's embedding is close
+    to a highly-engaged neighbor. The neighbor boost pushes A above B.
     """
     config = make_config(notification_pool_size=1)
 
@@ -1450,24 +1478,19 @@ async def test_notification_neighbor_boost_shifts_selection(
         # Embedding: [1, 0, 0, 0] — close to entity A
         penny.db.entities.update_embedding(neighbor.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
 
-        # Entity A: low base interest, but embedding [0.9, 0.1, 0, 0] is
-        # very similar to neighbor (cosine ~0.99)
+        # Entity A: same base interest as B, but embedding [0.9, 0.1, 0, 0] is
+        # very similar to neighbor (cosine ~0.99) → gets neighbor boost
         entity_a = penny.db.entities.get_or_create(TEST_SENDER, "boosted entity")
         assert entity_a is not None and entity_a.id is not None
+        _add_notifiable_engagement(penny, entity_a.id)
         penny.db.entities.update_embedding(entity_a.id, serialize_embedding([0.9, 0.1, 0.0, 0.0]))
         penny.db.facts.add(entity_a.id, "Fact about boosted entity")
 
-        # Entity B: slightly higher base interest (follow-up question),
-        # but embedding [0, 0, 1, 0] is far from any engaged entity
+        # Entity B: same base interest as A,
+        # but embedding [0, 0, 1, 0] is far from any engaged entity → no boost
         entity_b = penny.db.entities.get_or_create(TEST_SENDER, "baseline entity")
         assert entity_b is not None and entity_b.id is not None
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=0.1,
-            entity_id=entity_b.id,
-        )
+        _add_notifiable_engagement(penny, entity_b.id)
         penny.db.entities.update_embedding(entity_b.id, serialize_embedding([0.0, 0.0, 1.0, 0.0]))
         penny.db.facts.add(entity_b.id, "Fact about baseline entity")
 
