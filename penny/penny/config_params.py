@@ -438,6 +438,33 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="NOTIFICATION_NEIGHBOR_K",
+    description="Max neighbors to consider for embedding-based neighbor boosting",
+    type=int,
+    default=3,
+    validator=_validate_positive_int,
+    group=GROUP_NOTIFICATION,
+)
+
+ConfigParam(
+    key="NOTIFICATION_NEIGHBOR_MIN_SIMILARITY",
+    description="Cosine similarity threshold for neighbor boosting",
+    type=float,
+    default=0.5,
+    validator=_validate_unit_float,
+    group=GROUP_NOTIFICATION,
+)
+
+ConfigParam(
+    key="NOTIFICATION_NEIGHBOR_FACTOR",
+    description="Multiplicative scaling factor for neighbor interest boost",
+    type=float,
+    default=0.3,
+    validator=_validate_unit_float,
+    group=GROUP_NOTIFICATION,
+)
+
+ConfigParam(
     key="EVENT_TIMELINESS_HALF_LIFE_HOURS",
     description="Half-life in hours for event timeliness decay (newer events score higher)",
     type=float,

@@ -6,6 +6,7 @@ import pytest
 
 from penny.agents.notification import NotificationAgent
 from penny.constants import PennyConstants
+from penny.ollama.embeddings import serialize_embedding
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
@@ -1359,3 +1360,91 @@ async def test_event_notification_priority_over_fact_notification(
         assert result is True
         # The event notification prompt contains "Headline:" (event format)
         assert any("Headline:" in p for p in captured_prompts)
+
+
+@pytest.mark.asyncio
+async def test_notification_neighbor_boost_shifts_selection(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Embedding neighbor boost lifts entities near positively-engaged neighbors.
+
+    Entity A has low base interest but its embedding is close to a neighbor
+    entity with strong positive engagement. Entity B has slightly higher base
+    interest but no engaged neighbors. With neighbor boost, A should outscore B.
+    """
+    config = make_config(notification_pool_size=1)
+
+    captured_prompts: list[str] = []
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        prompt = messages[-1]["content"] if messages else ""
+        captured_prompts.append(prompt)
+        if "boosted" in prompt:
+            return mock_ollama._make_text_response(
+                request,
+                "Hey, I found something really interesting about boosted entity"
+                " that I think you would enjoy hearing about!",
+            )
+        return mock_ollama._make_text_response(
+            request,
+            "Hey, I found something really interesting about baseline entity"
+            " that I think you would enjoy hearing about!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        # Neighbor entity: strong positive engagement, similar embedding to A
+        neighbor = penny.db.entities.get_or_create(TEST_SENDER, "neighbor entity")
+        assert neighbor is not None and neighbor.id is not None
+        penny.db.engagements.add(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.8,
+            entity_id=neighbor.id,
+        )
+        # Embedding: [1, 0, 0, 0] — close to entity A
+        penny.db.entities.update_embedding(neighbor.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+
+        # Entity A: low base interest, but embedding [0.9, 0.1, 0, 0] is
+        # very similar to neighbor (cosine ~0.99)
+        entity_a = penny.db.entities.get_or_create(TEST_SENDER, "boosted entity")
+        assert entity_a is not None and entity_a.id is not None
+        penny.db.entities.update_embedding(entity_a.id, serialize_embedding([0.9, 0.1, 0.0, 0.0]))
+        penny.db.facts.add(entity_a.id, "Fact about boosted entity")
+
+        # Entity B: slightly higher base interest (follow-up question),
+        # but embedding [0, 0, 1, 0] is far from any engaged entity
+        entity_b = penny.db.entities.get_or_create(TEST_SENDER, "baseline entity")
+        assert entity_b is not None and entity_b.id is not None
+        penny.db.engagements.add(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.1,
+            entity_id=entity_b.id,
+        )
+        penny.db.entities.update_embedding(entity_b.id, serialize_embedding([0.0, 0.0, 1.0, 0.0]))
+        penny.db.facts.add(entity_b.id, "Fact about baseline entity")
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is True
+
+        # Entity A (boosted) should be picked over entity B (baseline)
+        msgs = signal_server.outgoing_messages
+        assert len(msgs) == 1
+        assert "boosted entity" in msgs[0]["message"].lower()
