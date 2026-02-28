@@ -29,13 +29,14 @@ def _make_article(
     )
 
 
-def _create_event_agent(penny, config, news_tool=None):
+def _create_event_agent(penny, config, news_tool=None, embedding_model_client=None):
     """Create an EventAgent wired to penny's DB with a mock news tool."""
     return EventAgent(
         news_tool=news_tool,
         system_prompt="",
         background_model_client=penny.background_model_client,
         foreground_model_client=penny.foreground_model_client,
+        embedding_model_client=embedding_model_client,
         tools=[],
         db=penny.db,
         max_steps=1,
@@ -251,6 +252,65 @@ async def test_event_agent_dedup_by_headline(
         assert result is False
         events = penny.db.events.get_recent(TEST_SENDER, days=7)
         assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_event_agent_filters_irrelevant_articles(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Articles irrelevant to the followed topic are filtered by embedding similarity."""
+    config = make_config()
+    articles = [
+        _make_article(
+            title="SpaceX launches Starship",
+            url="https://example.com/spacex-relevant",
+        ),
+        _make_article(
+            title="Netflix buys Warner Brothers",
+            url="https://example.com/netflix-irrelevant",
+        ),
+    ]
+    news_tool = _make_mock_news_tool(articles)
+
+    # Mock embedding client: returns vectors where the topic and relevant article
+    # are similar (same direction) but the irrelevant article is orthogonal.
+    topic_vec = [1.0, 0.0, 0.0]
+    relevant_vec = [0.9, 0.1, 0.0]  # cosine ~0.99 with topic
+    irrelevant_vec = [0.0, 0.0, 1.0]  # cosine 0.0 with topic
+
+    embed_responses = {
+        "space launches": [topic_vec],
+        "SpaceX launches Starship": [relevant_vec],
+        "Netflix buys Warner Brothers": [irrelevant_vec],
+    }
+    embedding_client = AsyncMock()
+    embedding_client.embed = AsyncMock(side_effect=lambda text: embed_responses[text])
+
+    mock_ollama.set_response_handler(
+        lambda req, count: mock_ollama._make_text_response(req, json.dumps({"entities": []}))
+    )
+
+    async with running_penny(config) as penny:
+        penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="space launches",
+            query_terms='["spacex", "rocket launch"]',
+        )
+
+        agent = _create_event_agent(
+            penny, config, news_tool=news_tool, embedding_model_client=embedding_client
+        )
+        result = await agent.execute()
+
+        assert result is True
+        events = penny.db.events.get_recent(TEST_SENDER, days=7)
+        assert len(events) == 1
+        assert events[0].headline == "SpaceX launches Starship"
 
 
 def test_normalize_headline():
