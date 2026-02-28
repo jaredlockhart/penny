@@ -101,7 +101,8 @@ penny/
     profile.py        — /profile: user info collection (name, location, DOB, timezone)
     learn.py          — /learn: express active research interest in a topic
     memory.py         — /memory: view/manage knowledge base entities and facts (ranked by interest)
-    schedule.py       — /schedule: create, list, delete recurring background tasks
+    schedule.py       — /schedule: create and list recurring background tasks
+    unschedule.py     — /unschedule: delete a scheduled task
     test.py           — /test: isolated test mode for development
     draw.py           — /draw: generate images via Ollama image model (optional)
     bug.py            — /bug: file GitHub issues (optional, requires GitHub App)
@@ -344,7 +345,8 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
 - **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` creates a LearnPrompt DB record and acknowledges. The scheduled LearnAgent worker picks up pending prompts and processes them one search step at a time, generating queries via LLM and executing Perplexity searches. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`)
 - **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities ranked by interest score (with score and fact count); `/memory <number>` shows entity details and facts; `/memory <number> delete` removes an entity and its facts
-- **/schedule** (`schedule.py`): Create, list, and delete recurring cron-based background tasks (uses LLM to parse natural language timing)
+- **/schedule** (`schedule.py`): Create and list recurring cron-based background tasks (uses LLM to parse natural language timing)
+- **/unschedule** (`unschedule.py`): Delete a scheduled task. `/unschedule` shows numbered list; `/unschedule <N>` deletes
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
 
 ### Conditional Commands (registered based on config)

@@ -19,6 +19,7 @@ from penny.commands.test import TestCommand
 from penny.commands.unfollow import UnfollowCommand
 from penny.commands.unlearn import UnlearnCommand
 from penny.commands.unmute import UnmuteCommand
+from penny.commands.unschedule import UnscheduleCommand
 
 if TYPE_CHECKING:
     from github_api.api import GitHubAPI
@@ -69,6 +70,7 @@ def create_command_registry(
     registry.register(MuteCommand())
     registry.register(UnlearnCommand())
     registry.register(UnmuteCommand())
+    registry.register(UnscheduleCommand())
     registry.register(EventsCommand())
     registry.register(FollowCommand())
     registry.register(UnfollowCommand())
