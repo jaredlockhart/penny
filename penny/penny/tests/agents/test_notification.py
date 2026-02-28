@@ -69,12 +69,13 @@ async def test_notification_prefers_higher_interest_entity(
         assert boring_entity is not None and boring_entity.id is not None
         assert interesting_entity is not None and interesting_entity.id is not None
 
-        # Give interesting_entity a positive engagement to boost its interest score
+        # Give interesting_entity an explicit engagement (emoji reaction) to boost score.
+        # user_search is filtered out of notification scoring — only explicit signals count.
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=1.0,
+            strength=0.5,
             entity_id=interesting_entity.id,
         )
 
@@ -94,6 +95,209 @@ async def test_notification_prefers_higher_interest_entity(
 
         # Prompt sent to model should instruct it to synthesize, not echo raw facts
         assert any("Synthesize" in p for p in captured_prompts)
+
+
+@pytest.mark.asyncio
+async def test_notification_vetoes_entity_with_negative_emoji(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Entity with a negative emoji reaction is hard-vetoed from notifications.
+
+    Even if the entity has positive engagements, a single thumbs-down
+    completely excludes it. The fallback entity (no engagement) gets picked.
+    """
+    config = make_config(notification_pool_size=1)
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Hey, I came across something about fallback entity that you might find interesting!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        # Create two entities — vetoed one has positive AND negative signals
+        vetoed = penny.db.entities.get_or_create(TEST_SENDER, "vetoed entity")
+        fallback = penny.db.entities.get_or_create(TEST_SENDER, "fallback entity")
+        assert vetoed is not None and vetoed.id is not None
+        assert fallback is not None and fallback.id is not None
+
+        # Vetoed entity: positive follow-up but negative emoji → hard veto
+        penny.db.engagements.add(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            entity_id=vetoed.id,
+        )
+        penny.db.engagements.add(
+            user=TEST_SENDER,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+            valence=PennyConstants.EngagementValence.NEGATIVE,
+            strength=0.8,
+            entity_id=vetoed.id,
+        )
+
+        penny.db.facts.add(vetoed.id, "Vetoed fact")
+        penny.db.facts.add(fallback.id, "Fallback fact")
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is True
+
+        # Should pick the fallback, not the vetoed entity
+        msgs = signal_server.outgoing_messages
+        assert len(msgs) == 1
+        assert "fallback entity" in msgs[0]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_notification_fatigue_penalizes_over_notified_entity(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Entity with many previously-notified facts is penalized by fatigue.
+
+    Two entities with the same emoji engagement, but the over-notified one
+    (many pre-marked facts) should score lower due to fatigue divisor.
+    """
+    config = make_config(notification_pool_size=1)
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Hey, I found something new about fresh entity that you might find really interesting!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        fatigued = penny.db.entities.get_or_create(TEST_SENDER, "fatigued entity")
+        fresh = penny.db.entities.get_or_create(TEST_SENDER, "fresh entity")
+        assert fatigued is not None and fatigued.id is not None
+        assert fresh is not None and fresh.id is not None
+
+        # Same emoji engagement for both
+        for entity in [fatigued, fresh]:
+            penny.db.engagements.add(
+                user=TEST_SENDER,
+                engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+                valence=PennyConstants.EngagementValence.POSITIVE,
+                strength=0.5,
+                entity_id=entity.id,
+            )
+
+        # Fatigued entity: 50 pre-notified facts (already told user about it many times)
+        now = datetime.now(UTC)
+        for i in range(50):
+            penny.db.facts.add(fatigued.id, f"Old fact {i}", notified_at=now)
+
+        # Both get one new un-notified fact
+        penny.db.facts.add(fatigued.id, "New fatigued fact")
+        penny.db.facts.add(fresh.id, "New fresh fact")
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is True
+
+        # Fresh entity should win (lower fatigue divisor)
+        msgs = signal_server.outgoing_messages
+        assert len(msgs) == 1
+        assert "fresh entity" in msgs[0]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_notification_auto_tuning_records_ignored(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """When a notification gets no engagement, the next cycle records NOTIFICATION_IGNORED.
+
+    First cycle: sends notification for entity A.
+    Second cycle: no engagement since → records NOTIFICATION_IGNORED for A.
+    """
+    config = make_config(
+        notification_pool_size=1,
+        notification_initial_backoff=0,
+        notification_entity_cooldown=0,
+    )
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Hey, I came across some interesting news about this entity that is worth sharing!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        entity_a = penny.db.entities.get_or_create(TEST_SENDER, "entity a")
+        entity_b = penny.db.entities.get_or_create(TEST_SENDER, "entity b")
+        assert entity_a is not None and entity_a.id is not None
+        assert entity_b is not None and entity_b.id is not None
+
+        penny.db.facts.add(entity_a.id, "Fact for A")
+        penny.db.facts.add(entity_b.id, "Fact for B")
+
+        agent = _create_notification_agent(penny, config)
+
+        # Cycle 1: sends notification (picks one entity)
+        signal_server.outgoing_messages.clear()
+        result1 = await agent.execute()
+        assert result1 is True
+
+        # No engagement happens between cycles — user ignores the notification
+
+        # Simulate user message to reset backoff (so cycle 2 can fire)
+        msg_id2 = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="something"
+        )
+        penny.db.messages.mark_processed([msg_id2])
+
+        # Cycle 2: should record NOTIFICATION_IGNORED for the entity from cycle 1
+        await agent.execute()
+
+        # Check that a NOTIFICATION_IGNORED engagement was created
+        # The ignored engagement is for the FIRST notification's entity
+        # (recorded at the start of cycle 2, before picking the new entity)
+        all_user_engs = penny.db.engagements.get_for_user(TEST_SENDER)
+        all_ignored = [
+            e
+            for e in all_user_engs
+            if e.engagement_type == PennyConstants.EngagementType.NOTIFICATION_IGNORED
+        ]
+        assert len(all_ignored) >= 1
 
 
 @pytest.mark.asyncio

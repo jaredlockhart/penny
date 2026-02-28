@@ -429,6 +429,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="NOTIFICATION_IGNORE_STRENGTH",
+    description="Strength of the auto-tuning negative signal when a notification is ignored",
+    type=float,
+    default=0.15,
+    validator=_validate_unit_float,
+    group=GROUP_NOTIFICATION,
+)
+
+ConfigParam(
     key="EVENT_TIMELINESS_HALF_LIFE_HOURS",
     description="Half-life in hours for event timeliness decay (newer events score higher)",
     type=float,

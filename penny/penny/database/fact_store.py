@@ -116,6 +116,14 @@ class FactStore:
         except Exception as e:
             logger.error("Failed to update fact %d embedding: %s", fact_id, e)
 
+    def count_notified(self, entity_id: int) -> int:
+        """Count facts that have already been notified for an entity."""
+        with self._session() as session:
+            stmt = (
+                select(Fact).where(Fact.entity_id == entity_id, Fact.notified_at != None)  # noqa: E711
+            )
+            return len(list(session.exec(stmt).all()))
+
     def mark_notified(self, fact_ids: list[int]) -> None:
         """Mark facts as notified (communicated to user)."""
         if not fact_ids:
