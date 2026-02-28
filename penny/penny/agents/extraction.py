@@ -940,42 +940,54 @@ class ExtractionPipeline(Agent):
         candidates: list[_EntityCandidate],
         trigger_text: str,
     ) -> list[tuple[_EntityCandidate, float]]:
-        """Embed candidates and score against trigger text. Returns (candidate, score) pairs."""
+        """Embed candidates and score against trigger text. Returns (candidate, score) pairs.
+
+        Computes two scores per candidate — name-stripped and name-included —
+        and takes the max.  Stripping helps ambiguous names ("genesis", "yes")
+        that pull embeddings away from their domain; including helps when the
+        name IS the relevance signal ("star trek: voyager" vs trigger "star trek").
+        """
         if not self._embedding_model_client:
             return [(c, 0.0) for c in candidates]
 
-        # Batch-embed tagline+facts (no name) + trigger text in one call.
-        # Entity names are omitted because ambiguous names (e.g. "genesis",
-        # "focus", "renaissance") pull the embedding away from the domain.
-        embed_texts = [_build_relevance_text(c.tagline, c.facts, c.name) for c in candidates]
-        embed_texts.append(trigger_text)
+        n = len(candidates)
+        stripped_texts = [_build_relevance_text(c.tagline, c.facts, c.name) for c in candidates]
+        included_texts = [_build_relevance_text(c.tagline, c.facts) for c in candidates]
+        all_texts = stripped_texts + included_texts + [trigger_text]
 
         try:
-            vecs = await self._embedding_model_client.embed(embed_texts)
+            vecs = await self._embedding_model_client.embed(all_texts)
         except Exception:
             logger.warning("Post-fact embedding failed, accepting all candidates", exc_info=True)
             return [(c, 0.0) for c in candidates]
 
+        stripped_vecs = vecs[:n]
+        included_vecs = vecs[n : 2 * n]
         trigger_vec = vecs[-1]
         threshold = self.config.runtime.EXTRACTION_ENTITY_SEMANTIC_THRESHOLD
         survivors: list[tuple[_EntityCandidate, float]] = []
 
-        for candidate, entity_vec in zip(candidates, vecs[:-1], strict=True):
-            score = round(cosine_similarity(entity_vec, trigger_vec), 2)
+        for i, candidate in enumerate(candidates):
+            s_score = cosine_similarity(stripped_vecs[i], trigger_vec)
+            i_score = cosine_similarity(included_vecs[i], trigger_vec)
+            best = "included" if i_score > s_score else "stripped"
+            score = round(max(s_score, i_score), 2)
             if score >= threshold:
                 logger.info(
-                    "Accepted entity '%s' (post-fact similarity %.2f >= %.2f)",
+                    "Accepted entity '%s' (post-fact similarity %.2f >= %.2f, best=%s)",
                     candidate.name,
                     score,
                     threshold,
+                    best,
                 )
                 survivors.append((candidate, score))
             else:
                 logger.info(
-                    "Rejected entity '%s' (post-fact similarity %.2f < %.2f)",
+                    "Rejected entity '%s' (post-fact similarity %.2f < %.2f, best=%s)",
                     candidate.name,
                     score,
                     threshold,
+                    best,
                 )
         return survivors
 
