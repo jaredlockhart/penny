@@ -312,6 +312,32 @@ Examples:
         "Keep it concise — one short paragraph."
     )
 
+    # Enrichment entity discovery prompt
+    ENRICHMENT_ENTITY_DISCOVERY_PROMPT = (
+        "Identify notable entities RELATED TO {entity_name} "
+        "mentioned in the following search results.\n"
+        "Return only NEW entities — do NOT include {entity_name} itself "
+        "or any entity from the known list.\n\n"
+        "ENTITY NAME RULES:\n"
+        "- Use short canonical names (1-5 words). "
+        "No parenthetical annotations or descriptions.\n"
+        "- Good: 'Uni-Q driver', 'Andrew Jones', 'Metamaterial Absorption Technology'\n"
+        "- Bad: 'Uni-Q driver (coaxial driver by KEF)', "
+        "'Andrew Jones (speaker designer)'\n\n"
+        "WHAT TO INCLUDE:\n"
+        "- Sub-components, technologies, people, related products, "
+        "organizations closely tied to {entity_name}\n\n"
+        "WHAT TO SKIP:\n"
+        "- Vague concepts ('audio quality', 'speaker design')\n"
+        "- Dates, years, locations\n"
+        "- Entities only loosely mentioned in passing\n"
+        "- The entity being researched: {entity_name}\n\n"
+        "TAGLINE:\n"
+        "For each entity, provide a short tagline (3-8 words) describing what it is.\n"
+        "- 'Uni-Q driver' → 'coaxial driver array by kef'\n"
+        "- 'Andrew Jones' → 'speaker designer at kef'"
+    )
+
     MESSAGE_SENTIMENT_EXTRACTION_PROMPT = (
         "Analyze the user's sentiment toward each named entity in their message.\n\n"
         "Return ONLY entities where the user expresses a clear opinion:\n"

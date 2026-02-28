@@ -13,11 +13,13 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
+from penny.agents.extraction import _is_valid_entity_name
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Fact
 from penny.interest import compute_interest_score
 from penny.ollama.embeddings import (
     build_entity_embed_text,
+    cosine_similarity,
     deserialize_embedding,
     find_similar,
     serialize_embedding,
@@ -47,6 +49,22 @@ class ExtractedFacts(BaseModel):
         default_factory=list,
         description="NEW specific, verifiable facts about the entity from the text",
     )
+
+
+class _DiscoveredEntity(BaseModel):
+    """A candidate entity discovered during enrichment search results."""
+
+    name: str = Field(description="Entity name (e.g., 'Uni-Q driver', 'Andrew Jones')")
+    tagline: str = Field(
+        default="",
+        description="Short 3-8 word description of what the entity is",
+    )
+
+
+class _DiscoveredEntities(BaseModel):
+    """Schema for LLM response: related entities found in enrichment search results."""
+
+    entities: list[_DiscoveredEntity] = Field(default_factory=list)
 
 
 class _ScoredEntity:
@@ -178,6 +196,18 @@ class EnrichAgent(Agent):
         if stored_facts and self._embedding_model_client:
             await self._update_entity_embedding(entity)
             logger.info("Updated entity embedding for '%s'", entity.name)
+
+        # Discover related entities from the same search results
+        if self._embedding_model_client:
+            discovered = await self._discover_related_entities(
+                entity, candidate.user, search_result
+            )
+            if discovered:
+                logger.info(
+                    "Discovered %d related entities for '%s'",
+                    len(discovered),
+                    entity.name,
+                )
 
         self.db.entities.update_last_enriched_at(entity.id)
         return True
@@ -502,3 +532,248 @@ class EnrichAgent(Agent):
             self.db.entities.update_embedding(entity.id, serialize_embedding(vecs[0]))
         except Exception as e:
             logger.warning("Failed to update entity embedding for '%s': %s", entity.name, e)
+
+    # --- Entity discovery during enrichment ---
+
+    async def _discover_related_entities(
+        self, entity: Entity, user: str, search_text: str
+    ) -> list[Entity]:
+        """Discover new entities related to the enriching entity in search results.
+
+        Uses embedding similarity to the enriching entity as a relevance gate,
+        plus embedding dedup to prevent creating duplicate entities.
+        """
+        assert self._embedding_model_client is not None
+
+        enriching_vec = self._load_enriching_embedding(entity)
+        if enriching_vec is None:
+            return []
+
+        existing_entities = self.db.entities.get_for_user(user)
+        existing_names = {e.name for e in existing_entities}
+
+        candidates = await self._identify_entity_candidates(
+            entity.name, existing_names, search_text
+        )
+        if not candidates:
+            return []
+
+        scored = await self._score_discovery_candidates(candidates, enriching_vec, existing_names)
+        scored.sort(key=lambda s: s[1], reverse=True)
+
+        budget = int(self.config.runtime.ENRICHMENT_MAX_NEW_ENTITIES)
+        created: list[Entity] = []
+        for candidate, relevance_score, candidate_vec in scored:
+            if len(created) >= budget:
+                break
+            new_entity = await self._create_if_not_duplicate(
+                candidate,
+                relevance_score,
+                candidate_vec,
+                existing_entities,
+                existing_names,
+                user,
+                search_text,
+            )
+            if new_entity:
+                created.append(new_entity)
+                existing_entities.append(new_entity)
+                existing_names.add(new_entity.name)
+
+        return created
+
+    def _load_enriching_embedding(self, entity: Entity) -> list[float] | None:
+        """Reload and deserialize the enriching entity's embedding from DB."""
+        assert entity.id is not None
+        refreshed = self.db.entities.get(entity.id)
+        if refreshed is None or refreshed.embedding is None:
+            return None
+        return deserialize_embedding(refreshed.embedding)
+
+    async def _identify_entity_candidates(
+        self, entity_name: str, existing_names: set[str], search_text: str
+    ) -> list[_DiscoveredEntity]:
+        """Call LLM to identify new entity candidates in search results."""
+        known_list = "\n".join(f"- {n}" for n in sorted(existing_names))
+        prompt = (
+            f"{Prompt.ENRICHMENT_ENTITY_DISCOVERY_PROMPT.format(entity_name=entity_name)}\n\n"
+            f"Content:\n{search_text}\n\n"
+            f"Known entities (do NOT return these):\n{known_list}"
+        )
+
+        try:
+            response = await self._background_model_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=_DiscoveredEntities.model_json_schema(),
+            )
+            if not response.content or not response.content.strip():
+                return []
+            result = _DiscoveredEntities.model_validate_json(response.content)
+            return result.entities
+        except Exception as e:
+            logger.error("Failed to identify entity candidates: %s", e)
+            return []
+
+    async def _score_discovery_candidates(
+        self,
+        candidates: list[_DiscoveredEntity],
+        enriching_vec: list[float],
+        existing_names: set[str],
+    ) -> list[tuple[_DiscoveredEntity, float, list[float]]]:
+        """Validate and score all candidates by relevance.
+
+        Returns list of (candidate_with_cleaned_name, relevance_score, candidate_vec).
+        Only candidates that pass name validation and the relevance gate are included.
+        """
+        scored: list[tuple[_DiscoveredEntity, float, list[float]]] = []
+        for candidate in candidates:
+            name = candidate.name.lower().strip()
+            if not name or not _is_valid_entity_name(name):
+                continue
+            if name in existing_names:
+                continue
+            candidate.name = name
+            candidate.tagline = self._clean_tagline(candidate.tagline) or ""
+
+            relevance = await self._check_candidate_relevance(name, enriching_vec)
+            if relevance is not None:
+                scored.append((candidate, relevance[0], relevance[1]))
+        return scored
+
+    async def _create_if_not_duplicate(
+        self,
+        candidate: _DiscoveredEntity,
+        relevance_score: float,
+        candidate_vec: list[float],
+        existing_entities: list[Entity],
+        existing_names: set[str],
+        user: str,
+        search_text: str,
+    ) -> Entity | None:
+        """Check dedup and create entity if not a duplicate."""
+        if self._is_discovery_duplicate(candidate.name, candidate_vec, existing_entities):
+            return None
+        tagline = candidate.tagline or None
+        return await self._create_discovered_entity(
+            candidate.name,
+            tagline,
+            relevance_score,
+            user,
+            search_text,
+        )
+
+    def _clean_tagline(self, raw: str) -> str | None:
+        """Normalize tagline: lowercase, strip trailing period, reject if too long."""
+        if not raw:
+            return None
+        cleaned = raw.strip().lower().rstrip(".")
+        if len(cleaned.split()) > 10:
+            return None
+        return cleaned or None
+
+    async def _check_candidate_relevance(
+        self, name: str, enriching_vec: list[float]
+    ) -> tuple[float, list[float]] | None:
+        """Embed candidate and check relevance to enriching entity.
+
+        Returns (similarity_score, candidate_vec) if relevant, None otherwise.
+        """
+        assert self._embedding_model_client is not None
+        try:
+            vecs = await self._embedding_model_client.embed([name])
+            candidate_vec = vecs[0]
+        except Exception:
+            logger.debug("Failed to embed candidate '%s'", name, exc_info=True)
+            return None
+
+        sim = cosine_similarity(candidate_vec, enriching_vec)
+        threshold = self.config.runtime.ENRICHMENT_DISCOVERY_SIMILARITY_THRESHOLD
+        if sim < threshold:
+            logger.info("Discovery: rejected '%s' (relevance %.2f < %.2f)", name, sim, threshold)
+            return None
+
+        logger.info("Discovery: accepted '%s' (relevance %.2f >= %.2f)", name, sim, threshold)
+        return sim, candidate_vec
+
+    def _is_discovery_duplicate(
+        self, name: str, candidate_vec: list[float], existing_entities: list[Entity]
+    ) -> bool:
+        """Check if candidate is a duplicate of an existing entity by embedding."""
+        dedup_threshold = self.config.runtime.EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD
+        for entity in existing_entities:
+            if entity.embedding is None:
+                continue
+            entity_vec = deserialize_embedding(entity.embedding)
+            sim = cosine_similarity(candidate_vec, entity_vec)
+            if sim >= dedup_threshold:
+                logger.info(
+                    "Discovery: '%s' is duplicate of '%s' (sim=%.2f)",
+                    name,
+                    entity.name,
+                    sim,
+                )
+                return True
+        return False
+
+    async def _create_discovered_entity(
+        self,
+        name: str,
+        tagline: str | None,
+        relevance_score: float,
+        user: str,
+        search_text: str,
+    ) -> Entity | None:
+        """Create a new entity with facts and record discovery engagement."""
+        facts = await self._extract_discovery_facts(name, tagline, search_text)
+        if not facts:
+            logger.info("Discovery: skipping '%s' (no facts extracted)", name)
+            return None
+
+        entity = self.db.entities.get_or_create(user, name)
+        if entity is None or entity.id is None:
+            return None
+
+        if tagline:
+            self.db.entities.update_tagline(entity.id, tagline)
+            entity.tagline = tagline
+
+        await self._store_new_facts(entity, facts, search_text)
+        await self._update_entity_embedding(entity)
+
+        self.db.engagements.add(
+            user=user,
+            engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=relevance_score,
+            entity_id=entity.id,
+        )
+        logger.info(
+            "Discovery: created '%s' (relevance=%.2f, %d facts)", name, relevance_score, len(facts)
+        )
+        return entity
+
+    async def _extract_discovery_facts(
+        self, name: str, tagline: str | None, search_text: str
+    ) -> list[str]:
+        """Extract facts for a newly discovered entity from search text."""
+        entity_label = f"{name} ({tagline})" if tagline else name
+        prompt = (
+            f"{Prompt.ENTITY_FACT_EXTRACTION_PROMPT}\n\n"
+            f"Entity: {entity_label}\n\n"
+            f"Content:\n{search_text}"
+        )
+
+        try:
+            response = await self._background_model_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=ExtractedFacts.model_json_schema(),
+            )
+            if not response.content or not response.content.strip():
+                return []
+            extracted = ExtractedFacts.model_validate_json(response.content)
+            return extracted.facts
+        except Exception as e:
+            logger.error("Failed to extract discovery facts for '%s': %s", name, e)
+            return []

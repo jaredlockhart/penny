@@ -531,6 +531,24 @@ ConfigParam(
     group=GROUP_ENRICHMENT,
 )
 
+ConfigParam(
+    key="ENRICHMENT_MAX_NEW_ENTITIES",
+    description="Max new entities created per enrichment cycle via entity discovery",
+    type=int,
+    default=2,
+    validator=_validate_positive_int,
+    group=GROUP_ENRICHMENT,
+)
+
+ConfigParam(
+    key="ENRICHMENT_DISCOVERY_SIMILARITY_THRESHOLD",
+    description="Cosine similarity threshold for enrichment entity discovery relevance gate",
+    type=float,
+    default=0.4,
+    validator=_validate_unit_float,
+    group=GROUP_ENRICHMENT,
+)
+
 
 # ── Events ───────────────────────────────────────────────────────────────────
 
