@@ -15,20 +15,19 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryCommand(Command):
-    """View or manage Penny's knowledge base."""
+    """View Penny's knowledge base."""
 
     name = "memory"
-    description = "View or manage Penny's knowledge base"
+    description = "View what Penny has learned and remembered"
     help_text = (
-        "View what Penny has learned from searches, or manage stored knowledge.\n\n"
+        "View what Penny has learned from searches.\n\n"
         "**Usage**:\n"
         "• `/memory` — List all remembered entities ranked by interest\n"
-        "• `/memory <number>` — Show details for an entity\n"
-        "• `/memory <number> delete` — Delete an entity and its facts\n\n"
+        "• `/memory <number>` — Show details for an entity\n\n"
+        "To delete a memory, use `/forget <number>`.\n\n"
         "**Examples**:\n"
         "• `/memory`\n"
-        "• `/memory 1`\n"
-        "• `/memory 3 delete`"
+        "• `/memory 1`"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
@@ -65,14 +64,6 @@ class MemoryCommand(Command):
 
         _score, entity = scored[position - 1]
         assert entity.id is not None
-
-        # Number + "delete" — delete entity
-        if len(parts) >= 2 and parts[1].lower() == "delete":
-            facts = context.db.facts.get_for_entity(entity.id)
-            context.db.entities.delete(entity.id)
-            return CommandResult(
-                text=PennyResponse.MEMORY_DELETED.format(name=entity.name, count=len(facts))
-            )
 
         # Number only — show entity details
         facts = context.db.facts.get_for_entity(entity.id)

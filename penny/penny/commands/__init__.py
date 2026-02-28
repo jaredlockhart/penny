@@ -8,6 +8,7 @@ from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
 from penny.commands.events import EventsCommand
 from penny.commands.follow import FollowCommand
+from penny.commands.forget import ForgetCommand
 from penny.commands.index import IndexCommand
 from penny.commands.learn import LearnCommand
 from penny.commands.memory import MemoryCommand
@@ -66,6 +67,7 @@ def create_command_registry(
     registry.register(ProfileCommand())
     registry.register(ScheduleCommand())
     registry.register(MemoryCommand())
+    registry.register(ForgetCommand())
     registry.register(LearnCommand())
     registry.register(MuteCommand())
     registry.register(UnlearnCommand())

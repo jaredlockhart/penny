@@ -94,24 +94,3 @@ async def test_memory_show_not_found(signal_server, test_config, mock_ollama, ru
         await signal_server.push_message(sender=TEST_SENDER, content="/memory 99")
         response = await signal_server.wait_for_message(timeout=5.0)
         assert "doesn't match any memory" in response["message"]
-
-
-@pytest.mark.asyncio
-async def test_memory_delete(signal_server, test_config, mock_ollama, running_penny):
-    """Test /memory <number> delete removes entity."""
-    async with running_penny(test_config) as penny:
-        # Seed entity
-        entity = penny.db.entities.get_or_create(TEST_SENDER, "wharfedale linton")
-        penny.db.facts.add(entity.id, "Classic heritage speaker")
-        penny.db.facts.add(entity.id, "3-way design")
-
-        # Delete it
-        await signal_server.push_message(sender=TEST_SENDER, content="/memory 1 delete")
-        response = await signal_server.wait_for_message(timeout=5.0)
-        assert "Deleted 'wharfedale linton'" in response["message"]
-        assert "2 fact(s)" in response["message"]
-
-        # Verify it's gone
-        await signal_server.push_message(sender=TEST_SENDER, content="/memory")
-        response2 = await signal_server.wait_for_message(timeout=5.0)
-        assert "You don't have any stored memories yet" in response2["message"]
