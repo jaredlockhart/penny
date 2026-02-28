@@ -103,17 +103,20 @@ Examples:
     FACT_DISCOVERY_NEW_ENTITY_PROMPT = (
         "You just came across a new topic: {entity_name}. "
         "Write a short, casual message sharing what you found. "
-        "Open by telling the user you found a new topic worth tracking: **{entity_name}**. "
-        "If context is provided, briefly describe what it is. "
-        "Synthesize the facts below into natural sentences — don't just list them verbatim. "
+        "Open by telling the user you found a new topic "
+        "worth tracking: **{entity_name}**{descriptor}. "
+        "Synthesize the facts below into natural sentences "
+        "— don't just list them verbatim. "
         "Use **bold** for the topic name."
     )
 
     FACT_DISCOVERY_KNOWN_ENTITY_PROMPT = (
         "You just came across some new information about {entity_name}. "
         "Write a short, casual message sharing what's new. "
-        "Open by telling the user this is an update on **{entity_name}**. "
-        "Synthesize the facts below into natural sentences — don't just list them verbatim. "
+        "Open by telling the user this is an update "
+        "on **{entity_name}**{descriptor}. "
+        "Synthesize the facts below into natural sentences "
+        "— don't just list them verbatim. "
         "Use **bold** for the topic name."
     )
 
@@ -123,9 +126,10 @@ Examples:
         "you came across a new topic: {entity_name}. "
         "Write a short, casual message sharing what you found. "
         "Open by telling the user you found a new topic "
-        "while looking into **{learn_topic}**: **{entity_name}**. "
-        "If context is provided, briefly describe what it is. "
-        "Synthesize the facts below into natural sentences — don't just list them verbatim. "
+        "while looking into **{learn_topic}**: "
+        "**{entity_name}**{descriptor}. "
+        "Synthesize the facts below into natural sentences "
+        "— don't just list them verbatim. "
         "Use **bold** for topic names."
     )
 
@@ -134,8 +138,10 @@ Examples:
         "you came across some new information about {entity_name}. "
         "Write a short, casual message sharing what's new. "
         "Open by telling the user this is an update on "
-        "**{entity_name}**, found while looking into **{learn_topic}**. "
-        "Synthesize the facts below into natural sentences — don't just list them verbatim. "
+        "**{entity_name}**{descriptor}, found while "
+        "looking into **{learn_topic}**. "
+        "Synthesize the facts below into natural sentences "
+        "— don't just list them verbatim. "
         "Use **bold** for topic names."
     )
 
