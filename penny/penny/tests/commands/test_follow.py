@@ -1,9 +1,11 @@
 """Integration tests for /follow and /unfollow commands."""
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
+from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -99,11 +101,29 @@ async def test_unfollow_cancels(signal_server, mock_ollama, make_config, running
     config = make_config(news_api_key="test-key")
 
     async with running_penny(config) as penny:
-        penny.db.follow_prompts.create(
+        fp = penny.db.follow_prompts.create(
             user=TEST_SENDER,
             prompt_text="quantum computing",
             query_terms='["quantum computing"]',
         )
+        assert fp is not None and fp.id is not None
+
+        # Create events linked to this follow prompt
+        for i in range(3):
+            event = penny.db.events.add(
+                user=TEST_SENDER,
+                headline=f"Quantum news {i}",
+                summary=f"Article {i}",
+                occurred_at=datetime.now(UTC),
+                source_type=PennyConstants.EventSourceType.NEWS_API,
+                source_url=f"https://example.com/q{i}",
+                external_id=f"https://example.com/q{i}",
+                follow_prompt_id=fp.id,
+            )
+            assert event is not None and event.id is not None
+            entity = penny.db.entities.get_or_create(TEST_SENDER, "quantum computing")
+            assert entity is not None and entity.id is not None
+            penny.db.events.link_entity(event.id, entity.id)
 
         await signal_server.push_message(sender=TEST_SENDER, content="/unfollow 1")
         response = await signal_server.wait_for_message(timeout=5.0)
@@ -114,6 +134,10 @@ async def test_unfollow_cancels(signal_server, mock_ollama, make_config, running
         # Verify cancelled in DB
         active = penny.db.follow_prompts.get_active(TEST_SENDER)
         assert len(active) == 0
+
+        # Verify related events and entity links deleted
+        events = penny.db.events.get_for_user(TEST_SENDER)
+        assert len(events) == 0
 
 
 @pytest.mark.asyncio
