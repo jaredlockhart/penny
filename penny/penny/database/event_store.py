@@ -113,6 +113,47 @@ class EventStore:
                 ).all()
             )
 
+    def delete_for_follow_prompt(self, follow_prompt_id: int) -> int:
+        """Delete all events (and their entity links) for a follow prompt.
+
+        Returns the number of events deleted.
+        """
+        try:
+            with self._session() as session:
+                events = list(
+                    session.exec(
+                        select(Event).where(Event.follow_prompt_id == follow_prompt_id)
+                    ).all()
+                )
+                if not events:
+                    return 0
+                event_ids = [e.id for e in events if e.id is not None]
+                # Delete entity links first
+                if event_ids:
+                    links = list(
+                        session.exec(
+                            select(EventEntity).where(
+                                EventEntity.event_id.in_(event_ids)  # type: ignore[union-attr]
+                            )
+                        ).all()
+                    )
+                    for link in links:
+                        session.delete(link)
+                # Delete events
+                for event in events:
+                    session.delete(event)
+                session.commit()
+                logger.info(
+                    "Deleted %d events and %d entity links for follow prompt %d",
+                    len(events),
+                    len(links) if event_ids else 0,
+                    follow_prompt_id,
+                )
+                return len(events)
+        except Exception as e:
+            logger.error("Failed to delete events for follow prompt %d: %s", follow_prompt_id, e)
+            return 0
+
     def mark_notified(self, event_ids: list[int]) -> None:
         """Mark events as notified (communicated to user)."""
         if not event_ids:

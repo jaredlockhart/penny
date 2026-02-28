@@ -61,5 +61,6 @@ class UnfollowCommand(Command):
 
         fp = follows[position - 1]
         assert fp.id is not None
+        context.db.events.delete_for_follow_prompt(fp.id)
         context.db.follow_prompts.cancel(fp.id)
         return CommandResult(text=PennyResponse.FOLLOW_CANCELLED.format(topic=fp.prompt_text))
