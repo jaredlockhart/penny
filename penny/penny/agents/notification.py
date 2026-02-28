@@ -521,7 +521,6 @@ class NotificationAgent(Agent):
         facts_by_entity = {
             e.id: self.db.facts.get_for_entity(e.id) for e in entities if e.id is not None
         }
-        notified_counts = {eid: self.db.facts.count_notified(eid) for eid in facts_by_entity}
         embedding_candidates = [
             (e.id, deserialize_embedding(e.embedding))
             for e in self.db.entities.get_with_embeddings(user)
@@ -532,12 +531,10 @@ class NotificationAgent(Agent):
             entities,
             all_engagements,
             facts_by_entity,
-            notified_counts,
             embedding_candidates,
             half_life_days=rt.INTEREST_SCORE_HALF_LIFE_DAYS,
-            neighbor_k=int(rt.NOTIFICATION_NEIGHBOR_K),
-            neighbor_min_similarity=rt.NOTIFICATION_NEIGHBOR_MIN_SIMILARITY,
-            neighbor_factor=rt.NOTIFICATION_NEIGHBOR_FACTOR,
+            novelty_weight=rt.NOTIFICATION_NOVELTY_WEIGHT,
+            loyal_pool_size=int(rt.NOTIFICATION_LOYAL_POOL_SIZE),
         )
 
         engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
