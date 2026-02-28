@@ -26,8 +26,13 @@ from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Event, Fact, FollowPrompt, LearnPrompt
-from penny.interest import compute_notification_interest
-from penny.ollama.embeddings import deserialize_embedding, find_similar
+from penny.interest import (
+    _build_interest_map,
+    compute_neighbor_boost,
+    compute_notification_interest,
+    compute_notification_score,
+)
+from penny.ollama.embeddings import deserialize_embedding
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
@@ -518,8 +523,11 @@ class NotificationAgent(Agent):
         Neighbor boost: base * (1 + factor * mean_neighbor_interest)
         """
         engagements_by_entity = self._build_engagement_map(user)
-        all_interest = self._build_interest_map(engagements_by_entity)
+        all_interest = _build_interest_map(
+            engagements_by_entity, half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS
+        )
         embedding_candidates = self._build_embedding_candidates(user)
+        rt = self.config.runtime
 
         scored: list[tuple[float, Entity]] = []
         for eid, facts in facts_by_entity.items():
@@ -531,9 +539,21 @@ class NotificationAgent(Agent):
             ):
                 continue
 
-            base = self._compute_base_score(eid, facts, engagements_by_entity)
-            boost = self._compute_neighbor_boost(eid, entity, all_interest, embedding_candidates)
-            score = base * (1.0 + self.config.runtime.NOTIFICATION_NEIGHBOR_FACTOR * boost)
+            base = compute_notification_score(
+                engagements_by_entity.get(eid, []),
+                len(facts),
+                self.db.facts.count_notified(eid),
+                half_life_days=rt.INTEREST_SCORE_HALF_LIFE_DAYS,
+            )
+            boost = compute_neighbor_boost(
+                eid,
+                entity,
+                all_interest,
+                embedding_candidates,
+                neighbor_k=int(rt.NOTIFICATION_NEIGHBOR_K),
+                neighbor_min_similarity=rt.NOTIFICATION_NEIGHBOR_MIN_SIMILARITY,
+            )
+            score = base * (1.0 + rt.NOTIFICATION_NEIGHBOR_FACTOR * boost)
             scored.append((score, entity))
 
         return scored
@@ -544,18 +564,6 @@ class NotificationAgent(Agent):
         for eng in self.db.engagements.get_for_user(user):
             if eng.entity_id is not None:
                 result[eng.entity_id].append(eng)
-        return result
-
-    def _build_interest_map(
-        self, engagements_by_entity: dict[int, list[Engagement]]
-    ) -> dict[int, float]:
-        """Precompute notification interest score for every entity with engagements."""
-        result: dict[int, float] = {}
-        for eid, engs in engagements_by_entity.items():
-            result[eid] = compute_notification_interest(
-                engs,
-                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-            )
         return result
 
     def _build_embedding_candidates(self, user: str) -> list[tuple[int, list[float]]]:
@@ -589,59 +597,6 @@ class NotificationAgent(Agent):
             return False
         return True
 
-    def _compute_base_score(
-        self,
-        eid: int,
-        facts: list[Fact],
-        engagements_by_entity: dict[int, list[Engagement]],
-    ) -> float:
-        """Compute base score: filtered_interest * log2(fact_count + 1) / fatigue.
-
-        Multiplicative: zero interest means zero score, so discovery-only
-        entities (no explicit user engagement) are never surfaced.
-        """
-        interest = compute_notification_interest(
-            engagements_by_entity.get(eid, []),
-            half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-        )
-        if interest == 0.0:
-            return 0.0
-        fatigue = self._compute_notification_fatigue(eid)
-        return interest * math.log2(len(facts) + 1) / fatigue
-
-    def _compute_neighbor_boost(
-        self,
-        eid: int,
-        entity: Entity,
-        all_interest: dict[int, float],
-        embedding_candidates: list[tuple[int, list[float]]],
-    ) -> float:
-        """Compute mean neighbor interest weighted by similarity.
-
-        Finds the K most similar entities by embedding cosine similarity,
-        filters to those with non-zero interest (engaged-only), and returns
-        the mean of (interest * similarity). Bidirectional: positive neighbors
-        lift, negative neighbors drag down.
-        """
-        if entity.embedding is None or not embedding_candidates:
-            return 0.0
-
-        query_vec = deserialize_embedding(entity.embedding)
-        k = int(self.config.runtime.NOTIFICATION_NEIGHBOR_K)
-        min_sim = self.config.runtime.NOTIFICATION_NEIGHBOR_MIN_SIMILARITY
-        # Request k+1 to account for self-match (filtered out below)
-        neighbors = find_similar(query_vec, embedding_candidates, top_k=k + 1, threshold=min_sim)
-
-        # Filter to engaged-only (non-zero interest)
-        engaged = [
-            (nid, sim) for nid, sim in neighbors if nid != eid and all_interest.get(nid, 0.0) != 0.0
-        ]
-        if not engaged:
-            return 0.0
-
-        weighted = [all_interest[nid] * sim for nid, sim in engaged]
-        return sum(weighted) / len(weighted)
-
     def _is_vetoed_by_emoji(
         self, entity_id: int, engagements_by_entity: dict[int, list[Engagement]]
     ) -> bool:
@@ -654,11 +609,6 @@ class NotificationAgent(Agent):
                 logger.debug("Notification: vetoed '%d' (negative emoji reaction)", entity_id)
                 return True
         return False
-
-    def _compute_notification_fatigue(self, entity_id: int) -> float:
-        """Compute fatigue divisor based on how many facts have been notified."""
-        total_notified = self.db.facts.count_notified(entity_id)
-        return math.log2(total_notified + 2)
 
     def _is_entity_on_cooldown(self, entity: Entity) -> bool:
         """Check whether an entity was notified too recently."""
