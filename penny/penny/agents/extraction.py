@@ -15,12 +15,17 @@ from penny.constants import PennyConstants
 from penny.database.models import Entity, Fact
 from penny.ollama.embeddings import (
     build_entity_embed_text,
-    cosine_similarity,
     deserialize_embedding,
     find_similar,
     serialize_embedding,
-    token_containment_ratio,
     tokenize_entity_name,
+)
+from penny.ollama.similarity import (
+    DedupStrategy,
+    check_relevance,
+    dedup_facts_by_embedding,
+    is_embedding_duplicate,
+    normalize_fact,
 )
 from penny.prompts import Prompt
 
@@ -28,9 +33,6 @@ if TYPE_CHECKING:
     from penny.database.models import MessageLog
 
 logger = logging.getLogger(__name__)
-
-# Pattern to collapse whitespace and strip bullet prefixes for fact comparison
-_WHITESPACE_RE = re.compile(r"\s+")
 
 
 def _strip_name_from_text(text: str, name: str) -> str:
@@ -117,16 +119,6 @@ _MONTH_NAMES = frozenset(
     }
 )
 _ENTITY_NAME_MAX_WORDS = 8
-
-
-def _normalize_fact(fact: str) -> str:
-    """Normalize a fact string for dedup comparison.
-
-    Strips leading '- ', lowercases, and collapses whitespace so that
-    near-duplicate facts with minor formatting differences are caught.
-    """
-    text = fact.strip().lstrip("-").strip()
-    return _WHITESPACE_RE.sub(" ", text).lower()
 
 
 def _is_valid_entity_name(name: str) -> bool:
@@ -968,8 +960,10 @@ class ExtractionPipeline(Agent):
         survivors: list[tuple[_EntityCandidate, float]] = []
 
         for i, candidate in enumerate(candidates):
-            s_score = cosine_similarity(stripped_vecs[i], trigger_vec)
-            i_score = cosine_similarity(included_vecs[i], trigger_vec)
+            s_result = check_relevance(stripped_vecs[i], trigger_vec, threshold)
+            i_result = check_relevance(included_vecs[i], trigger_vec, threshold)
+            s_score = s_result if s_result is not None else 0.0
+            i_score = i_result if i_result is not None else 0.0
             best = "included" if i_score > s_score else "stripped"
             score = round(max(s_score, i_score), 2)
             if score >= threshold:
@@ -1129,49 +1123,21 @@ class ExtractionPipeline(Agent):
     ) -> Entity | None:
         """Check if a candidate entity name is a duplicate of an existing entity.
 
-        Uses dual-threshold detection: token containment ratio (TCR) as a fast
-        lexical pre-filter, then embedding cosine similarity for confirmation.
-        Both signals must pass for a match.
-
-        Exception: when the shorter name is a single token (e.g. an acronym like
-        "clps" vs "commercial lunar payload services"), TCR is structurally blind
-        (zero shared tokens), so we skip it and rely on embedding similarity alone.
+        Delegates to is_embedding_duplicate with TCR_AND_EMBEDDING strategy.
         """
-        if candidate_embedding is None:
-            return None
-
-        tcr_threshold = self.config.runtime.EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD
-        sim_threshold = self.config.runtime.EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD
-        candidate_tokens = tokenize_entity_name(candidate_name)
-
-        for entity in existing_entities:
-            if entity.embedding is None:
-                continue
-
-            entity_tokens = tokenize_entity_name(entity.name)
-            shorter_len = min(len(candidate_tokens), len(entity_tokens))
-
-            # Single-token names (acronyms, abbreviations): skip TCR, use
-            # embedding similarity only — TCR is meaningless with one token.
-            if shorter_len <= 1:
-                require_tcr = False
-            else:
-                tcr = token_containment_ratio(candidate_name, entity.name)
-                require_tcr = tcr >= tcr_threshold
-                if not require_tcr:
-                    continue
-
-            entity_vec = deserialize_embedding(entity.embedding)
-            sim = cosine_similarity(candidate_embedding, entity_vec)
-            if sim >= sim_threshold:
-                logger.info(
-                    "Dedup: '%s' matches existing '%s' (single_token=%s, sim=%.2f)",
-                    candidate_name,
-                    entity.name,
-                    shorter_len <= 1,
-                    sim,
-                )
-                return entity
+        items = [(e.name, e.embedding) for e in existing_entities]
+        match_idx = is_embedding_duplicate(
+            candidate_name,
+            candidate_embedding,
+            items,
+            DedupStrategy.TCR_AND_EMBEDDING,
+            embedding_threshold=self.config.runtime.EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD,
+            tcr_threshold=self.config.runtime.EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD,
+        )
+        if match_idx is not None:
+            matched = existing_entities[match_idx]
+            logger.info("Dedup: '%s' matches existing '%s'", candidate_name, matched.name)
+            return matched
         return None
 
     async def _extract_facts(
@@ -1222,56 +1188,34 @@ class ExtractionPipeline(Agent):
         Uses normalized string match as a fast first pass, then embedding
         similarity for paraphrase detection.
         """
-        existing_normalized = {_normalize_fact(f.content) for f in existing_facts}
+        candidates = self._string_dedup_facts(new_facts, existing_facts)
+        if not candidates:
+            return []
 
-        # Fast pass: normalized string dedup
+        # Slow pass: embedding similarity dedup
+        existing_with_emb = [
+            (i, f.embedding) for i, f in enumerate(existing_facts) if f.embedding is not None
+        ]
+        threshold = self.config.runtime.EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD
+        survivors, _ = await dedup_facts_by_embedding(
+            self._embedding_model_client, candidates, existing_with_emb, threshold
+        )
+        return survivors
+
+    def _string_dedup_facts(self, new_facts: list[str], existing_facts: list[Fact]) -> list[str]:
+        """Fast pass: deduplicate by normalized string match."""
+        existing_normalized = {normalize_fact(f.content) for f in existing_facts}
         candidates: list[str] = []
         for fact_text in new_facts:
             fact_text = fact_text.strip()
             if not fact_text:
                 continue
-            normalized = _normalize_fact(fact_text)
+            normalized = normalize_fact(fact_text)
             if normalized in existing_normalized:
                 continue
             candidates.append(fact_text)
             existing_normalized.add(normalized)
-
-        if not candidates:
-            return []
-
-        # Slow pass: embedding similarity dedup
-        if not self._embedding_model_client:
-            return candidates
-
-        facts_with_embeddings = [f for f in existing_facts if f.embedding is not None]
-        if not facts_with_embeddings:
-            return candidates
-
-        try:
-            vecs = await self._embedding_model_client.embed(candidates)
-            existing_candidates = [
-                (i, deserialize_embedding(f.embedding))
-                for i, f in enumerate(facts_with_embeddings)
-                if f.embedding is not None
-            ]
-
-            deduped: list[str] = []
-            for fact_text, query_vec in zip(candidates, vecs, strict=True):
-                matches = find_similar(
-                    query_vec,
-                    existing_candidates,
-                    top_k=1,
-                    threshold=self.config.runtime.EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD,
-                )
-                if matches:
-                    logger.debug("Skipping duplicate fact (embedding match): %s", fact_text[:50])
-                    continue
-                deduped.append(fact_text)
-
-            return deduped
-        except Exception as e:
-            logger.warning("Embedding dedup failed, keeping all candidates: %s", e)
-            return candidates
+        return candidates
 
     # --- Message filtering ---
 

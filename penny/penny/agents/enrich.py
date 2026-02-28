@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -19,10 +18,16 @@ from penny.database.models import Engagement, Entity, Fact
 from penny.interest import compute_interest_score
 from penny.ollama.embeddings import (
     build_entity_embed_text,
-    cosine_similarity,
     deserialize_embedding,
-    find_similar,
     serialize_embedding,
+)
+from penny.ollama.similarity import (
+    DedupStrategy,
+    check_relevance,
+    dedup_facts_by_embedding,
+    embed_text,
+    is_embedding_duplicate,
+    normalize_fact,
 )
 from penny.prompts import Prompt
 from penny.tools.models import SearchResult
@@ -31,15 +36,6 @@ if TYPE_CHECKING:
     from penny.tools import Tool
 
 logger = logging.getLogger(__name__)
-
-# Pattern to collapse whitespace and strip bullet prefixes for fact comparison
-_WHITESPACE_RE = re.compile(r"\s+")
-
-
-def _normalize_fact(fact: str) -> str:
-    """Normalize a fact string for dedup comparison."""
-    text = fact.strip().lstrip("-").strip()
-    return _WHITESPACE_RE.sub(" ", text).lower()
 
 
 class ExtractedFacts(BaseModel):
@@ -420,7 +416,7 @@ class EnrichAgent(Agent):
         Returns:
             Tuple of (new_facts not matching existing, confirmed_existing_fact_ids)
         """
-        existing_normalized = {_normalize_fact(f.content): f for f in existing_facts}
+        existing_normalized = {normalize_fact(f.content): f for f in existing_facts}
         new_facts: list[str] = []
         confirmed_ids: list[int] = []
         seen_normalized: set[str] = set()
@@ -429,7 +425,7 @@ class EnrichAgent(Agent):
             fact_text = fact_text.strip()
             if not fact_text:
                 continue
-            normalized = _normalize_fact(fact_text)
+            normalized = normalize_fact(fact_text)
             if normalized in seen_normalized:
                 continue
             seen_normalized.add(normalized)
@@ -451,44 +447,22 @@ class EnrichAgent(Agent):
         Returns:
             Tuple of (deduped_facts, confirmed_existing_fact_ids)
         """
-        confirmed_ids: list[int] = []
-
-        if not self._embedding_model_client:
-            return new_facts, confirmed_ids
-
         facts_with_embeddings = [f for f in existing_facts if f.embedding is not None]
-        if not facts_with_embeddings:
-            return new_facts, confirmed_ids
+        existing_with_emb = [
+            (i, f.embedding) for i, f in enumerate(facts_with_embeddings) if f.embedding is not None
+        ]
+        threshold = self.config.runtime.EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD
+        survivors, matched_indices = await dedup_facts_by_embedding(
+            self._embedding_model_client, new_facts, existing_with_emb, threshold
+        )
 
-        try:
-            vecs = await self._embedding_model_client.embed(new_facts)
-            existing_candidates = [
-                (i, deserialize_embedding(f.embedding))
-                for i, f in enumerate(facts_with_embeddings)
-                if f.embedding is not None
-            ]
+        confirmed_ids: list[int] = []
+        for idx in matched_indices:
+            matched_fact = facts_with_embeddings[idx]
+            if matched_fact.id is not None:
+                confirmed_ids.append(matched_fact.id)
 
-            deduped: list[str] = []
-            for fact_text, query_vec in zip(new_facts, vecs, strict=True):
-                matches = find_similar(
-                    query_vec,
-                    existing_candidates,
-                    top_k=1,
-                    threshold=self.config.runtime.EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD,
-                )
-                if matches:
-                    matched_idx = matches[0][0]
-                    matched_fact = facts_with_embeddings[matched_idx]
-                    if matched_fact.id is not None:
-                        confirmed_ids.append(matched_fact.id)
-                    logger.debug("Skipping duplicate fact (embedding match): %s", fact_text[:50])
-                    continue
-                deduped.append(fact_text)
-
-            return deduped, confirmed_ids
-        except Exception as e:
-            logger.warning("Embedding dedup failed, keeping all candidates: %s", e)
-            return new_facts, confirmed_ids
+        return survivors, confirmed_ids
 
     async def _store_new_facts(
         self, entity: Entity, new_fact_texts: list[str], search_text: str
@@ -679,41 +653,33 @@ class EnrichAgent(Agent):
 
         Returns (similarity_score, candidate_vec) if relevant, None otherwise.
         """
-        assert self._embedding_model_client is not None
-        try:
-            vecs = await self._embedding_model_client.embed([name])
-            candidate_vec = vecs[0]
-        except Exception:
-            logger.debug("Failed to embed candidate '%s'", name, exc_info=True)
+        candidate_vec = await embed_text(self._embedding_model_client, name)
+        if candidate_vec is None:
             return None
 
-        sim = cosine_similarity(candidate_vec, enriching_vec)
         threshold = self.config.runtime.ENRICHMENT_DISCOVERY_SIMILARITY_THRESHOLD
-        if sim < threshold:
-            logger.info("Discovery: rejected '%s' (relevance %.2f < %.2f)", name, sim, threshold)
+        score = check_relevance(candidate_vec, enriching_vec, threshold)
+        if score is None:
+            logger.info("Discovery: rejected '%s' (relevance < %.2f)", name, threshold)
             return None
 
-        logger.info("Discovery: accepted '%s' (relevance %.2f >= %.2f)", name, sim, threshold)
-        return sim, candidate_vec
+        logger.info("Discovery: accepted '%s' (relevance %.2f >= %.2f)", name, score, threshold)
+        return score, candidate_vec
 
     def _is_discovery_duplicate(
         self, name: str, candidate_vec: list[float], existing_entities: list[Entity]
     ) -> bool:
         """Check if candidate is a duplicate of an existing entity by embedding."""
-        dedup_threshold = self.config.runtime.EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD
-        for entity in existing_entities:
-            if entity.embedding is None:
-                continue
-            entity_vec = deserialize_embedding(entity.embedding)
-            sim = cosine_similarity(candidate_vec, entity_vec)
-            if sim >= dedup_threshold:
-                logger.info(
-                    "Discovery: '%s' is duplicate of '%s' (sim=%.2f)",
-                    name,
-                    entity.name,
-                    sim,
-                )
-                return True
+        items = [(e.name, e.embedding) for e in existing_entities]
+        threshold = self.config.runtime.EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD
+        match_idx = is_embedding_duplicate(
+            name, candidate_vec, items, DedupStrategy.EMBEDDING_ONLY, threshold
+        )
+        if match_idx is not None:
+            logger.info(
+                "Discovery: '%s' is duplicate of '%s'", name, existing_entities[match_idx].name
+            )
+            return True
         return False
 
     async def _create_discovered_entity(
