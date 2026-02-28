@@ -24,6 +24,7 @@ from penny.channels.base import MessageChannel
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Event, Fact, LearnPrompt
 from penny.interest import compute_interest_score
+from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
@@ -433,51 +434,137 @@ class NotificationAgent(Agent):
         facts_by_entity: dict[int, list[Fact]],
         last_notified_learn_prompt_id: int | None,
     ) -> list[tuple[float, Entity]]:
-        """Score entities by explicit user signals, filtering ineligible ones.
+        """Score entities by explicit user signals + neighbor boost.
 
-        Scoring formula: (filtered_interest + log2(fact_count + 1)) / fatigue
-        - filtered_interest: only explicit signals (emoji, statement, mention)
-        - fatigue: log2(total_notified_facts + 2) — penalizes over-notified
-        - Hard veto: any negative emoji_reaction → entity excluded entirely
+        Base: (filtered_interest + log2(fact_count + 1)) / fatigue
+        Neighbor boost: base * (1 + factor * mean_neighbor_interest)
         """
-        all_engagements = self.db.engagements.get_for_user(user)
-        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
-        for eng in all_engagements:
-            if eng.entity_id is not None:
-                engagements_by_entity[eng.entity_id].append(eng)
+        engagements_by_entity = self._build_engagement_map(user)
+        all_interest = self._build_interest_map(engagements_by_entity)
+        embedding_candidates = self._build_embedding_candidates(user)
 
         scored: list[tuple[float, Entity]] = []
         for eid, facts in facts_by_entity.items():
             entity = self.db.entities.get(eid)
             if entity is None:
                 continue
-            if self._is_vetoed_by_emoji(eid, engagements_by_entity):
-                continue
-            if self._is_entity_on_cooldown(entity):
-                continue
-            if self._is_same_learn_topic(facts, last_notified_learn_prompt_id):
-                logger.debug(
-                    "Notification: skipping '%s' (same learn topic as last notification, "
-                    "learn_prompt_id=%d)",
-                    entity.name,
-                    last_notified_learn_prompt_id,
-                )
+            if not self._is_eligible(
+                eid, entity, facts, engagements_by_entity, last_notified_learn_prompt_id
+            ):
                 continue
 
-            notification_engs = [
-                eng
-                for eng in engagements_by_entity.get(eid, [])
-                if eng.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
-            ]
-            interest = compute_interest_score(
-                notification_engs,
-                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-            )
-            fatigue = self._compute_notification_fatigue(eid)
-            score = (interest + math.log2(len(facts) + 1)) / fatigue
+            base = self._compute_base_score(eid, facts, engagements_by_entity)
+            boost = self._compute_neighbor_boost(eid, entity, all_interest, embedding_candidates)
+            score = base * (1.0 + self.config.runtime.NOTIFICATION_NEIGHBOR_FACTOR * boost)
             scored.append((score, entity))
 
         return scored
+
+    def _build_engagement_map(self, user: str) -> dict[int, list[Engagement]]:
+        """Group all user engagements by entity ID."""
+        result: dict[int, list[Engagement]] = defaultdict(list)
+        for eng in self.db.engagements.get_for_user(user):
+            if eng.entity_id is not None:
+                result[eng.entity_id].append(eng)
+        return result
+
+    def _build_interest_map(
+        self, engagements_by_entity: dict[int, list[Engagement]]
+    ) -> dict[int, float]:
+        """Precompute notification interest score for every entity with engagements."""
+        result: dict[int, float] = {}
+        for eid, engs in engagements_by_entity.items():
+            notification_engs = [
+                e for e in engs if e.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
+            ]
+            result[eid] = compute_interest_score(
+                notification_engs,
+                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+            )
+        return result
+
+    def _build_embedding_candidates(self, user: str) -> list[tuple[int, list[float]]]:
+        """Build (entity_id, embedding_vector) pairs for neighbor search."""
+        return [
+            (e.id, deserialize_embedding(e.embedding))
+            for e in self.db.entities.get_with_embeddings(user)
+            if e.id is not None and e.embedding is not None
+        ]
+
+    def _is_eligible(
+        self,
+        eid: int,
+        entity: Entity,
+        facts: list[Fact],
+        engagements_by_entity: dict[int, list[Engagement]],
+        last_notified_learn_prompt_id: int | None,
+    ) -> bool:
+        """Check veto, cooldown, and learn-topic dedup filters."""
+        if self._is_vetoed_by_emoji(eid, engagements_by_entity):
+            return False
+        if self._is_entity_on_cooldown(entity):
+            return False
+        if self._is_same_learn_topic(facts, last_notified_learn_prompt_id):
+            logger.debug(
+                "Notification: skipping '%s' (same learn topic as last notification, "
+                "learn_prompt_id=%d)",
+                entity.name,
+                last_notified_learn_prompt_id,
+            )
+            return False
+        return True
+
+    def _compute_base_score(
+        self,
+        eid: int,
+        facts: list[Fact],
+        engagements_by_entity: dict[int, list[Engagement]],
+    ) -> float:
+        """Compute base score: (filtered_interest + log2(fact_count + 1)) / fatigue."""
+        notification_engs = [
+            eng
+            for eng in engagements_by_entity.get(eid, [])
+            if eng.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
+        ]
+        interest = compute_interest_score(
+            notification_engs,
+            half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+        )
+        fatigue = self._compute_notification_fatigue(eid)
+        return (interest + math.log2(len(facts) + 1)) / fatigue
+
+    def _compute_neighbor_boost(
+        self,
+        eid: int,
+        entity: Entity,
+        all_interest: dict[int, float],
+        embedding_candidates: list[tuple[int, list[float]]],
+    ) -> float:
+        """Compute mean neighbor interest weighted by similarity.
+
+        Finds the K most similar entities by embedding cosine similarity,
+        filters to those with non-zero interest (engaged-only), and returns
+        the mean of (interest * similarity). Bidirectional: positive neighbors
+        lift, negative neighbors drag down.
+        """
+        if entity.embedding is None or not embedding_candidates:
+            return 0.0
+
+        query_vec = deserialize_embedding(entity.embedding)
+        k = int(self.config.runtime.NOTIFICATION_NEIGHBOR_K)
+        min_sim = self.config.runtime.NOTIFICATION_NEIGHBOR_MIN_SIMILARITY
+        # Request k+1 to account for self-match (filtered out below)
+        neighbors = find_similar(query_vec, embedding_candidates, top_k=k + 1, threshold=min_sim)
+
+        # Filter to engaged-only (non-zero interest)
+        engaged = [
+            (nid, sim) for nid, sim in neighbors if nid != eid and all_interest.get(nid, 0.0) != 0.0
+        ]
+        if not engaged:
+            return 0.0
+
+        weighted = [all_interest[nid] * sim for nid, sim in engaged]
+        return sum(weighted) / len(weighted)
 
     def _is_vetoed_by_emoji(
         self, entity_id: int, engagements_by_entity: dict[int, list[Engagement]]
