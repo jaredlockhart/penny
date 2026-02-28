@@ -1775,7 +1775,7 @@ async def test_enrichment_runs_independently(
         assert entity is not None and entity.id is not None
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,

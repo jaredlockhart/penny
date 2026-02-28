@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from datetime import UTC, datetime
 
 from penny.constants import PennyConstants
-from penny.database.models import Engagement
+from penny.database.models import Engagement, Entity
 
 
 def _recency_weight(
@@ -87,3 +88,45 @@ def compute_interest_score(
         score += sign * engagement.strength * decay
 
     return score
+
+
+def compute_notification_interest(
+    engagements: list[Engagement],
+    now: datetime | None = None,
+    *,
+    half_life_days: float,
+) -> float:
+    """Compute interest score using only notification-relevant engagement types.
+
+    Filters to NOTIFICATION_ENGAGEMENT_TYPES (excludes USER_SEARCH and
+    SEARCH_DISCOVERY), then delegates to compute_interest_score.
+    """
+    notification_engs = [
+        e for e in engagements if e.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
+    ]
+    return compute_interest_score(notification_engs, now=now, half_life_days=half_life_days)
+
+
+def scored_entities_for_user(
+    entities: list[Entity],
+    engagements: list[Engagement],
+    *,
+    half_life_days: float,
+) -> list[tuple[float, Entity]]:
+    """Score entities by notification interest, sorted by absolute score descending."""
+    engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
+    for eng in engagements:
+        if eng.entity_id is not None:
+            engagements_by_entity[eng.entity_id].append(eng)
+
+    scored: list[tuple[float, Entity]] = []
+    for entity in entities:
+        assert entity.id is not None
+        score = compute_notification_interest(
+            engagements_by_entity.get(entity.id, []),
+            half_life_days=half_life_days,
+        )
+        scored.append((score, entity))
+
+    scored.sort(key=lambda x: abs(x[0]), reverse=True)
+    return scored

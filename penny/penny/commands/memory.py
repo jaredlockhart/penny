@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.database.models import Engagement, Entity
-from penny.interest import compute_interest_score
+from penny.database.models import Entity
+from penny.interest import scored_entities_for_user
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -106,22 +105,9 @@ class MemoryCommand(Command):
         entities = context.db.entities.get_for_user(context.user)
         if not entities:
             return []
-
         all_engagements = context.db.engagements.get_for_user(context.user)
-        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
-        for eng in all_engagements:
-            if eng.entity_id is not None:
-                engagements_by_entity[eng.entity_id].append(eng)
-
-        scored: list[tuple[float, Entity]] = []
-        for entity in entities:
-            assert entity.id is not None
-            entity_engagements = engagements_by_entity.get(entity.id, [])
-            score = compute_interest_score(
-                entity_engagements,
-                half_life_days=context.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-            )
-            scored.append((score, entity))
-
-        scored.sort(key=lambda x: abs(x[0]), reverse=True)
-        return scored
+        return scored_entities_for_user(
+            entities,
+            all_engagements,
+            half_life_days=context.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
+        )

@@ -26,7 +26,7 @@ from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Event, Fact, FollowPrompt, LearnPrompt
-from penny.interest import compute_interest_score
+from penny.interest import compute_notification_interest
 from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -203,7 +203,7 @@ class NotificationAgent(Agent):
             entity = self.db.entities.get(entity_id)
             if entity is None:
                 continue
-            score = compute_interest_score(
+            score = compute_notification_interest(
                 engagements_by_entity.get(entity_id, []),
                 half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
             )
@@ -352,7 +352,7 @@ class NotificationAgent(Agent):
         interest_total = 0.0
         for entity in linked_entities:
             assert entity.id is not None
-            interest_total += compute_interest_score(
+            interest_total += compute_notification_interest(
                 engagements_by_entity.get(entity.id, []),
                 half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
             )
@@ -552,11 +552,8 @@ class NotificationAgent(Agent):
         """Precompute notification interest score for every entity with engagements."""
         result: dict[int, float] = {}
         for eid, engs in engagements_by_entity.items():
-            notification_engs = [
-                e for e in engs if e.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
-            ]
-            result[eid] = compute_interest_score(
-                notification_engs,
+            result[eid] = compute_notification_interest(
+                engs,
                 half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
             )
         return result
@@ -603,13 +600,8 @@ class NotificationAgent(Agent):
         Multiplicative: zero interest means zero score, so discovery-only
         entities (no explicit user engagement) are never surfaced.
         """
-        notification_engs = [
-            eng
-            for eng in engagements_by_entity.get(eid, [])
-            if eng.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
-        ]
-        interest = compute_interest_score(
-            notification_engs,
+        interest = compute_notification_interest(
+            engagements_by_entity.get(eid, []),
             half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
         )
         if interest == 0.0:
