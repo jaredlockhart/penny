@@ -164,6 +164,11 @@ async def test_event_agent_creates_events_and_links_entities(
         follows = penny.db.follow_prompts.get_active(TEST_SENDER)
         assert follows[0].last_polled_at is not None
 
+        # Regression: second execute reads last_polled_at back from SQLite as
+        # a naive datetime — must not raise TypeError on aware/naive subtraction
+        result2 = await agent.execute()
+        assert result2 is False  # poll interval not elapsed
+
 
 @pytest.mark.asyncio
 async def test_event_agent_dedup_by_url(

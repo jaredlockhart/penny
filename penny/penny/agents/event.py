@@ -98,7 +98,10 @@ class EventAgent(Agent):
         if prompt.last_polled_at is None:
             return True
         interval = self.config.runtime.EVENT_POLL_INTERVAL
-        elapsed = (datetime.now(UTC) - prompt.last_polled_at).total_seconds()
+        last = prompt.last_polled_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        elapsed = (datetime.now(UTC) - last).total_seconds()
         return elapsed >= interval
 
     # --- Fetch ---
