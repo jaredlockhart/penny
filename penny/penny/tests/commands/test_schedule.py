@@ -196,7 +196,7 @@ async def test_schedule_delete(signal_server, test_config, mock_ollama, running_
         assert "Added hourly: sports scores" in response["message"]
 
         # Delete schedule
-        await signal_server.push_message(sender=TEST_SENDER, content="/schedule delete 1")
+        await signal_server.push_message(sender=TEST_SENDER, content="/unschedule 1")
 
         # Wait for response
         response = await signal_server.wait_for_message(timeout=5.0)
@@ -225,10 +225,10 @@ async def test_schedule_delete_invalid_index(
             session.commit()
 
         # Try to delete non-existent schedule
-        await signal_server.push_message(sender=TEST_SENDER, content="/schedule delete 99")
+        await signal_server.push_message(sender=TEST_SENDER, content="/unschedule 99")
 
         # Wait for response
         response = await signal_server.wait_for_message(timeout=5.0)
 
-        # Should show error
-        assert "No schedule with number 99" in response["message"]
+        # Should show empty message (no schedules to delete)
+        assert "You don't have any scheduled tasks yet" in response["message"]

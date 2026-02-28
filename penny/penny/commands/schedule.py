@@ -1,4 +1,4 @@
-"""The /schedule command — create, list, and delete recurring background tasks."""
+"""The /schedule command — create and list recurring background tasks."""
 
 from __future__ import annotations
 
@@ -26,33 +26,26 @@ class ScheduleParseResult(BaseModel):
 
 
 class ScheduleCommand(Command):
-    """Create, list, and delete recurring background tasks."""
+    """Create and list recurring background tasks."""
 
     name = "schedule"
-    description = "Create, list, and delete recurring background tasks"
+    description = "Create and list recurring background tasks"
     help_text = (
         "Create recurring background tasks that run prompts automatically.\n\n"
         "**Usage**:\n"
         "• `/schedule` — List all your active schedules\n"
         "• `/schedule <timing> <prompt>` — Create a new schedule\n"
-        "  (e.g., `/schedule daily 9am what's the news?`)\n"
-        "• `/schedule delete <number>` — Delete a schedule by its list number"
+        "  (e.g., `/schedule daily 9am what's the news?`)\n\n"
+        "Use `/unschedule` to delete a schedule."
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Execute schedule command."""
         args = args.strip()
 
-        # Case 1: List schedules
         if not args:
             return await self._list_schedules(context)
 
-        # Case 2: Delete schedule
-        if args.startswith("delete "):
-            index_str = args[7:].strip()
-            return await self._delete_schedule(index_str, context)
-
-        # Case 3: Create schedule
         return await self._create_schedule(args, context)
 
     async def _list_schedules(self, context: CommandContext) -> CommandResult:
@@ -69,53 +62,6 @@ class ScheduleCommand(Command):
 
             lines = ["**Your Schedules**", ""]
             for idx, sched in enumerate(schedules, start=1):
-                lines.append(f"{idx}. **{sched.timing_description}**: {sched.prompt_text}")
-
-            return CommandResult(text="\n".join(lines))
-
-    async def _delete_schedule(self, index_str: str, context: CommandContext) -> CommandResult:
-        """Delete a schedule by index."""
-        try:
-            index = int(index_str)
-        except ValueError:
-            return CommandResult(
-                text=PennyResponse.SCHEDULE_INVALID_NUMBER.format(number=index_str)
-            )
-
-        with Session(context.db.engine) as session:
-            schedules = list(
-                session.exec(
-                    select(Schedule).where(Schedule.user_id == context.user).order_by(Schedule.id)  # type: ignore[arg-type]
-                )
-            )
-
-            if index < 1 or index > len(schedules):
-                return CommandResult(
-                    text=PennyResponse.SCHEDULE_NO_SCHEDULE_WITH_NUMBER.format(number=index)
-                )
-
-            to_delete = schedules[index - 1]
-            session.delete(to_delete)
-            session.commit()
-
-            # Show remaining schedules
-            remaining = [s for s in schedules if s.id != to_delete.id]
-            if not remaining:
-                deleted_msg = PennyResponse.SCHEDULE_DELETED_PREFIX.format(
-                    timing=to_delete.timing_description, prompt=to_delete.prompt_text
-                )
-                return CommandResult(
-                    text=f"{deleted_msg}\n\n{PennyResponse.SCHEDULE_DELETED_NO_REMAINING}"
-                )
-
-            deleted_msg = PennyResponse.SCHEDULE_DELETED_PREFIX.format(
-                timing=to_delete.timing_description, prompt=to_delete.prompt_text
-            )
-            lines = [
-                f"{deleted_msg}\n",
-                PennyResponse.SCHEDULE_STILL_SCHEDULED,
-            ]
-            for idx, sched in enumerate(remaining, start=1):
                 lines.append(f"{idx}. **{sched.timing_description}**: {sched.prompt_text}")
 
             return CommandResult(text="\n".join(lines))
