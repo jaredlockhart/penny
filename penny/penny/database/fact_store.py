@@ -3,9 +3,10 @@
 import logging
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
-from penny.database.models import Entity, Fact
+from penny.constants import PennyConstants
+from penny.database.models import Engagement, Entity, Fact
 
 logger = logging.getLogger(__name__)
 
@@ -93,16 +94,36 @@ class FactStore:
             )
 
     def get_unnotified(self, user: str) -> list[Fact]:
-        """Get facts that haven't been communicated to a user yet."""
+        """Get facts that haven't been communicated to a user yet.
+
+        Excludes facts from entities with negative emoji reactions (hard veto)
+        so the notification loop never sees them.
+        """
+        vetoed_ids = self._get_vetoed_entity_ids()
         with self._session() as session:
-            return list(
-                session.exec(
-                    select(Fact)
-                    .join(Entity, Fact.entity_id == Entity.id)  # type: ignore[invalid-argument-type]
-                    .where(Entity.user == user, Fact.notified_at == None)  # noqa: E711
-                    .order_by(Fact.learned_at.desc())  # type: ignore[unresolved-attribute]
-                ).all()
+            stmt = (
+                select(Fact)
+                .join(Entity, Fact.entity_id == Entity.id)  # type: ignore[invalid-argument-type]
+                .where(Entity.user == user, Fact.notified_at == None)  # noqa: E711
+                .order_by(Fact.learned_at.desc())  # type: ignore[unresolved-attribute]
             )
+            if vetoed_ids:
+                stmt = stmt.where(col(Fact.entity_id).notin_(vetoed_ids))
+            return list(session.exec(stmt).all())
+
+    def _get_vetoed_entity_ids(self) -> list[int]:
+        """Get entity IDs that have negative emoji reactions (hard veto)."""
+        with self._session() as session:
+            rows = session.exec(
+                select(Engagement.entity_id)
+                .where(
+                    Engagement.entity_id != None,  # noqa: E711
+                    Engagement.engagement_type == PennyConstants.EngagementType.EMOJI_REACTION,
+                    Engagement.valence == PennyConstants.EngagementValence.NEGATIVE,
+                )
+                .distinct()
+            ).all()
+            return [eid for eid in rows if eid is not None]
 
     def update_embedding(self, fact_id: int, embedding: bytes) -> None:
         """Update the embedding for a fact."""

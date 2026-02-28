@@ -24,6 +24,9 @@ class UnfollowCommand(Command):
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Route to list or cancel based on args."""
+        if not context.config.news_api_key:
+            return CommandResult(text=PennyResponse.NEWS_NOT_CONFIGURED)
+
         args = args.strip()
 
         follows = context.db.follow_prompts.get_active(context.user)
