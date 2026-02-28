@@ -42,7 +42,7 @@ async def test_learn_enrichment(
         assert entity is not None and entity.id is not None
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
@@ -235,7 +235,7 @@ async def test_learn_dedup_facts(
 
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
@@ -282,10 +282,10 @@ async def test_learn_semantic_interest_priority(
     test_user_info,
     running_penny,
 ):
-    """Entity with higher SEARCH_DISCOVERY strength is prioritized.
+    """Entity with higher engagement strength is prioritized.
 
-    Two entities with identical USER_SEARCH engagement — entity A has a
-    SEARCH_DISCOVERY engagement with high strength (0.9), entity B with low
+    Two entities with identical EXPLICIT_STATEMENT engagement — entity A has a
+    FOLLOW_UP_QUESTION engagement with high strength (0.9), entity B with low
     strength (0.6). Entity A should be selected first.
     """
     config = make_config()
@@ -300,7 +300,7 @@ async def test_learn_semantic_interest_priority(
         await signal_server.push_message(sender=TEST_SENDER, content="hello")
         await signal_server.wait_for_message(timeout=10.0)
 
-        # Create two entities with identical USER_SEARCH engagement
+        # Create two entities with identical EXPLICIT_STATEMENT engagement
         entity_a = penny.db.entities.get_or_create(TEST_SENDER, "aamas")
         entity_b = penny.db.entities.get_or_create(TEST_SENDER, "coral beach hotel")
         assert entity_a is not None and entity_a.id is not None
@@ -309,23 +309,23 @@ async def test_learn_semantic_interest_priority(
         for eid in (entity_a.id, entity_b.id):
             penny.db.engagements.add(
                 user=TEST_SENDER,
-                engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+                engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
                 valence=PennyConstants.EngagementValence.POSITIVE,
                 strength=0.6,
                 entity_id=eid,
             )
 
-        # Entity A gets high semantic relevance, entity B gets low
+        # Entity A gets high interest boost, entity B gets low
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
+            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.9,
             entity_id=entity_a.id,
         )
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
+            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.6,
             entity_id=entity_b.id,
@@ -360,7 +360,7 @@ async def test_learn_semantic_interest_priority(
         result = await agent.execute()
         assert result is True
 
-        # Entity A (aamas) should be selected because its SEARCH_DISCOVERY
+        # Entity A (aamas) should be selected because its FOLLOW_UP_QUESTION
         # engagement has higher strength (0.9 vs 0.6).
         # Verify by checking which entity got new facts stored.
         facts_a = penny.db.facts.get_for_entity(entity_a.id)
@@ -410,7 +410,7 @@ async def test_learn_enrichment_fixed_interval(
         assert entity is not None and entity.id is not None
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
@@ -483,7 +483,7 @@ async def test_enrich_entity_rotation_cooldown(
         assert entity_a is not None and entity_a.id is not None
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity_a.id,
@@ -494,7 +494,7 @@ async def test_enrich_entity_rotation_cooldown(
         assert entity_b is not None and entity_b.id is not None
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.5,
             entity_id=entity_b.id,
@@ -556,7 +556,7 @@ async def test_enrich_skips_entity_with_unannounced_facts(
         assert entity is not None and entity.id is not None
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
@@ -616,7 +616,7 @@ async def test_learn_enrichment_includes_tagline_in_extraction_prompt(
         penny.db.entities.update_tagline(entity.id, "british progressive rock band")
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
@@ -725,7 +725,7 @@ async def test_enrichment_discovers_related_entities(
         assert entity is not None and entity.id is not None
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
@@ -847,7 +847,7 @@ async def test_enrichment_discovery_respects_budget(
         assert entity is not None and entity.id is not None
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,

@@ -29,10 +29,10 @@ async def test_memory_list_ranked_by_interest(
         penny.db.facts.add(entity2.id, "Costs $1,599 per pair")
         penny.db.facts.add(entity2.id, "Uses MAT driver")
 
-        # Strong engagement for entity2 (user_search = 1.0)
+        # Strong engagement for entity2 (explicit_statement = 1.0)
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity2.id,

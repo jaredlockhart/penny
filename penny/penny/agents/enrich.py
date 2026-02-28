@@ -15,7 +15,7 @@ from penny.agents.base import Agent
 from penny.agents.extraction import _is_valid_entity_name
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Fact
-from penny.interest import compute_interest_score
+from penny.interest import compute_notification_interest
 from penny.ollama.embeddings import (
     build_entity_embed_text,
     deserialize_embedding,
@@ -272,7 +272,7 @@ class EnrichAgent(Agent):
         assert entity.id is not None
 
         entity_engagements = engagements_by_entity.get(entity.id, [])
-        interest = compute_interest_score(
+        interest = compute_notification_interest(
             entity_engagements,
             half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
         )

@@ -11,6 +11,7 @@ from penny.interest import (
     _recency_weight,
     _valence_sign,
     compute_interest_score,
+    compute_notification_interest,
 )
 
 _HALF_LIFE = RUNTIME_CONFIG_PARAMS["INTEREST_SCORE_HALF_LIFE_DAYS"].default
@@ -180,3 +181,60 @@ class TestComputeInterestScore:
         ]
         score = compute_interest_score(engagements, now=now, half_life_days=_HALF_LIFE)
         assert score == pytest.approx(-0.6)
+
+
+class TestComputeNotificationInterest:
+    """Tests for notification-filtered interest scoring."""
+
+    def test_filters_out_user_search(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        eng = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            created_at=now,
+        )
+        assert compute_notification_interest([eng], now=now, half_life_days=_HALF_LIFE) == 0.0
+
+    def test_filters_out_search_discovery(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        eng = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            created_at=now,
+        )
+        assert compute_notification_interest([eng], now=now, half_life_days=_HALF_LIFE) == 0.0
+
+    def test_keeps_notification_types(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        eng = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            created_at=now,
+        )
+        score = compute_notification_interest([eng], now=now, half_life_days=_HALF_LIFE)
+        assert score == pytest.approx(0.5)
+
+    def test_mixed_types_filters_correctly(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        search = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            created_at=now,
+        )
+        mention = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.3,
+            created_at=now,
+        )
+        score = compute_notification_interest([search, mention], now=now, half_life_days=_HALF_LIFE)
+        assert score == pytest.approx(0.3)
