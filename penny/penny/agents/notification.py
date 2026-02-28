@@ -26,12 +26,7 @@ from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Event, Fact, FollowPrompt, LearnPrompt
-from penny.interest import (
-    _build_interest_map,
-    compute_neighbor_boost,
-    compute_notification_interest,
-    compute_notification_score,
-)
+from penny.interest import compute_notification_interest, scored_entities_for_user
 from penny.ollama.embeddings import deserialize_embedding
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -514,64 +509,53 @@ class NotificationAgent(Agent):
     def _score_eligible_entities(
         self,
         user: str,
-        facts_by_entity: dict[int, list[Fact]],
+        unnotified_by_entity: dict[int, list[Fact]],
         last_notified_learn_prompt_id: int | None,
     ) -> list[tuple[float, Entity]]:
-        """Score entities by explicit user signals + neighbor boost.
+        """Score all entities via shared scorer, then filter to eligible ones."""
+        entities = [e for e in self.db.entities.get_for_user(user) if e.id in unnotified_by_entity]
+        if not entities:
+            return []
 
-        Base: filtered_interest * log2(fact_count + 1) / fatigue
-        Neighbor boost: base * (1 + factor * mean_neighbor_interest)
-        """
-        engagements_by_entity = self._build_engagement_map(user)
-        all_interest = _build_interest_map(
-            engagements_by_entity, half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS
-        )
-        embedding_candidates = self._build_embedding_candidates(user)
-        rt = self.config.runtime
-
-        scored: list[tuple[float, Entity]] = []
-        for eid, facts in facts_by_entity.items():
-            entity = self.db.entities.get(eid)
-            if entity is None:
-                continue
-            if not self._is_eligible(
-                eid, entity, facts, engagements_by_entity, last_notified_learn_prompt_id
-            ):
-                continue
-
-            base = compute_notification_score(
-                engagements_by_entity.get(eid, []),
-                len(facts),
-                self.db.facts.count_notified(eid),
-                half_life_days=rt.INTEREST_SCORE_HALF_LIFE_DAYS,
-            )
-            boost = compute_neighbor_boost(
-                eid,
-                entity,
-                all_interest,
-                embedding_candidates,
-                neighbor_k=int(rt.NOTIFICATION_NEIGHBOR_K),
-                neighbor_min_similarity=rt.NOTIFICATION_NEIGHBOR_MIN_SIMILARITY,
-            )
-            score = base * (1.0 + rt.NOTIFICATION_NEIGHBOR_FACTOR * boost)
-            scored.append((score, entity))
-
-        return scored
-
-    def _build_engagement_map(self, user: str) -> dict[int, list[Engagement]]:
-        """Group all user engagements by entity ID."""
-        result: dict[int, list[Engagement]] = defaultdict(list)
-        for eng in self.db.engagements.get_for_user(user):
-            if eng.entity_id is not None:
-                result[eng.entity_id].append(eng)
-        return result
-
-    def _build_embedding_candidates(self, user: str) -> list[tuple[int, list[float]]]:
-        """Build (entity_id, embedding_vector) pairs for neighbor search."""
-        return [
+        all_engagements = self.db.engagements.get_for_user(user)
+        facts_by_entity = {
+            e.id: self.db.facts.get_for_entity(e.id) for e in entities if e.id is not None
+        }
+        notified_counts = {eid: self.db.facts.count_notified(eid) for eid in facts_by_entity}
+        embedding_candidates = [
             (e.id, deserialize_embedding(e.embedding))
             for e in self.db.entities.get_with_embeddings(user)
             if e.id is not None and e.embedding is not None
+        ]
+        rt = self.config.runtime
+        scored = scored_entities_for_user(
+            entities,
+            all_engagements,
+            facts_by_entity,
+            notified_counts,
+            embedding_candidates,
+            half_life_days=rt.INTEREST_SCORE_HALF_LIFE_DAYS,
+            neighbor_k=int(rt.NOTIFICATION_NEIGHBOR_K),
+            neighbor_min_similarity=rt.NOTIFICATION_NEIGHBOR_MIN_SIMILARITY,
+            neighbor_factor=rt.NOTIFICATION_NEIGHBOR_FACTOR,
+        )
+
+        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
+        for eng in all_engagements:
+            if eng.entity_id is not None:
+                engagements_by_entity[eng.entity_id].append(eng)
+
+        return [
+            (score, entity)
+            for score, entity in scored
+            if entity.id is not None
+            and self._is_eligible(
+                entity.id,
+                entity,
+                unnotified_by_entity.get(entity.id, []),
+                engagements_by_entity,
+                last_notified_learn_prompt_id,
+            )
         ]
 
     def _is_eligible(
