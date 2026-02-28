@@ -1077,8 +1077,9 @@ async def test_semantic_entity_name_validation(
     """
     Post-fact semantic pruning: entities whose tagline+facts embedding doesn't
     relate to the trigger query are rejected after fact extraction.
-    Entity names are excluded from the relevance embedding to avoid ambiguous
-    names (e.g. "genesis", "focus") pulling the vector away from the domain.
+    Both name-stripped and name-included variants are scored and the max is
+    used — stripping helps ambiguous names ("genesis") while including helps
+    when the name is the relevance signal ("star trek: voyager").
     """
     config = make_config(ollama_embedding_model="test-embed-model")
 
@@ -1116,8 +1117,8 @@ async def test_semantic_entity_name_validation(
 
     # Embed handler: return high similarity for speaker-related content,
     # low similarity for the unrelated entity.
-    # Relevance texts exclude entity names (only tagline+facts), so we match
-    # on "speaker" (from the facts) not "kef" (the entity name).
+    # Relevance scoring embeds both name-stripped and name-included variants
+    # and takes the max, so we match on "speaker" (from the facts).
     embed_texts_seen: list[str] = []
 
     def embed_handler(model, input_text):
@@ -1176,16 +1177,13 @@ async def test_semantic_entity_name_validation(
         # Similarity should be 1.0 (facts text contains "speaker")
         assert discovery_engagements[0].strength == pytest.approx(1.0)
 
-        # Verify entity names were excluded from relevance embedding texts.
-        # The relevance batch contains tagline+facts texts (no names) + trigger.
-        # Entity storage also embeds with names, so we verify that at least one
-        # speaker-related text was embedded WITHOUT the entity name "kef".
+        # Verify that the name-stripped variant was embedded (for the
+        # "genesis"/"yes" case where name hurts relevance).  The relevance
+        # batch now contains both stripped and included texts + trigger.
         nameless_speaker_texts = [
             t for t in embed_texts_seen if "speaker" in t.lower() and "kef" not in t.lower()
         ]
-        assert nameless_speaker_texts, (
-            "Relevance embedding should use tagline+facts without entity name"
-        )
+        assert nameless_speaker_texts, "Relevance embedding should include a name-stripped variant"
 
 
 # --- Entity pre-filter ---
