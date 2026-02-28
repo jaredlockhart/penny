@@ -565,8 +565,17 @@ ConfigParam(
     key="EVENT_DEDUP_SIMILARITY_THRESHOLD",
     description="Embedding cosine similarity threshold for headline dedup",
     type=float,
-    default=0.90,
-    validator=_validate_positive_float,
+    default=0.60,
+    validator=_validate_unit_float,
+    group=GROUP_EVENTS,
+)
+
+ConfigParam(
+    key="EVENT_DEDUP_TCR_THRESHOLD",
+    description="Token containment ratio threshold for headline dedup",
+    type=float,
+    default=0.60,
+    validator=_validate_unit_float,
     group=GROUP_EVENTS,
 )
 

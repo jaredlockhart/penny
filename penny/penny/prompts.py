@@ -309,7 +309,8 @@ Examples:
         "Write a short, casual heads-up message about it. "
         "Synthesize the headline and summary into a natural message. "
         "Use **bold** for key names and topics. "
-        "Keep it concise — one short paragraph."
+        "Keep it concise — one short paragraph. "
+        "End with the source URL on its own line so the user can read the full story."
     )
 
     # Enrichment entity discovery prompt

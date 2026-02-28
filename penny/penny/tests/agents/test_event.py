@@ -313,6 +313,54 @@ async def test_event_agent_filters_irrelevant_articles(
         assert events[0].headline == "SpaceX launches Starship"
 
 
+@pytest.mark.asyncio
+async def test_event_agent_dedup_by_tcr(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Articles with high token containment ratio to existing events are filtered out."""
+    config = make_config()
+    # Same story, reworded — high TCR but different normalized headline
+    article = _make_article(
+        title="SpaceX Successfully Launches Starship Rocket",
+        url="https://example.com/different-url",
+    )
+    news_tool = _make_mock_news_tool([article])
+
+    mock_ollama.set_response_handler(
+        lambda req, count: mock_ollama._make_text_response(req, json.dumps({"entities": []}))
+    )
+
+    async with running_penny(config) as penny:
+        penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="space news",
+            query_terms='["spacex"]',
+        )
+
+        # Pre-create event — shares most tokens with the new article
+        penny.db.events.add(
+            user=TEST_SENDER,
+            headline="SpaceX Launches Starship",
+            summary="Existing",
+            occurred_at=datetime.now(UTC),
+            source_type=PennyConstants.EventSourceType.NEWS_API,
+            source_url="https://example.com/old-url",
+            external_id="https://example.com/old-url",
+        )
+
+        agent = _create_event_agent(penny, config, news_tool=news_tool)
+        result = await agent.execute()
+
+        assert result is False
+        events = penny.db.events.get_recent(TEST_SENDER, days=7)
+        assert len(events) == 1
+
+
 def test_normalize_headline():
     """Headline normalization strips punctuation and normalizes case."""
     assert _normalize_headline("SpaceX Launches Starship!") == "spacex launches starship"
