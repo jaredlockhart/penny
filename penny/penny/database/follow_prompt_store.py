@@ -58,22 +58,28 @@ class FollowPromptStore:
                 ).all()
             )
 
-    def get_next_to_poll(self) -> FollowPrompt | None:
-        """Get the active prompt that was polled longest ago (round-robin fairness)."""
+    def get_active_by_poll_priority(self) -> list[FollowPrompt]:
+        """Get all active prompts ordered by poll priority (never-polled first, then oldest)."""
         with self._session() as session:
-            never_polled = session.exec(
-                select(FollowPrompt).where(
-                    FollowPrompt.status == "active",
-                    FollowPrompt.last_polled_at == None,  # noqa: E711
-                )
-            ).first()
-            if never_polled:
-                return never_polled
-            return session.exec(
-                select(FollowPrompt)
-                .where(FollowPrompt.status == "active")
-                .order_by(FollowPrompt.last_polled_at.asc())  # type: ignore[unresolved-attribute]
-            ).first()
+            never_polled = list(
+                session.exec(
+                    select(FollowPrompt).where(
+                        FollowPrompt.status == "active",
+                        FollowPrompt.last_polled_at == None,  # noqa: E711
+                    )
+                ).all()
+            )
+            polled = list(
+                session.exec(
+                    select(FollowPrompt)
+                    .where(
+                        FollowPrompt.status == "active",
+                        FollowPrompt.last_polled_at != None,  # noqa: E711
+                    )
+                    .order_by(FollowPrompt.last_polled_at.asc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+            return never_polled + polled
 
     def update_last_polled(self, follow_prompt_id: int) -> None:
         """Record that a follow prompt was just polled."""
