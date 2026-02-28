@@ -29,10 +29,10 @@ async def test_memory_list_ranked_by_interest(
         penny.db.facts.add(entity2.id, "Costs $1,599 per pair")
         penny.db.facts.add(entity2.id, "Uses MAT driver")
 
-        # Strong engagement for entity2 (user_search = 1.0)
+        # Strong engagement for entity2 (explicit_statement = 1.0)
         penny.db.engagements.add(
             user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity2.id,
@@ -52,8 +52,11 @@ async def test_memory_list_ranked_by_interest(
 
         msg = response["message"]
         assert "Your Memory" in msg
-        # Entity2 (score ~1.0) should be ranked above entity1 (score ~0.2)
-        assert "1. **kef ls50 meta** (2 facts, interest: +1.00)" in msg
+        # Entity2 should be ranked above entity1
+        # Scores: interest * log2(unnotified+1) / log2(notified+2)
+        # Entity2: 1.0 * log2(3) / log2(2) ≈ 1.58
+        # Entity1: 0.2 * log2(2) / log2(2) = 0.20
+        assert "1. **kef ls50 meta** (2 facts, interest: +1.58)" in msg
         assert "2. **nvidia jetson** (1 fact, interest: +0.20)" in msg
 
         # Show entity details — #1 is kef (highest interest)

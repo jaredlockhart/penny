@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from datetime import UTC, datetime
 
 from penny.constants import PennyConstants
-from penny.database.models import Engagement
+from penny.database.models import Engagement, Entity, Fact
+from penny.ollama.embeddings import deserialize_embedding, find_similar
 
 
 def _recency_weight(
@@ -87,3 +89,125 @@ def compute_interest_score(
         score += sign * engagement.strength * decay
 
     return score
+
+
+def compute_notification_interest(
+    engagements: list[Engagement],
+    now: datetime | None = None,
+    *,
+    half_life_days: float,
+) -> float:
+    """Compute interest score using only notification-relevant engagement types.
+
+    Filters to NOTIFICATION_ENGAGEMENT_TYPES (excludes USER_SEARCH and
+    SEARCH_DISCOVERY), then delegates to compute_interest_score.
+    """
+    notification_engs = [
+        e for e in engagements if e.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
+    ]
+    return compute_interest_score(notification_engs, now=now, half_life_days=half_life_days)
+
+
+def compute_notification_score(
+    engagements: list[Engagement],
+    unnotified_fact_count: int,
+    notified_fact_count: int,
+    *,
+    half_life_days: float,
+) -> float:
+    """Full notification priority: interest * log2(facts + 1) / fatigue.
+
+    Multiplicative: zero interest means zero score, so discovery-only
+    entities (no explicit user engagement) are never surfaced.
+    """
+    interest = compute_notification_interest(engagements, half_life_days=half_life_days)
+    if interest == 0.0:
+        return 0.0
+    fatigue = math.log2(notified_fact_count + 2)
+    return interest * math.log2(unnotified_fact_count + 1) / fatigue
+
+
+def compute_neighbor_boost(
+    eid: int,
+    entity: Entity,
+    all_interest: dict[int, float],
+    embedding_candidates: list[tuple[int, list[float]]],
+    *,
+    neighbor_k: int,
+    neighbor_min_similarity: float,
+) -> float:
+    """Mean neighbor interest weighted by embedding similarity."""
+    if entity.embedding is None or not embedding_candidates:
+        return 0.0
+
+    query_vec = deserialize_embedding(entity.embedding)
+    neighbors = find_similar(
+        query_vec, embedding_candidates, top_k=neighbor_k + 1, threshold=neighbor_min_similarity
+    )
+    engaged = [
+        (nid, sim) for nid, sim in neighbors if nid != eid and all_interest.get(nid, 0.0) != 0.0
+    ]
+    if not engaged:
+        return 0.0
+
+    weighted = [all_interest[nid] * sim for nid, sim in engaged]
+    return sum(weighted) / len(weighted)
+
+
+def scored_entities_for_user(
+    entities: list[Entity],
+    engagements: list[Engagement],
+    facts_by_entity: dict[int, list[Fact]],
+    notified_counts: dict[int, int],
+    embedding_candidates: list[tuple[int, list[float]]],
+    *,
+    half_life_days: float,
+    neighbor_k: int,
+    neighbor_min_similarity: float,
+    neighbor_factor: float,
+) -> list[tuple[float, Entity]]:
+    """Score entities by full notification priority, sorted by absolute score descending."""
+    engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
+    for eng in engagements:
+        if eng.entity_id is not None:
+            engagements_by_entity[eng.entity_id].append(eng)
+
+    all_interest = _build_interest_map(engagements_by_entity, half_life_days=half_life_days)
+
+    scored: list[tuple[float, Entity]] = []
+    for entity in entities:
+        assert entity.id is not None
+        facts = facts_by_entity.get(entity.id, [])
+        unnotified = sum(1 for f in facts if f.notified_at is None)
+        notified = notified_counts.get(entity.id, 0)
+        base = compute_notification_score(
+            engagements_by_entity.get(entity.id, []),
+            unnotified,
+            notified,
+            half_life_days=half_life_days,
+        )
+        boost = compute_neighbor_boost(
+            entity.id,
+            entity,
+            all_interest,
+            embedding_candidates,
+            neighbor_k=neighbor_k,
+            neighbor_min_similarity=neighbor_min_similarity,
+        )
+        score = base * (1.0 + neighbor_factor * boost)
+        scored.append((score, entity))
+
+    scored.sort(key=lambda x: abs(x[0]), reverse=True)
+    return scored
+
+
+def _build_interest_map(
+    engagements_by_entity: dict[int, list[Engagement]],
+    *,
+    half_life_days: float,
+) -> dict[int, float]:
+    """Precompute notification interest score for every entity with engagements."""
+    return {
+        eid: compute_notification_interest(engs, half_life_days=half_life_days)
+        for eid, engs in engagements_by_entity.items()
+    }

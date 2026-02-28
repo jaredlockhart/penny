@@ -660,8 +660,14 @@ class ExtractionPipeline(Agent):
         source_message_id: int | None,
         notified_at: datetime | None,
     ) -> list[int]:
-        """Pass 2a: extract and store facts for existing entities. Returns IDs with new facts."""
+        """Pass 2a: extract and store facts for existing entities. Returns IDs with new facts.
+
+        Cross-entity dedup: facts stored for earlier entities in this batch are
+        included in the dedup check for later entities, preventing the same fact
+        from being stored under multiple sibling entities from the same content.
+        """
         entities_with_new_facts: list[int] = []
+        batch_facts: list[Fact] = []
         for entity in entities_to_process:
             assert entity.id is not None
             existing_fact_rows = self.db.facts.get_for_entity(entity.id)
@@ -676,11 +682,11 @@ class ExtractionPipeline(Agent):
             if not new_facts:
                 continue
 
-            new_fact_texts = await self._dedup_facts(new_facts, existing_fact_rows)
+            new_fact_texts = await self._dedup_facts(new_facts, existing_fact_rows + batch_facts)
             if not new_fact_texts:
                 continue
 
-            await self._embed_and_store_facts(
+            stored = await self._embed_and_store_facts(
                 entity.id,
                 entity.name,
                 new_fact_texts,
@@ -688,6 +694,7 @@ class ExtractionPipeline(Agent):
                 source_message_id,
                 notified_at,
             )
+            batch_facts.extend(stored)
             entities_with_new_facts.append(entity.id)
         return entities_with_new_facts
 
@@ -699,7 +706,7 @@ class ExtractionPipeline(Agent):
         source_search_log_id: int | None,
         source_message_id: int | None,
         notified_at: datetime | None,
-    ) -> None:
+    ) -> list[Fact]:
         """Batch-embed facts and store them in the database for one entity."""
         fact_embeddings: list[bytes | None] = [None] * len(fact_texts)
         if self._embedding_model_client:
@@ -709,8 +716,9 @@ class ExtractionPipeline(Agent):
             except Exception as e:
                 logger.warning("Failed to embed facts for '%s': %s", entity_name, e)
 
+        stored: list[Fact] = []
         for fact_text, emb in zip(fact_texts, fact_embeddings, strict=True):
-            self.db.facts.add(
+            fact = self.db.facts.add(
                 entity_id=entity_id,
                 content=fact_text,
                 source_search_log_id=source_search_log_id,
@@ -718,7 +726,10 @@ class ExtractionPipeline(Agent):
                 embedding=emb,
                 notified_at=notified_at,
             )
+            if fact is not None:
+                stored.append(fact)
             logger.info("  '%s' +fact: %s", entity_name, fact_text)
+        return stored
 
     async def _extract_candidate_facts(
         self,

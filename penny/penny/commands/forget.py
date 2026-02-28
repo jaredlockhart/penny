@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.database.models import Engagement, Entity
-from penny.interest import compute_interest_score
+from penny.database.models import Entity
+from penny.interest import scored_entities_for_user
+from penny.ollama.embeddings import deserialize_embedding
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -56,26 +56,29 @@ class ForgetCommand(Command):
 
     @staticmethod
     def _scored_entities(context: CommandContext) -> list[tuple[float, Entity]]:
-        """Return (score, entity) pairs sorted by absolute interest score descending."""
+        """Return (score, entity) pairs sorted by notification priority descending."""
         entities = context.db.entities.get_for_user(context.user)
         if not entities:
             return []
-
         all_engagements = context.db.engagements.get_for_user(context.user)
-        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
-        for eng in all_engagements:
-            if eng.entity_id is not None:
-                engagements_by_entity[eng.entity_id].append(eng)
-
-        scored: list[tuple[float, Entity]] = []
-        for entity in entities:
-            assert entity.id is not None
-            entity_engagements = engagements_by_entity.get(entity.id, [])
-            score = compute_interest_score(
-                entity_engagements,
-                half_life_days=context.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-            )
-            scored.append((score, entity))
-
-        scored.sort(key=lambda x: abs(x[0]), reverse=True)
-        return scored
+        facts_by_entity = {
+            e.id: context.db.facts.get_for_entity(e.id) for e in entities if e.id is not None
+        }
+        notified_counts = {eid: context.db.facts.count_notified(eid) for eid in facts_by_entity}
+        embedding_candidates = [
+            (e.id, deserialize_embedding(e.embedding))
+            for e in context.db.entities.get_with_embeddings(context.user)
+            if e.id is not None and e.embedding is not None
+        ]
+        rt = context.config.runtime
+        return scored_entities_for_user(
+            entities,
+            all_engagements,
+            facts_by_entity,
+            notified_counts,
+            embedding_candidates,
+            half_life_days=rt.INTEREST_SCORE_HALF_LIFE_DAYS,
+            neighbor_k=int(rt.NOTIFICATION_NEIGHBOR_K),
+            neighbor_min_similarity=rt.NOTIFICATION_NEIGHBOR_MIN_SIMILARITY,
+            neighbor_factor=rt.NOTIFICATION_NEIGHBOR_FACTOR,
+        )
