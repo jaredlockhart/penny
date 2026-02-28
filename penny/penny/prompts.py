@@ -289,6 +289,37 @@ Examples:
         "- If no genuinely new facts are found, return an empty list"
     )
 
+    # /follow command: parse timing + topic from natural language input
+    FOLLOW_PARSE_PROMPT = """Parse this follow command into structured components.
+
+Extract:
+1. The timing description (e.g., "daily 9:30am", "every monday", "hourly")
+2. The topic text (the subject to monitor for news)
+3. A cron expression representing the timing (use standard cron format)
+   Format: minute hour day month weekday
+
+If no timing is specified, default to "daily" with cron "0 9 * * *".
+
+User timezone: {timezone}
+
+Command: {command}
+
+Return JSON with:
+- timing_description: the natural language timing description you extracted
+- topic_text: the topic to monitor
+- cron_expression: cron expression (5 fields: minute hour day month weekday, use * for "any")
+
+Examples:
+- "daily 9:30am usa news"
+  → timing="daily 9:30am", topic="usa news", cron="30 9 * * *"
+- "every monday morning tech"
+  → timing="every monday morning", topic="tech", cron="0 9 * * 1"
+- "hourly spacex launches"
+  → timing="hourly", topic="spacex launches", cron="0 * * * *"
+- "artificial intelligence"
+  → timing="daily", topic="artificial intelligence", cron="0 9 * * *"
+"""
+
     # /follow command: generate search query terms from a user topic
     FOLLOW_QUERY_TERMS_PROMPT = (
         "Generate search query terms for monitoring news about the given topic.\n"

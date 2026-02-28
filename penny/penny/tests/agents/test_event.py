@@ -380,7 +380,7 @@ async def test_event_agent_polls_hourly_skips_daily(
     test_user_info,
     running_penny,
 ):
-    """Cadence-aware polling: hourly follow is due, daily follow is skipped."""
+    """Cron-aware polling: hourly follow is due, daily follow is skipped."""
     config = make_config()
     articles = [_make_article(url="https://example.com/hourly-article")]
     news_tool = _make_mock_news_tool(articles)
@@ -390,12 +390,13 @@ async def test_event_agent_polls_hourly_skips_daily(
     )
 
     async with running_penny(config) as penny:
-        # Daily follow polled 2 hours ago — not due (needs 24h)
+        # Daily follow polled 2 hours ago — not due (cron period ~24h)
         daily = penny.db.follow_prompts.create(
             user=TEST_SENDER,
             prompt_text="daily topic",
             query_terms='["daily"]',
-            cadence="daily",
+            cron_expression="0 9 * * *",
+            timing_description="daily",
         )
         assert daily is not None and daily.id is not None
         penny.db.follow_prompts.update_last_polled(daily.id)
@@ -407,12 +408,13 @@ async def test_event_agent_polls_hourly_skips_daily(
             session.add(row)
             session.commit()
 
-        # Hourly follow polled 2 hours ago — due (needs 1h)
+        # Hourly follow polled 2 hours ago — due (cron period ~1h)
         hourly = penny.db.follow_prompts.create(
             user=TEST_SENDER,
             prompt_text="hourly topic",
             query_terms='["hourly"]',
-            cadence="hourly",
+            cron_expression="0 * * * *",
+            timing_description="hourly",
         )
         assert hourly is not None and hourly.id is not None
         penny.db.follow_prompts.update_last_polled(hourly.id)
@@ -441,7 +443,7 @@ async def test_event_agent_polls_hourly_skips_daily(
         hourly_elapsed = (datetime.now(UTC) - hourly_polled).total_seconds()
         daily_elapsed = (datetime.now(UTC) - daily_polled).total_seconds()
         assert hourly_elapsed < 10  # just polled
-        assert daily_elapsed > PennyConstants.FOLLOW_CADENCE_SECONDS["hourly"]  # still ~2h ago
+        assert daily_elapsed > 3600  # still ~2h ago (more than 1h hourly period)
 
 
 def test_normalize_headline():

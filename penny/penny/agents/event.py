@@ -8,6 +8,7 @@ import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
 
+from croniter import croniter
 from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
@@ -26,6 +27,15 @@ from penny.tools.news import NewsArticle, NewsTool
 logger = logging.getLogger(__name__)
 
 _HEADLINE_STRIP_RE = re.compile(r"[^a-z0-9\s]")
+
+
+def _cron_period_seconds(cron_expression: str) -> float:
+    """Compute the typical period between consecutive cron firings."""
+    now = datetime.now(UTC)
+    cron = croniter(cron_expression, now)
+    first = cron.get_next(datetime)
+    second = cron.get_next(datetime)
+    return (second - first).total_seconds()
 
 
 class ExtractedEntities(BaseModel):
@@ -91,13 +101,10 @@ class EventAgent(Agent):
         return None
 
     def _poll_interval_elapsed(self, prompt: FollowPrompt) -> bool:
-        """Check if the prompt's cadence interval has elapsed since last poll."""
+        """Check if the prompt's cron-derived interval has elapsed since last poll."""
         if prompt.last_polled_at is None:
             return True
-        interval = PennyConstants.FOLLOW_CADENCE_SECONDS.get(
-            prompt.cadence,
-            PennyConstants.FOLLOW_CADENCE_SECONDS[PennyConstants.FOLLOW_DEFAULT_CADENCE],
-        )
+        interval = _cron_period_seconds(prompt.cron_expression)
         last = prompt.last_polled_at
         if last.tzinfo is None:
             last = last.replace(tzinfo=UTC)

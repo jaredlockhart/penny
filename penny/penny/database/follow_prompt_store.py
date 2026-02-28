@@ -20,7 +20,13 @@ class FollowPromptStore:
         return Session(self.engine)
 
     def create(
-        self, user: str, prompt_text: str, query_terms: str, cadence: str = "daily"
+        self,
+        user: str,
+        prompt_text: str,
+        query_terms: str,
+        cron_expression: str = "0 9 * * *",
+        timing_description: str = "daily",
+        user_timezone: str = "UTC",
     ) -> FollowPrompt | None:
         """Create a new follow prompt. Returns the created FollowPrompt, or None on failure."""
         try:
@@ -29,7 +35,9 @@ class FollowPromptStore:
                     user=user,
                     prompt_text=prompt_text,
                     query_terms=query_terms,
-                    cadence=cadence,
+                    cron_expression=cron_expression,
+                    timing_description=timing_description,
+                    user_timezone=user_timezone,
                     created_at=datetime.now(UTC),
                     updated_at=datetime.now(UTC),
                 )

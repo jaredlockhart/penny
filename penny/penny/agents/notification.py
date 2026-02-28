@@ -17,6 +17,9 @@ import math
 import random
 from collections import defaultdict
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
+
+from croniter import croniter
 
 from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
@@ -244,9 +247,9 @@ class NotificationAgent(Agent):
     def _find_due_follow_prompt(self, user: str) -> FollowPrompt | None:
         """Find the most overdue follow prompt for a user.
 
-        Iterates active follow prompts, checks if enough time has elapsed
-        since last_notified_at based on each prompt's cadence. Returns the
-        prompt with the greatest overdue ratio, or None if none are due.
+        Uses each prompt's cron expression to determine if a firing has been
+        missed since last_notified_at. Returns the prompt with the greatest
+        overdue ratio, or None if none are due.
         """
         follows = self.db.follow_prompts.get_active(user)
         if not follows:
@@ -255,38 +258,54 @@ class NotificationAgent(Agent):
         best: FollowPrompt | None = None
         best_overdue = 0.0
 
-        default_seconds = PennyConstants.FOLLOW_CADENCE_SECONDS[
-            PennyConstants.FOLLOW_DEFAULT_CADENCE
-        ]
-
         for fp in follows:
-            cadence_seconds = PennyConstants.FOLLOW_CADENCE_SECONDS.get(fp.cadence, default_seconds)
-
-            if fp.last_notified_at is None:
-                # Never notified — always due immediately
-                overdue_ratio = float("inf")
-            else:
-                last = fp.last_notified_at
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=UTC)
-                elapsed = (datetime.now(UTC) - last).total_seconds()
-                if elapsed < cadence_seconds:
-                    continue
-                overdue_ratio = elapsed / cadence_seconds
-
+            overdue_ratio = self._compute_overdue_ratio(fp)
+            if overdue_ratio is None:
+                continue
             if overdue_ratio > best_overdue:
                 best_overdue = overdue_ratio
                 best = fp
 
         if best is not None:
             logger.debug(
-                "Event notification: follow prompt '%s' is due (%.1fx overdue, cadence=%s)",
+                "Event notification: follow prompt '%s' is due (%.1fx overdue, timing=%s)",
                 best.prompt_text[:50],
                 best_overdue,
-                best.cadence,
+                best.timing_description,
             )
 
         return best
+
+    def _compute_overdue_ratio(self, fp: FollowPrompt) -> float | None:
+        """Compute how overdue a follow prompt is, or None if not yet due.
+
+        Returns infinity for never-notified prompts. For others, checks if
+        the cron expression has fired since last_notified_at and returns
+        the overdue ratio (elapsed_since_firing / cron_period).
+        """
+        if fp.last_notified_at is None:
+            return float("inf")
+
+        tz = ZoneInfo(fp.user_timezone) if fp.user_timezone else UTC
+        now_local = datetime.now(tz)
+
+        last = fp.last_notified_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        last_local = last.astimezone(tz)
+
+        # Find the next cron firing after the last notification
+        cron = croniter(fp.cron_expression, last_local)
+        next_firing = cron.get_next(datetime)
+
+        if next_firing > now_local:
+            return None  # Not due yet
+
+        # Compute overdue ratio: how far past the firing are we, relative to cron period
+        second_firing = cron.get_next(datetime)
+        period = (second_firing - next_firing).total_seconds()
+        elapsed_since_firing = (now_local - next_firing).total_seconds()
+        return elapsed_since_firing / period if period > 0 else float("inf")
 
     def _pick_best_event(self, user: str, events: list[Event]) -> Event | None:
         """Score events by entity interest + timeliness, return the best one."""
