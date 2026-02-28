@@ -102,19 +102,17 @@ class FollowPromptStore:
             logger.error("Failed to update follow prompt %d last_notified: %s", follow_prompt_id, e)
 
     def cancel(self, follow_prompt_id: int) -> bool:
-        """Cancel a follow prompt. Returns True if cancelled, False if not found."""
+        """Delete a follow prompt. Returns True if deleted, False if not found."""
         try:
             with self._session() as session:
                 prompt = session.get(FollowPrompt, follow_prompt_id)
                 if not prompt:
                     return False
-                prompt.status = "cancelled"
-                prompt.updated_at = datetime.now(UTC)
-                session.add(prompt)
+                session.delete(prompt)
                 session.commit()
                 return True
         except Exception as e:
-            logger.error("Failed to cancel follow prompt %d: %s", follow_prompt_id, e)
+            logger.error("Failed to delete follow prompt %d: %s", follow_prompt_id, e)
             return False
 
     def get_for_user(self, user: str) -> list[FollowPrompt]:
