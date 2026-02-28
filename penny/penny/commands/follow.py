@@ -9,10 +9,13 @@ from pydantic import BaseModel, Field
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
+from penny.constants import PennyConstants
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
+
+_CADENCE_VALUES = frozenset(c.value for c in PennyConstants.FollowCadence)
 
 
 class QueryTermsResult(BaseModel):
@@ -30,10 +33,12 @@ class FollowCommand(Command):
         "Start monitoring a topic for news and events.\n\n"
         "**Usage**:\n"
         "• `/follow` — List your active subscriptions\n"
-        "• `/follow <topic>` — Start following a topic\n\n"
+        "• `/follow <topic>` — Start following a topic (daily updates by default)\n"
+        "• `/follow hourly|daily|weekly <topic>` — Follow with a specific cadence\n\n"
         "**Examples**:\n"
         "• `/follow artificial intelligence`\n"
-        "• `/follow spacex launches`"
+        "• `/follow hourly spacex launches`\n"
+        "• `/follow weekly climate policy`"
     )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
@@ -46,7 +51,21 @@ class FollowCommand(Command):
         if not topic:
             return self._list_follows(context)
 
-        return await self._follow_topic(topic, context)
+        cadence, topic = self._parse_cadence(topic)
+        return await self._follow_topic(topic, cadence, context)
+
+    def _parse_cadence(self, text: str) -> tuple[str, str]:
+        """Extract optional cadence prefix from topic text.
+
+        Returns (cadence, remaining_topic). Defaults to FOLLOW_DEFAULT_CADENCE
+        if no cadence keyword is found.
+        """
+        parts = text.split(None, 1)
+        if parts and parts[0].lower() in _CADENCE_VALUES:
+            cadence = parts[0].lower()
+            topic = parts[1] if len(parts) > 1 else ""
+            return cadence, topic.strip()
+        return PennyConstants.FOLLOW_DEFAULT_CADENCE, text
 
     def _list_follows(self, context: CommandContext) -> CommandResult:
         """List active follow subscriptions."""
@@ -57,11 +76,13 @@ class FollowCommand(Command):
         lines = [PennyResponse.FOLLOW_LIST_HEADER, ""]
         for i, fp in enumerate(follows, 1):
             date = fp.created_at.strftime("%Y-%m-%d")
-            lines.append(f"{i}. **{fp.prompt_text}** — since {date}")
+            lines.append(f"{i}. **{fp.prompt_text}** ({fp.cadence}) — since {date}")
 
         return CommandResult(text="\n".join(lines))
 
-    async def _follow_topic(self, topic: str, context: CommandContext) -> CommandResult:
+    async def _follow_topic(
+        self, topic: str, cadence: str, context: CommandContext
+    ) -> CommandResult:
         """Generate query terms via LLM and create a FollowPrompt."""
         query_terms = await self._generate_query_terms(topic, context)
         if query_terms is None:
@@ -71,8 +92,11 @@ class FollowCommand(Command):
             user=context.user,
             prompt_text=topic,
             query_terms=json.dumps(query_terms),
+            cadence=cadence,
         )
-        return CommandResult(text=PennyResponse.FOLLOW_ACKNOWLEDGED.format(topic=topic))
+        return CommandResult(
+            text=PennyResponse.FOLLOW_ACKNOWLEDGED.format(topic=topic, cadence=cadence)
+        )
 
     async def _generate_query_terms(self, topic: str, context: CommandContext) -> list[str] | None:
         """Use the foreground model to generate search query terms for a topic."""

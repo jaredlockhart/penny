@@ -19,7 +19,9 @@ class FollowPromptStore:
     def _session(self) -> Session:
         return Session(self.engine)
 
-    def create(self, user: str, prompt_text: str, query_terms: str) -> FollowPrompt | None:
+    def create(
+        self, user: str, prompt_text: str, query_terms: str, cadence: str = "daily"
+    ) -> FollowPrompt | None:
         """Create a new follow prompt. Returns the created FollowPrompt, or None on failure."""
         try:
             with self._session() as session:
@@ -27,6 +29,7 @@ class FollowPromptStore:
                     user=user,
                     prompt_text=prompt_text,
                     query_terms=query_terms,
+                    cadence=cadence,
                     created_at=datetime.now(UTC),
                     updated_at=datetime.now(UTC),
                 )
@@ -84,6 +87,19 @@ class FollowPromptStore:
                     session.commit()
         except Exception as e:
             logger.error("Failed to update follow prompt %d last_polled: %s", follow_prompt_id, e)
+
+    def update_last_notified(self, follow_prompt_id: int) -> None:
+        """Record that a follow prompt just triggered a notification."""
+        try:
+            with self._session() as session:
+                prompt = session.get(FollowPrompt, follow_prompt_id)
+                if prompt:
+                    prompt.last_notified_at = datetime.now(UTC)
+                    prompt.updated_at = datetime.now(UTC)
+                    session.add(prompt)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update follow prompt %d last_notified: %s", follow_prompt_id, e)
 
     def cancel(self, follow_prompt_id: int) -> bool:
         """Cancel a follow prompt. Returns True if cancelled, False if not found."""
