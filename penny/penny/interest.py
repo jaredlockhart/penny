@@ -197,7 +197,7 @@ def scored_entities_for_user(
         score = base * (1.0 + neighbor_factor * boost)
         scored.append((score, entity))
 
-    scored.sort(key=lambda x: abs(x[0]), reverse=True)
+    scored.sort(key=lambda x: x[0], reverse=True)
     return scored
 
 
