@@ -125,12 +125,12 @@ async def test_unfollow_no_args_lists(signal_server, mock_ollama, make_config, r
 
 
 @pytest.mark.asyncio
-async def test_follow_not_registered_without_api_key(
+async def test_follow_without_api_key_shows_config_error(
     signal_server, mock_ollama, test_config, running_penny
 ):
-    """/follow is not available when NEWS_API_KEY is not configured."""
+    """/follow without NEWS_API_KEY tells user to configure it."""
     async with running_penny(test_config) as _penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/follow AI")
         response = await signal_server.wait_for_message(timeout=5.0)
 
-        assert "Unknown command" in response["message"]
+        assert "NEWS_API_KEY" in response["message"]

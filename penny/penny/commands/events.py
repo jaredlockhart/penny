@@ -25,6 +25,9 @@ class EventsCommand(Command):
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         """Route to list or detail based on args."""
+        if not context.config.news_api_key:
+            return CommandResult(text=PennyResponse.NEWS_NOT_CONFIGURED)
+
         args = args.strip()
 
         events = context.db.events.get_recent(context.user)
