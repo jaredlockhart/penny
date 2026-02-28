@@ -324,6 +324,69 @@ async def test_event_agent_filters_irrelevant_articles(
 
 
 @pytest.mark.asyncio
+async def test_event_agent_tag_fallback_rescues_broad_topic(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Tag extraction rescues articles whose title doesn't embed close to a broad topic.
+
+    When the title embedding scores below the threshold, the agent extracts
+    topic tags via the LLM and checks those against the topic instead.
+    """
+    config = make_config()
+    articles = [
+        _make_article(
+            title="Regeneron Renews Sponsorship of Science Talent Search",
+            url="https://example.com/regeneron",
+        ),
+    ]
+    news_tool = _make_mock_news_tool(articles)
+
+    # Title embedding is orthogonal to topic (fails 0.40 threshold),
+    # but the extracted tags embedding is similar (passes).
+    topic_vec = [1.0, 0.0, 0.0]
+    title_vec = [0.1, 0.0, 0.9]  # cosine ~0.11 with topic — fails
+    tags_vec = [0.9, 0.1, 0.0]  # cosine ~0.99 with topic — passes
+
+    embed_responses = {
+        "science": [topic_vec],
+        "Regeneron Renews Sponsorship of Science Talent Search": [title_vec],
+        "science, education, regeneron": [tags_vec],
+    }
+    embedding_client = AsyncMock()
+    embedding_client.embed = AsyncMock(side_effect=lambda text: embed_responses[text])
+
+    def handler(request: dict, count: int) -> dict:
+        content = request.get("messages", [{}])[-1].get("content", "")
+        if "Extract 2-4 one-word topic tags" in content:
+            return mock_ollama._make_text_response(request, '["science", "education", "regeneron"]')
+        return mock_ollama._make_text_response(request, json.dumps({"entities": []}))
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="science",
+            query_terms='["science news", "scientific research"]',
+        )
+
+        agent = _create_event_agent(
+            penny, config, news_tool=news_tool, embedding_model_client=embedding_client
+        )
+        result = await agent.execute()
+
+        assert result is True
+        events = penny.db.events.get_recent(TEST_SENDER, days=7)
+        assert len(events) == 1
+        assert "Regeneron" in events[0].headline
+
+
+@pytest.mark.asyncio
 async def test_event_agent_dedup_by_tcr(
     signal_server,
     mock_ollama,

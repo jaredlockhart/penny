@@ -1424,6 +1424,74 @@ async def test_event_and_fact_notifications_independent(
 
 
 @pytest.mark.asyncio
+async def test_event_notification_empty_prompt_does_not_starve_siblings(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """A follow prompt with no events must not block other prompts that have events.
+
+    Regression test: previously _find_due_follow_prompt returned a single most-
+    overdue prompt. If that prompt had no unnotified events the agent bailed
+    without trying any other prompts, starving siblings indefinitely.
+    """
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Here's a heads up about some interesting news I saw recently!"
+            " This looks like something you'd want to know about.",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        # Prompt A: overdue but has NO unnotified events
+        fp_empty = penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="empty topic",
+            query_terms='["empty"]',
+        )
+        assert fp_empty is not None and fp_empty.id is not None
+
+        # Prompt B: also overdue and HAS an unnotified event
+        fp_with_events = penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="active topic",
+            query_terms='["active"]',
+        )
+        assert fp_with_events is not None and fp_with_events.id is not None
+
+        penny.db.events.add(
+            user=TEST_SENDER,
+            headline="Something happened",
+            summary="An event for the active topic.",
+            occurred_at=datetime.now(UTC),
+            source_type=PennyConstants.EventSourceType.NEWS_API,
+            source_url="https://example.com/active",
+            external_id="https://example.com/active",
+            follow_prompt_id=fp_with_events.id,
+        )
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+
+        # The active topic's event should still be sent
+        assert result is True
+        assert len(signal_server.outgoing_messages) >= 1
+
+
+@pytest.mark.asyncio
 async def test_notification_neighbor_boost_shifts_selection(
     signal_server,
     mock_ollama,
