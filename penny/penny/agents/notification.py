@@ -215,17 +215,25 @@ class NotificationAgent(Agent):
     # --- Event notifications ---
 
     async def _try_event_notification(self, user: str) -> bool:
-        """Check for a due follow prompt and send one event notification.
+        """Send one event notification per due follow prompt.
 
-        Each follow prompt has its own cadence (hourly/daily/weekly). Finds
-        the most overdue prompt, picks the best unnotified event for it,
-        sends the notification, and updates the prompt's last_notified_at.
-        Independent of fact notification backoff.
+        Each follow prompt has its own cadence (hourly/daily/weekly) and is
+        processed independently — one prompt having no events never blocks
+        another. Returns True if any notification was sent.
         """
-        prompt = self._find_due_follow_prompt(user)
-        if prompt is None:
+        due_prompts = self._find_due_follow_prompts(user)
+        if not due_prompts:
             return False
 
+        any_sent = False
+        for prompt in due_prompts:
+            sent = await self._try_single_follow_notification(user, prompt)
+            if sent:
+                any_sent = True
+        return any_sent
+
+    async def _try_single_follow_notification(self, user: str, prompt: FollowPrompt) -> bool:
+        """Try to send one event notification for a single follow prompt."""
         assert prompt.id is not None
         unnotified = self.db.events.get_unnotified_for_follow_prompt(prompt.id)
         if not unnotified:
@@ -244,37 +252,34 @@ class NotificationAgent(Agent):
         self.db.follow_prompts.update_last_notified(prompt.id)
         return True
 
-    def _find_due_follow_prompt(self, user: str) -> FollowPrompt | None:
-        """Find the most overdue follow prompt for a user.
+    def _find_due_follow_prompts(self, user: str) -> list[FollowPrompt]:
+        """Find all overdue follow prompts for a user, most overdue first.
 
         Uses each prompt's cron expression to determine if a firing has been
-        missed since last_notified_at. Returns the prompt with the greatest
-        overdue ratio, or None if none are due.
+        missed since last_notified_at. Each prompt is independent — one having
+        no events must never block another.
         """
         follows = self.db.follow_prompts.get_active(user)
         if not follows:
-            return None
+            return []
 
-        best: FollowPrompt | None = None
-        best_overdue = 0.0
-
+        due: list[tuple[float, FollowPrompt]] = []
         for fp in follows:
             overdue_ratio = self._compute_overdue_ratio(fp)
-            if overdue_ratio is None:
-                continue
-            if overdue_ratio > best_overdue:
-                best_overdue = overdue_ratio
-                best = fp
+            if overdue_ratio is not None:
+                due.append((overdue_ratio, fp))
 
-        if best is not None:
+        due.sort(key=lambda x: x[0], reverse=True)
+
+        for overdue_ratio, fp in due:
             logger.debug(
                 "Event notification: follow prompt '%s' is due (%.1fx overdue, timing=%s)",
-                best.prompt_text[:50],
-                best_overdue,
-                best.timing_description,
+                fp.prompt_text[:50],
+                overdue_ratio,
+                fp.timing_description,
             )
 
-        return best
+        return [fp for _, fp in due]
 
     def _compute_overdue_ratio(self, fp: FollowPrompt) -> float | None:
         """Compute how overdue a follow prompt is, or None if not yet due.

@@ -335,6 +335,17 @@ Examples:
         "Return only the JSON object, no explanations."
     )
 
+    # Event agent: extract topic tags from a headline for relevance matching
+    EVENT_TAG_EXTRACTION_PROMPT = (
+        "Extract 2-4 one-word topic tags from this headline. "
+        "Return ONLY a JSON list of lowercase strings.\n"
+        'Example: "Recent breakthroughs in quantum biology"'
+        ' -> ["science", "biology", "quantum"]\n'
+        'Example: "Tesla stock surges after record deliveries"'
+        ' -> ["business", "automotive", "tesla"]\n\n'
+        'Headline: "{headline}"'
+    )
+
     # Event agent: extract entity names from a news article
     EVENT_ENTITY_EXTRACTION_PROMPT = (
         "Identify named entities mentioned in the following news article.\n"

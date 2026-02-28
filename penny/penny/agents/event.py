@@ -130,7 +130,14 @@ class EventAgent(Agent):
     async def _filter_relevant(
         self, articles: list[NewsArticle], follow_prompt: FollowPrompt
     ) -> list[NewsArticle]:
-        """Filter articles by embedding similarity to the follow prompt topic."""
+        """Filter articles by embedding similarity to the follow prompt topic.
+
+        Two-pass: first checks title embedding against the topic. If that
+        fails, extracts topic tags from the headline via the LLM and
+        checks those against the topic. This handles broad topics like
+        "science" where specific article titles don't embed close to the
+        bare topic word.
+        """
         topic_vec = await embed_text(self._embedding_model_client, follow_prompt.prompt_text)
         if topic_vec is None:
             return articles  # No embedding model — pass all through
@@ -138,11 +145,7 @@ class EventAgent(Agent):
         threshold = self.config.runtime.EVENT_RELEVANCE_THRESHOLD
         relevant: list[NewsArticle] = []
         for article in articles:
-            article_vec = await embed_text(self._embedding_model_client, article.title)
-            if (
-                article_vec is None
-                or check_relevance(article_vec, topic_vec, threshold) is not None
-            ):
+            if await self._is_relevant(article, topic_vec, threshold):
                 relevant.append(article)
             else:
                 logger.debug("Relevance: rejected '%s' (below %.2f)", article.title[:60], threshold)
@@ -154,6 +157,36 @@ class EventAgent(Agent):
             follow_prompt.prompt_text,
         )
         return relevant
+
+    async def _is_relevant(
+        self, article: NewsArticle, topic_vec: list[float], threshold: float
+    ) -> bool:
+        """Check if an article is relevant via title embedding, then tag fallback."""
+        article_vec = await embed_text(self._embedding_model_client, article.title)
+        if article_vec is None:
+            return True  # Can't embed — let it through
+        if check_relevance(article_vec, topic_vec, threshold) is not None:
+            return True
+        # Title didn't match — try extracting topic tags from the headline
+        tags_vec = await self._extract_tag_embedding(article.title)
+        if tags_vec is None:
+            return False
+        return check_relevance(tags_vec, topic_vec, threshold) is not None
+
+    async def _extract_tag_embedding(self, headline: str) -> list[float] | None:
+        """Extract topic tags from a headline and return their embedding."""
+        prompt = Prompt.EVENT_TAG_EXTRACTION_PROMPT.format(headline=headline)
+        try:
+            response = await self._background_model_client.chat(
+                [{"role": "user", "content": prompt}]
+            )
+            tags = json.loads(response.message.content.strip())
+            if not isinstance(tags, list) or not tags:
+                return None
+            return await embed_text(self._embedding_model_client, ", ".join(tags))
+        except Exception:
+            logger.debug("Tag extraction failed for '%s'", headline[:60])
+            return None
 
     # --- Dedup ---
 
