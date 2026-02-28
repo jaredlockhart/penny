@@ -228,9 +228,9 @@ ConfigParam(
 
 ConfigParam(
     key="INTEREST_SCORE_HALF_LIFE_DAYS",
-    description="Half-life in days for interest score recency decay",
+    description="Half-life in days for loyalty recency decay",
     type=float,
-    default=30.0,
+    default=14.0,
     validator=_validate_positive_float,
     group=GROUP_KNOWLEDGE,
 )
@@ -438,29 +438,20 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="NOTIFICATION_NEIGHBOR_K",
-    description="Max neighbors to consider for embedding-based neighbor boosting",
+    key="NOTIFICATION_LOYAL_POOL_SIZE",
+    description="Number of top loyal entities used for novelty similarity scoring",
     type=int,
-    default=3,
+    default=15,
     validator=_validate_positive_int,
     group=GROUP_NOTIFICATION,
 )
 
 ConfigParam(
-    key="NOTIFICATION_NEIGHBOR_MIN_SIMILARITY",
-    description="Cosine similarity threshold for neighbor boosting",
+    key="NOTIFICATION_NOVELTY_WEIGHT",
+    description="Weight for novelty bonus (similarity to loyal entities * freshness)",
     type=float,
     default=0.5,
-    validator=_validate_unit_float,
-    group=GROUP_NOTIFICATION,
-)
-
-ConfigParam(
-    key="NOTIFICATION_NEIGHBOR_FACTOR",
-    description="Multiplicative scaling factor for neighbor interest boost",
-    type=float,
-    default=0.3,
-    validator=_validate_unit_float,
+    validator=_validate_positive_float,
     group=GROUP_NOTIFICATION,
 )
 

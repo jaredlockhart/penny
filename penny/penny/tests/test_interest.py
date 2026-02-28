@@ -11,6 +11,7 @@ from penny.interest import (
     _recency_weight,
     _valence_sign,
     compute_interest_score,
+    compute_loyalty_score,
     compute_notification_interest,
 )
 
@@ -238,3 +239,132 @@ class TestComputeNotificationInterest:
         )
         score = compute_notification_interest([search, mention], now=now, half_life_days=_HALF_LIFE)
         assert score == pytest.approx(0.3)
+
+
+class TestComputeLoyaltyScore:
+    """Tests for day-based loyalty scoring."""
+
+    def test_no_engagements_returns_zero(self):
+        assert compute_loyalty_score([], fact_count=5, half_life_days=_HALF_LIFE) == 0.0
+
+    def test_search_only_counts_at_half_weight_day(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        eng = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            created_at=now,
+        )
+        score = compute_loyalty_score([eng], fact_count=10, now=now, half_life_days=_HALF_LIFE)
+        # 0.5 day (search at half weight) * 0.3 (default strength) * 1.0 (recency) = 0.15
+        assert score == pytest.approx(0.15)
+
+    def test_no_positive_no_negative_no_search_returns_zero(self):
+        assert compute_loyalty_score([], fact_count=5, half_life_days=_HALF_LIFE) == 0.0
+
+    def test_single_positive_day(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        eng = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            created_at=now,
+        )
+        score = compute_loyalty_score([eng], fact_count=5, now=now, half_life_days=_HALF_LIFE)
+        # 1 day * 0.5 strength * 1.0 recency = 0.5
+        assert score == pytest.approx(0.5)
+
+    def test_multi_day_engagement_scores_higher(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        day1 = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            created_at=now,
+        )
+        day2 = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            created_at=now - timedelta(days=1),
+        )
+        single = compute_loyalty_score([day1], fact_count=5, now=now, half_life_days=_HALF_LIFE)
+        multi = compute_loyalty_score(
+            [day1, day2], fact_count=5, now=now, half_life_days=_HALF_LIFE
+        )
+        assert multi > single
+
+    def test_search_days_count_at_half_weight(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        mention = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            created_at=now,
+        )
+        search = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=1.0,
+            created_at=now - timedelta(days=1),
+        )
+        mention_only = compute_loyalty_score(
+            [mention], fact_count=5, now=now, half_life_days=_HALF_LIFE
+        )
+        with_search = compute_loyalty_score(
+            [mention, search], fact_count=5, now=now, half_life_days=_HALF_LIFE
+        )
+        # Search on a different day adds 0.5 to distinct_days
+        assert with_search > mention_only
+
+    def test_negative_days_reduce_score(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        positive = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            created_at=now,
+        )
+        negative = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+            valence=PennyConstants.EngagementValence.NEGATIVE,
+            strength=0.8,
+            created_at=now - timedelta(days=1),
+        )
+        pos_only = compute_loyalty_score(
+            [positive], fact_count=5, now=now, half_life_days=_HALF_LIFE
+        )
+        with_neg = compute_loyalty_score(
+            [positive, negative], fact_count=5, now=now, half_life_days=_HALF_LIFE
+        )
+        assert with_neg < pos_only
+
+    def test_recency_decay_reduces_old_engagement(self):
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        recent = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            created_at=now,
+        )
+        old = Engagement(
+            user=_DEFAULT_USER,
+            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
+            valence=PennyConstants.EngagementValence.POSITIVE,
+            strength=0.5,
+            created_at=now - timedelta(days=30),
+        )
+        recent_score = compute_loyalty_score(
+            [recent], fact_count=5, now=now, half_life_days=_HALF_LIFE
+        )
+        old_score = compute_loyalty_score([old], fact_count=5, now=now, half_life_days=_HALF_LIFE)
+        assert recent_score > old_score
