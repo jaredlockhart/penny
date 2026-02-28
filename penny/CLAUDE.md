@@ -34,6 +34,9 @@ flowchart TD
         Enrich -->|search| Search2[SearchTool]
         Search2 -.->|"new SearchLogs<br>trigger=enrichment"| DB
 
+        EventAg[EventAgent] -->|poll| NewsAPI["NewsAPI.org"]
+        EventAg -.->|"new Events<br>+ entity links"| DB
+
         LearnWorker[LearnAgent] -->|search| Search3[SearchTool]
         Search3 -.->|"new SearchLogs<br>trigger=learn_command"| DB
 
@@ -44,7 +47,7 @@ flowchart TD
     end
 
     DB -.->|"unprocessed<br>messages & searches"| P1
-    DB -.->|"un-notified facts<br>+ interest scores"| Notify
+    DB -.->|"un-notified facts<br>& events + interest"| Notify
     Notify -->|"proactive message<br>(with backoff)"| Channel
 
     User -.->|"resets idle<br>cancels background"| Scheduler
@@ -67,7 +70,7 @@ flowchart TD
 penny/
   penny.py            — Entry point. Penny class: creates agents, channel, scheduler
   config.py           — Config dataclass loaded from .env, channel auto-detection
-  config_params.py    — ConfigParam definitions for 38 runtime-configurable settings
+  config_params.py    — ConfigParam definitions for 42 runtime-configurable settings
   constants.py        — System prompt, research prompts, engagement/trigger enums
   interest.py         — Interest score computation (pure function, half-life decay)
   prompts.py          — LLM prompt templates (extraction, learn queries, notifications)
@@ -80,8 +83,9 @@ penny/
     message.py        — MessageAgent: handles incoming user messages
     extraction.py     — ExtractionPipeline: unified entity/fact extraction from search results and messages (no notifications)
     enrich.py         — EnrichAgent: adaptive background research driven by interest scores (no notifications)
+    event.py          — EventAgent: polls NewsAPI for followed topics, creates events, links entities
     learn.py          — LearnAgent: scheduled worker for /learn command — one search step per tick
-    notification.py   — NotificationAgent: interest-ranked fact discovery notifications with backoff
+    notification.py   — NotificationAgent: proactive notifications (learn completions, events, fact discoveries)
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
     schedules.py      — PeriodicSchedule, AlwaysRunSchedule, DelayedSchedule implementations
@@ -103,10 +107,14 @@ penny/
     bug.py            — /bug: file GitHub issues (optional, requires GitHub App)
     feature.py        — /feature: file GitHub feature requests (optional, requires GitHub App)
     email.py          — /email: search Fastmail email via JMAP (optional)
+    follow.py         — /follow: subscribe to news monitoring for a topic (optional, requires NEWS_API_KEY)
+    unfollow.py       — /unfollow: cancel a follow subscription (optional, requires NEWS_API_KEY)
+    events.py         — /events: view recent discovered events (optional, requires NEWS_API_KEY)
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult
     builtin.py        — SearchTool (Perplexity text + Serper images, run in parallel)
+    news.py           — NewsTool: NewsAPI.org client for structured news articles
     email.py          — SearchEmailsTool, ReadEmailTool (Fastmail JMAP)
   jmap/
     client.py         — JmapClient: Fastmail JMAP API client (httpx)
@@ -128,10 +136,12 @@ penny/
     learn_prompt_store.py — LearnPromptStore: create, get, delete, lifecycle
     search_store.py   — SearchStore: log, get, get_by_learn_prompt, mark_extracted
     engagement_store.py — EngagementStore: add, get_for_entity, get_for_user
+    event_store.py    — EventStore: add, get_recent, get_unnotified, link_entity, mark_notified
+    follow_prompt_store.py — FollowPromptStore: create, get_active, get_next_to_poll, cancel
     user_store.py     — UserStore: get_info, save_info, mute/unmute
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0023)
+    migrations/       — Numbered migration files (0001–0029)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client
     models.py         — ChatResponse, ChatResponseMessage
@@ -144,13 +154,13 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + Serper image search monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_extraction.py, test_enrich.py, test_notification.py
+      test_message.py, test_extraction.py, test_enrich.py, test_event.py, test_notification.py, test_learn.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py,
       test_signal_formatting.py, test_startup_announcement.py
     commands/         — Per-command tests
       test_commands.py, test_config.py, test_debug.py, test_draw.py, test_email.py,
-      test_feature.py, test_learn.py, test_memory.py,
+      test_events.py, test_feature.py, test_follow.py, test_learn.py, test_memory.py,
       test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
@@ -214,6 +224,14 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Does NOT send notifications — the NotificationAgent handles all proactive messaging
 - Learn prompts and their searches processed oldest-first (ORDER BY created_at/timestamp ASC)
 
+**EventAgent** (`agents/event.py`)
+- Background agent that polls NewsAPI.org for followed topics
+- Only instantiated if `NEWS_API_KEY` is configured
+- Each `execute()` call: gets next FollowPrompt (round-robin by `last_polled_at`), queries NewsAPI, deduplicates, creates Events, links entities
+- Three-layer dedup: URL match → normalized headline → embedding cosine similarity (0.90 threshold, 7-day window)
+- Entity linking: LLM extracts entity names from articles (full mode — creates new entities via `get_or_create`)
+- Config: `EVENT_POLL_INTERVAL` (3600s), `EVENT_DEDUP_SIMILARITY_THRESHOLD` (0.90), `EVENT_DEDUP_WINDOW_DAYS` (7)
+
 **LearnAgent** (`agents/learn.py`)
 - Scheduled worker that processes `/learn` prompts one search step at a time
 - Runs on its own PeriodicSchedule (after ExtractionPipeline in priority order)
@@ -242,16 +260,15 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 **NotificationAgent** (`agents/notification.py`)
 - Single agent that owns ALL proactive messaging to users
 - Runs on its own PeriodicSchedule (highest background priority — announces before new work starts)
-- Queries for un-notified facts (`notified_at IS NULL`), groups by entity
-- Picks the highest-interest entity using `compute_interest_score()`
+- Three notification streams, checked in priority order each cycle:
+  1. **Learn completions** (bypass backoff): announces when all searches for a `/learn` topic finish extraction
+  2. **Event notifications** (respect backoff): sends heads-up about unnotified events from followed topics. Scores events by `sum(linked_entity_interest) + timeliness_decay` where timeliness = `2^(-hours_since / half_life)` (configurable half-life, default 24h)
+  3. **Fact discoveries** (respect backoff): picks the highest-interest entity with unnotified facts
 - Composes ONE message per cycle via `_compose_user_facing()` with image search
 - Exponential backoff per user (in-memory): 60s initial, doubles up to 3600s max
 - Backoff resets to eager (0s) when user sends a message or command
 - At max backoff, stays at that cadence until user re-engages
-- Marks facts as notified (`notified_at = now`) after sending
-- Uses `FACT_DISCOVERY_NEW_ENTITY_PROMPT` for new entities, `FACT_DISCOVERY_KNOWN_ENTITY_PROMPT` for known
-- Learn-aware variants: includes `/learn` topic context when facts originate from a learn command
-- Sends learn completion announcement when all searches for a `/learn` topic finish extraction
+- Marks facts/events as notified (`notified_at = now`) after sending
 
 **ScheduleExecutor** (`scheduler/schedule_runner.py`)
 - Background task: runs user-created cron-based scheduled tasks
@@ -264,7 +281,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule executor → notification → extraction → learn → enrich)
+- Runs tasks in priority order (schedule executor → notification → extraction → event → learn → enrich)
 - **Skips agents with no work**: when an agent returns False, continues to the next eligible schedule in the same tick. Only breaks when an agent does real work.
 - Tracks global idle threshold (default: 60s)
 - Notifies schedules when messages arrive (resets timers)
@@ -335,13 +352,16 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/bug** (`bug.py`): File a bug report on GitHub (requires GitHub App config)
 - **/feature** (`feature.py`): File a feature request on GitHub (requires GitHub App config)
 - **/email** (`email.py`): Search Fastmail email via JMAP (requires `FASTMAIL_API_TOKEN`)
+- **/follow** (`follow.py`): Subscribe to news monitoring for a topic. `/follow` lists active subscriptions; `/follow <topic>` generates query terms via LLM and creates a FollowPrompt (requires `NEWS_API_KEY`)
+- **/unfollow** (`unfollow.py`): Cancel a follow subscription. `/unfollow` shows numbered list; `/unfollow <N>` cancels (requires `NEWS_API_KEY`)
+- **/events** (`events.py`): View recent discovered events. `/events` lists events (7-day window); `/events <N>` shows full detail with linked entities (requires `NEWS_API_KEY`)
 
 ### Runtime Configuration
 - `/config` reads and writes to a `RuntimeConfig` table in SQLite (migration `0002_add_runtime_config_table.py`)
-- `ConfigParam` definitions in `config_params.py` declare 38 runtime-configurable settings with types and validation
+- `ConfigParam` definitions in `config_params.py` declare 42 runtime-configurable settings with types and validation
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Categories: engagement strengths, extraction thresholds, entity dedup settings, learn parameters, notification backoff, scheduling intervals, and more
+- Categories: engagement strengths, extraction thresholds, entity dedup settings, learn parameters, notification backoff, event polling, scheduling intervals, and more
 
 ## Knowledge System
 
@@ -357,6 +377,8 @@ Penny learns what the user likes, finds information about those things, and proa
 - **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at` and `notified_at` timestamps. `notified_at=NULL` means not yet communicated to user
 - **Engagement**: User interest signals (searches, mentions, reactions, explicit statements). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
 - **LearnPrompt**: First-class learning prompt with lifecycle tracking — enables provenance chain: prompt → searches → facts → entities. Has `announced_at` for learn completion notifications
+- **Event** (`database/models.py`): Time-stamped occurrence (news article). Has `headline`, `summary`, `occurred_at`, `source_url`, `external_id` (URL for dedup), `notified_at`, `embedding` (headline embedding for similarity dedup). Linked to entities via M2M `EventEntity` junction table
+- **FollowPrompt** (`database/models.py`): Ongoing monitoring subscription — like LearnPrompt but never-ending. Has `prompt_text`, `query_terms` (LLM-generated JSON list), `status` (active/cancelled), `last_polled_at` (round-robin fairness)
 
 ### Engagement Types
 
@@ -385,6 +407,12 @@ Every SearchLog has a `trigger` field determining extraction behavior:
 | `learn_command` | Yes | Yes | Yes |
 | `penny_enrichment` | No | Yes | No |
 
+### Event System
+
+The event system adds time-awareness to Penny's knowledge graph. Users subscribe to topics via `/follow`, and the EventAgent polls NewsAPI.org for relevant articles. Events are linked to entities (M2M) and surfaced via proactive notifications.
+
+Flow: `/follow <topic>` → FollowPrompt → EventAgent polls NewsAPI → dedup → Event records → entity links → NotificationAgent sends heads-up
+
 ### Two-Mode Extraction
 
 The ExtractionPipeline checks each SearchLog's trigger to determine mode:
@@ -405,11 +433,14 @@ Before creating a new entity, checks all existing entities using dual-threshold 
 - **Embedding cosine similarity (>= 0.85)**: Confirmation via paraphrase detection
 - Both must pass; routes to existing entity instead of creating a duplicate
 
-### Fact Discovery Notifications
+### Proactive Notifications
 
-Notifications are decoupled from extraction. The ExtractionPipeline stores facts silently (with `notified_at=NULL` for discoverable facts, or `notified_at=now` for user-sourced facts). A separate NotificationAgent runs on its own schedule, queries for un-notified facts, picks the highest-interest entity, composes one message, and marks the facts as notified. Uses per-user exponential backoff: each message without a user reply doubles the delay. User engagement resets backoff to zero.
+Notifications are decoupled from extraction. The NotificationAgent owns all proactive messaging and checks three streams per cycle:
+1. **Learn completions** (bypass backoff): when all searches for a `/learn` topic finish extraction, sends a summary of discovered entities with fact counts
+2. **Event notifications** (respect backoff): sends heads-up about unnotified events from followed topics, scored by entity interest + timeliness
+3. **Fact discoveries** (respect backoff): picks the highest-interest entity with unnotified facts, composes one message
 
-The NotificationAgent also sends learn completion announcements when all searches for a `/learn` topic finish extraction, summarizing discovered entities with fact counts.
+Uses per-user exponential backoff: each message without a user reply doubles the delay. User engagement resets backoff to zero.
 
 ## Message Flow
 
@@ -442,7 +473,7 @@ The NotificationAgent also sends learn completion announcements when all searche
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Specialized agents**: Each task type (message, extraction, learn, notification) has its own agent subclass
-- **Priority scheduling**: Schedule executor → notifications → extraction → learn → enrichment (agents with no work are skipped each tick)
+- **Priority scheduling**: Schedule executor → notifications → extraction → events → learn → enrichment (agents with no work are skipped each tick)
 - **Always-run schedules**: User-created schedules run regardless of idle state; knowledge pipeline waits for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free Ollama immediately; cancelled work is idempotent and retried next cycle
@@ -458,7 +489,7 @@ The NotificationAgent also sends learn completion announcements when all searche
 
 ## Dependencies
 
-- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `ollama`, `perplexityai`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`
+- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `ollama`, `perplexityai`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`, `newsapi-python`
 - Dev: `ruff` (lint/format), `ty` (type check), `pytest`, `pytest-asyncio`, `aiohttp` (mock Signal server)
 - Python 3.12+
 
@@ -488,6 +519,8 @@ Notable migrations:
 - 0021: Drop `fact_last_verified` column (fact verification deprecated)
 - 0022: Drop `preference` table (organic engagement replaces explicit preferences)
 - 0023: `announced_at` on `LearnPrompt` table (learn completion notifications)
+- 0028: `Event` and `EventEntity` tables (knowledge system v4 — time-aware events)
+- 0029: `FollowPrompt` table (ongoing monitoring subscriptions for event system)
 
 ## Extending
 
