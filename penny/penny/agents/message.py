@@ -9,6 +9,7 @@ from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, MessageRole
 from penny.database.models import Entity
 from penny.ollama.embeddings import deserialize_embedding, find_similar
+from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.builtin import SearchTool
@@ -174,7 +175,7 @@ class MessageAgent(Agent):
         if not candidates:
             return None, False
 
-        query_vec = await self._embed_message(content)
+        query_vec = await embed_text(self._embedding_model_client, content)
         if query_vec is None:
             return None, False
 
@@ -217,17 +218,6 @@ class MessageAgent(Agent):
                 continue
             candidates.append((entity.id, deserialize_embedding(entity.embedding)))
         return candidates, entities
-
-    async def _embed_message(self, content: str) -> list[float] | None:
-        """Embed the user's message. Returns None on failure."""
-        if not self._embedding_model_client:
-            return None
-        try:
-            vecs = await self._embedding_model_client.embed(content)
-            return vecs[0]
-        except Exception:
-            logger.warning("Failed to embed message for entity context, skipping")
-            return None
 
     def _build_entity_context_text(
         self,

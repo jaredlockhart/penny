@@ -13,11 +13,12 @@ from pydantic import BaseModel, Field
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
 from penny.database.models import Event, FollowPrompt
-from penny.ollama.embeddings import (
-    cosine_similarity,
-    deserialize_embedding,
-    serialize_embedding,
-    token_containment_ratio,
+from penny.ollama.embeddings import serialize_embedding
+from penny.ollama.similarity import (
+    DedupStrategy,
+    check_relevance,
+    embed_text,
+    is_embedding_duplicate,
 )
 from penny.prompts import Prompt
 from penny.tools.news import NewsArticle, NewsTool
@@ -123,15 +124,18 @@ class EventAgent(Agent):
         self, articles: list[NewsArticle], follow_prompt: FollowPrompt
     ) -> list[NewsArticle]:
         """Filter articles by embedding similarity to the follow prompt topic."""
-        topic_vec = await self._embed_text(follow_prompt.prompt_text)
+        topic_vec = await embed_text(self._embedding_model_client, follow_prompt.prompt_text)
         if topic_vec is None:
             return articles  # No embedding model — pass all through
 
         threshold = self.config.runtime.EVENT_RELEVANCE_THRESHOLD
         relevant: list[NewsArticle] = []
         for article in articles:
-            article_vec = await self._embed_text(article.title)
-            if article_vec is None or cosine_similarity(article_vec, topic_vec) >= threshold:
+            article_vec = await embed_text(self._embedding_model_client, article.title)
+            if (
+                article_vec is None
+                or check_relevance(article_vec, topic_vec, threshold) is not None
+            ):
                 relevant.append(article)
             else:
                 logger.debug("Relevance: rejected '%s' (below %.2f)", article.title[:60], threshold)
@@ -184,36 +188,17 @@ class EventAgent(Agent):
         self, article: NewsArticle, recent_events: list[Event]
     ) -> bool:
         """Check TCR OR embedding similarity against recent events."""
-        tcr_threshold = self.config.runtime.EVENT_DEDUP_TCR_THRESHOLD
-        embed_threshold = self.config.runtime.EVENT_DEDUP_SIMILARITY_THRESHOLD
-
-        for event in recent_events:
-            if token_containment_ratio(article.title, event.headline) >= tcr_threshold:
-                return True
-
-        article_vec = await self._embed_text(article.title)
-        if article_vec is None:
-            return False
-
-        for event in recent_events:
-            if event.embedding is None:
-                continue
-            event_vec = deserialize_embedding(event.embedding)
-            if cosine_similarity(article_vec, event_vec) >= embed_threshold:
-                return True
-
-        return False
-
-    async def _embed_text(self, text: str) -> list[float] | None:
-        """Embed text using the embedding model. Returns None if unavailable."""
-        if not self._embedding_model_client:
-            return None
-        try:
-            vectors = await self._embedding_model_client.embed(text)
-            return vectors[0]
-        except Exception as e:
-            logger.warning("Failed to embed text: %s", e)
-            return None
+        article_vec = await embed_text(self._embedding_model_client, article.title)
+        items = [(e.headline, e.embedding) for e in recent_events]
+        match_idx = is_embedding_duplicate(
+            article.title,
+            article_vec,
+            items,
+            DedupStrategy.TCR_OR_EMBEDDING,
+            embedding_threshold=self.config.runtime.EVENT_DEDUP_SIMILARITY_THRESHOLD,
+            tcr_threshold=self.config.runtime.EVENT_DEDUP_TCR_THRESHOLD,
+        )
+        return match_idx is not None
 
     # --- Event creation ---
 
@@ -248,7 +233,7 @@ class EventAgent(Agent):
         """Compute and store headline embedding for future dedup."""
         if event.id is None:
             return
-        vec = await self._embed_text(article.title)
+        vec = await embed_text(self._embedding_model_client, article.title)
         if vec is not None:
             self.db.events.update_embedding(event.id, serialize_embedding(vec))
 
