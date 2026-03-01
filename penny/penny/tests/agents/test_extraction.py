@@ -1623,15 +1623,18 @@ async def test_extraction_does_not_send_notifications(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello there friend"
+        # Learn command searches happen in the background — no messagelog entry
+        # exists nearby. The user must be resolved from the LearnPrompt record.
+        lp = penny.db.learn_prompts.create(
+            user=TEST_SENDER, prompt_text="test topic", searches_remaining=0
         )
-        penny.db.messages.mark_processed([msg_id])
+        assert lp is not None and lp.id is not None
 
         penny.db.searches.log(
             query="test query",
             response="Info about silent entity 1.",
             trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
+            learn_prompt_id=lp.id,
         )
 
         signal_server.outgoing_messages.clear()
