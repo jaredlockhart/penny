@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
-from penny.database.models import Entity, Fact
+from penny.database.models import Entity, Fact, SearchLog
 from penny.ollama.embeddings import (
     build_entity_embed_text,
     deserialize_embedding,
@@ -268,6 +268,19 @@ class ExtractionPipeline(Agent):
 
     # --- Phase 1: Search log processing ---
 
+    def _resolve_user(self, search_log: SearchLog) -> str | None:
+        """Resolve the user who triggered a search log.
+
+        For learn_command searches, the user is on the LearnPrompt record
+        (background searches have no nearby messagelog entry). Falls back
+        to the messagelog timestamp heuristic for other triggers.
+        """
+        if search_log.learn_prompt_id is not None:
+            learn_prompt = self.db.learn_prompts.get(search_log.learn_prompt_id)
+            if learn_prompt:
+                return learn_prompt.user
+        return self.db.users.find_sender_for_timestamp(search_log.timestamp)
+
     async def _process_search_logs(self) -> bool:
         """Process unextracted SearchLog entries for entity/fact extraction."""
         search_logs = self.db.searches.get_unprocessed(
@@ -282,7 +295,7 @@ class ExtractionPipeline(Agent):
         for search_log in search_logs:
             assert search_log.id is not None
 
-            user = self.db.users.find_sender_for_timestamp(search_log.timestamp)
+            user = self._resolve_user(search_log)
             if not user:
                 self.db.searches.mark_extracted(search_log.id)
                 continue
