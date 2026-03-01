@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -46,7 +47,7 @@ class NotificationAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._channel: MessageChannel | None = None
         self._backoff_state: dict[str, BackoffState] = {}
-        self._last_notified_learn_prompt_id: dict[str, int | None] = {}
+        self._learn_topic_last_notified_at: dict[str, dict[int | None, datetime]] = {}
         self._last_notification: dict[str, tuple[int, datetime]] = {}  # user → (entity_id, sent_at)
         self._heat_engine: HeatEngine | None = None
 
@@ -381,9 +382,8 @@ class NotificationAgent(Agent):
         for fact in unnotified:
             facts_by_entity[fact.entity_id].append(fact)
 
-        # Pick the hottest eligible entity
-        last_learn_prompt_id = self._last_notified_learn_prompt_id.get(user)
-        entity = self._pick_hottest_entity(user, facts_by_entity, last_learn_prompt_id)
+        # Pick an eligible entity (prefers stale learn topics, top 20 by heat, random)
+        entity = self._pick_hottest_entity(user, facts_by_entity)
         if entity is None:
             return False
         assert entity.id is not None
@@ -406,8 +406,11 @@ class NotificationAgent(Agent):
         if self._heat_engine:
             self._heat_engine.start_cooldown(entity.id)
 
-        # Track which learn prompt this notification came from (to suppress same-topic dedup)
-        self._last_notified_learn_prompt_id[user] = self._get_learn_prompt_id(facts)
+        # Track when this learn topic was last notified (for rotation preference)
+        learn_prompt_id = self._get_learn_prompt_id(facts)
+        if user not in self._learn_topic_last_notified_at:
+            self._learn_topic_last_notified_at[user] = {}
+        self._learn_topic_last_notified_at[user][learn_prompt_id] = datetime.now(UTC)
 
         # Track this notification for ignore detection
         self._last_notification[user] = (entity.id, datetime.now(UTC))
@@ -421,20 +424,20 @@ class NotificationAgent(Agent):
         self,
         user: str,
         facts_by_entity: dict[int, list[Fact]],
-        last_notified_learn_prompt_id: int | None = None,
     ) -> Entity | None:
-        """Pick the hottest eligible entity deterministically.
+        """Pick an eligible entity, preferring learn topic rotation.
 
-        Filters by: heat > 0, not on cooldown, not same learn topic.
-        Returns the entity with the highest heat, or None.
+        Sorts by least-recently-notified learn topic first, takes the top 20
+        by heat, then picks randomly. This naturally rotates between learn
+        topics while still favoring hot entities.
         """
-        eligible = self._get_eligible_entities(user, facts_by_entity, last_notified_learn_prompt_id)
+        eligible = self._get_eligible_entities(user, facts_by_entity)
         if not eligible:
             return None
 
-        # Sort by heat descending, pick the hottest
-        eligible.sort(key=lambda e: e.heat, reverse=True)
-        chosen = eligible[0]
+        ranked = self._rank_by_topic_recency_then_heat(user, eligible, facts_by_entity)
+        top = ranked[:20]
+        chosen = random.choice(top)
 
         logger.info(
             "Notification: picked '%s' (heat=%.2f) from %d eligible",
@@ -444,30 +447,43 @@ class NotificationAgent(Agent):
         )
         return chosen
 
+    def _rank_by_topic_recency_then_heat(
+        self,
+        user: str,
+        entities: list[Entity],
+        facts_by_entity: dict[int, list[Fact]],
+    ) -> list[Entity]:
+        """Sort entities by learn topic recency (stale first), then heat."""
+        topic_times = self._learn_topic_last_notified_at.get(user, {})
+        epoch = datetime.min.replace(tzinfo=UTC)
+
+        def sort_key(entity: Entity) -> tuple[datetime, float]:
+            assert entity.id is not None
+            facts = facts_by_entity.get(entity.id, [])
+            lp_id = self._get_learn_prompt_id(facts)
+            last_notified = topic_times.get(lp_id, epoch)
+            return (last_notified, -entity.heat)
+
+        return sorted(entities, key=sort_key)
+
     def _get_eligible_entities(
         self,
         user: str,
         facts_by_entity: dict[int, list[Fact]],
-        last_notified_learn_prompt_id: int | None,
     ) -> list[Entity]:
-        """Get entities with unnotified facts that pass all eligibility filters."""
+        """Get entities with unnotified facts that pass heat and cooldown filters."""
         entities = self.db.entities.get_for_user(user)
         eligible: list[Entity] = []
         for entity in entities:
             if entity.id not in facts_by_entity:
                 continue
-            if not self._is_eligible(entity, facts_by_entity, last_notified_learn_prompt_id):
+            if not self._is_eligible(entity):
                 continue
             eligible.append(entity)
         return eligible
 
-    def _is_eligible(
-        self,
-        entity: Entity,
-        facts_by_entity: dict[int, list[Fact]],
-        last_notified_learn_prompt_id: int | None,
-    ) -> bool:
-        """Check heat, cooldown, and learn-topic dedup filters."""
+    def _is_eligible(self, entity: Entity) -> bool:
+        """Check heat and cooldown filters."""
         assert entity.id is not None
 
         if entity.heat <= 0:
@@ -483,23 +499,7 @@ class NotificationAgent(Agent):
                     cooldown_until.isoformat(),
                 )
                 return False
-        facts = facts_by_entity.get(entity.id, [])
-        if self._is_same_learn_topic(facts, last_notified_learn_prompt_id):
-            logger.debug(
-                "Notification: skipping '%s' (same learn topic as last notification)",
-                entity.name,
-            )
-            return False
         return True
-
-    def _is_same_learn_topic(
-        self, facts: list[Fact], last_notified_learn_prompt_id: int | None
-    ) -> bool:
-        """Check if these facts share the same learn topic as the last notification."""
-        if last_notified_learn_prompt_id is None:
-            return False
-        entity_learn_prompt_id = self._get_learn_prompt_id(facts)
-        return entity_learn_prompt_id == last_notified_learn_prompt_id
 
     def _handle_ignored_notification(self, user: str) -> None:
         """Check if the previous notification was ignored and penalize heat.

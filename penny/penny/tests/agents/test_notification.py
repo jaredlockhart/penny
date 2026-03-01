@@ -22,7 +22,7 @@ async def test_notification_prefers_higher_heat_entity(
     test_user_info,
     running_penny,
 ):
-    """Notification agent picks the entity with higher heat deterministically."""
+    """Notification agent picks from eligible entities (random from top 20 by heat)."""
     config = make_config()
 
     captured_prompts: list[str] = []
@@ -31,13 +31,11 @@ async def test_notification_prefers_higher_heat_entity(
         messages = request.get("messages", [])
         prompt = messages[-1]["content"] if messages else ""
         captured_prompts.append(prompt)
-        if "came across" in prompt:
-            return mock_ollama._make_text_response(
-                request,
-                "Hey, I came across **interesting entity** recently and found some"
-                " really interesting stuff worth sharing!",
-            )
-        return mock_ollama._make_text_response(request, "ok")
+        return mock_ollama._make_text_response(
+            request,
+            "Hey, I came across something recently and found some"
+            " really interesting stuff worth sharing!",
+        )
 
     mock_ollama.set_response_handler(handler)
 
@@ -65,10 +63,9 @@ async def test_notification_prefers_higher_heat_entity(
         result = await penny.notification_agent.execute()
         assert result is True
 
-        # Should notify about the interesting entity (higher heat)
+        # One of the eligible entities should be picked
         msgs = signal_server.outgoing_messages
         assert len(msgs) == 1
-        assert "interesting entity" in msgs[0]["message"]
 
         # Prompt sent to model should instruct it to synthesize, not echo raw facts
         assert any("Synthesize" in p for p in captured_prompts)
@@ -276,7 +273,7 @@ async def test_notification_entity_cooldown(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        # Create two entities — give entity A higher heat so it's picked first
+        # Create two entities with heat
         entity_a = penny.db.entities.get_or_create(TEST_SENDER, "entity alpha")
         entity_b = penny.db.entities.get_or_create(TEST_SENDER, "entity beta")
         assert entity_a is not None and entity_a.id is not None
@@ -290,16 +287,24 @@ async def test_notification_entity_cooldown(
 
         agent = penny.notification_agent
 
-        # Cycle 1: entity A picked (highest heat)
+        # Cycle 1: one entity is picked (random from top 20)
         signal_server.outgoing_messages.clear()
         result1 = await agent.execute()
         assert result1 is True
-        # Verify entity A was notified and has cooldown set
+
+        # Determine which entity was picked by checking notified_at
         facts_a = penny.db.facts.get_for_entity(entity_a.id)
-        assert any(f.notified_at is not None for f in facts_a)
-        entity_a_refreshed = penny.db.entities.get(entity_a.id)
-        assert entity_a_refreshed is not None
-        assert entity_a_refreshed.heat_cooldown_until is not None
+        facts_b = penny.db.facts.get_for_entity(entity_b.id)
+        a_notified = any(f.notified_at is not None for f in facts_a)
+        b_notified = any(f.notified_at is not None for f in facts_b)
+        assert a_notified or b_notified
+        first_id = entity_a.id if a_notified else entity_b.id
+        second_id = entity_b.id if a_notified else entity_a.id
+
+        # Verify picked entity has cooldown set
+        first_refreshed = penny.db.entities.get(first_id)
+        assert first_refreshed is not None
+        assert first_refreshed.heat_cooldown_until is not None
 
         # Add new facts to both
         penny.db.facts.add(entity_b.id, "Another beta fact")
@@ -315,13 +320,13 @@ async def test_notification_entity_cooldown(
         interaction_recorded = datetime.now(UTC)
         await wait_until(lambda: (datetime.now(UTC) - interaction_recorded).total_seconds() >= 0.1)
 
-        # Cycle 2: entity A is on cooldown, so entity B is picked instead
+        # Cycle 2: first entity is on cooldown, so the other is picked
         signal_server.outgoing_messages.clear()
         result2 = await agent.execute()
         assert result2 is True
-        # Verify entity B was notified this time (cooldown forced rotation)
-        facts_b = penny.db.facts.get_for_entity(entity_b.id)
-        assert any(f.notified_at is not None for f in facts_b)
+        # Verify the second entity was notified this time (cooldown forced rotation)
+        second_facts = penny.db.facts.get_for_entity(second_id)
+        assert any(f.notified_at is not None for f in second_facts)
 
 
 @pytest.mark.asyncio
