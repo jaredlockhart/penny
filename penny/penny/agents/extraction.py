@@ -339,23 +339,10 @@ class ExtractionPipeline(Agent):
                 source_search_log_id=search_log.id,
                 allow_new_entities=allow_new,
                 relevance_reference=relevance_ref,
-                record_discovery_score=True,
                 notified_at=notified_at,
             )
             if result.entities:
                 work_done = True
-
-                # Create USER_SEARCH engagements for user-triggered searches
-                if allow_new:
-                    for entity in result.entities:
-                        assert entity.id is not None
-                        self.db.engagements.add(
-                            user=user,
-                            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
-                            valence=PennyConstants.EngagementValence.POSITIVE,
-                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_USER_SEARCH,
-                            entity_id=entity.id,
-                        )
 
             self.db.searches.mark_extracted(search_log.id)
 
@@ -477,7 +464,6 @@ class ExtractionPipeline(Agent):
         source_message_id: int | None = None,
         allow_new_entities: bool = True,
         relevance_reference: str | None = None,
-        record_discovery_score: bool = False,
         notified_at: datetime | None = None,
     ) -> _ExtractionResult:
         """Two-pass extraction for a single piece of content.
@@ -553,7 +539,6 @@ class ExtractionPipeline(Agent):
                 source_search_log_id=source_search_log_id,
                 source_message_id=source_message_id,
                 notified_at=notified_at,
-                record_discovery_score=record_discovery_score,
             )
             entities_to_process.extend(survivors)
 
@@ -934,7 +919,6 @@ class ExtractionPipeline(Agent):
         source_search_log_id: int | None,
         source_message_id: int | None,
         notified_at: datetime | None,
-        record_discovery_score: bool,
     ) -> list[Entity]:
         """Semantic pruning using entity+facts embeddings, then commit survivors to DB.
 
@@ -963,7 +947,6 @@ class ExtractionPipeline(Agent):
                 source_search_log_id,
                 source_message_id,
                 notified_at,
-                record_discovery_score,
             )
             if entity:
                 committed.append(entity)
@@ -1035,7 +1018,6 @@ class ExtractionPipeline(Agent):
         source_search_log_id: int | None,
         source_message_id: int | None,
         notified_at: datetime | None,
-        record_discovery_score: bool,
     ) -> Entity | None:
         """Commit a single candidate: dedup check, then merge or create.
 
@@ -1080,15 +1062,6 @@ class ExtractionPipeline(Agent):
                 relevance=score,
             )
 
-        if entity and record_discovery_score and score > 0.0:
-            assert entity.id is not None
-            self.db.engagements.add(
-                user=user,
-                engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
-                valence=PennyConstants.EngagementValence.POSITIVE,
-                strength=score,
-                entity_id=entity.id,
-            )
         return entity
 
     async def _merge_into_existing(

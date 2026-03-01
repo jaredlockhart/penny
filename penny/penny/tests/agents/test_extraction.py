@@ -120,15 +120,6 @@ async def test_extraction_processes_search_log(
         # Verify facts have source_search_log_id set
         assert all(f.source_search_log_id == search_logs[0].id for f in facts)
 
-        # Verify USER_SEARCH engagement was created
-        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
-        search_engagements = [
-            e for e in engagements if e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
-        ]
-        assert len(search_engagements) >= 1
-        assert search_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert search_engagements[0].strength == 1.0
-
         # Verify entity received heat (novelty seed from creation)
         refreshed = penny.db.entities.get(entity.id)
         assert refreshed is not None
@@ -928,8 +919,7 @@ async def test_extraction_penny_enrichment_known_only(
     1. Pre-seed a known entity
     2. Create a SearchLog with trigger=penny_enrichment
     3. Mock LLM to return the known entity + facts
-    4. Verify: known entity gets new facts, NO new entities created,
-       NO USER_SEARCH engagements
+    4. Verify: known entity gets new facts, NO new entities created
     """
     config = make_config()
 
@@ -982,15 +972,6 @@ async def test_extraction_penny_enrichment_known_only(
         entities = penny.db.entities.get_for_user(TEST_SENDER)
         assert len(entities) == 1, (
             f"Expected only 1 entity, got {len(entities)}: {[e.name for e in entities]}"
-        )
-
-        # Verify NO USER_SEARCH engagements
-        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
-        search_engagements = [
-            e for e in engagements if e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
-        ]
-        assert len(search_engagements) == 0, (
-            "penny_enrichment should not create USER_SEARCH engagements"
         )
 
         # Verify SearchLog is marked as extracted
@@ -1177,20 +1158,6 @@ async def test_semantic_entity_name_validation(
         assert "random conference sponsor" not in entity_names, (
             f"Unrelated entity should be rejected by post-fact pruning, got: {entity_names}"
         )
-
-        # SEARCH_DISCOVERY engagement should be created with the post-fact similarity score
-        kef_entity = next(e for e in entities if e.name == "kef ls50 meta")
-        assert kef_entity.id is not None
-        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, kef_entity.id)
-        discovery_engagements = [
-            e
-            for e in engagements
-            if e.engagement_type == PennyConstants.EngagementType.SEARCH_DISCOVERY
-        ]
-        assert len(discovery_engagements) == 1
-        assert discovery_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        # Similarity should be 1.0 (facts text contains "speaker")
-        assert discovery_engagements[0].strength == pytest.approx(1.0)
 
         # Verify that the name-stripped variant was embedded (for the
         # "genesis"/"yes" case where name hurts relevance).  The relevance
@@ -1669,15 +1636,6 @@ async def test_extraction_does_not_send_notifications(
         facts = penny.db.facts.get_for_entity(entity.id)
         assert len(facts) >= 1
         assert all(f.notified_at is None for f in facts)
-
-        # Verify USER_SEARCH engagement was created for learn-triggered search
-        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
-        search_engagements = [
-            e for e in engagements if e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
-        ]
-        assert len(search_engagements) >= 1
-        assert search_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert search_engagements[0].strength == 1.0
 
 
 @pytest.mark.asyncio

@@ -357,15 +357,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="ENGAGEMENT_STRENGTH_USER_SEARCH",
-    description="Engagement strength for user-initiated searches (/learn and message searches)",
-    type=float,
-    default=1.0,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
     key="ENGAGEMENT_STRENGTH_MESSAGE_MENTION",
     description="Engagement strength for entity mentions in messages",
     type=float,

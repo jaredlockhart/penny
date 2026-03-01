@@ -443,7 +443,7 @@ class TestDatabaseEngagementMethods:
         # Add two engagements for this entity
         e1 = db.engagements.add(
             user="+1234",
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.6,
             entity_id=entity.id,
@@ -483,14 +483,14 @@ class TestDatabaseEngagementMethods:
         # Add engagements for two different users
         db.engagements.add(
             user="+1234",
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.6,
             entity_id=entity.id,
         )
         db.engagements.add(
             user="+5678",
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.8,
             entity_id=entity.id,
@@ -514,14 +514,14 @@ class TestDatabaseEngagementMethods:
 
         db.engagements.add(
             user="+1234",
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=1.0,
             entity_id=entity.id,
         )
         db.engagements.add(
             user="+1234",
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
+            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
             valence=PennyConstants.EngagementValence.POSITIVE,
             strength=0.6,
             entity_id=entity.id,

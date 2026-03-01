@@ -700,13 +700,6 @@ class EnrichAgent(Agent):
         await self._store_new_facts(entity, facts, search_text)
         await self._update_entity_embedding(entity)
 
-        self.db.engagements.add(
-            user=user,
-            engagement_type=PennyConstants.EngagementType.SEARCH_DISCOVERY,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=relevance_score,
-            entity_id=entity.id,
-        )
         if self._heat_engine:
             self._heat_engine.seed_discovery_heat(entity.id, user, relevance=relevance_score)
 

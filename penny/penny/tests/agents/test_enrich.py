@@ -565,7 +565,7 @@ async def test_enrichment_discovers_related_entities(
     When enriching "kef ls50 meta", the search results mention "uni-q driver"
     which passes the relevance gate (cosine sim to enriching entity > 0.4)
     and dedup gate (not a duplicate of existing entities). A new entity is
-    created with facts and a SEARCH_DISCOVERY engagement.
+    created with facts and discovery heat.
     """
     config = make_config(ollama_embedding_model="test-embed-model")
 
@@ -657,17 +657,6 @@ async def test_enrichment_discovers_related_entities(
         assert any("tweeter" in f.content.lower() for f in discovered_facts)
         # Discovered facts should be unnotified (notification agent's job)
         assert all(f.notified_at is None for f in discovered_facts)
-
-        # Discovered entity has SEARCH_DISCOVERY engagement
-        engagements = penny.db.engagements.get_for_user(TEST_SENDER)
-        discovery_engs = [
-            e
-            for e in engagements
-            if e.entity_id == discovered.id
-            and e.engagement_type == PennyConstants.EngagementType.SEARCH_DISCOVERY
-        ]
-        assert len(discovery_engs) == 1
-        assert discovery_engs[0].strength > 0.0
 
         # Verify discovered entity received heat (novelty seed)
         refreshed = penny.db.entities.get(discovered.id)

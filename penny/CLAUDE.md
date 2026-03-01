@@ -217,7 +217,6 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - **Message extraction**: Extracts entities/facts from user messages
 - Pre-filters messages before LLM calls: skips short messages (< 20 chars) and slash commands
 - Creates MESSAGE_MENTION engagements when entities are found in user messages
-- Creates USER_SEARCH engagements for entities found in user-triggered searches
 - Extracts sentiment from user messages (explicit opinions about entities → engagement signals)
 - Fact dedup: normalized string match (fast) then embedding similarity (paraphrase detection, threshold=0.85)
 - Facts track provenance via `source_search_log_id` or `source_message_id`
@@ -392,12 +391,10 @@ Penny learns what the user likes, finds information about those things, and proa
 
 | Type | Source | Strength |
 |---|---|---|
-| `USER_SEARCH` | User search or `/learn` command | 1.0 |
 | `MESSAGE_MENTION` | Entity mentioned in user message | configurable |
 | `EXPLICIT_STATEMENT` | User expresses clear opinion | configurable |
 | `EMOJI_REACTION` | Emoji reaction (positive/negative) | 0.3 normal, 0.5 proactive, 0.8 proactive negative |
 | `FOLLOW_UP_QUESTION` | User asks follow-up about entity | configurable |
-| `SEARCH_DISCOVERY` | Entity discovered in search results | configurable |
 
 ### Heat Model (`interest.py`)
 
