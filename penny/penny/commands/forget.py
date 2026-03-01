@@ -8,7 +8,6 @@ from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.database.models import Entity
 from penny.interest import scored_entities_for_user
-from penny.ollama.embeddings import deserialize_embedding
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -56,26 +55,8 @@ class ForgetCommand(Command):
 
     @staticmethod
     def _scored_entities(context: CommandContext) -> list[tuple[float, Entity]]:
-        """Return (score, entity) pairs sorted by notification priority descending."""
+        """Return (heat, entity) pairs sorted by heat descending."""
         entities = context.db.entities.get_for_user(context.user)
         if not entities:
             return []
-        all_engagements = context.db.engagements.get_for_user(context.user)
-        facts_by_entity = {
-            e.id: context.db.facts.get_for_entity(e.id) for e in entities if e.id is not None
-        }
-        embedding_candidates = [
-            (e.id, deserialize_embedding(e.embedding))
-            for e in context.db.entities.get_with_embeddings(context.user)
-            if e.id is not None and e.embedding is not None
-        ]
-        rt = context.config.runtime
-        return scored_entities_for_user(
-            entities,
-            all_engagements,
-            facts_by_entity,
-            embedding_candidates,
-            half_life_days=rt.INTEREST_SCORE_HALF_LIFE_DAYS,
-            novelty_weight=rt.NOTIFICATION_NOVELTY_WEIGHT,
-            loyal_pool_size=int(rt.NOTIFICATION_LOYAL_POOL_SIZE),
-        )
+        return scored_entities_for_user(entities)

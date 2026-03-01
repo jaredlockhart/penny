@@ -159,3 +159,66 @@ class EntityStore:
                     session.commit()
         except Exception as e:
             logger.error("Failed to update entity %d last_notified_at: %s", entity_id, e)
+
+    # --- Heat methods ---
+
+    def apply_heat_decay(self, user: str, decay_rate: float) -> None:
+        """Multiply all entity heat values by decay_rate for a user."""
+        from sqlalchemy import text
+
+        with self._session() as session:
+            session.exec(  # type: ignore[call-overload]
+                text("UPDATE entity SET heat = heat * :rate WHERE user = :user"),
+                params={"rate": decay_rate, "user": user},
+            )
+            session.commit()
+
+    def decrement_cooldowns(self, user: str) -> None:
+        """Decrement heat_cooldown by 1 for all entities with cooldown > 0."""
+        from sqlalchemy import text
+
+        with self._session() as session:
+            session.exec(  # type: ignore[call-overload]
+                text(
+                    "UPDATE entity SET heat_cooldown = heat_cooldown - 1 "
+                    "WHERE user = :user AND heat_cooldown > 0"
+                ),
+                params={"user": user},
+            )
+            session.commit()
+
+    def update_heat(self, entity_id: int, heat: float) -> None:
+        """Set the heat value for an entity."""
+        try:
+            with self._session() as session:
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.heat = heat
+                    session.add(entity)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update entity %d heat: %s", entity_id, e)
+
+    def add_heat(self, entity_id: int, amount: float) -> None:
+        """Add heat to an entity."""
+        try:
+            with self._session() as session:
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.heat += amount
+                    session.add(entity)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to add heat to entity %d: %s", entity_id, e)
+
+    def update_heat_cooldown(self, entity_id: int, cooldown: int) -> None:
+        """Set the cooldown cycles remaining for an entity."""
+        try:
+            with self._session() as session:
+                entity = session.get(Entity, entity_id)
+                if entity:
+                    entity.heat_cooldown = cooldown
+                    session.add(entity)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update entity %d cooldown: %s", entity_id, e)

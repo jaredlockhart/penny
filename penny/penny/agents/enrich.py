@@ -15,7 +15,7 @@ from penny.agents.base import Agent
 from penny.agents.extraction import _is_valid_entity_name
 from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Fact
-from penny.interest import compute_notification_interest
+from penny.interest import HeatEngine, compute_notification_interest
 from penny.ollama.embeddings import (
     build_entity_embed_text,
     deserialize_embedding,
@@ -101,6 +101,11 @@ class EnrichAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._search_tool = search_tool
         self._last_enrich_time: float | None = None
+        self._heat_engine: HeatEngine | None = None
+
+    def set_heat_engine(self, engine: HeatEngine) -> None:
+        """Set the heat engine for intrinsic heat seeding."""
+        self._heat_engine = engine
 
     @property
     def name(self) -> str:
@@ -714,6 +719,11 @@ class EnrichAgent(Agent):
             strength=relevance_score,
             entity_id=entity.id,
         )
+
+        # Seed intrinsic heat from similarity to existing hot entities
+        if self._heat_engine:
+            self._heat_engine.seed_intrinsic_heat(entity.id, user)
+
         logger.info(
             "Discovery: created '%s' (relevance=%.2f, %d facts)", name, relevance_score, len(facts)
         )

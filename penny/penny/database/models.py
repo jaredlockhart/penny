@@ -133,6 +133,8 @@ class Entity(SQLModel, table=True):
     tagline: str | None = None  # Short disambiguating summary (e.g., "british prog rock band")
     last_enriched_at: datetime | None = None  # When this entity was last enriched
     last_notified_at: datetime | None = None  # When this entity was last included in a notification
+    heat: float = Field(default=0.0)  # Persistent interest score (thermodynamic heat model)
+    heat_cooldown: int = Field(default=0)  # Notification cycles remaining before eligible
 
 
 class Engagement(SQLModel, table=True):

@@ -8,7 +8,6 @@ from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.database.models import Entity
 from penny.interest import scored_entities_for_user
-from penny.ollama.embeddings import deserialize_embedding
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -22,7 +21,7 @@ class MemoryCommand(Command):
     help_text = (
         "View what Penny has learned from searches.\n\n"
         "**Usage**:\n"
-        "• `/memory` — List all remembered entities ranked by interest\n"
+        "• `/memory` — List all remembered entities ranked by heat\n"
         "• `/memory <number>` — Show details for an entity\n\n"
         "To delete a memory, use `/forget <number>`.\n\n"
         "**Examples**:\n"
@@ -35,7 +34,7 @@ class MemoryCommand(Command):
         args = args.strip()
         parts = args.split() if args else []
 
-        # No args — list all entities ranked by interest score
+        # No args — list all entities ranked by heat
         if not parts:
             scored = self._scored_entities(context)
             if not scored:
@@ -45,11 +44,10 @@ class MemoryCommand(Command):
             for i, (score, entity) in enumerate(scored, 1):
                 assert entity.id is not None
                 facts = context.db.facts.get_for_entity(entity.id)
-                sign = "+" if score > 0 else ""
                 facts_label = f"{len(facts)} fact{'s' if len(facts) != 1 else ''}"
                 tagline_suffix = f" — {entity.tagline}" if entity.tagline else ""
                 name_part = f"{i}. **{entity.name}**{tagline_suffix}"
-                lines.append(f"{name_part} ({facts_label}, interest: {sign}{score:.2f})")
+                lines.append(f"{name_part} ({facts_label}, heat: {score:.2f})")
             return CommandResult(text="\n".join(lines))
 
         # First arg must be a number
@@ -102,26 +100,8 @@ class MemoryCommand(Command):
 
     @staticmethod
     def _scored_entities(context: CommandContext) -> list[tuple[float, Entity]]:
-        """Return (score, entity) pairs sorted by notification priority descending."""
+        """Return (heat, entity) pairs sorted by heat descending."""
         entities = context.db.entities.get_for_user(context.user)
         if not entities:
             return []
-        all_engagements = context.db.engagements.get_for_user(context.user)
-        facts_by_entity = {
-            e.id: context.db.facts.get_for_entity(e.id) for e in entities if e.id is not None
-        }
-        embedding_candidates = [
-            (e.id, deserialize_embedding(e.embedding))
-            for e in context.db.entities.get_with_embeddings(context.user)
-            if e.id is not None and e.embedding is not None
-        ]
-        rt = context.config.runtime
-        return scored_entities_for_user(
-            entities,
-            all_engagements,
-            facts_by_entity,
-            embedding_candidates,
-            half_life_days=rt.INTEREST_SCORE_HALF_LIFE_DAYS,
-            novelty_weight=rt.NOTIFICATION_NOVELTY_WEIGHT,
-            loyal_pool_size=int(rt.NOTIFICATION_LOYAL_POOL_SIZE),
-        )
+        return scored_entities_for_user(entities)

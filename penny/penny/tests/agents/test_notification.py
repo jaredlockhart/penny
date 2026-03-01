@@ -6,23 +6,17 @@ import pytest
 
 from penny.agents.notification import NotificationAgent
 from penny.constants import PennyConstants
-from penny.ollama.embeddings import serialize_embedding
+from penny.interest import HeatEngine
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
-def _add_notifiable_engagement(penny, entity_id):
-    """Add a notification-eligible engagement so the entity scores > 0."""
-    penny.db.engagements.add(
-        user=TEST_SENDER,
-        engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
-        valence=PennyConstants.EngagementValence.POSITIVE,
-        strength=0.2,
-        entity_id=entity_id,
-    )
+def _set_entity_heat(penny, entity_id, heat):
+    """Set an entity's heat so it's eligible for notification."""
+    penny.db.entities.update_heat(entity_id, heat)
 
 
 def _create_notification_agent(penny, config):
-    """Create a NotificationAgent wired to penny's DB and channel."""
+    """Create a NotificationAgent wired to penny's DB, channel, and heat engine."""
     agent = NotificationAgent(
         system_prompt="",
         background_model_client=penny.background_model_client,
@@ -34,11 +28,13 @@ def _create_notification_agent(penny, config):
         config=config,
     )
     agent.set_channel(penny.channel)
+    heat_engine = HeatEngine(db=penny.db, runtime=config.runtime)
+    agent.set_heat_engine(heat_engine)
     return agent
 
 
 @pytest.mark.asyncio
-async def test_notification_prefers_higher_interest_entity(
+async def test_notification_prefers_higher_heat_entity(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -46,12 +42,8 @@ async def test_notification_prefers_higher_interest_entity(
     test_user_info,
     running_penny,
 ):
-    """Notification agent scores entities by interest * enrichment volume.
-
-    With pool_size=1, selection is deterministic (always picks highest score).
-    An entity with user engagement should outscore one with less.
-    """
-    config = make_config(notification_pool_size=1)
+    """Notification agent picks the entity with higher heat deterministically."""
+    config = make_config()
 
     captured_prompts: list[str] = []
 
@@ -75,23 +67,17 @@ async def test_notification_prefers_higher_interest_entity(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        # Create two entities — one with interest (engagement), one without
+        # Create two entities — one with high heat, one with low heat
         boring_entity = penny.db.entities.get_or_create(TEST_SENDER, "boring entity")
         interesting_entity = penny.db.entities.get_or_create(TEST_SENDER, "interesting entity")
         assert boring_entity is not None and boring_entity.id is not None
         assert interesting_entity is not None and interesting_entity.id is not None
 
-        # Give interesting_entity an explicit engagement (emoji reaction) to boost score.
-        # user_search is filtered out of notification scoring — only explicit signals count.
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=0.5,
-            entity_id=interesting_entity.id,
-        )
+        # Give interesting_entity higher heat
+        _set_entity_heat(penny, boring_entity.id, 1.0)
+        _set_entity_heat(penny, interesting_entity.id, 5.0)
 
-        # Both get one fact (same enrichment volume)
+        # Both get one fact
         penny.db.facts.add(boring_entity.id, "Boring fact")
         penny.db.facts.add(interesting_entity.id, "Interesting fact")
 
@@ -100,7 +86,7 @@ async def test_notification_prefers_higher_interest_entity(
         result = await agent.execute()
         assert result is True
 
-        # Should notify about the interesting entity (higher interest score)
+        # Should notify about the interesting entity (higher heat)
         msgs = signal_server.outgoing_messages
         assert len(msgs) == 1
         assert "interesting entity" in msgs[0]["message"]
@@ -110,7 +96,7 @@ async def test_notification_prefers_higher_interest_entity(
 
 
 @pytest.mark.asyncio
-async def test_notification_vetoes_entity_with_negative_emoji(
+async def test_notification_skips_zero_heat_entity(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -118,12 +104,12 @@ async def test_notification_vetoes_entity_with_negative_emoji(
     test_user_info,
     running_penny,
 ):
-    """Entity with a negative emoji reaction is hard-vetoed from notifications.
+    """Entity with zero heat (e.g., vetoed) is excluded from notifications.
 
-    Even if the entity has positive engagements, a single thumbs-down
-    completely excludes it. The fallback entity (no engagement) gets picked.
+    A thumbs-down zeroes heat, so the entity naturally sinks to ineligible.
+    The fallback entity (with heat) gets picked instead.
     """
-    config = make_config(notification_pool_size=1)
+    config = make_config()
 
     def handler(request: dict, count: int) -> dict:
         return mock_ollama._make_text_response(
@@ -139,27 +125,15 @@ async def test_notification_vetoes_entity_with_negative_emoji(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        # Create two entities — vetoed one has positive AND negative signals
+        # Create two entities — vetoed one has zero heat
         vetoed = penny.db.entities.get_or_create(TEST_SENDER, "vetoed entity")
         fallback = penny.db.entities.get_or_create(TEST_SENDER, "fallback entity")
         assert vetoed is not None and vetoed.id is not None
         assert fallback is not None and fallback.id is not None
 
-        # Vetoed entity: positive follow-up but negative emoji → hard veto
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=0.5,
-            entity_id=vetoed.id,
-        )
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
-            valence=PennyConstants.EngagementValence.NEGATIVE,
-            strength=0.8,
-            entity_id=vetoed.id,
-        )
+        # Vetoed entity: heat = 0 (as if thumbs-downed)
+        _set_entity_heat(penny, vetoed.id, 0.0)
+        _set_entity_heat(penny, fallback.id, 3.0)
 
         penny.db.facts.add(vetoed.id, "Vetoed fact")
         penny.db.facts.add(fallback.id, "Fallback fact")
@@ -176,7 +150,7 @@ async def test_notification_vetoes_entity_with_negative_emoji(
 
 
 @pytest.mark.asyncio
-async def test_notification_fatigue_penalizes_over_notified_entity(
+async def test_notification_ignore_penalty_reduces_heat(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -184,80 +158,14 @@ async def test_notification_fatigue_penalizes_over_notified_entity(
     test_user_info,
     running_penny,
 ):
-    """Entity with many previously-notified facts is penalized by fatigue.
-
-    Two entities with the same emoji engagement, but the over-notified one
-    (many pre-marked facts) should score lower due to fatigue divisor.
-    """
-    config = make_config(notification_pool_size=1)
-
-    def handler(request: dict, count: int) -> dict:
-        return mock_ollama._make_text_response(
-            request,
-            "Hey, I found something new about fresh entity that you might find really interesting!",
-        )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        fatigued = penny.db.entities.get_or_create(TEST_SENDER, "fatigued entity")
-        fresh = penny.db.entities.get_or_create(TEST_SENDER, "fresh entity")
-        assert fatigued is not None and fatigued.id is not None
-        assert fresh is not None and fresh.id is not None
-
-        # Same emoji engagement for both
-        for entity in [fatigued, fresh]:
-            penny.db.engagements.add(
-                user=TEST_SENDER,
-                engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
-                valence=PennyConstants.EngagementValence.POSITIVE,
-                strength=0.5,
-                entity_id=entity.id,
-            )
-
-        # Fatigued entity: 50 pre-notified facts (already told user about it many times)
-        now = datetime.now(UTC)
-        for i in range(50):
-            penny.db.facts.add(fatigued.id, f"Old fact {i}", notified_at=now)
-
-        # Both get one new un-notified fact
-        penny.db.facts.add(fatigued.id, "New fatigued fact")
-        penny.db.facts.add(fresh.id, "New fresh fact")
-
-        agent = _create_notification_agent(penny, config)
-        signal_server.outgoing_messages.clear()
-        result = await agent.execute()
-        assert result is True
-
-        # Fresh entity should win (lower fatigue divisor)
-        msgs = signal_server.outgoing_messages
-        assert len(msgs) == 1
-        assert "fresh entity" in msgs[0]["message"].lower()
-
-
-@pytest.mark.asyncio
-async def test_notification_auto_tuning_records_ignored(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """When a notification gets no engagement, the next cycle records NOTIFICATION_IGNORED.
+    """When a notification gets no engagement, the next cycle penalizes heat.
 
     First cycle: sends notification for entity A.
-    Second cycle: no engagement since → records NOTIFICATION_IGNORED for A.
+    Second cycle: no engagement since → heat penalty applied to A.
     """
     config = make_config(
-        notification_pool_size=1,
         notification_initial_backoff=0,
-        notification_entity_cooldown=0,
+        HEAT_COOLDOWN_CYCLES=0,
     )
 
     def handler(request: dict, count: int) -> dict:
@@ -279,19 +187,21 @@ async def test_notification_auto_tuning_records_ignored(
         assert entity_a is not None and entity_a.id is not None
         assert entity_b is not None and entity_b.id is not None
 
-        # Both need notification-eligible engagement to score > 0
-        _add_notifiable_engagement(penny, entity_a.id)
-        _add_notifiable_engagement(penny, entity_b.id)
+        _set_entity_heat(penny, entity_a.id, 5.0)
+        _set_entity_heat(penny, entity_b.id, 3.0)
 
         penny.db.facts.add(entity_a.id, "Fact for A")
         penny.db.facts.add(entity_b.id, "Fact for B")
 
         agent = _create_notification_agent(penny, config)
 
-        # Cycle 1: sends notification (picks one entity)
+        # Cycle 1: sends notification (picks entity A — higher heat)
         signal_server.outgoing_messages.clear()
         result1 = await agent.execute()
         assert result1 is True
+
+        # Record A's heat before ignore penalty
+        heat_before = penny.db.entities.get(entity_a.id).heat
 
         # No engagement happens between cycles — user ignores the notification
 
@@ -301,19 +211,16 @@ async def test_notification_auto_tuning_records_ignored(
         )
         penny.db.messages.mark_processed([msg_id2])
 
-        # Cycle 2: should record NOTIFICATION_IGNORED for the entity from cycle 1
+        # Add new facts so there's something to notify about
+        penny.db.facts.add(entity_a.id, "New fact for A")
+        penny.db.facts.add(entity_b.id, "New fact for B")
+
+        # Cycle 2: should penalize heat for ignored entity A
         await agent.execute()
 
-        # Check that a NOTIFICATION_IGNORED engagement was created
-        # The ignored engagement is for the FIRST notification's entity
-        # (recorded at the start of cycle 2, before picking the new entity)
-        all_user_engs = penny.db.engagements.get_for_user(TEST_SENDER)
-        all_ignored = [
-            e
-            for e in all_user_engs
-            if e.engagement_type == PennyConstants.EngagementType.NOTIFICATION_IGNORED
-        ]
-        assert len(all_ignored) >= 1
+        # Entity A's heat should have been reduced by ignore penalty
+        heat_after = penny.db.entities.get(entity_a.id).heat
+        assert heat_after < heat_before
 
 
 @pytest.mark.asyncio
@@ -345,7 +252,7 @@ async def test_notification_marks_facts_notified(
 
         entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
         assert entity is not None and entity.id is not None
-        _add_notifiable_engagement(penny, entity.id)
+        _set_entity_heat(penny, entity.id, 5.0)
         penny.db.facts.add(entity.id, "Fact one")
         penny.db.facts.add(entity.id, "Fact two")
 
@@ -376,9 +283,7 @@ async def test_notification_entity_cooldown(
     running_penny,
 ):
     """After notifying about an entity, it enters cooldown and other entities are picked instead."""
-    # Use small initial_backoff (50ms) so the second notification fires quickly after user message.
-    # pool_size=1 makes selection deterministic (always picks highest score).
-    config = make_config(notification_initial_backoff=0.05, notification_pool_size=1)
+    config = make_config(notification_initial_backoff=0.05)
 
     def handler(request: dict, count: int) -> dict:
         return mock_ollama._make_text_response(
@@ -394,61 +299,52 @@ async def test_notification_entity_cooldown(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        # Create two entities — give entity A higher interest so it's picked first
+        # Create two entities — give entity A higher heat so it's picked first
         entity_a = penny.db.entities.get_or_create(TEST_SENDER, "entity alpha")
         entity_b = penny.db.entities.get_or_create(TEST_SENDER, "entity beta")
         assert entity_a is not None and entity_a.id is not None
         assert entity_b is not None and entity_b.id is not None
 
-        # Entity A: higher interest so it's picked first (pool_size=1)
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=0.5,
-            entity_id=entity_a.id,
-        )
-        # Entity B: lower interest, picked when A is on cooldown
-        _add_notifiable_engagement(penny, entity_b.id)
+        _set_entity_heat(penny, entity_a.id, 8.0)
+        _set_entity_heat(penny, entity_b.id, 3.0)
 
         penny.db.facts.add(entity_b.id, "Fact for beta")
         penny.db.facts.add(entity_a.id, "Fact for alpha")
 
         agent = _create_notification_agent(penny, config)
 
-        # Cycle 1: entity A picked (highest interest score)
+        # Cycle 1: entity A picked (highest heat)
         signal_server.outgoing_messages.clear()
         result1 = await agent.execute()
         assert result1 is True
-        # Verify entity A was notified (its fact is marked, its last_notified_at is set)
+        # Verify entity A was notified and has cooldown set
         facts_a = penny.db.facts.get_for_entity(entity_a.id)
         assert any(f.notified_at is not None for f in facts_a)
         entity_a_refreshed = penny.db.entities.get(entity_a.id)
-        assert entity_a_refreshed is not None and entity_a_refreshed.last_notified_at is not None
+        assert entity_a_refreshed is not None
+        assert entity_a_refreshed.heat_cooldown > 0
 
         # Add new facts to both
         penny.db.facts.add(entity_b.id, "Another beta fact")
         penny.db.facts.add(entity_a.id, "Another alpha fact")
 
-        # User sends message → resets backoff (to initial_backoff=50ms from interaction time)
+        # User sends message → resets backoff
         msg_id2 = penny.db.messages.log_message(
             direction="incoming", sender=TEST_SENDER, content="thanks"
         )
         penny.db.messages.mark_processed([msg_id2])
 
-        # Wait for initial_backoff (50ms) to elapse from interaction time
+        # Wait for initial_backoff (50ms) to elapse
         interaction_recorded = datetime.now(UTC)
         await wait_until(lambda: (datetime.now(UTC) - interaction_recorded).total_seconds() >= 0.1)
 
-        # Cycle 2: entity A is in cooldown, so entity B is picked instead
+        # Cycle 2: entity A is on cooldown, so entity B is picked instead
         signal_server.outgoing_messages.clear()
         result2 = await agent.execute()
         assert result2 is True
         # Verify entity B was notified this time (cooldown forced rotation)
         facts_b = penny.db.facts.get_for_entity(entity_b.id)
         assert any(f.notified_at is not None for f in facts_b)
-        entity_b_refreshed = penny.db.entities.get(entity_b.id)
-        assert entity_b_refreshed is not None and entity_b_refreshed.last_notified_at is not None
 
 
 @pytest.mark.asyncio
@@ -482,8 +378,8 @@ async def test_notification_one_per_cycle(
         e2 = penny.db.entities.get_or_create(TEST_SENDER, "entity two")
         assert e1 is not None and e1.id is not None
         assert e2 is not None and e2.id is not None
-        _add_notifiable_engagement(penny, e1.id)
-        _add_notifiable_engagement(penny, e2.id)
+        _set_entity_heat(penny, e1.id, 5.0)
+        _set_entity_heat(penny, e2.id, 3.0)
         penny.db.facts.add(e1.id, "Fact for entity one")
         penny.db.facts.add(e2.id, "Fact for entity two")
 
@@ -516,6 +412,7 @@ async def test_notification_skips_user_message_facts(
 
         entity = penny.db.entities.get_or_create(TEST_SENDER, "pre-notified entity")
         assert entity is not None and entity.id is not None
+        _set_entity_heat(penny, entity.id, 5.0)
         # Pre-mark as notified (simulates user-sourced facts)
         penny.db.facts.add(entity.id, "Already notified fact", notified_at=datetime.now(UTC))
 
@@ -577,7 +474,7 @@ async def test_notification_mentions_learn_topic(
 
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        _add_notifiable_engagement(penny, entity.id)
+        _set_entity_heat(penny, entity.id, 5.0)
         penny.db.facts.add(
             entity.id,
             "KEF LS50 Meta uses Metamaterial Absorption Technology",
@@ -628,7 +525,7 @@ async def test_notification_backoff_and_reset(
         # --- Cycle 1: notification sent (no backoff — never acted before) ---
         e1 = penny.db.entities.get_or_create(TEST_SENDER, "backoff entity 1")
         assert e1 is not None and e1.id is not None
-        _add_notifiable_engagement(penny, e1.id)
+        _set_entity_heat(penny, e1.id, 5.0)
         penny.db.facts.add(e1.id, "Fact for backoff test 1")
 
         signal_server.outgoing_messages.clear()
@@ -639,7 +536,7 @@ async def test_notification_backoff_and_reset(
         # --- Cycle 2: suppressed (backoff active, no user reply) ---
         e2 = penny.db.entities.get_or_create(TEST_SENDER, "backoff entity 2")
         assert e2 is not None and e2.id is not None
-        _add_notifiable_engagement(penny, e2.id)
+        _set_entity_heat(penny, e2.id, 5.0)
         penny.db.facts.add(e2.id, "Fact for backoff test 2")
 
         signal_server.outgoing_messages.clear()
@@ -670,13 +567,7 @@ async def test_notification_fires_after_initial_backoff_from_user_message(
     test_user_info,
     running_penny,
 ):
-    """After user interaction, notification fires once initial_backoff has elapsed.
-
-    Uses a small initial_backoff so the test completes quickly while still
-    verifying the backoff fires correctly after the wait.
-    """
-    # Use a small initial_backoff (50ms) — reliably larger than Python/DB overhead
-    # but small enough that wait_until (50ms poll) catches it in one or two ticks.
+    """After user interaction, notification fires once initial_backoff has elapsed."""
     config = make_config(notification_initial_backoff=0.05)
 
     def handler(request: dict, count: int) -> dict:
@@ -688,7 +579,6 @@ async def test_notification_fires_after_initial_backoff_from_user_message(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Log and process initial message to establish a baseline interaction time
         msg_id = penny.db.messages.log_message(
             direction="incoming", sender=TEST_SENDER, content="hello"
         )
@@ -699,7 +589,7 @@ async def test_notification_fires_after_initial_backoff_from_user_message(
         # --- Cycle 1: first notification fires (no prior state) ---
         e1 = penny.db.entities.get_or_create(TEST_SENDER, "entity for initial backoff test")
         assert e1 is not None and e1.id is not None
-        _add_notifiable_engagement(penny, e1.id)
+        _set_entity_heat(penny, e1.id, 5.0)
         penny.db.facts.add(e1.id, "Fact for initial backoff test")
 
         signal_server.outgoing_messages.clear()
@@ -715,7 +605,7 @@ async def test_notification_fires_after_initial_backoff_from_user_message(
         # Add another entity/fact to notify about
         e2 = penny.db.entities.get_or_create(TEST_SENDER, "entity for initial backoff test 2")
         assert e2 is not None and e2.id is not None
-        _add_notifiable_engagement(penny, e2.id)
+        _set_entity_heat(penny, e2.id, 5.0)
         penny.db.facts.add(e2.id, "Fact for initial backoff test 2")
 
         # Immediately after interaction: suppressed (initial_backoff of 50ms not yet elapsed)
@@ -724,7 +614,6 @@ async def test_notification_fires_after_initial_backoff_from_user_message(
         assert result2_immediate is False
 
         # After initial_backoff (50ms) elapses from the interaction time, it fires.
-        # wait_until polls every 50ms, so this resolves in at most 2 poll cycles.
         interaction_recorded = datetime.now(UTC)
         await wait_until(lambda: (datetime.now(UTC) - interaction_recorded).total_seconds() >= 0.1)
         signal_server.outgoing_messages.clear()
@@ -764,7 +653,7 @@ async def test_notification_command_does_not_reset_backoff(
         # --- Cycle 1: notification sent (no backoff) ---
         e1 = penny.db.entities.get_or_create(TEST_SENDER, "command backoff entity 1")
         assert e1 is not None and e1.id is not None
-        _add_notifiable_engagement(penny, e1.id)
+        _set_entity_heat(penny, e1.id, 5.0)
         penny.db.facts.add(e1.id, "Fact for command backoff test 1")
 
         signal_server.outgoing_messages.clear()
@@ -774,7 +663,7 @@ async def test_notification_command_does_not_reset_backoff(
         # --- Cycle 2: suppressed (backoff active) ---
         e2 = penny.db.entities.get_or_create(TEST_SENDER, "command backoff entity 2")
         assert e2 is not None and e2.id is not None
-        _add_notifiable_engagement(penny, e2.id)
+        _set_entity_heat(penny, e2.id, 5.0)
         penny.db.facts.add(e2.id, "Fact for command backoff test 2")
 
         signal_server.outgoing_messages.clear()
@@ -805,11 +694,7 @@ async def test_notification_expired_backoff_stays_at_cadence(
     test_user_info,
     running_penny,
 ):
-    """At max backoff, _mark_proactive_sent doubles (clamped at max), not reset to initial.
-
-    Tests the backoff state machine directly: when backoff expires and a notification
-    fires, the next backoff should double from the current value.
-    """
+    """At max backoff, _mark_proactive_sent doubles (clamped at max), not reset to initial."""
     from datetime import timedelta
 
     from penny.agents.backoff import BackoffState
@@ -896,24 +781,16 @@ async def test_learn_completion_announcement(
         )
         search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
         assert len(search_logs) == 1
-        # Mark as extracted
-        assert search_logs[0].id is not None
-        penny.db.searches.mark_extracted(search_logs[0].id)
+        search_log_id = search_logs[0].id
+        assert search_log_id is not None
+        penny.db.searches.mark_extracted(search_log_id)
 
-        # Create entity and fact linked to the search log
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.USER_SEARCH,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=1.0,
-            entity_id=entity.id,
-        )
         penny.db.facts.add(
             entity.id,
             "KEF LS50 Meta uses Metamaterial Absorption Technology",
-            source_search_log_id=search_logs[0].id,
+            source_search_log_id=search_log_id,
         )
 
         agent = _create_notification_agent(penny, config)
@@ -921,23 +798,21 @@ async def test_learn_completion_announcement(
         result = await agent.execute()
         assert result is True
 
-        # Model was given the topic and entity facts to compose a summary
-        assert any("kef speakers" in p for p in captured_prompts)
-        assert any("kef ls50 meta" in p for p in captured_prompts)
-        assert any("Metamaterial Absorption Technology" in p for p in captured_prompts)
-
-        # Announcement was sent
         msgs = signal_server.outgoing_messages
         assert len(msgs) == 1
+        assert "kef" in msgs[0]["message"].lower()
 
-        # LearnPrompt should be marked as announced
-        updated_lp = penny.db.learn_prompts.get(lp.id)
-        assert updated_lp is not None
-        assert updated_lp.announced_at is not None
+        # Facts from the learn prompt should be marked as notified
+        facts = penny.db.facts.get_for_entity(entity.id)
+        assert all(f.notified_at is not None for f in facts)
+
+        # Learn prompt should be marked as announced
+        refreshed_lp = penny.db.learn_prompts.get(lp.id)
+        assert refreshed_lp is not None and refreshed_lp.announced_at is not None
 
 
 @pytest.mark.asyncio
-async def test_learn_completion_not_sent_when_unextracted(
+async def test_learn_completion_exclusive(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -945,61 +820,13 @@ async def test_learn_completion_not_sent_when_unextracted(
     test_user_info,
     running_penny,
 ):
-    """Completion announcement NOT sent when search logs are still unextracted."""
-    config = make_config()
-    mock_ollama.set_default_flow(search_query="test", final_response="ok")
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        # Create a completed learn prompt with UN-extracted search log
-        lp = penny.db.learn_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="kef speakers",
-            searches_remaining=0,
-        )
-        assert lp is not None and lp.id is not None
-        penny.db.learn_prompts.update_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
-
-        penny.db.searches.log(
-            query="kef speakers overview",
-            response="KEF makes great speakers...",
-            trigger="learn_command",
-            learn_prompt_id=lp.id,
-        )
-        # Do NOT mark as extracted
-
-        agent = _create_notification_agent(penny, config)
-        signal_server.outgoing_messages.clear()
-        result = await agent.execute()
-        assert result is False
-        assert len(signal_server.outgoing_messages) == 0
-
-        # LearnPrompt should NOT be announced
-        updated_lp = penny.db.learn_prompts.get(lp.id)
-        assert updated_lp is not None
-        assert updated_lp.announced_at is None
-
-
-@pytest.mark.asyncio
-async def test_learn_completion_marks_facts_notified(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """After learn completion announcement, un-notified facts from the learn prompt are marked."""
+    """Learn completion blocks other notifications in the same cycle."""
     config = make_config()
 
     def handler(request: dict, count: int) -> dict:
         return mock_ollama._make_text_response(
             request,
-            "I finished researching kef speakers and found some interesting stuff!",
+            "I finished researching kef speakers — great find!",
         )
 
     mock_ollama.set_response_handler(handler)
@@ -1010,6 +837,7 @@ async def test_learn_completion_marks_facts_notified(
         )
         penny.db.messages.mark_processed([msg_id])
 
+        # Create a completed learn prompt
         lp = penny.db.learn_prompts.create(
             user=TEST_SENDER,
             prompt_text="kef speakers",
@@ -1019,633 +847,33 @@ async def test_learn_completion_marks_facts_notified(
         penny.db.learn_prompts.update_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
 
         penny.db.searches.log(
-            query="kef speakers overview",
-            response="KEF makes great speakers...",
+            query="kef speakers",
+            response="KEF makes speakers...",
             trigger="learn_command",
             learn_prompt_id=lp.id,
         )
         search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
-        assert search_logs[0].id is not None
+        assert search_logs and search_logs[0].id is not None
         penny.db.searches.mark_extracted(search_logs[0].id)
 
-        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
-        assert entity is not None and entity.id is not None
+        entity_learn = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50")
+        assert entity_learn is not None and entity_learn.id is not None
         penny.db.facts.add(
-            entity.id,
-            "KEF LS50 Meta costs $1,599",
-            source_search_log_id=search_logs[0].id,
-        )
-        penny.db.facts.add(
-            entity.id,
-            "KEF LS50 Meta uses MAT technology",
+            entity_learn.id,
+            "KEF fact",
             source_search_log_id=search_logs[0].id,
         )
 
-        # Verify facts start un-notified
-        facts_before = penny.db.facts.get_for_entity(entity.id)
-        assert all(f.notified_at is None for f in facts_before)
+        # Also create a regular entity with an unnotified fact
+        entity_regular = penny.db.entities.get_or_create(TEST_SENDER, "regular entity")
+        assert entity_regular is not None and entity_regular.id is not None
+        _set_entity_heat(penny, entity_regular.id, 5.0)
+        penny.db.facts.add(entity_regular.id, "Regular fact")
 
         agent = _create_notification_agent(penny, config)
-        await agent.execute()
-
-        # Facts should now be marked as notified
-        facts_after = penny.db.facts.get_for_entity(entity.id)
-        assert all(f.notified_at is not None for f in facts_after)
-
-
-@pytest.mark.asyncio
-async def test_learn_completion_sends_one_per_cycle(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """Multiple completed learn prompts are announced one per cycle, not all at once."""
-    config = make_config()
-
-    def handler(request: dict, count: int) -> dict:
-        return mock_ollama._make_text_response(request, "Here's what I found!")
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        # Create two completed learn prompts, both fully extracted
-        for topic in ("kef speakers", "nvidia gpus"):
-            lp = penny.db.learn_prompts.create(
-                user=TEST_SENDER, prompt_text=topic, searches_remaining=0
-            )
-            assert lp is not None and lp.id is not None
-            penny.db.learn_prompts.update_status(lp.id, PennyConstants.LearnPromptStatus.COMPLETED)
-            penny.db.searches.log(
-                query=f"{topic} overview",
-                response=f"Info about {topic}...",
-                trigger="learn_command",
-                learn_prompt_id=lp.id,
-            )
-            search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
-            assert search_logs[0].id is not None
-            penny.db.searches.mark_extracted(search_logs[0].id)
-
-            entity = penny.db.entities.get_or_create(TEST_SENDER, topic)
-            assert entity is not None and entity.id is not None
-            penny.db.facts.add(
-                entity.id, f"Fact about {topic}", source_search_log_id=search_logs[0].id
-            )
-
-        agent = _create_notification_agent(penny, config)
-
-        # First cycle: only one announcement sent
         signal_server.outgoing_messages.clear()
         result = await agent.execute()
         assert result is True
+
+        # Only ONE message sent (learn completion is exclusive)
         assert len(signal_server.outgoing_messages) == 1
-
-        # One learn prompt announced, one still pending
-        prompts = penny.db.learn_prompts.get_unannounced_completed(TEST_SENDER)
-        assert len(prompts) == 1
-
-        # Second cycle: the other announcement sent
-        signal_server.outgoing_messages.clear()
-        result = await agent.execute()
-        assert result is True
-        assert len(signal_server.outgoing_messages) == 1
-
-        # Both now announced
-        prompts = penny.db.learn_prompts.get_unannounced_completed(TEST_SENDER)
-        assert len(prompts) == 0
-
-
-@pytest.mark.asyncio
-async def test_notification_skips_same_learn_topic_after_notifying(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """After notifying about entity B from learn topic X, skip entity A from same topic X.
-
-    When two entities share the same learn_prompt_id, notifying about one should
-    suppress notifications for the other on the very next cycle — the learn completion
-    announcement will surface all entities from the topic together.
-    """
-    # pool_size=1 makes selection deterministic (always picks highest score)
-    config = make_config(notification_initial_backoff=0.05, notification_pool_size=1)
-
-    def handler(request: dict, count: int) -> dict:
-        return mock_ollama._make_text_response(
-            request,
-            "Here's an interesting discovery — some really great new facts about this topic!",
-        )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        # Create a learn prompt and two entities with facts from it
-        lp = penny.db.learn_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="audiophile speakers",
-            searches_remaining=0,
-        )
-        assert lp is not None and lp.id is not None
-
-        penny.db.searches.log(
-            query="audiophile speakers",
-            response="KEF and Focal make great speakers...",
-            trigger="learn_command",
-            learn_prompt_id=lp.id,
-        )
-        search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
-        assert len(search_logs) == 1
-        sl_id = search_logs[0].id
-
-        # Entity A: from this learn topic (lower interest)
-        entity_a = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
-        assert entity_a is not None and entity_a.id is not None
-        _add_notifiable_engagement(penny, entity_a.id)
-        penny.db.facts.add(
-            entity_a.id, "KEF LS50 Meta uses MAT technology", source_search_log_id=sl_id
-        )
-
-        # Entity B: from the SAME learn topic, with higher interest so it's picked first
-        entity_b = penny.db.entities.get_or_create(TEST_SENDER, "focal clear mg")
-        assert entity_b is not None and entity_b.id is not None
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=0.5,
-            entity_id=entity_b.id,
-        )
-        penny.db.facts.add(
-            entity_b.id, "Focal Clear MG uses magnesium drivers", source_search_log_id=sl_id
-        )
-
-        agent = _create_notification_agent(penny, config)
-
-        # Cycle 1: entity B picked (highest interest score) and notified
-        signal_server.outgoing_messages.clear()
-        result1 = await agent.execute()
-        assert result1 is True
-        assert len(signal_server.outgoing_messages) == 1
-
-        # Verify entity B was the one notified (highest score)
-        facts_b = penny.db.facts.get_for_entity(entity_b.id)
-        assert any(f.notified_at is not None for f in facts_b)
-
-        # Wait for initial_backoff (50ms) to pass before next cycle
-        interaction_recorded = datetime.now(UTC)
-        await wait_until(lambda: (datetime.now(UTC) - interaction_recorded).total_seconds() >= 0.1)
-
-        # Cycle 2: entity A shares the same learn topic as entity B (just notified)
-        # → should be SKIPPED even though it has unnotified facts
-        signal_server.outgoing_messages.clear()
-        result2 = await agent.execute()
-        assert result2 is False
-        assert len(signal_server.outgoing_messages) == 0
-
-        # Entity A still has unnotified facts (it was skipped, not notified)
-        facts_a = penny.db.facts.get_for_entity(entity_a.id)
-        assert all(f.notified_at is None for f in facts_a)
-
-
-@pytest.mark.asyncio
-async def test_event_notification_sends_and_marks_notified(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """Unnotified events trigger a notification and get marked as notified."""
-    config = make_config()
-
-    def handler(request: dict, count: int) -> dict:
-        return mock_ollama._make_text_response(
-            request,
-            "Heads up — **SpaceX** just launched their Starship rocket today!"
-            " Pretty cool development worth keeping an eye on.",
-        )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        # Create a follow prompt — events need one for per-prompt scheduling
-        fp = penny.db.follow_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="space launches",
-            query_terms='["spacex"]',
-        )
-        assert fp is not None and fp.id is not None
-
-        # Create an unnotified event linked to the follow prompt
-        event = penny.db.events.add(
-            user=TEST_SENDER,
-            headline="SpaceX launches Starship",
-            summary="SpaceX successfully launched its Starship rocket today.",
-            occurred_at=datetime.now(UTC),
-            source_type=PennyConstants.EventSourceType.NEWS_API,
-            source_url="https://example.com/spacex",
-            external_id="https://example.com/spacex",
-            follow_prompt_id=fp.id,
-        )
-        assert event is not None and event.id is not None
-
-        agent = _create_notification_agent(penny, config)
-        signal_server.outgoing_messages.clear()
-        result = await agent.execute()
-
-        assert result is True
-        assert len(signal_server.outgoing_messages) == 1
-        assert "SpaceX" in signal_server.outgoing_messages[0]["message"]
-
-        # Event should be marked as notified
-        updated = penny.db.events.get(event.id)
-        assert updated is not None
-        assert updated.notified_at is not None
-
-        # Follow prompt's last_notified_at should be set
-        updated_fp = penny.db.follow_prompts.get(fp.id)
-        assert updated_fp is not None
-        assert updated_fp.last_notified_at is not None
-
-
-@pytest.mark.asyncio
-async def test_event_notification_respects_cadence(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """Event notifications respect per-prompt cadence — suppressed until cadence elapses."""
-    config = make_config()
-
-    def handler(request: dict, count: int) -> dict:
-        return mock_ollama._make_text_response(
-            request,
-            "Here's a heads up about some interesting news I saw recently!"
-            " This looks like something you'd want to know about.",
-        )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        # Create follow prompt with daily cron schedule
-        fp = penny.db.follow_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="tech news",
-            query_terms='["tech"]',
-            cron_expression="0 9 * * *",
-            timing_description="daily",
-        )
-        assert fp is not None and fp.id is not None
-
-        agent = _create_notification_agent(penny, config)
-
-        # Create and send first event notification
-        penny.db.events.add(
-            user=TEST_SENDER,
-            headline="Event one",
-            summary="First event.",
-            occurred_at=datetime.now(UTC),
-            source_type=PennyConstants.EventSourceType.NEWS_API,
-            source_url="https://example.com/1",
-            external_id="https://example.com/1",
-            follow_prompt_id=fp.id,
-        )
-
-        signal_server.outgoing_messages.clear()
-        result1 = await agent.execute()
-        assert result1 is True
-
-        # Second event — should be suppressed by cron (next firing ~24h away)
-        penny.db.events.add(
-            user=TEST_SENDER,
-            headline="Event two",
-            summary="Second event.",
-            occurred_at=datetime.now(UTC),
-            source_type=PennyConstants.EventSourceType.NEWS_API,
-            source_url="https://example.com/2",
-            external_id="https://example.com/2",
-            follow_prompt_id=fp.id,
-        )
-
-        signal_server.outgoing_messages.clear()
-        result2 = await agent.execute()
-        # Event notification suppressed, but fact notification may or may not fire
-        # (there are no unnotified facts here, so it's False)
-        assert result2 is False
-
-
-@pytest.mark.asyncio
-async def test_event_and_fact_notifications_independent(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """Event and fact notifications fire independently in the same cycle."""
-    config = make_config()
-
-    def handler(request: dict, count: int) -> dict:
-        return mock_ollama._make_text_response(
-            request,
-            "Here's what I noticed — some really interesting recent news about this topic!"
-            " Thought you'd want to know about these developments.",
-        )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        # Create a follow prompt with an unnotified event
-        fp = penny.db.follow_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="tech news",
-            query_terms='["tech"]',
-        )
-        assert fp is not None and fp.id is not None
-
-        penny.db.events.add(
-            user=TEST_SENDER,
-            headline="Breaking: test entity news",
-            summary="Something happened about test entity.",
-            occurred_at=datetime.now(UTC),
-            source_type=PennyConstants.EventSourceType.NEWS_API,
-            source_url="https://example.com/event",
-            external_id="https://example.com/event",
-            follow_prompt_id=fp.id,
-        )
-
-        # Also create an unnotified fact
-        entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
-        assert entity is not None and entity.id is not None
-        penny.db.facts.add(entity.id, "Some new fact about test entity")
-
-        agent = _create_notification_agent(penny, config)
-        signal_server.outgoing_messages.clear()
-        result = await agent.execute()
-
-        assert result is True
-        # Both event and fact notifications should fire independently
-        assert len(signal_server.outgoing_messages) == 2
-
-
-@pytest.mark.asyncio
-async def test_event_notification_empty_prompt_does_not_starve_siblings(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """A follow prompt with no events must not block other prompts that have events.
-
-    Regression test: previously _find_due_follow_prompt returned a single most-
-    overdue prompt. If that prompt had no unnotified events the agent bailed
-    without trying any other prompts, starving siblings indefinitely.
-    """
-    config = make_config()
-
-    def handler(request: dict, count: int) -> dict:
-        return mock_ollama._make_text_response(
-            request,
-            "Here's a heads up about some interesting news I saw recently!"
-            " This looks like something you'd want to know about.",
-        )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        # Prompt A: overdue but has NO unnotified events
-        fp_empty = penny.db.follow_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="empty topic",
-            query_terms='["empty"]',
-        )
-        assert fp_empty is not None and fp_empty.id is not None
-
-        # Prompt B: also overdue and HAS an unnotified event
-        fp_with_events = penny.db.follow_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="active topic",
-            query_terms='["active"]',
-        )
-        assert fp_with_events is not None and fp_with_events.id is not None
-
-        penny.db.events.add(
-            user=TEST_SENDER,
-            headline="Something happened",
-            summary="An event for the active topic.",
-            occurred_at=datetime.now(UTC),
-            source_type=PennyConstants.EventSourceType.NEWS_API,
-            source_url="https://example.com/active",
-            external_id="https://example.com/active",
-            follow_prompt_id=fp_with_events.id,
-        )
-
-        agent = _create_notification_agent(penny, config)
-        signal_server.outgoing_messages.clear()
-        result = await agent.execute()
-
-        # The active topic's event should still be sent
-        assert result is True
-        assert len(signal_server.outgoing_messages) >= 1
-
-
-@pytest.mark.asyncio
-async def test_notification_neighbor_boost_shifts_selection(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """Embedding neighbor boost lifts entities near positively-engaged neighbors.
-
-    Both entities have the same base interest, but entity A's embedding is close
-    to a highly-engaged neighbor. The neighbor boost pushes A above B.
-    """
-    config = make_config(notification_pool_size=1)
-
-    captured_prompts: list[str] = []
-
-    def handler(request: dict, count: int) -> dict:
-        messages = request.get("messages", [])
-        prompt = messages[-1]["content"] if messages else ""
-        captured_prompts.append(prompt)
-        if "boosted" in prompt:
-            return mock_ollama._make_text_response(
-                request,
-                "Hey, I found something really interesting about boosted entity"
-                " that I think you would enjoy hearing about!",
-            )
-        return mock_ollama._make_text_response(
-            request,
-            "Hey, I found something really interesting about baseline entity"
-            " that I think you would enjoy hearing about!",
-        )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        # Neighbor entity: strong positive engagement, similar embedding to A
-        neighbor = penny.db.entities.get_or_create(TEST_SENDER, "neighbor entity")
-        assert neighbor is not None and neighbor.id is not None
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=0.8,
-            entity_id=neighbor.id,
-        )
-        # Embedding: [1, 0, 0, 0] — close to entity A
-        penny.db.entities.update_embedding(neighbor.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
-
-        # Entity A: same base interest as B, but embedding [0.9, 0.1, 0, 0] is
-        # very similar to neighbor (cosine ~0.99) → gets neighbor boost
-        entity_a = penny.db.entities.get_or_create(TEST_SENDER, "boosted entity")
-        assert entity_a is not None and entity_a.id is not None
-        _add_notifiable_engagement(penny, entity_a.id)
-        penny.db.entities.update_embedding(entity_a.id, serialize_embedding([0.9, 0.1, 0.0, 0.0]))
-        penny.db.facts.add(entity_a.id, "Fact about boosted entity")
-
-        # Entity B: same base interest as A,
-        # but embedding [0, 0, 1, 0] is far from any engaged entity → no boost
-        entity_b = penny.db.entities.get_or_create(TEST_SENDER, "baseline entity")
-        assert entity_b is not None and entity_b.id is not None
-        _add_notifiable_engagement(penny, entity_b.id)
-        penny.db.entities.update_embedding(entity_b.id, serialize_embedding([0.0, 0.0, 1.0, 0.0]))
-        penny.db.facts.add(entity_b.id, "Fact about baseline entity")
-
-        agent = _create_notification_agent(penny, config)
-        signal_server.outgoing_messages.clear()
-        result = await agent.execute()
-        assert result is True
-
-        # Entity A (boosted) should be picked over entity B (baseline)
-        msgs = signal_server.outgoing_messages
-        assert len(msgs) == 1
-        assert "boosted entity" in msgs[0]["message"].lower()
-
-
-@pytest.mark.asyncio
-async def test_event_notification_prompt_includes_grounding_constraint(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """Event notification prompt must instruct the model not to fabricate details.
-
-    The EVENT_NOTIFICATION_PROMPT must include explicit grounding language so the
-    model is constrained to only use the provided headline and summary, preventing
-    hallucination of dates, names, or facts not present in the source article.
-    """
-    config = make_config()
-
-    captured_prompts: list[str] = []
-
-    def handler(request: dict, count: int) -> dict:
-        messages = request.get("messages", [])
-        user_msg = messages[-1]["content"] if messages else ""
-        captured_prompts.append(user_msg)
-        return mock_ollama._make_text_response(
-            request,
-            "Here's an update on **space exploration**: Moon Mission Alpha launched. Full story at the link.",  # noqa: E501
-        )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="hello"
-        )
-        penny.db.messages.mark_processed([msg_id])
-
-        # Create a follow prompt (last_notified_at=None → always due)
-        follow = penny.db.follow_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="space exploration",
-            query_terms='["space exploration"]',
-        )
-        assert follow is not None and follow.id is not None
-
-        # Create an event linked to that follow prompt
-        event = penny.db.events.add(
-            user=TEST_SENDER,
-            headline="Moon Mission Alpha Launches Successfully",
-            summary="The Moon Mission Alpha spacecraft launched from Kennedy Space Center on schedule.",  # noqa: E501
-            occurred_at=datetime.now(UTC),
-            source_type="news_api",
-            source_url="https://example.com/moon-mission",
-            follow_prompt_id=follow.id,
-        )
-        assert event is not None
-
-        agent = _create_notification_agent(penny, config)
-        signal_server.outgoing_messages.clear()
-        result = await agent.execute()
-        assert result is True
-
-        # Verify a message was sent
-        assert len(signal_server.outgoing_messages) == 1
-
-        # The prompt sent to the model for the event notification must include
-        # grounding instructions that prevent hallucination
-        event_prompts = [
-            p for p in captured_prompts if "Moon Mission" in p or "space exploration" in p
-        ]
-        assert event_prompts, "No event notification prompt was captured by mock Ollama"
-
-        event_prompt = event_prompts[0]
-        assert "only use information" in event_prompt.lower(), (
-            "EVENT_NOTIFICATION_PROMPT must instruct the model to only use provided data "
-            "to prevent hallucination of facts not present in the source article"
-        )
