@@ -247,6 +247,7 @@ class Penny:
             command_registry=self.command_registry,
         )
         self.notification_agent.set_channel(self.channel)
+        self.event_agent.set_channel(self.channel)
         self.channel.set_heat_engine(self.heat_engine)
         self.schedule_executor.set_channel(self.channel)
 
