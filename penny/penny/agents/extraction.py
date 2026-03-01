@@ -31,6 +31,7 @@ from penny.prompts import Prompt
 
 if TYPE_CHECKING:
     from penny.database.models import MessageLog
+    from penny.interest import HeatEngine
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +237,11 @@ class ExtractionPipeline(Agent):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._heat_engine: HeatEngine | None = None
+
+    def set_heat_engine(self, engine: HeatEngine) -> None:
+        """Set the heat engine for engagement heat touches."""
+        self._heat_engine = engine
 
     @property
     def name(self) -> str:
@@ -350,6 +356,8 @@ class ExtractionPipeline(Agent):
                             strength=self.config.runtime.ENGAGEMENT_STRENGTH_USER_SEARCH,
                             entity_id=entity.id,
                         )
+                        if self._heat_engine:
+                            self._heat_engine.touch(entity.id)
 
             self.db.searches.mark_extracted(search_log.id)
 
@@ -412,6 +420,8 @@ class ExtractionPipeline(Agent):
                             entity_id=entity.id,
                             source_message_id=message.id,
                         )
+                        if self._heat_engine:
+                            self._heat_engine.touch(entity.id)
 
                     # Extract sentiment and create EXPLICIT_STATEMENT engagements
                     sentiments = await self._extract_message_sentiments(
@@ -429,6 +439,11 @@ class ExtractionPipeline(Agent):
                             entity_id=matched.id,
                             source_message_id=message.id,
                         )
+                        if self._heat_engine:
+                            if s.sentiment == PennyConstants.EngagementValence.POSITIVE:
+                                self._heat_engine.touch(matched.id)
+                            elif s.sentiment == PennyConstants.EngagementValence.NEGATIVE:
+                                self._heat_engine.veto(matched.id)
 
             # --- Follow-up detection (separate from entity extraction, no min-length filter) ---
             for message in messages:
@@ -1070,6 +1085,8 @@ class ExtractionPipeline(Agent):
                 strength=score,
                 entity_id=entity.id,
             )
+            if self._heat_engine:
+                self._heat_engine.touch(entity.id)
         return entity
 
     async def _merge_into_existing(
@@ -1137,6 +1154,10 @@ class ExtractionPipeline(Agent):
         # candidates in this batch can dedup against it
         if self._embedding_model_client and candidate_embedding is not None:
             self.db.entities.update_embedding(entity.id, serialize_embedding(candidate_embedding))
+
+        if self._heat_engine:
+            self._heat_engine.seed_novelty(entity.id)
+
         return entity
 
     def _find_duplicate_entity(
@@ -1299,6 +1320,8 @@ class ExtractionPipeline(Agent):
                     entity_id=entity_id,
                     source_message_id=message.id,
                 )
+                if self._heat_engine:
+                    self._heat_engine.touch(entity_id)
 
             return len(matches) > 0
         except Exception:

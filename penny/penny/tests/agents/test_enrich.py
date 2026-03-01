@@ -745,6 +745,7 @@ async def test_enrichment_discovers_related_entities(
             max_steps=1,
             tool_timeout=config.tool_timeout,
         )
+        agent.set_heat_engine(penny.heat_engine)
 
         result = await agent.execute()
         assert result is True
@@ -775,6 +776,11 @@ async def test_enrichment_discovers_related_entities(
         ]
         assert len(discovery_engs) == 1
         assert discovery_engs[0].strength > 0.0
+
+        # Verify discovered entity received heat (novelty + SEARCH_DISCOVERY touch)
+        refreshed = penny.db.entities.get(discovered.id)
+        assert refreshed is not None
+        assert refreshed.heat > 0, "Discovered entity should have heat from novelty + touch"
 
 
 @pytest.mark.asyncio

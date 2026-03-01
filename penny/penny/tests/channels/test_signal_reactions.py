@@ -280,6 +280,11 @@ async def test_reaction_creates_entity_engagements(
         # Normal response (has incoming parent) → normal strength
         assert eng.strength == 0.3
 
+        # Verify positive reaction added heat via touch()
+        refreshed = penny.db.entities.get(entity.id)
+        assert refreshed is not None
+        assert refreshed.heat > 0, "Positive emoji reaction should add heat via touch()"
+
 
 @pytest.mark.asyncio
 async def test_negative_reaction_on_proactive_message(
@@ -308,6 +313,7 @@ async def test_negative_reaction_on_proactive_message(
         entity = penny.db.entities.get_or_create(TEST_SENDER, "sports news")
         assert entity is not None and entity.id is not None
         penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+        penny.db.entities.update_heat(entity.id, 5.0)
 
         # Insert a proactive outgoing message directly (simulates discovery/research)
         proactive_msg_id = penny.db.messages.log_message(
@@ -349,3 +355,8 @@ async def test_negative_reaction_on_proactive_message(
         eng = reaction_engagements[0]
         assert eng.valence == PennyConstants.EngagementValence.NEGATIVE
         assert eng.strength == 0.8
+
+        # Verify negative reaction zeroed heat via veto()
+        refreshed = penny.db.entities.get(entity.id)
+        assert refreshed is not None
+        assert refreshed.heat == 0.0, "Negative emoji reaction should zero heat via veto()"

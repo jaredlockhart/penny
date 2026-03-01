@@ -612,6 +612,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="HEAT_NOVELTY_AMOUNT",
+    description="Base heat given to newly created entities (novelty reward)",
+    type=float,
+    default=1.0,
+    validator=_validate_positive_float,
+    group=GROUP_HEAT,
+)
+
+ConfigParam(
     key="HEAT_IGNORE_PENALTY",
     description="Heat multiplier when a notification is ignored (e.g. 0.6 = lose 40%)",
     type=float,

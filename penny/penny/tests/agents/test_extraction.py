@@ -129,6 +129,11 @@ async def test_extraction_processes_search_log(
         assert search_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
         assert search_engagements[0].strength == 1.0
 
+        # Verify entity received heat (novelty from creation + touch from USER_SEARCH)
+        refreshed = penny.db.entities.get(entity.id)
+        assert refreshed is not None
+        assert refreshed.heat > 0, "Entity should have heat from novelty + engagement touch"
+
         # Verify SearchLog is marked as extracted
         with penny.db.get_session() as session:
             sl = session.get(SearchLog, search_logs[0].id)
@@ -679,6 +684,11 @@ async def test_extraction_processes_messages_for_entities(
         assert statement_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
         assert statement_engagements[0].strength == 0.7
 
+        # Verify entity received heat (novelty + MESSAGE_MENTION touch + EXPLICIT_STATEMENT touch)
+        refreshed = penny.db.entities.get(entity.id)
+        assert refreshed is not None
+        assert refreshed.heat > 0, "Entity should have heat from engagements"
+
 
 @pytest.mark.asyncio
 async def test_extraction_creates_follow_up_engagements(
@@ -741,6 +751,11 @@ async def test_extraction_creates_follow_up_engagements(
         assert follow_up_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
         assert follow_up_engagements[0].strength == 0.5
         assert follow_up_engagements[0].source_message_id == incoming_id
+
+        # Verify entity received heat from FOLLOW_UP_QUESTION touch
+        refreshed = penny.db.entities.get(entity.id)
+        assert refreshed is not None
+        assert refreshed.heat > 0, "Entity should have heat from follow-up touch"
 
 
 @pytest.mark.asyncio

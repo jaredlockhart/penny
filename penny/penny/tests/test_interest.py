@@ -305,6 +305,28 @@ class TestHeatEngine:
         assert refreshed is not None
         assert refreshed.heat == 0.0
 
+    def test_seed_novelty_adds_base_heat(self, heat_db, engine):
+        entity = heat_db.entities.get_or_create(_DEFAULT_USER, "brand new")
+        assert entity is not None and entity.id is not None
+        assert entity.heat == 0.0
+
+        engine.seed_novelty(entity.id)
+
+        refreshed = heat_db.entities.get(entity.id)
+        assert refreshed is not None
+        assert refreshed.heat == pytest.approx(1.0)  # default HEAT_NOVELTY_AMOUNT
+
+    def test_seed_novelty_stacks_with_existing_heat(self, heat_db, engine):
+        entity = heat_db.entities.get_or_create(_DEFAULT_USER, "existing")
+        assert entity is not None and entity.id is not None
+        heat_db.entities.update_heat(entity.id, 2.0)
+
+        engine.seed_novelty(entity.id)
+
+        refreshed = heat_db.entities.get(entity.id)
+        assert refreshed is not None
+        assert refreshed.heat == pytest.approx(3.0)  # 2.0 + 1.0
+
     def test_penalize_ignore_reduces_heat(self, heat_db, engine):
         entity = heat_db.entities.get_or_create(_DEFAULT_USER, "test")
         assert entity is not None and entity.id is not None
