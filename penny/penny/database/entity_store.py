@@ -162,30 +162,36 @@ class EntityStore:
 
     # --- Heat methods ---
 
-    def apply_heat_decay(self, user: str, decay_rate: float) -> None:
-        """Multiply all entity heat values by decay_rate for a user."""
-        from sqlalchemy import text
-
-        with self._session() as session:
-            session.exec(  # type: ignore[call-overload]
-                text("UPDATE entity SET heat = heat * :rate WHERE user = :user"),
-                params={"rate": decay_rate, "user": user},
-            )
-            session.commit()
-
-    def decrement_cooldowns(self, user: str) -> None:
-        """Decrement heat_cooldown by 1 for all entities with cooldown > 0."""
+    def apply_heat_decay(self, user: str, decay_factor: float, now: datetime) -> None:
+        """Multiply all entity heat values by decay_factor and stamp decay time."""
         from sqlalchemy import text
 
         with self._session() as session:
             session.exec(  # type: ignore[call-overload]
                 text(
-                    "UPDATE entity SET heat_cooldown = heat_cooldown - 1 "
-                    "WHERE user = :user AND heat_cooldown > 0"
+                    "UPDATE entity SET heat = heat * :factor, heat_decayed_at = :now "
+                    "WHERE user = :user"
                 ),
-                params={"user": user},
+                params={"factor": decay_factor, "now": now.isoformat(), "user": user},
             )
             session.commit()
+
+    def get_heat_decayed_at(self, user: str) -> datetime | None:
+        """Get the most recent heat_decayed_at timestamp for a user's entities."""
+        from sqlalchemy import text
+
+        with self._session() as session:
+            result = session.exec(  # type: ignore[call-overload]
+                text("SELECT MAX(heat_decayed_at) FROM entity WHERE user = :user"),
+                params={"user": user},
+            )
+            row = result.one_or_none()
+            if row is None or row[0] is None:
+                return None
+            value = row[0]
+            if isinstance(value, str):
+                return datetime.fromisoformat(value)
+            return value
 
     def update_heat(self, entity_id: int, heat: float) -> None:
         """Set the heat value for an entity."""
@@ -211,13 +217,13 @@ class EntityStore:
         except Exception as e:
             logger.error("Failed to add heat to entity %d: %s", entity_id, e)
 
-    def update_heat_cooldown(self, entity_id: int, cooldown: int) -> None:
-        """Set the cooldown cycles remaining for an entity."""
+    def update_heat_cooldown_until(self, entity_id: int, until: datetime) -> None:
+        """Set the cooldown deadline for an entity."""
         try:
             with self._session() as session:
                 entity = session.get(Entity, entity_id)
                 if entity:
-                    entity.heat_cooldown = cooldown
+                    entity.heat_cooldown_until = until
                     session.add(entity)
                     session.commit()
         except Exception as e:

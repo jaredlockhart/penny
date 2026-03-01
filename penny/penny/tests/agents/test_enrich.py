@@ -40,6 +40,7 @@ async def test_learn_enrichment(
         # Create entity with positive interest
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
+        penny.db.entities.update_heat(entity.id, 1.0)
         penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
@@ -191,6 +192,7 @@ async def test_learn_dedup_facts(
         # Create entity with existing fact and positive interest
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
+        penny.db.entities.update_heat(entity.id, 1.0)
         existing_fact = penny.db.facts.add(
             entity_id=entity.id, content="Costs $1,599 per pair", notified_at=datetime.now(UTC)
         )
@@ -256,6 +258,10 @@ async def test_learn_semantic_interest_priority(
         entity_b = penny.db.entities.get_or_create(TEST_SENDER, "coral beach hotel")
         assert entity_a is not None and entity_a.id is not None
         assert entity_b is not None and entity_b.id is not None
+
+        # Entity A gets higher heat (mirrors higher engagement strength)
+        penny.db.entities.update_heat(entity_a.id, 3.0)
+        penny.db.entities.update_heat(entity_b.id, 1.0)
 
         for eid in (entity_a.id, entity_b.id):
             penny.db.engagements.add(
@@ -347,6 +353,7 @@ async def test_learn_enrichment_fixed_interval(
         # Create entity with positive interest
         entity = penny.db.entities.get_or_create(TEST_SENDER, "interval test entity")
         assert entity is not None and entity.id is not None
+        penny.db.entities.update_heat(entity.id, 1.0)
         penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
@@ -410,6 +417,7 @@ async def test_enrich_entity_rotation_cooldown(
         # Entity A: higher interest
         entity_a = penny.db.entities.get_or_create(TEST_SENDER, "entity alpha")
         assert entity_a is not None and entity_a.id is not None
+        penny.db.entities.update_heat(entity_a.id, 3.0)
         penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
@@ -421,6 +429,7 @@ async def test_enrich_entity_rotation_cooldown(
         # Entity B: lower interest but still eligible
         entity_b = penny.db.entities.get_or_create(TEST_SENDER, "entity beta")
         assert entity_b is not None and entity_b.id is not None
+        penny.db.entities.update_heat(entity_b.id, 1.0)
         penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
@@ -520,6 +529,7 @@ async def test_learn_enrichment_includes_tagline_in_extraction_prompt(
         # Create entity with a tagline to disambiguate
         entity = penny.db.entities.get_or_create(TEST_SENDER, "genesis")
         assert entity is not None and entity.id is not None
+        penny.db.entities.update_heat(entity.id, 1.0)
         penny.db.entities.update_tagline(entity.id, "british progressive rock band")
         penny.db.engagements.add(
             user=TEST_SENDER,
@@ -618,6 +628,7 @@ async def test_enrichment_discovers_related_entities(
         # Create enriching entity with positive interest
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
+        penny.db.entities.update_heat(entity.id, 1.0)
         penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
@@ -732,6 +743,7 @@ async def test_enrichment_discovery_respects_budget(
 
         entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
         assert entity is not None and entity.id is not None
+        penny.db.entities.update_heat(entity.id, 1.0)
         penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,

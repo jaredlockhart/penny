@@ -228,15 +228,6 @@ ConfigParam(
     group=GROUP_KNOWLEDGE,
 )
 
-ConfigParam(
-    key="INTEREST_SCORE_HALF_LIFE_DAYS",
-    description="Half-life in days for loyalty recency decay",
-    type=float,
-    default=14.0,
-    validator=_validate_positive_float,
-    group=GROUP_KNOWLEDGE,
-)
-
 # ── Extraction ────────────────────────────────────────────────────────────────
 
 ConfigParam(
@@ -594,11 +585,11 @@ ConfigParam(
 # ── Heat ────────────────────────────────────────────────────────────────────
 
 ConfigParam(
-    key="HEAT_DECAY_RATE",
-    description="Per-cycle multiplicative decay applied to all entity heat",
+    key="HEAT_DECAY_HALF_LIFE_DAYS",
+    description="Half-life in days for heat decay (heat halves every N days)",
     type=float,
-    default=0.85,
-    validator=_validate_unit_float,
+    default=7.0,
+    validator=_validate_positive_float,
     group=GROUP_HEAT,
 )
 
@@ -657,11 +648,11 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="HEAT_COOLDOWN_CYCLES",
-    description="Notification cycles an entity must sit out after being notified",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
+    key="HEAT_COOLDOWN_SECONDS",
+    description="Seconds an entity must sit out after being notified",
+    type=float,
+    default=3600.0,
+    validator=_validate_positive_float,
     group=GROUP_HEAT,
 )
 

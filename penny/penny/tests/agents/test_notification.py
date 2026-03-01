@@ -143,7 +143,7 @@ async def test_notification_ignore_penalty_reduces_heat(
     """
     config = make_config(
         notification_initial_backoff=0,
-        HEAT_COOLDOWN_CYCLES=0,
+        HEAT_COOLDOWN_SECONDS=0,
     )
 
     def handler(request: dict, count: int) -> dict:
@@ -299,7 +299,7 @@ async def test_notification_entity_cooldown(
         assert any(f.notified_at is not None for f in facts_a)
         entity_a_refreshed = penny.db.entities.get(entity_a.id)
         assert entity_a_refreshed is not None
-        assert entity_a_refreshed.heat_cooldown > 0
+        assert entity_a_refreshed.heat_cooldown_until is not None
 
         # Add new facts to both
         penny.db.facts.add(entity_b.id, "Another beta fact")

@@ -1791,6 +1791,7 @@ async def test_enrichment_runs_independently(
         # Create entity with positive interest (needed for enrichment candidate scoring)
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
+        penny.db.entities.update_heat(entity.id, 1.0)
         penny.db.engagements.add(
             user=TEST_SENDER,
             engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,

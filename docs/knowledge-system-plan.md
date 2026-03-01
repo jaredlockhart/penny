@@ -230,7 +230,7 @@ engagement
   created_at        TIMESTAMP (indexed)
 ```
 
-**Interest score** — computed from accumulated engagements: `sum(valence_sign × strength × recency_decay)`. Half-life of 30 days. Drives research priority and context injection ranking.
+**Heat** — persistent interest score on each entity, maintained by the `HeatEngine`. Heat accumulates from engagement touches (+3.0 per positive engagement) and decays over wall-clock time (7-day half-life). Drives research priority, notification selection, and context injection ranking.
 
 ### Preference
 
