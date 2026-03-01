@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine
 
+from penny.database.app_state_store import AppStateStore
 from penny.database.engagement_store import EngagementStore
 from penny.database.entity_store import EntityStore
 from penny.database.event_store import EventStore
@@ -22,6 +23,7 @@ class Database:
     """Database facade — provides access to domain-specific stores.
 
     Stores:
+        app_state: Internal key-value state persisted across restarts
         entities: Entity CRUD, embeddings, taglines, metadata
         events: Event CRUD, entity linking, dedup, notification tracking
         facts: Fact CRUD, embeddings, notification tracking
@@ -38,6 +40,7 @@ class Database:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(f"sqlite:///{db_path}")
 
+        self.app_state = AppStateStore(self.engine)
         self.entities = EntityStore(self.engine)
         self.events = EventStore(self.engine)
         self.facts = FactStore(self.engine)
