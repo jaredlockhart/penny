@@ -191,7 +191,7 @@ class Penny:
         """Create NewsTool if NEWS_API_KEY is configured."""
         if not config.news_api_key:
             return None
-        return NewsTool(api_key=config.news_api_key)
+        return NewsTool(api_key=config.news_api_key, app_state=self.db.app_state)
 
     def _init_github_client(self, config: Config) -> Any:
         """Initialize GitHub API client if configured. Returns GitHubAPI or None."""

@@ -196,6 +196,20 @@ class Event(SQLModel, table=True):
     )  # Which follow prompt generated this event
 
 
+class AppState(SQLModel, table=True):
+    """Internal app state persisted across container restarts.
+
+    Generic key-value store for internal runtime state (e.g., rate limit backoff
+    timestamps). Not for user-configurable settings — use RuntimeConfig for those.
+    """
+
+    __tablename__ = "app_state"
+
+    key: str = Field(primary_key=True)
+    value: str  # Store as string; parse to correct type in application code
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class FollowPrompt(SQLModel, table=True):
     """An ongoing monitoring subscription for event tracking."""
 
