@@ -1,14 +1,33 @@
-"""Interest score computation for user-entity relationships."""
+"""Interest score computation and heat engine for entity scoring.
+
+The heat model is the single source of truth for entity interest:
+- Heat accumulates from user engagement (touch)
+- Heat decays multiplicatively each cycle
+- Hot entities radiate heat to cooler semantic neighbors (conservative transfer)
+- Negative engagement (thumbs down) zeroes heat
+- Ignored notifications penalize heat multiplicatively
+- Newly discovered entities get intrinsic heat from similarity to hot entities
+"""
 
 from __future__ import annotations
 
+import logging
 import math
-from collections import defaultdict
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from penny.constants import PennyConstants
-from penny.database.models import Engagement, Entity, Fact
+from penny.database.models import Engagement, Entity
 from penny.ollama.embeddings import cosine_similarity, deserialize_embedding
+
+if TYPE_CHECKING:
+    from penny.config_params import RuntimeParams
+    from penny.database import Database
+
+logger = logging.getLogger(__name__)
+
+
+# --- Legacy interest scoring (used by learn completion and enrich) ---
 
 
 def _recency_weight(
@@ -90,261 +109,239 @@ def compute_notification_interest(
     return compute_interest_score(notification_engs, now=now, half_life_days=half_life_days)
 
 
-# --- Loyalty + novelty scoring ---
+# --- Heat engine ---
 
 
-def compute_loyalty_score(
-    engagements: list[Engagement],
-    fact_count: int,
-    now: datetime | None = None,
-    *,
-    half_life_days: float,
-) -> float:
-    """Day-based loyalty score: distinct positive engagement days * strength * recency.
+class HeatEngine:
+    """Thermodynamic heat model for entity interest scoring.
 
-    Rewards entities the user engages with across multiple distinct days.
-    Search days count at half weight. Negative notification-type days
-    subtract at half weight.
+    Heat is the single persistent score for each entity. The engine runs
+    cycles (decay → radiate → tick cooldowns) and handles engagement-driven
+    heat touches, ignore penalties, veto resets, and intrinsic heat seeding.
     """
-    if now is None:
-        now = datetime.now(UTC)
 
-    pos_notif, pos_search, neg_notif = _split_engagements(engagements)
+    def __init__(self, db: Database, runtime: RuntimeParams) -> None:
+        self._db = db
+        self._runtime = runtime
 
-    all_pos = pos_notif + pos_search
-    if not all_pos:
-        if neg_notif:
-            return _negative_only_score(neg_notif, now, half_life_days=half_life_days)
-        return _loyalty_baseline(engagements, fact_count)
+    def run_cycle(self, user: str) -> None:
+        """Run one heat cycle: decay → radiate → tick cooldowns."""
+        self._decay(user)
+        self._radiate(user)
+        self._tick_cooldowns(user)
 
-    distinct_days = _count_loyalty_days(pos_notif, pos_search)
-    avg_strength = _avg_positive_strength(pos_notif)
-    recency = _most_recent_recency(all_pos, now, half_life_days=half_life_days)
-    neg_days = len({_eng_date(e, now) for e in neg_notif})
+    def touch(self, entity_id: int) -> None:
+        """Add heat on positive engagement."""
+        self._db.entities.add_heat(entity_id, self._runtime.HEAT_TOUCH_AMOUNT)
 
-    return max((distinct_days - 0.5 * neg_days) * avg_strength * recency, -5.0)
+    def penalize_ignore(self, entity_id: int) -> None:
+        """Reduce heat when a notification is ignored."""
+        self._db.entities.update_heat(
+            entity_id,
+            self._get_heat(entity_id) * self._runtime.HEAT_IGNORE_PENALTY,
+        )
 
+    def veto(self, entity_id: int) -> None:
+        """Zero out heat on negative engagement (thumbs down)."""
+        self._db.entities.update_heat(entity_id, 0.0)
 
-def _split_engagements(
-    engagements: list[Engagement],
-) -> tuple[list[Engagement], list[Engagement], list[Engagement]]:
-    """Split into positive notification-type, positive search, and negative notification-type."""
-    pos_notif = []
-    pos_search = []
-    neg_notif = []
-    for e in engagements:
-        is_positive = e.valence == PennyConstants.EngagementValence.POSITIVE
-        is_negative = e.valence == PennyConstants.EngagementValence.NEGATIVE
-        is_notif = e.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
-        is_search = e.engagement_type == PennyConstants.EngagementType.USER_SEARCH
+    def start_cooldown(self, entity_id: int) -> None:
+        """Put an entity on cooldown after being notified."""
+        self._db.entities.update_heat_cooldown(entity_id, int(self._runtime.HEAT_COOLDOWN_CYCLES))
 
-        if is_positive and is_notif:
-            pos_notif.append(e)
-        elif is_positive and is_search:
-            pos_search.append(e)
-        elif is_negative and is_notif:
-            neg_notif.append(e)
-    return pos_notif, pos_search, neg_notif
+    def seed_intrinsic_heat(self, entity_id: int, user: str) -> None:
+        """Give a newly discovered entity starting heat from similar hot entities.
 
+        Computes max cosine similarity to the user's hot entities,
+        then sets initial heat proportional to similarity * average
+        heat of those hot neighbors.
+        """
+        entity = self._db.entities.get(entity_id)
+        if entity is None or entity.embedding is None:
+            return
 
-def _negative_only_score(
-    neg_notif: list[Engagement],
-    now: datetime,
-    *,
-    half_life_days: float,
-) -> float:
-    """Score for entities with only negative engagement (e.g., downvoted)."""
-    neg_days = len({_eng_date(e, now) for e in neg_notif})
-    recency = _most_recent_recency(neg_notif, now, half_life_days=half_life_days)
-    return max(-0.5 * neg_days * recency, -5.0)
+        hot_entities = self._get_hot_entities_with_embeddings(user)
+        if not hot_entities:
+            return
 
+        similarity, avg_heat = self._compute_intrinsic_params(entity, hot_entities)
+        if similarity <= 0.0:
+            return
 
-def _loyalty_baseline(engagements: list[Engagement], fact_count: int) -> float:
-    """Tiny baseline for searched entities with facts but no positive notification engagement."""
-    has_search = any(
-        e.engagement_type == PennyConstants.EngagementType.USER_SEARCH for e in engagements
-    )
-    if has_search and fact_count > 0:
-        return 0.01 * math.log2(fact_count + 1)
-    return 0.0
+        intrinsic = similarity * avg_heat
+        self._db.entities.update_heat(entity_id, intrinsic)
+        logger.info(
+            "Seeded intrinsic heat %.2f for '%s' (sim=%.2f, avg_heat=%.2f)",
+            intrinsic,
+            entity.name,
+            similarity,
+            avg_heat,
+        )
 
+    # --- Internal methods ---
 
-def _count_loyalty_days(pos_notif: list[Engagement], pos_search: list[Engagement]) -> float:
-    """Count distinct positive days: notification days full weight, search-only days half."""
-    notif_dates = {_eng_date_naive(e) for e in pos_notif}
-    search_dates = {_eng_date_naive(e) for e in pos_search} - notif_dates
-    return len(notif_dates) + 0.5 * len(search_dates)
+    def _decay(self, user: str) -> None:
+        """Apply multiplicative decay to all entity heat for a user."""
+        self._db.entities.apply_heat_decay(user, self._runtime.HEAT_DECAY_RATE)
 
+    def _radiate(self, user: str) -> None:
+        """Transfer heat from hot entities to cooler semantic neighbors.
 
-def _avg_positive_strength(pos_notif: list[Engagement]) -> float:
-    """Average strength of positive notification engagements, or default 0.3."""
-    if not pos_notif:
-        return 0.3
-    return sum(e.strength for e in pos_notif) / len(pos_notif)
+        Conservative: source loses exactly what neighbors gain.
+        Only radiates to neighbors above the similarity threshold.
+        """
+        entities = self._db.entities.get_with_embeddings(user)
+        if len(entities) < 2:
+            return
 
+        entity_map, embeddings = self._prepare_radiation_data(entities)
+        transfers = self._compute_radiation_transfers(entity_map, embeddings)
+        self._apply_transfers(entity_map, transfers)
 
-def _most_recent_recency(
-    engagements: list[Engagement],
-    now: datetime,
-    *,
-    half_life_days: float,
-) -> float:
-    """Recency decay based on the most recent engagement."""
-    most_recent = max(engagements, key=lambda e: e.created_at)
-    return _recency_weight(most_recent.created_at, now=now, half_life_days=half_life_days)
+    def _prepare_radiation_data(
+        self, entities: list[Entity]
+    ) -> tuple[dict[int, Entity], dict[int, list[float]]]:
+        """Build lookup maps for radiation computation."""
+        entity_map: dict[int, Entity] = {}
+        embeddings: dict[int, list[float]] = {}
+        for e in entities:
+            assert e.id is not None
+            entity_map[e.id] = e
+            assert e.embedding is not None
+            embeddings[e.id] = deserialize_embedding(e.embedding)
+        return entity_map, embeddings
 
+    def _compute_radiation_transfers(
+        self,
+        entity_map: dict[int, Entity],
+        embeddings: dict[int, list[float]],
+    ) -> dict[int, float]:
+        """Compute net heat transfers for all entities.
 
-def _eng_date(e: Engagement, now: datetime) -> str:
-    """Engagement date as string key, handling naive datetimes."""
-    dt = e.created_at
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.date().isoformat()
+        Returns a dict of entity_id → net heat change (positive = gains, negative = losses).
+        """
+        threshold = self._runtime.HEAT_RADIATION_THRESHOLD
+        rate = self._runtime.HEAT_RADIATION_RATE
+        top_k = int(self._runtime.HEAT_RADIATION_TOP_K)
 
+        transfers: dict[int, float] = dict.fromkeys(entity_map, 0.0)
 
-def _eng_date_naive(e: Engagement) -> str:
-    """Engagement date as string key (no now needed)."""
-    dt = e.created_at
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.date().isoformat()
+        for src_id, src_entity in entity_map.items():
+            if src_entity.heat <= 0:
+                continue
+            neighbors = self._find_radiation_neighbors(
+                src_id, embeddings, entity_map, threshold, top_k
+            )
+            if not neighbors:
+                continue
+            self._distribute_radiation(src_id, src_entity.heat, rate, neighbors, transfers)
 
+        return transfers
 
-def compute_novelty_bonus(
-    entity: Entity,
-    loyal_embeddings: list[tuple[int, list[float]]],
-    *,
-    half_life_days: float,
-    now: datetime | None = None,
-) -> float:
-    """Novelty bonus: max similarity to loyal entities * entity freshness.
+    def _find_radiation_neighbors(
+        self,
+        src_id: int,
+        embeddings: dict[int, list[float]],
+        entity_map: dict[int, Entity],
+        threshold: float,
+        top_k: int,
+    ) -> list[tuple[int, float]]:
+        """Find the top-K cooler neighbors above similarity threshold."""
+        src_vec = embeddings[src_id]
+        src_heat = entity_map[src_id].heat
 
-    Surfaces newly discovered entities that are semantically close to
-    the user's established interests.
-    """
-    if entity.embedding is None or not loyal_embeddings:
-        return 0.0
-    if now is None:
-        now = datetime.now(UTC)
+        candidates: list[tuple[int, float]] = []
+        for other_id, other_vec in embeddings.items():
+            if other_id == src_id:
+                continue
+            if entity_map[other_id].heat >= src_heat:
+                continue  # Only radiate to cooler entities
+            sim = cosine_similarity(src_vec, other_vec)
+            if sim >= threshold:
+                candidates.append((other_id, sim))
 
-    similarity = _best_loyal_similarity(entity, loyal_embeddings)
-    freshness = _entity_freshness(entity, now, half_life_days=half_life_days)
-    return similarity * freshness
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return candidates[:top_k]
 
+    def _distribute_radiation(
+        self,
+        src_id: int,
+        src_heat: float,
+        rate: float,
+        neighbors: list[tuple[int, float]],
+        transfers: dict[int, float],
+    ) -> None:
+        """Distribute radiation from source to neighbors, weighted by similarity.
 
-def _best_loyal_similarity(
-    entity: Entity,
-    loyal_embeddings: list[tuple[int, list[float]]],
-) -> float:
-    """Max cosine similarity between entity and any loyal entity."""
-    assert entity.embedding is not None
-    query = deserialize_embedding(entity.embedding)
-    best = 0.0
-    for lid, loyal_vec in loyal_embeddings:
-        if lid == entity.id:
-            continue
-        sim = cosine_similarity(query, loyal_vec)
-        best = max(best, sim)
-    return best
+        Conservative: total given to neighbors equals total lost by source.
+        """
+        total_sim = sum(sim for _, sim in neighbors)
+        if total_sim <= 0:
+            return
 
+        budget = src_heat * rate
+        for neighbor_id, sim in neighbors:
+            share = budget * (sim / total_sim)
+            transfers[neighbor_id] += share
+            transfers[src_id] -= share
 
-def _entity_freshness(
-    entity: Entity,
-    now: datetime,
-    *,
-    half_life_days: float,
-) -> float:
-    """Entity freshness based on creation age."""
-    created = entity.created_at
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=UTC)
-    age_days = (now - created).total_seconds() / 86400.0
-    if age_days < 0:
-        age_days = 0.0
-    return math.pow(2.0, -age_days / half_life_days)
+    def _apply_transfers(self, entity_map: dict[int, Entity], transfers: dict[int, float]) -> None:
+        """Apply computed heat transfers to the database."""
+        for eid, delta in transfers.items():
+            if abs(delta) < 0.001:
+                continue
+            new_heat = max(entity_map[eid].heat + delta, 0.0)
+            self._db.entities.update_heat(eid, new_heat)
+
+    def _tick_cooldowns(self, user: str) -> None:
+        """Decrement cooldown counters for all entities."""
+        self._db.entities.decrement_cooldowns(user)
+
+    def _get_heat(self, entity_id: int) -> float:
+        """Get current heat for an entity."""
+        entity = self._db.entities.get(entity_id)
+        return entity.heat if entity else 0.0
+
+    def _get_hot_entities_with_embeddings(self, user: str) -> list[tuple[Entity, list[float]]]:
+        """Get entities with heat > 0 and embeddings for intrinsic heat computation."""
+        entities = self._db.entities.get_with_embeddings(user)
+        result: list[tuple[Entity, list[float]]] = []
+        for e in entities:
+            if e.heat > 0 and e.embedding is not None:
+                result.append((e, deserialize_embedding(e.embedding)))
+        return result
+
+    def _compute_intrinsic_params(
+        self,
+        entity: Entity,
+        hot_entities: list[tuple[Entity, list[float]]],
+    ) -> tuple[float, float]:
+        """Compute max similarity and average heat for intrinsic heat seeding."""
+        assert entity.embedding is not None
+        entity_vec = deserialize_embedding(entity.embedding)
+
+        best_sim = 0.0
+        total_heat = 0.0
+        for hot_entity, hot_vec in hot_entities:
+            if hot_entity.id == entity.id:
+                continue
+            sim = cosine_similarity(entity_vec, hot_vec)
+            best_sim = max(best_sim, sim)
+            total_heat += hot_entity.heat
+
+        avg_heat = total_heat / len(hot_entities) if hot_entities else 0.0
+        return best_sim, avg_heat
 
 
 # --- Main scoring entry point ---
 
 
-def scored_entities_for_user(
-    entities: list[Entity],
-    engagements: list[Engagement],
-    facts_by_entity: dict[int, list[Fact]],
-    embedding_candidates: list[tuple[int, list[float]]],
-    *,
-    half_life_days: float,
-    novelty_weight: float,
-    loyal_pool_size: int,
-) -> list[tuple[float, Entity]]:
-    """Score entities by loyalty + novelty, sorted by score descending.
+def scored_entities_for_user(entities: list[Entity]) -> list[tuple[float, Entity]]:
+    """Score entities by persistent heat, sorted descending.
 
-    Loyalty rewards entities engaged with across multiple distinct days.
-    Novelty surfaces fresh entities semantically near loyal ones.
+    Heat is maintained by the HeatEngine — this function simply reads
+    the current heat values and sorts.
     """
-    engagements_by_entity = _group_engagements(engagements)
-    # Compute loyalty for ALL engaged entities (not just scored ones) so the
-    # loyal pool includes highly-engaged entities that may not have unnotified facts.
-    all_loyalty = _compute_loyalty_from_engagements(
-        engagements_by_entity, half_life_days=half_life_days
-    )
-    loyal_embeddings = _build_loyal_embeddings(
-        all_loyalty, embedding_candidates, pool_size=loyal_pool_size
-    )
-    novelty_half_life = half_life_days / 2.0
-
-    scored: list[tuple[float, Entity]] = []
-    for entity in entities:
-        assert entity.id is not None
-        loyalty = all_loyalty.get(entity.id, 0.0)
-        facts = facts_by_entity.get(entity.id, [])
-        has_facts = len(facts) > 0
-
-        novelty = 0.0
-        if has_facts:
-            novelty = compute_novelty_bonus(
-                entity, loyal_embeddings, half_life_days=novelty_half_life
-            )
-
-        score = loyalty + novelty_weight * novelty
-        scored.append((score, entity))
-
+    scored = [(e.heat, e) for e in entities]
     scored.sort(key=lambda x: x[0], reverse=True)
     return scored
-
-
-def _group_engagements(
-    engagements: list[Engagement],
-) -> dict[int, list[Engagement]]:
-    """Group engagements by entity ID."""
-    by_entity: dict[int, list[Engagement]] = defaultdict(list)
-    for eng in engagements:
-        if eng.entity_id is not None:
-            by_entity[eng.entity_id].append(eng)
-    return by_entity
-
-
-def _compute_loyalty_from_engagements(
-    engagements_by_entity: dict[int, list[Engagement]],
-    *,
-    half_life_days: float,
-) -> dict[int, float]:
-    """Compute loyalty score for every entity with engagements."""
-    return {
-        entity_id: compute_loyalty_score(engs, 0, half_life_days=half_life_days)
-        for entity_id, engs in engagements_by_entity.items()
-    }
-
-
-def _build_loyal_embeddings(
-    loyalty_scores: dict[int, float],
-    embedding_candidates: list[tuple[int, list[float]]],
-    *,
-    pool_size: int,
-) -> list[tuple[int, list[float]]]:
-    """Build embedding list for the top-N loyal entities."""
-    top_loyal = sorted(loyalty_scores, key=lambda eid: loyalty_scores[eid], reverse=True)[
-        :pool_size
-    ]
-    top_set = set(top_loyal)
-    return [(eid, vec) for eid, vec in embedding_candidates if eid in top_set]

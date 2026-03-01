@@ -3,11 +3,12 @@
 import pytest
 
 from penny.agents.notification import NotificationAgent
+from penny.interest import HeatEngine
 from penny.tests.conftest import TEST_SENDER
 
 
 def _create_notification_agent(penny, config):
-    """Create a NotificationAgent wired to penny's DB and channel."""
+    """Create a NotificationAgent wired to penny's DB, channel, and heat engine."""
     agent = NotificationAgent(
         system_prompt="",
         background_model_client=penny.background_model_client,
@@ -19,6 +20,8 @@ def _create_notification_agent(penny, config):
         config=config,
     )
     agent.set_channel(penny.channel)
+    heat_engine = HeatEngine(db=penny.db, runtime=config.runtime)
+    agent.set_heat_engine(heat_engine)
     return agent
 
 
@@ -89,10 +92,11 @@ async def test_notification_skipped_when_muted(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        # Create entity with un-notified facts
+        # Create entity with un-notified facts and heat
         entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
         assert entity is not None and entity.id is not None
         penny.db.facts.add(entity.id, "Interesting fact")
+        penny.db.entities.update_heat(entity.id, 5.0)
 
         # Mute the user
         penny.db.users.set_muted(TEST_SENDER)

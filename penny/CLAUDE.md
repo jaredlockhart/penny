@@ -70,9 +70,9 @@ flowchart TD
 penny/
   penny.py            — Entry point. Penny class: creates agents, channel, scheduler
   config.py           — Config dataclass loaded from .env, channel auto-detection
-  config_params.py    — ConfigParam definitions for 42 runtime-configurable settings
+  config_params.py    — ConfigParam definitions for 49 runtime-configurable settings
   constants.py        — System prompt, research prompts, engagement/trigger enums
-  interest.py         — Interest score computation (pure function, half-life decay)
+  interest.py         — Heat engine (thermodynamic entity scoring) + legacy interest scoring
   prompts.py          — LLM prompt templates (extraction, learn queries, notifications)
   responses.py        — All user-facing response strings (PennyResponse class)
   startup.py          — Startup announcement message generation (git commit info)
@@ -100,7 +100,7 @@ penny/
     index.py          — /commands: list available commands
     profile.py        — /profile: user info collection (name, location, DOB, timezone)
     learn.py          — /learn: express active research interest in a topic
-    memory.py         — /memory: view/manage knowledge base entities and facts (ranked by interest)
+    memory.py         — /memory: view/manage knowledge base entities and facts (ranked by heat)
     schedule.py       — /schedule: create and list recurring background tasks
     unschedule.py     — /unschedule: delete a scheduled task
     test.py           — /test: isolated test mode for development
@@ -131,7 +131,7 @@ penny/
       models.py       — DiscordMessage, DiscordUser Pydantic models
   database/
     database.py       — Database facade: thin wrapper creating domain stores
-    entity_store.py   — EntityStore: get, get_or_create, get_for_user, embeddings
+    entity_store.py   — EntityStore: get, get_or_create, get_for_user, embeddings, heat operations
     fact_store.py     — FactStore: add, get_for_entity, embeddings, notification marking
     message_store.py  — MessageStore: log_message, log_prompt, log_command, threads
     learn_prompt_store.py — LearnPromptStore: create, get, delete, lifecycle
@@ -142,7 +142,7 @@ penny/
     user_store.py     — UserStore: get_info, save_info, mute/unmute
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0029)
+    migrations/       — Numbered migration files (0001–0032)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client
     models.py         — ChatResponse, ChatResponseMessage
@@ -255,16 +255,22 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Extracts facts via `ollama_client.generate()` with structured output (Pydantic schema)
 - Two-pass fact dedup: normalized string match (fast) then embedding similarity (threshold 0.85)
 - Stores facts with `notified_at=NULL` — the NotificationAgent surfaces them
+- Seeds intrinsic heat for newly discovered entities (similarity to existing hot entities × average heat)
 - Exponential backoff (in-memory): 300s initial, doubles up to 3600s max
 - Backoff resets when any user sends a message or command
 
 **NotificationAgent** (`agents/notification.py`)
 - Single agent that owns ALL proactive messaging to users
 - Runs on its own PeriodicSchedule (highest background priority — announces before new work starts)
+- Integrates with `HeatEngine` for entity scoring and lifecycle management
 - Three notification streams, checked in priority order each cycle:
   1. **Learn completions** (bypass backoff): announces when all searches for a `/learn` topic finish extraction
-  2. **Event notifications** (respect backoff): sends heads-up about unnotified events from followed topics. Scores events by `sum(linked_entity_interest) + timeliness_decay` where timeliness = `2^(-hours_since / half_life)` (configurable half-life, default 24h)
-  3. **Fact discoveries** (respect backoff): picks the highest-interest entity with unnotified facts
+  2. **Event notifications** (respect backoff): sends heads-up about unnotified events from followed topics. Scores events by `sum(linked_entity_heat) + timeliness_decay` where timeliness = `2^(-hours_since / half_life)` (configurable half-life, default 24h)
+  3. **Fact discoveries** (respect backoff): picks the hottest eligible entity with unnotified facts
+- Eligibility: entity must have heat > 0 and heat_cooldown == 0
+- Heat cycle: runs decay → radiate → tick cooldowns each notification cycle
+- After notifying: starts cooldown on the entity (cycle-based, not time-based)
+- Ignored notifications: applies heat penalty (multiplicative reduction)
 - Composes ONE message per cycle via `_compose_user_facing()` with image search
 - Exponential backoff per user (in-memory): 60s initial, doubles up to 3600s max
 - Backoff resets to eager (0s) when user sends a message or command
@@ -344,7 +350,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/config** (`config.py`): View and modify runtime settings (e.g., `/config idle_seconds 600`). Reads/writes RuntimeConfig table in SQLite; changes take effect immediately
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
 - **/learn** (`learn.py`): Express active interest in a topic for background research. `/learn` lists tracked entities; `/learn <topic>` creates a LearnPrompt DB record and acknowledges. The scheduled LearnAgent worker picks up pending prompts and processes them one search step at a time, generating queries via LLM and executing Perplexity searches. Works for both specific entities (`/learn kef ls50`) and broad topics (`/learn travel in china 2026`)
-- **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities ranked by interest score (with score and fact count); `/memory <number>` shows entity details and facts; `/memory <number> delete` removes an entity and its facts
+- **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities ranked by heat (with score and fact count); `/memory <number>` shows entity details and facts
 - **/schedule** (`schedule.py`): Create and list recurring cron-based background tasks (uses LLM to parse natural language timing)
 - **/unschedule** (`unschedule.py`): Delete a scheduled task. `/unschedule` shows numbered list; `/unschedule <N>` deletes
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
@@ -360,10 +366,10 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 ### Runtime Configuration
 - `/config` reads and writes to a `RuntimeConfig` table in SQLite (migration `0002_add_runtime_config_table.py`)
-- `ConfigParam` definitions in `config_params.py` declare 42 runtime-configurable settings with types and validation
+- `ConfigParam` definitions in `config_params.py` declare 49 runtime-configurable settings with types and validation
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Categories: engagement strengths, extraction thresholds, entity dedup settings, learn parameters, notification backoff, event polling, scheduling intervals, and more
+- Categories: engagement strengths, extraction thresholds, entity dedup settings, learn parameters, notification backoff, event polling, scheduling intervals, heat engine parameters, and more
 
 ## Knowledge System
 
@@ -375,7 +381,7 @@ Penny learns what the user likes, finds information about those things, and proa
 
 ### Data Model
 
-- **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search
+- **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search, `heat` (persistent interest score), and `heat_cooldown` (notification cooldown counter)
 - **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at` and `notified_at` timestamps. `notified_at=NULL` means not yet communicated to user
 - **Engagement**: User interest signals (searches, mentions, reactions, explicit statements). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
 - **LearnPrompt**: First-class learning prompt with lifecycle tracking — enables provenance chain: prompt → searches → facts → entities. Has `announced_at` for learn completion notifications
@@ -393,11 +399,21 @@ Penny learns what the user likes, finds information about those things, and proa
 | `FOLLOW_UP_QUESTION` | User asks follow-up about entity | configurable |
 | `SEARCH_DISCOVERY` | Entity discovered in search results | configurable |
 
-### Interest Scores (`interest.py`)
+### Heat Model (`interest.py`)
 
-Pure function: `compute_interest_score(engagements, half_life_days) → float`
+Entity interest is modeled as a thermodynamic heat system. Heat is a persistent score on each entity, maintained by the `HeatEngine`:
 
-Formula: `sum(valence_sign × strength × recency_decay)` with configurable half-life (default: 30 days). Drives research priority in the learn agent, ranking in `/memory`, and notification entity selection.
+- **Touch**: Positive engagement adds heat (default: +3.0)
+- **Decay**: All entity heat decays multiplicatively each cycle (default: ×0.85)
+- **Radiation**: Hot entities transfer heat to cooler semantic neighbors (conservative — total heat preserved). Uses embedding cosine similarity with configurable threshold and top-K neighbors
+- **Cooldown**: After notification, entity sits out for N cycles (default: 3)
+- **Ignore penalty**: Ignored notifications reduce heat multiplicatively (default: ×0.6)
+- **Veto**: Negative engagement (thumbs down) zeroes heat — eliminates the entity from notification eligibility
+- **Intrinsic heat**: Newly discovered entities start with heat proportional to their similarity to existing hot entities
+
+The `/memory` command ranks by heat. The notification agent picks the hottest eligible entity.
+
+Legacy `compute_interest_score()` (half-life decay over engagements) is still used by learn completion ranking and enrich priority.
 
 ### Search Trigger Tracking
 
@@ -497,7 +513,7 @@ Uses per-user exponential backoff: each message without a user reply doubles the
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0023):
+File-based migration system in `database/migrations/` (currently 0001–0032):
 - Each migration is a numbered Python file (e.g., `0001_add_reaction_fields.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -523,6 +539,7 @@ Notable migrations:
 - 0023: `announced_at` on `LearnPrompt` table (learn completion notifications)
 - 0028: `Event` and `EventEntity` tables (knowledge system v4 — time-aware events)
 - 0029: `FollowPrompt` table (ongoing monitoring subscriptions for event system)
+- 0032: `heat` and `heat_cooldown` columns on `entity` table (thermodynamic interest scoring)
 
 ## Extending
 

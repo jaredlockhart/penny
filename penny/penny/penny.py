@@ -21,6 +21,7 @@ from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
 from penny.database import Database
 from penny.database.migrate import migrate
+from penny.interest import HeatEngine
 from penny.ollama.client import OllamaClient
 from penny.ollama.embeddings import build_entity_embed_text, serialize_embedding
 from penny.prompts import Prompt
@@ -169,12 +170,15 @@ class Penny:
         self.extraction_pipeline = ExtractionPipeline(
             embedding_model_client=self.embedding_model_client, **kwargs
         )
+        self.heat_engine = HeatEngine(db=self.db, runtime=config.runtime)
         self.notification_agent = NotificationAgent(**kwargs)
+        self.notification_agent.set_heat_engine(self.heat_engine)
         self.enrich_agent = EnrichAgent(
             search_tool=search_tool,
             embedding_model_client=self.embedding_model_client,
             **kwargs,
         )
+        self.enrich_agent.set_heat_engine(self.heat_engine)
         self.event_agent = EventAgent(
             news_tool=self._create_news_tool(config),
             embedding_model_client=self.embedding_model_client,

@@ -2,7 +2,6 @@
 
 import pytest
 
-from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -16,50 +15,29 @@ async def test_memory_list_empty(signal_server, test_config, mock_ollama, runnin
 
 
 @pytest.mark.asyncio
-async def test_memory_list_ranked_by_interest(
-    signal_server, test_config, mock_ollama, running_penny
-):
-    """Test /memory lists entities ranked by interest score with scores displayed."""
+async def test_memory_list_ranked_by_heat(signal_server, test_config, mock_ollama, running_penny):
+    """Test /memory lists entities ranked by heat with scores displayed."""
     async with running_penny(test_config) as penny:
-        # Create entities with different engagement levels
+        # Create entities with different heat levels
         entity1 = penny.db.entities.get_or_create(TEST_SENDER, "nvidia jetson")
         penny.db.facts.add(entity1.id, "Edge AI compute module")
+        penny.db.entities.update_heat(entity1.id, 1.50)
 
         entity2 = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         penny.db.facts.add(entity2.id, "Costs $1,599 per pair")
         penny.db.facts.add(entity2.id, "Uses MAT driver")
-
-        # Strong engagement for entity2 (explicit_statement = 1.0)
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=1.0,
-            entity_id=entity2.id,
-        )
-
-        # Weaker engagement for entity1 (message_mention = 0.2)
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=0.2,
-            entity_id=entity1.id,
-        )
+        penny.db.entities.update_heat(entity2.id, 5.00)
 
         await signal_server.push_message(sender=TEST_SENDER, content="/memory")
         response = await signal_server.wait_for_message(timeout=5.0)
 
         msg = response["message"]
         assert "Your Memory" in msg
-        # Entity2 should be ranked above entity1
-        # Loyalty: distinct_days * avg_strength * recency
-        # Entity2: 1 day * 1.0 strength * 1.0 recency = 1.00
-        # Entity1: 1 day * 0.2 strength * 1.0 recency = 0.20
-        assert "1. **kef ls50 meta** (2 facts, interest: +1.00)" in msg
-        assert "2. **nvidia jetson** (1 fact, interest: +0.20)" in msg
+        # Entity2 should be ranked above entity1 (higher heat)
+        assert "1. **kef ls50 meta** (2 facts, heat: 5.00)" in msg
+        assert "2. **nvidia jetson** (1 fact, heat: 1.50)" in msg
 
-        # Show entity details — #1 is kef (highest interest)
+        # Show entity details — #1 is kef (highest heat)
         await signal_server.push_message(sender=TEST_SENDER, content="/memory 1")
         response2 = await signal_server.wait_for_message(timeout=5.0)
         assert "kef ls50 meta" in response2["message"]
@@ -68,27 +46,19 @@ async def test_memory_list_ranked_by_interest(
 
 
 @pytest.mark.asyncio
-async def test_memory_shows_negative_scores(signal_server, test_config, mock_ollama, running_penny):
-    """Test /memory shows entities with negative interest scores."""
+async def test_memory_shows_zero_heat(signal_server, test_config, mock_ollama, running_penny):
+    """Test /memory shows entities with zero heat (e.g. vetoed)."""
     async with running_penny(test_config) as penny:
         entity = penny.db.entities.get_or_create(TEST_SENDER, "sports")
         penny.db.facts.add(entity.id, "Various athletic activities")
-
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
-            valence=PennyConstants.EngagementValence.NEGATIVE,
-            strength=0.8,
-            entity_id=entity.id,
-        )
+        # Heat defaults to 0.0 (e.g. after a veto)
 
         await signal_server.push_message(sender=TEST_SENDER, content="/memory")
         response = await signal_server.wait_for_message(timeout=5.0)
 
         msg = response["message"]
         assert "sports" in msg
-        # Loyalty: negative-only entity gets -0.5 * neg_days * recency
-        assert "-0.50" in msg
+        assert "heat: 0.00" in msg
 
 
 @pytest.mark.asyncio

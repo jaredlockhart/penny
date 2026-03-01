@@ -43,7 +43,7 @@ class PennyResponse:
     )
     LEARN_STATUS_HEADER = "**Learning Status**"
     LEARN_COMPLETE_HEADER = "I finished learning about **{topic}**"
-    LEARN_COMPLETE_ENTITY_LINE = "• **{name}** ({fact_count} facts, interest: {score})"
+    LEARN_COMPLETE_ENTITY_LINE = "• **{name}** ({fact_count} facts, heat: {score})"
     LEARN_COMPLETE_NO_ENTITIES = "I didn't find any specific topics to track from that."
 
     # ── Memory ───────────────────────────────────────────────────────────────

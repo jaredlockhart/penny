@@ -1,12 +1,10 @@
 """Notification agent — owns all proactive messaging to users.
 
-Decoupled from extraction: the extraction pipeline stores facts silently,
-and this agent scores entities by explicit user signals (emoji reactions,
-follow-up questions, mentions) — filtering out noisy batch signals from
-/learn sessions. Entities with negative emoji reactions are hard-vetoed,
-and notification fatigue penalizes over-notified entities.
+Uses the heat model for entity scoring: entities accumulate heat from
+engagement, radiate to semantic neighbors, and cool over time. Negative
+emoji reactions zero out heat. Ignored notifications penalize heat.
 
-Gated by per-user exponential backoff and a per-entity cooldown.
+Gated by per-user exponential backoff and per-entity cycle-based cooldown.
 """
 
 from __future__ import annotations
@@ -14,9 +12,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import random
 from collections import defaultdict
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
@@ -24,12 +22,13 @@ from croniter import croniter
 from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
-from penny.constants import PennyConstants
 from penny.database.models import Engagement, Entity, Event, Fact, FollowPrompt, LearnPrompt
-from penny.interest import compute_notification_interest, scored_entities_for_user
-from penny.ollama.embeddings import deserialize_embedding
+from penny.interest import compute_notification_interest
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
+
+if TYPE_CHECKING:
+    from penny.interest import HeatEngine
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +50,7 @@ class NotificationAgent(Agent):
         self._backoff_state: dict[str, BackoffState] = {}
         self._last_notified_learn_prompt_id: dict[str, int | None] = {}
         self._last_notification: dict[str, tuple[int, datetime]] = {}  # user → (entity_id, sent_at)
+        self._heat_engine: HeatEngine | None = None
 
     @property
     def name(self) -> str:
@@ -59,6 +59,10 @@ class NotificationAgent(Agent):
     def set_channel(self, channel: MessageChannel) -> None:
         """Set the channel for sending notifications."""
         self._channel = channel
+
+    def set_heat_engine(self, engine: HeatEngine) -> None:
+        """Set the heat engine for entity scoring."""
+        self._heat_engine = engine
 
     async def execute(self) -> bool:
         """Run notification loops for all users.
@@ -383,18 +387,21 @@ class NotificationAgent(Agent):
     # --- Fact discovery notifications ---
 
     async def _try_notify_user(self, user: str) -> bool:
-        """Attempt to send one notification to this user.
+        """Attempt to send one fact notification to this user.
 
-        Scores entities by explicit user signals, randomly picks from the
-        top-N pool (respecting emoji veto, fatigue, cooldown, and learn-topic
-        dedup), and announces all unnotified facts for the selected entity.
+        Runs a heat cycle, handles ignored notifications, picks the hottest
+        entity with unnotified facts, and sends a notification.
         Returns True if a notification was sent.
         """
         if not self._should_send(user):
             return False
 
-        # Auto-tuning: record ignored notification before picking the next one
-        self._record_ignored_notification(user)
+        # Handle ignored previous notification (heat penalty)
+        self._handle_ignored_notification(user)
+
+        # Run heat cycle: decay → radiate → tick cooldowns
+        if self._heat_engine:
+            self._heat_engine.run_cycle(user)
 
         unnotified = self.db.facts.get_unnotified(user)
         if not unnotified:
@@ -405,9 +412,9 @@ class NotificationAgent(Agent):
         for fact in unnotified:
             facts_by_entity[fact.entity_id].append(fact)
 
-        # Score and randomly select from top-N pool
+        # Pick the hottest eligible entity
         last_learn_prompt_id = self._last_notified_learn_prompt_id.get(user)
-        entity = self._pick_scored_entity(user, facts_by_entity, last_learn_prompt_id)
+        entity = self._pick_hottest_entity(user, facts_by_entity, last_learn_prompt_id)
         if entity is None:
             return False
         assert entity.id is not None
@@ -423,15 +430,17 @@ class NotificationAgent(Agent):
         if not sent:
             return False
 
-        # Mark these facts as notified + record entity notification time
+        # Mark these facts as notified + start cooldown
         fact_ids = [f.id for f in facts if f.id is not None]
         self.db.facts.mark_notified(fact_ids)
         self.db.entities.update_last_notified_at(entity.id)
+        if self._heat_engine:
+            self._heat_engine.start_cooldown(entity.id)
 
         # Track which learn prompt this notification came from (to suppress same-topic dedup)
         self._last_notified_learn_prompt_id[user] = self._get_learn_prompt_id(facts)
 
-        # Track this notification for auto-tuning outcome check
+        # Track this notification for ignore detection
         self._last_notification[user] = (entity.id, datetime.now(UTC))
 
         # Update backoff
@@ -439,150 +448,76 @@ class NotificationAgent(Agent):
 
         return True
 
-    def _pick_scored_entity(
+    def _pick_hottest_entity(
         self,
         user: str,
         facts_by_entity: dict[int, list[Fact]],
         last_notified_learn_prompt_id: int | None = None,
     ) -> Entity | None:
-        """Score entities by interest * enrichment volume, pick randomly from top-N.
+        """Pick the hottest eligible entity deterministically.
 
-        Score formula: interest * log2(unannounced_count + 1)
-        - Interest gates: zero engagement means zero score (no chaff)
-        - log2(unannounced_count) amplifies entities with more new material
-        - Random selection from the top pool prevents stagnation
-        - Per-entity cooldown ensures no entity dominates
-
-        Filters: per-entity cooldown, learn-topic dedup (same as before).
+        Filters by: heat > 0, not on cooldown, not same learn topic.
+        Returns the entity with the highest heat, or None.
         """
-        pool_size = self.config.runtime.NOTIFICATION_POOL_SIZE
-        scored = self._score_eligible_entities(user, facts_by_entity, last_notified_learn_prompt_id)
-
-        if not scored:
+        eligible = self._get_eligible_entities(user, facts_by_entity, last_notified_learn_prompt_id)
+        if not eligible:
             return None
 
-        # Sort descending by score, take top-N, pick randomly
-        scored.sort(key=lambda x: x[0], reverse=True)
-        pool = scored[:pool_size]
-        _, chosen = random.choice(pool)
+        # Sort by heat descending, pick the hottest
+        eligible.sort(key=lambda e: e.heat, reverse=True)
+        chosen = eligible[0]
 
         logger.info(
-            "Notification: picked '%s' (score=%.2f) from pool of %d (top-%d of %d eligible)",
+            "Notification: picked '%s' (heat=%.2f) from %d eligible",
             chosen.name,
-            next(s for s, e in pool if e is chosen),
-            len(pool),
-            pool_size,
-            len(scored),
+            chosen.heat,
+            len(eligible),
         )
-
         return chosen
 
-    def _score_eligible_entities(
+    def _get_eligible_entities(
         self,
         user: str,
-        unnotified_by_entity: dict[int, list[Fact]],
+        facts_by_entity: dict[int, list[Fact]],
         last_notified_learn_prompt_id: int | None,
-    ) -> list[tuple[float, Entity]]:
-        """Score all entities via shared scorer, then filter to eligible ones."""
-        entities = [e for e in self.db.entities.get_for_user(user) if e.id in unnotified_by_entity]
-        if not entities:
-            return []
-
-        all_engagements = self.db.engagements.get_for_user(user)
-        facts_by_entity = {
-            e.id: self.db.facts.get_for_entity(e.id) for e in entities if e.id is not None
-        }
-        embedding_candidates = [
-            (e.id, deserialize_embedding(e.embedding))
-            for e in self.db.entities.get_with_embeddings(user)
-            if e.id is not None and e.embedding is not None
-        ]
-        rt = self.config.runtime
-        scored = scored_entities_for_user(
-            entities,
-            all_engagements,
-            facts_by_entity,
-            embedding_candidates,
-            half_life_days=rt.INTEREST_SCORE_HALF_LIFE_DAYS,
-            novelty_weight=rt.NOTIFICATION_NOVELTY_WEIGHT,
-            loyal_pool_size=int(rt.NOTIFICATION_LOYAL_POOL_SIZE),
-        )
-
-        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
-        for eng in all_engagements:
-            if eng.entity_id is not None:
-                engagements_by_entity[eng.entity_id].append(eng)
-
-        return [
-            (score, entity)
-            for score, entity in scored
-            if entity.id is not None
-            and self._is_eligible(
-                entity.id,
-                entity,
-                unnotified_by_entity.get(entity.id, []),
-                engagements_by_entity,
-                last_notified_learn_prompt_id,
-            )
-        ]
+    ) -> list[Entity]:
+        """Get entities with unnotified facts that pass all eligibility filters."""
+        entities = self.db.entities.get_for_user(user)
+        eligible: list[Entity] = []
+        for entity in entities:
+            if entity.id not in facts_by_entity:
+                continue
+            if not self._is_eligible(entity, facts_by_entity, last_notified_learn_prompt_id):
+                continue
+            eligible.append(entity)
+        return eligible
 
     def _is_eligible(
         self,
-        eid: int,
         entity: Entity,
-        facts: list[Fact],
-        engagements_by_entity: dict[int, list[Engagement]],
+        facts_by_entity: dict[int, list[Fact]],
         last_notified_learn_prompt_id: int | None,
     ) -> bool:
-        """Check veto, cooldown, and learn-topic dedup filters."""
-        if self._is_vetoed_by_emoji(eid, engagements_by_entity):
+        """Check heat, cooldown, and learn-topic dedup filters."""
+        assert entity.id is not None
+
+        if entity.heat <= 0:
             return False
-        if self._is_entity_on_cooldown(entity):
+        if entity.heat_cooldown > 0:
+            logger.debug(
+                "Notification: skipping '%s' (cooldown=%d cycles remaining)",
+                entity.name,
+                entity.heat_cooldown,
+            )
             return False
+        facts = facts_by_entity.get(entity.id, [])
         if self._is_same_learn_topic(facts, last_notified_learn_prompt_id):
             logger.debug(
-                "Notification: skipping '%s' (same learn topic as last notification, "
-                "learn_prompt_id=%d)",
+                "Notification: skipping '%s' (same learn topic as last notification)",
                 entity.name,
-                last_notified_learn_prompt_id,
             )
             return False
         return True
-
-    def _is_vetoed_by_emoji(
-        self, entity_id: int, engagements_by_entity: dict[int, list[Engagement]]
-    ) -> bool:
-        """Check if an entity has any negative emoji reaction (hard veto)."""
-        for eng in engagements_by_entity.get(entity_id, []):
-            if (
-                eng.engagement_type == PennyConstants.EngagementType.EMOJI_REACTION
-                and eng.valence == PennyConstants.EngagementValence.NEGATIVE
-            ):
-                logger.debug("Notification: vetoed '%d' (negative emoji reaction)", entity_id)
-                return True
-        return False
-
-    def _is_entity_on_cooldown(self, entity: Entity) -> bool:
-        """Check whether an entity was notified too recently."""
-        if entity.last_notified_at is None:
-            return False
-
-        cooldown = self.config.runtime.NOTIFICATION_ENTITY_COOLDOWN
-        now = datetime.now(UTC)
-        last = entity.last_notified_at
-        if last.tzinfo is None:
-            last = last.replace(tzinfo=UTC)
-        elapsed = (now - last).total_seconds()
-
-        if elapsed < cooldown:
-            logger.debug(
-                "Notification: skipping '%s' (notified %.0fs ago, cooldown=%.0fs)",
-                entity.name,
-                elapsed,
-                cooldown,
-            )
-            return True
-        return False
 
     def _is_same_learn_topic(
         self, facts: list[Fact], last_notified_learn_prompt_id: int | None
@@ -593,12 +528,12 @@ class NotificationAgent(Agent):
         entity_learn_prompt_id = self._get_learn_prompt_id(facts)
         return entity_learn_prompt_id == last_notified_learn_prompt_id
 
-    def _record_ignored_notification(self, user: str) -> None:
-        """Check if the previous notification was ignored and record a negative signal.
+    def _handle_ignored_notification(self, user: str) -> None:
+        """Check if the previous notification was ignored and penalize heat.
 
         If the last notification for this user received no engagement (no emoji,
-        no follow-up, no mention), create a NOTIFICATION_IGNORED engagement to
-        gradually suppress uninteresting entities.
+        no follow-up, no mention), apply the ignore penalty to reduce the
+        entity's heat.
         """
         prev = self._last_notification.get(user)
         if prev is None:
@@ -608,20 +543,14 @@ class NotificationAgent(Agent):
         if self.db.engagements.has_engagement_since(entity_id, sent_at):
             return
 
-        strength = self.config.runtime.NOTIFICATION_IGNORE_STRENGTH
-        self.db.engagements.add(
-            user=user,
-            engagement_type=PennyConstants.EngagementType.NOTIFICATION_IGNORED,
-            valence=PennyConstants.EngagementValence.NEGATIVE,
-            strength=strength,
-            entity_id=entity_id,
-        )
+        if self._heat_engine:
+            self._heat_engine.penalize_ignore(entity_id)
+
         entity = self.db.entities.get(entity_id)
         entity_name = entity.name if entity else str(entity_id)
         logger.info(
-            "Auto-tuning: recorded ignored notification for '%s' (strength=%.2f)",
+            "Heat: penalized ignored notification for '%s'",
             entity_name,
-            strength,
         )
 
     def _should_send(self, user: str) -> bool:

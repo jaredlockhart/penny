@@ -21,6 +21,7 @@ GROUP_NOTIFICATION = "Notification"
 GROUP_LEARN = "Learn"
 GROUP_ENRICHMENT = "Enrichment"
 GROUP_EVENTS = "Events"
+GROUP_HEAT = "Heat"
 
 # Ordered list for display
 CONFIG_GROUPS: list[str] = [
@@ -32,6 +33,7 @@ CONFIG_GROUPS: list[str] = [
     GROUP_LEARN,
     GROUP_ENRICHMENT,
     GROUP_EVENTS,
+    GROUP_HEAT,
 ]
 
 
@@ -577,6 +579,72 @@ ConfigParam(
     default=0.40,
     validator=_validate_positive_float,
     group=GROUP_EVENTS,
+)
+
+
+# ── Heat ────────────────────────────────────────────────────────────────────
+
+ConfigParam(
+    key="HEAT_DECAY_RATE",
+    description="Per-cycle multiplicative decay applied to all entity heat",
+    type=float,
+    default=0.85,
+    validator=_validate_unit_float,
+    group=GROUP_HEAT,
+)
+
+ConfigParam(
+    key="HEAT_TOUCH_AMOUNT",
+    description="Heat added to an entity on positive engagement",
+    type=float,
+    default=3.0,
+    validator=_validate_positive_float,
+    group=GROUP_HEAT,
+)
+
+ConfigParam(
+    key="HEAT_IGNORE_PENALTY",
+    description="Heat multiplier when a notification is ignored (e.g. 0.6 = lose 40%)",
+    type=float,
+    default=0.6,
+    validator=_validate_unit_float,
+    group=GROUP_HEAT,
+)
+
+ConfigParam(
+    key="HEAT_RADIATION_RATE",
+    description="Fraction of heat radiated to semantic neighbors per cycle",
+    type=float,
+    default=0.5,
+    validator=_validate_unit_float,
+    group=GROUP_HEAT,
+)
+
+ConfigParam(
+    key="HEAT_RADIATION_THRESHOLD",
+    description="Min cosine similarity for radiation between entities",
+    type=float,
+    default=0.5,
+    validator=_validate_unit_float,
+    group=GROUP_HEAT,
+)
+
+ConfigParam(
+    key="HEAT_RADIATION_TOP_K",
+    description="Max number of neighbors that receive radiation from a hot entity",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_HEAT,
+)
+
+ConfigParam(
+    key="HEAT_COOLDOWN_CYCLES",
+    description="Notification cycles an entity must sit out after being notified",
+    type=int,
+    default=3,
+    validator=_validate_positive_int,
+    group=GROUP_HEAT,
 )
 
 
