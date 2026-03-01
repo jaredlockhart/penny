@@ -145,6 +145,14 @@ class HeatEngine:
         """Zero out heat on negative engagement (thumbs down)."""
         self._db.entities.update_heat(entity_id, 0.0)
 
+    def seed_novelty(self, entity_id: int) -> None:
+        """Give a newly created entity base novelty heat.
+
+        Ensures entities are notifiable even on a fresh DB where
+        seed_intrinsic_heat would be a no-op (no hot neighbors).
+        """
+        self._db.entities.add_heat(entity_id, self._runtime.HEAT_NOVELTY_AMOUNT)
+
     def start_cooldown(self, entity_id: int) -> None:
         """Put an entity on cooldown after being notified."""
         self._db.entities.update_heat_cooldown(entity_id, int(self._runtime.HEAT_COOLDOWN_CYCLES))

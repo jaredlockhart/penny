@@ -171,6 +171,7 @@ class Penny:
             embedding_model_client=self.embedding_model_client, **kwargs
         )
         self.heat_engine = HeatEngine(db=self.db, runtime=config.runtime)
+        self.extraction_pipeline.set_heat_engine(self.heat_engine)
         self.notification_agent = NotificationAgent(**kwargs)
         self.notification_agent.set_heat_engine(self.heat_engine)
         self.enrich_agent = EnrichAgent(
@@ -246,6 +247,7 @@ class Penny:
             command_registry=self.command_registry,
         )
         self.notification_agent.set_channel(self.channel)
+        self.channel.set_heat_engine(self.heat_engine)
         self.schedule_executor.set_channel(self.channel)
 
     def _init_scheduler(self, config: Config) -> None:

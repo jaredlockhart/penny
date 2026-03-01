@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from penny.agents import MessageAgent
     from penny.commands import CommandRegistry
     from penny.database import Database
+    from penny.interest import HeatEngine
     from penny.scheduler import BackgroundScheduler
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,11 @@ class MessageChannel(ABC):
         self._command_registry = command_registry
         self._scheduler: BackgroundScheduler | None = None
         self._config: Config | None = None
+        self._heat_engine: HeatEngine | None = None
+
+    def set_heat_engine(self, engine: HeatEngine) -> None:
+        """Set the heat engine for reaction heat updates."""
+        self._heat_engine = engine
 
     def set_scheduler(self, scheduler: BackgroundScheduler) -> None:
         """Set the scheduler for message notifications."""
@@ -512,6 +518,11 @@ class MessageChannel(ABC):
                     entity_id=entity_id,
                     source_message_id=reacted_msg.id,
                 )
+                if self._heat_engine:
+                    if valence == PennyConstants.EngagementValence.POSITIVE:
+                        self._heat_engine.touch(entity_id)
+                    elif valence == PennyConstants.EngagementValence.NEGATIVE:
+                        self._heat_engine.veto(entity_id)
         except Exception:
             logger.debug("Reaction engagement extraction failed", exc_info=True)
 
