@@ -346,7 +346,7 @@ Examples:
         'Headline: "{headline}"'
     )
 
-    # Event notification prompt (for proactive event announcements)
+    # Event notification prompt (for proactive event announcements — single event)
     EVENT_NOTIFICATION_PROMPT = (
         "You just saw a news headline relevant to the user's follow topic. "
         "Write a short, casual heads-up message about it. "
@@ -357,6 +357,20 @@ Examples:
         "Use **bold** for key names and topics. "
         "Keep it concise — one short paragraph. "
         "End with the source URL on its own line so the user can read the full story."
+    )
+
+    # Event digest prompt (for proactive event announcements — multiple events)
+    EVENT_DIGEST_PROMPT = (
+        "You just received {count} news headlines relevant to the user's follow topic. "
+        "Write a casual digest summarizing what happened. "
+        "Open by telling the user this is an update on their "
+        "follow topic (mention the topic by name). "
+        "Synthesize related stories together into natural paragraphs — "
+        "don't just list them verbatim. "
+        "Only use information from the provided headlines and summaries — "
+        "do not add details, dates, names, or facts not present in the sources. "
+        "Use **bold** for key names and topics. "
+        "End with source URLs, each on its own line."
     )
 
     # Enrichment entity discovery prompt

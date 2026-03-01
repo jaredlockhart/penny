@@ -1,6 +1,6 @@
 """Integration tests for the NotificationAgent."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -877,3 +877,72 @@ async def test_learn_completion_exclusive(
 
         # Only ONE message sent (learn completion is exclusive)
         assert len(signal_server.outgoing_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_event_digest_marks_all_notified(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Event digest sends one message and marks all unnotified events as notified."""
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        return mock_ollama._make_text_response(
+            request,
+            "Here's your latest update on **space launches** — "
+            "SpaceX launched Starship, NASA updated Artemis, and Blue Origin tested New Glenn!",
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        msg_id = penny.db.messages.log_message(
+            direction="incoming", sender=TEST_SENDER, content="hello"
+        )
+        penny.db.messages.mark_processed([msg_id])
+
+        # Create follow prompt with cron that's overdue
+        fp = penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="space launches",
+            query_terms='["spacex"]',
+            cron_expression="0 * * * *",
+            timing_description="hourly",
+        )
+        assert fp is not None and fp.id is not None
+
+        # Create 3 unnotified events for this follow prompt
+        for i, headline in enumerate(
+            ["SpaceX launches Starship", "NASA Artemis update", "Blue Origin tests New Glenn"]
+        ):
+            penny.db.events.add(
+                user=TEST_SENDER,
+                headline=headline,
+                summary=f"Details about {headline}.",
+                occurred_at=datetime.now(UTC) - timedelta(hours=i),
+                source_type=PennyConstants.EventSourceType.NEWS_API,
+                source_url=f"https://example.com/story-{i}",
+                external_id=f"https://example.com/story-{i}",
+                follow_prompt_id=fp.id,
+            )
+
+        # Verify events start unnotified
+        unnotified = penny.db.events.get_unnotified_for_follow_prompt(fp.id)
+        assert len(unnotified) == 3
+
+        agent = _create_notification_agent(penny, config)
+        signal_server.outgoing_messages.clear()
+        result = await agent.execute()
+        assert result is True
+
+        # One digest message sent (not 3 individual ones)
+        assert len(signal_server.outgoing_messages) == 1
+
+        # All 3 events marked as notified
+        still_unnotified = penny.db.events.get_unnotified_for_follow_prompt(fp.id)
+        assert len(still_unnotified) == 0

@@ -44,10 +44,11 @@ class EventAgent(Agent):
     1. Checks preconditions (news tool, poll interval)
     2. Gets next FollowPrompt to poll (round-robin)
     3. Fetches articles from NewsAPI
-    4. Filters by relevance (embedding similarity to topic)
+    4. Scores by relevance (embedding similarity to topic)
     5. Deduplicates (URL → headline → embedding similarity)
-    6. Creates Event records for new articles
-    7. Updates last_polled_at
+    6. Ranks by relevance and caps at EVENT_MAX_PER_POLL
+    7. Creates Event records for new articles
+    8. Updates last_polled_at
     """
 
     def __init__(self, news_tool: NewsTool | None = None, **kwargs: object) -> None:
@@ -67,9 +68,10 @@ class EventAgent(Agent):
 
         assert follow_prompt.id is not None
         articles = await self._fetch_articles(follow_prompt)
-        articles = await self._filter_relevant(articles, follow_prompt)
-        new_articles = await self._deduplicate(articles, follow_prompt)
-        events_created = await self._create_events(new_articles, follow_prompt)
+        scored = await self._score_relevant(articles, follow_prompt)
+        deduped = await self._deduplicate(scored, follow_prompt)
+        capped = self._rank_and_cap(deduped)
+        events_created = await self._create_events(capped, follow_prompt)
         self.db.follow_prompts.update_last_polled(follow_prompt.id)
 
         if events_created:
@@ -119,51 +121,59 @@ class EventAgent(Agent):
 
     # --- Relevance ---
 
-    async def _filter_relevant(
+    async def _score_relevant(
         self, articles: list[NewsArticle], follow_prompt: FollowPrompt
-    ) -> list[NewsArticle]:
-        """Filter articles by embedding similarity to the follow prompt topic.
+    ) -> list[tuple[float, NewsArticle]]:
+        """Score articles by embedding similarity to the follow prompt topic.
 
         Two-pass: first checks title embedding against the topic. If that
         fails, extracts topic tags from the headline via the LLM and
         checks those against the topic. This handles broad topics like
         "science" where specific article titles don't embed close to the
         bare topic word.
+
+        Returns (score, article) pairs for articles above the threshold.
         """
         topic_vec = await embed_text(self._embedding_model_client, follow_prompt.prompt_text)
         if topic_vec is None:
-            return articles  # No embedding model — pass all through
+            # No embedding model — pass all through with default score
+            return [(1.0, article) for article in articles]
 
         threshold = self.config.runtime.EVENT_RELEVANCE_THRESHOLD
-        relevant: list[NewsArticle] = []
+        scored: list[tuple[float, NewsArticle]] = []
         for article in articles:
-            if await self._is_relevant(article, topic_vec, threshold):
-                relevant.append(article)
+            score = await self._relevance_score(article, topic_vec, threshold)
+            if score is not None:
+                scored.append((score, article))
             else:
                 logger.debug("Relevance: rejected '%s' (below %.2f)", article.title[:60], threshold)
 
         logger.debug(
             "Relevance: %d articles → %d relevant for '%s'",
             len(articles),
-            len(relevant),
+            len(scored),
             follow_prompt.prompt_text,
         )
-        return relevant
+        return scored
 
-    async def _is_relevant(
+    async def _relevance_score(
         self, article: NewsArticle, topic_vec: list[float], threshold: float
-    ) -> bool:
-        """Check if an article is relevant via title embedding, then tag fallback."""
+    ) -> float | None:
+        """Score an article's relevance via title embedding, then tag fallback.
+
+        Returns the cosine similarity score if above threshold, else None.
+        """
         article_vec = await embed_text(self._embedding_model_client, article.title)
         if article_vec is None:
-            return True  # Can't embed — let it through
-        if check_relevance(article_vec, topic_vec, threshold) is not None:
-            return True
+            return 1.0  # Can't embed — let it through with default score
+        score = check_relevance(article_vec, topic_vec, threshold)
+        if score is not None:
+            return score
         # Title didn't match — try extracting topic tags from the headline
         tags_vec = await self._extract_tag_embedding(article.title)
         if tags_vec is None:
-            return False
-        return check_relevance(tags_vec, topic_vec, threshold) is not None
+            return None
+        return check_relevance(tags_vec, topic_vec, threshold)
 
     async def _extract_tag_embedding(self, headline: str) -> list[float] | None:
         """Extract topic tags from a headline and return their embedding."""
@@ -183,25 +193,27 @@ class EventAgent(Agent):
     # --- Dedup ---
 
     async def _deduplicate(
-        self, articles: list[NewsArticle], follow_prompt: FollowPrompt
-    ) -> list[NewsArticle]:
+        self,
+        scored_articles: list[tuple[float, NewsArticle]],
+        follow_prompt: FollowPrompt,
+    ) -> list[tuple[float, NewsArticle]]:
         """Three-layer dedup: URL → normalized headline → semantic (TCR OR embedding)."""
         window_days = int(self.config.runtime.EVENT_DEDUP_WINDOW_DAYS)
         recent_events = self.db.events.get_recent(follow_prompt.user, days=window_days)
-        new_articles: list[NewsArticle] = []
+        new_articles: list[tuple[float, NewsArticle]] = []
 
-        for article in articles:
+        for score, article in scored_articles:
             if self._is_url_duplicate(article, recent_events):
                 continue
             if self._is_headline_duplicate(article, recent_events):
                 continue
             if await self._is_semantic_duplicate(article, recent_events):
                 continue
-            new_articles.append(article)
+            new_articles.append((score, article))
 
         logger.debug(
             "Dedup: %d articles → %d new for '%s'",
-            len(articles),
+            len(scored_articles),
             len(new_articles),
             follow_prompt.prompt_text,
         )
@@ -231,6 +243,23 @@ class EventAgent(Agent):
             tcr_threshold=self.config.runtime.EVENT_DEDUP_TCR_THRESHOLD,
         )
         return match_idx is not None
+
+    # --- Rank and cap ---
+
+    def _rank_and_cap(self, scored_articles: list[tuple[float, NewsArticle]]) -> list[NewsArticle]:
+        """Sort by relevance score descending and return top EVENT_MAX_PER_POLL."""
+        scored_articles.sort(key=lambda x: x[0], reverse=True)
+        max_events = int(self.config.runtime.EVENT_MAX_PER_POLL)
+        capped = scored_articles[:max_events]
+
+        if len(scored_articles) > max_events:
+            logger.debug(
+                "Capped %d articles to %d (max per poll)",
+                len(scored_articles),
+                max_events,
+            )
+
+        return [article for _, article in capped]
 
     # --- Event creation ---
 

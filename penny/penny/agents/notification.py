@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -237,22 +236,18 @@ class NotificationAgent(Agent):
         return any_sent
 
     async def _try_single_follow_notification(self, user: str, prompt: FollowPrompt) -> bool:
-        """Try to send one event notification for a single follow prompt."""
+        """Try to send a digest of all unnotified events for a follow prompt."""
         assert prompt.id is not None
         unnotified = self.db.events.get_unnotified_for_follow_prompt(prompt.id)
         if not unnotified:
             return False
 
-        event = self._pick_best_event(user, unnotified)
-        if event is None:
-            return False
-
-        sent = await self._send_event_notification(user, event, prompt.prompt_text)
+        sent = await self._send_event_digest(user, unnotified, prompt.prompt_text)
         if not sent:
             return False
 
-        assert event.id is not None
-        self.db.events.mark_notified([event.id])
+        event_ids = [e.id for e in unnotified if e.id is not None]
+        self.db.events.mark_notified(event_ids)
         self.db.follow_prompts.update_last_notified(prompt.id)
         return True
 
@@ -316,50 +311,18 @@ class NotificationAgent(Agent):
         elapsed_since_firing = (now_local - next_firing).total_seconds()
         return elapsed_since_firing / period if period > 0 else float("inf")
 
-    def _pick_best_event(self, user: str, events: list[Event]) -> Event | None:
-        """Pick the most timely event to notify about."""
-        scored: list[tuple[float, Event]] = []
-        for event in events:
-            score = self._compute_timeliness(event)
-            scored.append((score, event))
-
-        if not scored:
-            return None
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        best_score, best_event = scored[0]
-
-        logger.info(
-            "Event notification: picked '%s' (score=%.2f) from %d unnotified",
-            best_event.headline[:50],
-            best_score,
-            len(scored),
-        )
-        return best_event
-
-    def _compute_timeliness(self, event: Event) -> float:
-        """Compute timeliness decay: 2^(-hours_since / half_life)."""
-        half_life = self.config.runtime.EVENT_TIMELINESS_HALF_LIFE_HOURS
-        occurred = event.occurred_at
-        if occurred.tzinfo is None:
-            occurred = occurred.replace(tzinfo=UTC)
-        hours_since = (datetime.now(UTC) - occurred).total_seconds() / 3600.0
-        if hours_since < 0:
-            hours_since = 0.0
-        return math.pow(2.0, -hours_since / half_life)
-
-    async def _send_event_notification(self, user: str, event: Event, follow_topic: str) -> bool:
-        """Compose and send a notification about an event."""
+    async def _send_event_digest(self, user: str, events: list[Event], follow_topic: str) -> bool:
+        """Compose and send a digest notification for one or more events."""
         assert self._channel is not None
 
-        prompt = self._build_event_prompt(event, follow_topic)
-        result = await self._compose_user_facing(prompt, image_query=event.headline)
+        prompt = self._build_event_digest_prompt(events, follow_topic)
+        result = await self._compose_user_facing(prompt, image_query=follow_topic)
 
         if not result.answer:
             return False
         if len(result.answer) < self.config.runtime.NOTIFICATION_MIN_LENGTH:
             logger.debug(
-                "Skipping short event notification (%d chars): %r",
+                "Skipping short event digest (%d chars): %r",
                 len(result.answer),
                 result.answer,
             )
@@ -367,14 +330,31 @@ class NotificationAgent(Agent):
 
         await self._send_with_typing(user, result.answer, result.attachments)
         logger.info(
-            "Event notification sent for '%s' to %s",
-            event.headline[:50],
+            "Event digest sent (%d events for '%s') to %s",
+            len(events),
+            follow_topic[:50],
             user,
         )
         return True
 
-    def _build_event_prompt(self, event: Event, follow_topic: str) -> str:
-        """Build the LLM prompt for an event notification."""
+    def _build_event_digest_prompt(self, events: list[Event], follow_topic: str) -> str:
+        """Build the LLM prompt for an event digest notification."""
+        if len(events) == 1:
+            return self._build_single_event_prompt(events[0], follow_topic)
+
+        parts = [Prompt.EVENT_DIGEST_PROMPT.format(count=len(events)), ""]
+        parts.append(f"Follow topic: {follow_topic}")
+        for i, event in enumerate(events, 1):
+            parts.append(f"\nStory {i}:")
+            parts.append(f"Headline: {event.headline}")
+            if event.summary:
+                parts.append(f"Summary: {event.summary}")
+            if event.source_url:
+                parts.append(f"Source: {event.source_url}")
+        return "\n".join(parts)
+
+    def _build_single_event_prompt(self, event: Event, follow_topic: str) -> str:
+        """Build the LLM prompt for a single event notification."""
         parts = [Prompt.EVENT_NOTIFICATION_PROMPT, ""]
         parts.append(f"Follow topic: {follow_topic}")
         parts.append(f"Headline: {event.headline}")
