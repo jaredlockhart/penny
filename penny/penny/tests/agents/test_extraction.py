@@ -675,10 +675,21 @@ async def test_extraction_processes_messages_for_entities(
         assert statement_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
         assert statement_engagements[0].strength == 0.7
 
-        # Verify entity received heat (novelty + MESSAGE_MENTION touch + EXPLICIT_STATEMENT touch)
+        # Verify entity received heat (MESSAGE_MENTION touch + EXPLICIT_STATEMENT touch)
         refreshed = penny.db.entities.get(entity.id)
         assert refreshed is not None
         assert refreshed.heat > 0, "Entity should have heat from engagements"
+
+        # Verify diminishing touch: additional touch adds less than full HEAT_TOUCH_AMOUNT
+        heat_before = refreshed.heat
+        penny.heat_engine.touch(entity.id)
+        refreshed = penny.db.entities.get(entity.id)
+        assert refreshed is not None
+        increment = refreshed.heat - heat_before
+        assert 0 < increment < config.runtime.HEAT_TOUCH_AMOUNT, (
+            f"Diminishing touch: increment {increment:.2f} should be less than "
+            f"{config.runtime.HEAT_TOUCH_AMOUNT}"
+        )
 
 
 @pytest.mark.asyncio

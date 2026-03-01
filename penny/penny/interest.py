@@ -64,8 +64,10 @@ class HeatEngine:
         self._radiate(user)
 
     def touch(self, entity_id: int) -> None:
-        """Add heat on positive engagement."""
-        self._db.entities.add_heat(entity_id, self._runtime.HEAT_TOUCH_AMOUNT)
+        """Add heat on positive engagement (diminishing with current heat)."""
+        current = self._get_heat(entity_id)
+        amount = self._runtime.HEAT_TOUCH_AMOUNT / (1.0 + current)
+        self._db.entities.add_heat(entity_id, amount)
 
     def penalize_ignore(self, entity_id: int) -> None:
         """Reduce heat when a notification is ignored."""
