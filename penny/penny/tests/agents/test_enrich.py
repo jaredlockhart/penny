@@ -51,20 +51,7 @@ async def test_learn_enrichment(
         # Clear previous mock state
         mock_ollama.requests.clear()
 
-        # Create and run learn agent
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
-
-        result = await agent.execute()
+        result = await penny.enrich_agent.execute()
         assert result is True
 
         # Verify facts were stored with notified_at=NULL (notification agent's job)
@@ -112,19 +99,7 @@ async def test_learn_skips_negative_interest(
             entity_id=entity.id,
         )
 
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
-
-        result = await agent.execute()
+        result = await penny.enrich_agent.execute()
         assert result is False
 
 
@@ -141,19 +116,7 @@ async def test_learn_no_entities(
     config = make_config()
 
     async with running_penny(config) as penny:
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
-
-        result = await agent.execute()
+        result = await penny.enrich_agent.execute()
         assert result is False
 
 
@@ -244,19 +207,7 @@ async def test_learn_dedup_facts(
         mock_ollama.requests.clear()
         _captured_perplexity_queries.clear()
 
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
-
-        result = await agent.execute()
+        result = await penny.enrich_agent.execute()
         assert result is True
 
         # Enrichment query should include existing facts for Perplexity context
@@ -345,19 +296,7 @@ async def test_learn_semantic_interest_priority(
 
         mock_ollama.requests.clear()
 
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
-
-        result = await agent.execute()
+        result = await penny.enrich_agent.execute()
         assert result is True
 
         # Entity A (aamas) should be selected because its FOLLOW_UP_QUESTION
@@ -416,17 +355,7 @@ async def test_learn_enrichment_fixed_interval(
             entity_id=entity.id,
         )
 
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
+        agent = penny.enrich_agent
 
         # First execute: should succeed and record the timer
         result = await agent.execute()
@@ -500,17 +429,7 @@ async def test_enrich_entity_rotation_cooldown(
             entity_id=entity_b.id,
         )
 
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
+        agent = penny.enrich_agent
 
         # First cycle: entity A wins (higher interest, no cooldown yet)
         result = await agent.execute()
@@ -564,20 +483,8 @@ async def test_enrich_skips_entity_with_unannounced_facts(
         # Fact with notified_at=None (unannounced)
         penny.db.facts.add(entity_id=entity.id, content="Some unannounced fact")
 
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
-
         # Should return False — entity has unannounced facts
-        result = await agent.execute()
+        result = await penny.enrich_agent.execute()
         assert result is False
 
 
@@ -625,19 +532,7 @@ async def test_learn_enrichment_includes_tagline_in_extraction_prompt(
         mock_ollama.requests.clear()
         captured_prompts.clear()
 
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
-
-        result = await agent.execute()
+        result = await penny.enrich_agent.execute()
         assert result is True
 
         # The extraction prompt should include the tagline for disambiguation
@@ -733,21 +628,7 @@ async def test_enrichment_discovers_related_entities(
 
         mock_ollama.requests.clear()
 
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            embedding_model_client=penny.embedding_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
-        agent.set_heat_engine(penny.heat_engine)
-
-        result = await agent.execute()
+        result = await penny.enrich_agent.execute()
         assert result is True
 
         # Enriching entity got its facts
@@ -859,20 +740,7 @@ async def test_enrichment_discovery_respects_budget(
             entity_id=entity.id,
         )
 
-        agent = EnrichAgent(
-            search_tool=penny.message_agent.tools[0] if penny.message_agent.tools else None,
-            system_prompt="",
-            background_model_client=penny.background_model_client,
-            foreground_model_client=penny.foreground_model_client,
-            embedding_model_client=penny.embedding_model_client,
-            tools=[],
-            db=penny.db,
-            config=config,
-            max_steps=1,
-            tool_timeout=config.tool_timeout,
-        )
-
-        result = await agent.execute()
+        result = await penny.enrich_agent.execute()
         assert result is True
 
         # Only 1 entity should be created despite 3 candidates
