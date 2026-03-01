@@ -9,6 +9,7 @@ import unicodedata
 from datetime import UTC, datetime, timedelta
 
 from penny.agents.base import Agent
+from penny.channels.base import MessageChannel
 from penny.constants import PennyConstants
 from penny.database.models import Event, FollowPrompt
 from penny.ollama.embeddings import serialize_embedding
@@ -43,6 +44,11 @@ class EventAgent(Agent):
     def __init__(self, news_tool: NewsTool | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._news_tool = news_tool
+        self._channel: MessageChannel | None = None
+
+    def set_channel(self, channel: MessageChannel) -> None:
+        """Set the channel for sending rate-limit notifications to users."""
+        self._channel = channel
 
     @property
     def name(self) -> str:
@@ -57,6 +63,8 @@ class EventAgent(Agent):
 
         assert follow_prompt.id is not None
         articles = await self._fetch_articles(follow_prompt)
+        if self._news_tool and self._news_tool.consume_rate_limit_notification():
+            await self._notify_rate_limited(follow_prompt.user)
         scored = await self._score_relevant(articles, follow_prompt)
         deduped = await self._deduplicate(scored, follow_prompt)
         capped = self._rank_and_cap(deduped)
@@ -109,6 +117,16 @@ class EventAgent(Agent):
         return elapsed >= self.config.runtime.EVENT_POLL_INTERVAL_SECONDS
 
     # --- Fetch ---
+
+    async def _notify_rate_limited(self, user: str) -> None:
+        """Send a one-time notification to the user when the NewsAPI rate limit is hit."""
+        if self._channel is None:
+            return
+        message = (
+            "News updates are paused temporarily — the NewsAPI rate limit has been reached. "
+            "Updates will resume automatically in about 12 hours."
+        )
+        await self._channel.send_response(user, message, parent_id=None)
 
     async def _fetch_articles(self, follow_prompt: FollowPrompt) -> list[NewsArticle]:
         """Query NewsAPI with the follow prompt's query terms."""

@@ -29,10 +29,16 @@ def _make_article(
     )
 
 
-def _make_mock_news_tool(articles: list[NewsArticle] | None = None):
+def _make_mock_news_tool(
+    articles: list[NewsArticle] | None = None,
+    rate_limited: bool = False,
+):
     """Create a mock NewsTool that returns the given articles."""
+    from unittest.mock import MagicMock
+
     tool = AsyncMock()
     tool.search = AsyncMock(return_value=articles or [])
+    tool.consume_rate_limit_notification = MagicMock(return_value=rate_limited)
     return tool
 
 
@@ -514,6 +520,39 @@ async def test_event_agent_caps_by_relevance(
         assert "High relevance article" in headlines
         assert "Low relevance article" not in headlines
         assert "Medium relevance article" not in headlines
+
+
+@pytest.mark.asyncio
+async def test_event_agent_notifies_user_on_rate_limit(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """EventAgent sends a message to the user when the NewsAPI rate limit is first hit."""
+    config = make_config()
+    # Mock news tool that signals a new rate limit event
+    news_tool = _make_mock_news_tool(articles=[], rate_limited=True)
+
+    async with running_penny(config) as penny:
+        penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="AI safety",
+            query_terms='["AI safety"]',
+        )
+
+        penny.event_agent._news_tool = news_tool
+        await penny.event_agent.execute()
+
+        # User should receive a notification about the rate limit
+        from penny.tests.conftest import wait_until
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+        assert any(
+            "rate limit" in msg["message"].lower() for msg in signal_server.outgoing_messages
+        )
 
 
 def test_normalize_headline():
