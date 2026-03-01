@@ -2,27 +2,7 @@
 
 import pytest
 
-from penny.agents.notification import NotificationAgent
-from penny.interest import HeatEngine
 from penny.tests.conftest import TEST_SENDER
-
-
-def _create_notification_agent(penny, config):
-    """Create a NotificationAgent wired to penny's DB, channel, and heat engine."""
-    agent = NotificationAgent(
-        system_prompt="",
-        background_model_client=penny.background_model_client,
-        foreground_model_client=penny.foreground_model_client,
-        tools=[],
-        db=penny.db,
-        max_steps=1,
-        tool_timeout=config.tool_timeout,
-        config=config,
-    )
-    agent.set_channel(penny.channel)
-    heat_engine = HeatEngine(db=penny.db, runtime=config.runtime)
-    agent.set_heat_engine(heat_engine)
-    return agent
 
 
 @pytest.mark.asyncio
@@ -101,9 +81,8 @@ async def test_notification_skipped_when_muted(
         # Mute the user
         penny.db.users.set_muted(TEST_SENDER)
 
-        agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
-        result = await agent.execute()
+        result = await penny.notification_agent.execute()
 
         assert result is False
         assert len(signal_server.outgoing_messages) == 0
@@ -120,7 +99,7 @@ async def test_notification_skipped_when_muted(
         mock_ollama.set_response_handler(handler)
 
         signal_server.outgoing_messages.clear()
-        result = await agent.execute()
+        result = await penny.notification_agent.execute()
 
         assert result is True
         assert len(signal_server.outgoing_messages) == 1

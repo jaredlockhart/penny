@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from penny.agents.event import EventAgent, _normalize_headline
+from penny.agents.event import _normalize_headline
 from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
 from penny.tools.news import NewsArticle
@@ -26,22 +26,6 @@ def _make_article(
         url=url,
         published_at=datetime.now(UTC),
         source_name="Test News",
-    )
-
-
-def _create_event_agent(penny, config, news_tool=None, embedding_model_client=None):
-    """Create an EventAgent wired to penny's DB with a mock news tool."""
-    return EventAgent(
-        news_tool=news_tool,
-        system_prompt="",
-        background_model_client=penny.background_model_client,
-        foreground_model_client=penny.foreground_model_client,
-        embedding_model_client=embedding_model_client,
-        tools=[],
-        db=penny.db,
-        max_steps=1,
-        tool_timeout=config.tool_timeout,
-        config=config,
     )
 
 
@@ -71,8 +55,7 @@ async def test_event_agent_skips_without_news_tool(
             query_terms='["AI safety"]',
         )
 
-        agent = _create_event_agent(penny, config, news_tool=None)
-        result = await agent.execute()
+        result = await penny.event_agent.execute()
         assert result is False
 
 
@@ -90,8 +73,8 @@ async def test_event_agent_skips_without_follow_prompts(
     news_tool = _make_mock_news_tool()
 
     async with running_penny(config) as penny:
-        agent = _create_event_agent(penny, config, news_tool=news_tool)
-        result = await agent.execute()
+        penny.event_agent._news_tool = news_tool
+        result = await penny.event_agent.execute()
         assert result is False
 
 
@@ -127,8 +110,8 @@ async def test_event_agent_creates_events(
             query_terms='["spacex", "rocket launch"]',
         )
 
-        agent = _create_event_agent(penny, config, news_tool=news_tool)
-        result = await agent.execute()
+        penny.event_agent._news_tool = news_tool
+        result = await penny.event_agent.execute()
 
         assert result is True
 
@@ -150,7 +133,7 @@ async def test_event_agent_creates_events(
 
         # Regression: second execute reads last_polled_at back from SQLite as
         # a naive datetime — must not raise TypeError on aware/naive subtraction
-        result2 = await agent.execute()
+        result2 = await penny.event_agent.execute()
         assert result2 is False  # poll interval not elapsed
 
 
@@ -192,8 +175,8 @@ async def test_event_agent_dedup_by_url(
         assert existing is not None and existing.id is not None
         penny.db.events.mark_notified([existing.id])
 
-        agent = _create_event_agent(penny, config, news_tool=news_tool)
-        result = await agent.execute()
+        penny.event_agent._news_tool = news_tool
+        result = await penny.event_agent.execute()
 
         # No new events created (duplicate filtered)
         assert result is False
@@ -243,8 +226,8 @@ async def test_event_agent_dedup_by_headline(
         assert existing is not None and existing.id is not None
         penny.db.events.mark_notified([existing.id])
 
-        agent = _create_event_agent(penny, config, news_tool=news_tool)
-        result = await agent.execute()
+        penny.event_agent._news_tool = news_tool
+        result = await penny.event_agent.execute()
 
         assert result is False
         events = penny.db.events.get_recent(TEST_SENDER, days=7)
@@ -299,10 +282,9 @@ async def test_event_agent_filters_irrelevant_articles(
             query_terms='["spacex", "rocket launch"]',
         )
 
-        agent = _create_event_agent(
-            penny, config, news_tool=news_tool, embedding_model_client=embedding_client
-        )
-        result = await agent.execute()
+        penny.event_agent._news_tool = news_tool
+        penny.event_agent._embedding_model_client = embedding_client
+        result = await penny.event_agent.execute()
 
         assert result is True
         events = penny.db.events.get_recent(TEST_SENDER, days=7)
@@ -362,10 +344,9 @@ async def test_event_agent_tag_fallback_rescues_broad_topic(
             query_terms='["science news", "scientific research"]',
         )
 
-        agent = _create_event_agent(
-            penny, config, news_tool=news_tool, embedding_model_client=embedding_client
-        )
-        result = await agent.execute()
+        penny.event_agent._news_tool = news_tool
+        penny.event_agent._embedding_model_client = embedding_client
+        result = await penny.event_agent.execute()
 
         assert result is True
         events = penny.db.events.get_recent(TEST_SENDER, days=7)
@@ -415,8 +396,8 @@ async def test_event_agent_dedup_by_tcr(
         assert existing is not None and existing.id is not None
         penny.db.events.mark_notified([existing.id])
 
-        agent = _create_event_agent(penny, config, news_tool=news_tool)
-        result = await agent.execute()
+        penny.event_agent._news_tool = news_tool
+        result = await penny.event_agent.execute()
 
         assert result is False
         events = penny.db.events.get_recent(TEST_SENDER, days=7)
@@ -464,8 +445,8 @@ async def test_event_agent_skips_prompt_with_unannounced_events(
         )
         assert ready is not None and ready.id is not None
 
-        agent = _create_event_agent(penny, config, news_tool=news_tool)
-        result = await agent.execute()
+        penny.event_agent._news_tool = news_tool
+        result = await penny.event_agent.execute()
 
         assert result is True
 
@@ -520,11 +501,9 @@ async def test_event_agent_caps_by_relevance(
             query_terms='["spacex"]',
         )
 
-        agent = _create_event_agent(
-            penny, config, news_tool=news_tool, embedding_model_client=embedding_client
-        )
-        agent.config = penny.config  # Use the overridden config
-        result = await agent.execute()
+        penny.event_agent._news_tool = news_tool
+        penny.event_agent._embedding_model_client = embedding_client
+        result = await penny.event_agent.execute()
 
         assert result is True
         events = penny.db.events.get_recent(TEST_SENDER, days=7)

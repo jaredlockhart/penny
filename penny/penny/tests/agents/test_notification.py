@@ -4,33 +4,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from penny.agents.notification import NotificationAgent
 from penny.constants import PennyConstants
-from penny.interest import HeatEngine
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 def _set_entity_heat(penny, entity_id, heat):
     """Set an entity's heat so it's eligible for notification."""
     penny.db.entities.update_heat(entity_id, heat)
-
-
-def _create_notification_agent(penny, config):
-    """Create a NotificationAgent wired to penny's DB, channel, and heat engine."""
-    agent = NotificationAgent(
-        system_prompt="",
-        background_model_client=penny.background_model_client,
-        foreground_model_client=penny.foreground_model_client,
-        tools=[],
-        db=penny.db,
-        max_steps=1,
-        tool_timeout=config.tool_timeout,
-        config=config,
-    )
-    agent.set_channel(penny.channel)
-    heat_engine = HeatEngine(db=penny.db, runtime=config.runtime)
-    agent.set_heat_engine(heat_engine)
-    return agent
 
 
 @pytest.mark.asyncio
@@ -81,9 +61,8 @@ async def test_notification_prefers_higher_heat_entity(
         penny.db.facts.add(boring_entity.id, "Boring fact")
         penny.db.facts.add(interesting_entity.id, "Interesting fact")
 
-        agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
-        result = await agent.execute()
+        result = await penny.notification_agent.execute()
         assert result is True
 
         # Should notify about the interesting entity (higher heat)
@@ -138,9 +117,8 @@ async def test_notification_skips_zero_heat_entity(
         penny.db.facts.add(vetoed.id, "Vetoed fact")
         penny.db.facts.add(fallback.id, "Fallback fact")
 
-        agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
-        result = await agent.execute()
+        result = await penny.notification_agent.execute()
         assert result is True
 
         # Should pick the fallback, not the vetoed entity
@@ -193,7 +171,7 @@ async def test_notification_ignore_penalty_reduces_heat(
         penny.db.facts.add(entity_a.id, "Fact for A")
         penny.db.facts.add(entity_b.id, "Fact for B")
 
-        agent = _create_notification_agent(penny, config)
+        agent = penny.notification_agent
 
         # Cycle 1: sends notification (picks entity A — higher heat)
         signal_server.outgoing_messages.clear()
@@ -260,8 +238,7 @@ async def test_notification_marks_facts_notified(
         facts_before = penny.db.facts.get_for_entity(entity.id)
         assert all(f.notified_at is None for f in facts_before)
 
-        agent = _create_notification_agent(penny, config)
-        await agent.execute()
+        await penny.notification_agent.execute()
 
         # Facts should now be marked as notified
         facts_after = penny.db.facts.get_for_entity(entity.id)
@@ -311,7 +288,7 @@ async def test_notification_entity_cooldown(
         penny.db.facts.add(entity_b.id, "Fact for beta")
         penny.db.facts.add(entity_a.id, "Fact for alpha")
 
-        agent = _create_notification_agent(penny, config)
+        agent = penny.notification_agent
 
         # Cycle 1: entity A picked (highest heat)
         signal_server.outgoing_messages.clear()
@@ -383,9 +360,8 @@ async def test_notification_one_per_cycle(
         penny.db.facts.add(e1.id, "Fact for entity one")
         penny.db.facts.add(e2.id, "Fact for entity two")
 
-        agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
-        await agent.execute()
+        await penny.notification_agent.execute()
 
         # Only one notification sent
         assert len(signal_server.outgoing_messages) == 1
@@ -416,9 +392,8 @@ async def test_notification_skips_user_message_facts(
         # Pre-mark as notified (simulates user-sourced facts)
         penny.db.facts.add(entity.id, "Already notified fact", notified_at=datetime.now(UTC))
 
-        agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
-        result = await agent.execute()
+        result = await penny.notification_agent.execute()
 
         assert result is False
         assert len(signal_server.outgoing_messages) == 0
@@ -481,9 +456,8 @@ async def test_notification_mentions_learn_topic(
             source_search_log_id=search_logs[0].id,
         )
 
-        agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
-        result = await agent.execute()
+        result = await penny.notification_agent.execute()
         assert result is True
 
         # The prompt sent to the LLM should mention the learn topic
@@ -520,7 +494,7 @@ async def test_notification_backoff_and_reset(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        agent = _create_notification_agent(penny, config)
+        agent = penny.notification_agent
 
         # --- Cycle 1: notification sent (no backoff — never acted before) ---
         e1 = penny.db.entities.get_or_create(TEST_SENDER, "backoff entity 1")
@@ -584,7 +558,7 @@ async def test_notification_fires_after_initial_backoff_from_user_message(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        agent = _create_notification_agent(penny, config)
+        agent = penny.notification_agent
 
         # --- Cycle 1: first notification fires (no prior state) ---
         e1 = penny.db.entities.get_or_create(TEST_SENDER, "entity for initial backoff test")
@@ -648,7 +622,7 @@ async def test_notification_command_does_not_reset_backoff(
         )
         penny.db.messages.mark_processed([msg_id])
 
-        agent = _create_notification_agent(penny, config)
+        agent = penny.notification_agent
 
         # --- Cycle 1: notification sent (no backoff) ---
         e1 = penny.db.entities.get_or_create(TEST_SENDER, "command backoff entity 1")
@@ -704,7 +678,7 @@ async def test_notification_expired_backoff_stays_at_cadence(
     initial_backoff = config.runtime.NOTIFICATION_INITIAL_BACKOFF
 
     async with running_penny(config) as penny:
-        agent = _create_notification_agent(penny, config)
+        agent = penny.notification_agent
 
         # Simulate state: backoff at 480s, expired (last send was 481s ago)
         state = BackoffState()
@@ -793,9 +767,8 @@ async def test_learn_completion_announcement(
             source_search_log_id=search_log_id,
         )
 
-        agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
-        result = await agent.execute()
+        result = await penny.notification_agent.execute()
         assert result is True
 
         msgs = signal_server.outgoing_messages
@@ -870,9 +843,8 @@ async def test_learn_completion_exclusive(
         _set_entity_heat(penny, entity_regular.id, 5.0)
         penny.db.facts.add(entity_regular.id, "Regular fact")
 
-        agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
-        result = await agent.execute()
+        result = await penny.notification_agent.execute()
         assert result is True
 
         # Only ONE message sent (learn completion is exclusive)
@@ -935,9 +907,8 @@ async def test_event_digest_marks_all_notified(
         unnotified = penny.db.events.get_unnotified_for_follow_prompt(fp.id)
         assert len(unnotified) == 3
 
-        agent = _create_notification_agent(penny, config)
         signal_server.outgoing_messages.clear()
-        result = await agent.execute()
+        result = await penny.notification_agent.execute()
         assert result is True
 
         # One digest message sent (not 3 individual ones)
