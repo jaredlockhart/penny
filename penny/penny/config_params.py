@@ -463,7 +463,7 @@ ConfigParam(
     key="LEARN_PROMPT_DEFAULT_SEARCHES",
     description="Number of searches performed per /learn command",
     type=int,
-    default=5,
+    default=3,
     validator=_validate_positive_int,
     group=GROUP_LEARN,
 )
