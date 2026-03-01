@@ -18,24 +18,10 @@ def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
 
 
 def up(conn: sqlite3.Connection) -> None:
-    """Add heat columns and seed initial heat from engagement history."""
+    """Add heat and heat_cooldown columns to entity table."""
     if not _has_column(conn, "entity", "heat"):
         conn.execute("ALTER TABLE entity ADD COLUMN heat REAL NOT NULL DEFAULT 0.0")
     if not _has_column(conn, "entity", "heat_cooldown"):
         conn.execute("ALTER TABLE entity ADD COLUMN heat_cooldown INTEGER NOT NULL DEFAULT 0")
-
-    # Seed initial heat from positive engagement days (capped at 5.0)
-    conn.execute("""
-        UPDATE entity SET heat = MIN(COALESCE((
-            SELECT COUNT(DISTINCT DATE(e.created_at))
-            FROM engagement e
-            WHERE e.entity_id = entity.id
-              AND e.valence = 'positive'
-              AND e.engagement_type IN (
-                  'emoji_reaction', 'explicit_statement',
-                  'follow_up_question', 'message_mention'
-              )
-        ), 0.0), 5.0)
-    """)
 
     conn.commit()
