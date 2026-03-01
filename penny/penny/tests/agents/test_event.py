@@ -493,6 +493,66 @@ async def test_event_agent_polls_hourly_skips_daily(
         assert daily_elapsed > 3600  # still ~2h ago (more than 1h hourly period)
 
 
+@pytest.mark.asyncio
+async def test_event_agent_caps_by_relevance(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Articles are ranked by relevance score and capped at EVENT_MAX_PER_POLL."""
+    config = make_config()
+    # Create 4 articles — cap at 2 so only top 2 by relevance survive
+    articles = [
+        _make_article(title="Low relevance article", url="https://example.com/low"),
+        _make_article(title="High relevance article", url="https://example.com/high"),
+        _make_article(title="Medium relevance article", url="https://example.com/med"),
+        _make_article(title="Top relevance article", url="https://example.com/top"),
+    ]
+    news_tool = _make_mock_news_tool(articles)
+
+    # Topic and article embeddings — all above relevance threshold (0.40) but
+    # with different scores so ranking produces a clear top 2
+    topic_vec = [1.0, 0.0, 0.0]
+    embed_map = {
+        "space launches": [topic_vec],
+        "Low relevance article": [[0.5, 0.0, 0.866]],  # cosine ~0.50
+        "High relevance article": [[0.95, 0.05, 0.0]],  # cosine ~0.998
+        "Medium relevance article": [[0.7, 0.0, 0.714]],  # cosine ~0.70
+        "Top relevance article": [[1.0, 0.0, 0.0]],  # cosine 1.0
+    }
+    embedding_client = AsyncMock()
+    embedding_client.embed = AsyncMock(side_effect=lambda text: embed_map[text])
+
+    async with running_penny(config) as penny:
+        # Override EVENT_MAX_PER_POLL to 2 for this test
+        penny.config.runtime.EVENT_MAX_PER_POLL = 2
+
+        penny.db.follow_prompts.create(
+            user=TEST_SENDER,
+            prompt_text="space launches",
+            query_terms='["spacex"]',
+        )
+
+        agent = _create_event_agent(
+            penny, config, news_tool=news_tool, embedding_model_client=embedding_client
+        )
+        agent.config = penny.config  # Use the overridden config
+        result = await agent.execute()
+
+        assert result is True
+        events = penny.db.events.get_recent(TEST_SENDER, days=7)
+        assert len(events) == 2
+
+        headlines = {e.headline for e in events}
+        assert "Top relevance article" in headlines
+        assert "High relevance article" in headlines
+        assert "Low relevance article" not in headlines
+        assert "Medium relevance article" not in headlines
+
+
 def test_normalize_headline():
     """Headline normalization strips punctuation and normalizes case."""
     assert _normalize_headline("SpaceX Launches Starship!") == "spacex launches starship"

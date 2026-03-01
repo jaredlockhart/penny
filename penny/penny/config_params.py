@@ -457,15 +457,6 @@ ConfigParam(
     group=GROUP_NOTIFICATION,
 )
 
-ConfigParam(
-    key="EVENT_TIMELINESS_HALF_LIFE_HOURS",
-    description="Half-life in hours for event timeliness decay (newer events score higher)",
-    type=float,
-    default=24.0,
-    validator=_validate_positive_float,
-    group=GROUP_NOTIFICATION,
-)
-
 # ── Learn ─────────────────────────────────────────────────────────────────────
 
 ConfigParam(
@@ -578,6 +569,15 @@ ConfigParam(
     type=float,
     default=0.40,
     validator=_validate_positive_float,
+    group=GROUP_EVENTS,
+)
+
+ConfigParam(
+    key="EVENT_MAX_PER_POLL",
+    description="Maximum number of events to store per follow prompt poll cycle",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
     group=GROUP_EVENTS,
 )
 
