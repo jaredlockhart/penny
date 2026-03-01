@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -14,8 +13,8 @@ from pydantic import BaseModel, Field
 from penny.agents.base import Agent
 from penny.agents.extraction import _is_valid_entity_name
 from penny.constants import PennyConstants
-from penny.database.models import Engagement, Entity, Fact
-from penny.interest import HeatEngine, compute_notification_interest
+from penny.database.models import Entity, Fact
+from penny.interest import HeatEngine
 from penny.ollama.embeddings import (
     build_entity_embed_text,
     deserialize_embedding,
@@ -231,17 +230,11 @@ class EnrichAgent(Agent):
             if not entities:
                 continue
 
-            all_engagements = self.db.engagements.get_for_user(user)
-            engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
-            for eng in all_engagements:
-                if eng.entity_id is not None:
-                    engagements_by_entity[eng.entity_id].append(eng)
-
             for entity in entities:
                 assert entity.id is not None
                 if not self._is_entity_enrichment_eligible(entity, now, cooldown):
                     continue
-                scored = self._compute_entity_priority(entity, engagements_by_entity, user)
+                scored = self._compute_entity_priority(entity, user)
                 if scored is not None:
                     candidates.append(scored)
 
@@ -270,17 +263,12 @@ class EnrichAgent(Agent):
     def _compute_entity_priority(
         self,
         entity: Entity,
-        engagements_by_entity: dict[int, list[Engagement]],
         user: str,
     ) -> _ScoredEntity | None:
         """Compute priority score for an entity. Returns None if ineligible."""
         assert entity.id is not None
 
-        entity_engagements = engagements_by_entity.get(entity.id, [])
-        interest = compute_notification_interest(
-            entity_engagements,
-            half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-        )
+        interest = entity.heat
         if interest < self.config.runtime.LEARN_MIN_INTEREST_SCORE:
             return None
 

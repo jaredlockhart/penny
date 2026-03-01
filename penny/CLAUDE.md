@@ -267,9 +267,9 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
   1. **Learn completions** (bypass backoff): announces when all searches for a `/learn` topic finish extraction
   2. **Event notifications** (respect backoff): sends heads-up about unnotified events from followed topics. Scores events by `sum(linked_entity_heat) + timeliness_decay` where timeliness = `2^(-hours_since / half_life)` (configurable half-life, default 24h)
   3. **Fact discoveries** (respect backoff): picks the hottest eligible entity with unnotified facts
-- Eligibility: entity must have heat > 0 and heat_cooldown == 0
-- Heat cycle: runs decay → radiate → tick cooldowns each notification cycle
-- After notifying: starts cooldown on the entity (cycle-based, not time-based)
+- Eligibility: entity must have heat > 0 and not on cooldown (`heat_cooldown_until` expired or null)
+- Heat cycle: runs decay → radiate each notification cycle
+- After notifying: starts time-based cooldown on the entity (default: 1 hour via `HEAT_COOLDOWN_SECONDS`)
 - Ignored notifications: applies heat penalty (multiplicative reduction)
 - Composes ONE message per cycle via `_compose_user_facing()` with image search
 - Exponential backoff per user (in-memory): 60s initial, doubles up to 3600s max
@@ -381,7 +381,7 @@ Penny learns what the user likes, finds information about those things, and proa
 
 ### Data Model
 
-- **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search, `heat` (persistent interest score), and `heat_cooldown` (notification cooldown counter)
+- **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search, `heat` (persistent interest score), `heat_decayed_at` (last decay timestamp), and `heat_cooldown_until` (notification cooldown deadline)
 - **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at` and `notified_at` timestamps. `notified_at=NULL` means not yet communicated to user
 - **Engagement**: User interest signals (searches, mentions, reactions, explicit statements). Each has `engagement_type`, `valence` (positive/negative/neutral), and `strength` (0.0–1.0)
 - **LearnPrompt**: First-class learning prompt with lifecycle tracking — enables provenance chain: prompt → searches → facts → entities. Has `announced_at` for learn completion notifications
@@ -404,16 +404,14 @@ Penny learns what the user likes, finds information about those things, and proa
 Entity interest is modeled as a thermodynamic heat system. Heat is a persistent score on each entity, maintained by the `HeatEngine`:
 
 - **Touch**: Positive engagement adds heat (default: +3.0)
-- **Decay**: All entity heat decays multiplicatively each cycle (default: ×0.85)
+- **Decay**: Time-based multiplicative decay using wall-clock elapsed time. Formula: `factor = 2^(-elapsed_seconds / (half_life_days * 86400))`. Default half-life: 7 days (`HEAT_DECAY_HALF_LIFE_DAYS`). Tracks `heat_decayed_at` timestamp per entity.
 - **Radiation**: Hot entities transfer heat to cooler semantic neighbors (conservative — total heat preserved). Uses embedding cosine similarity with configurable threshold and top-K neighbors
-- **Cooldown**: After notification, entity sits out for N cycles (default: 3)
+- **Cooldown**: After notification, entity is ineligible until `heat_cooldown_until` deadline passes (default: 1 hour via `HEAT_COOLDOWN_SECONDS`)
 - **Ignore penalty**: Ignored notifications reduce heat multiplicatively (default: ×0.6)
 - **Veto**: Negative engagement (thumbs down) zeroes heat — eliminates the entity from notification eligibility
 - **Intrinsic heat**: Newly discovered entities start with heat proportional to their similarity to existing hot entities
 
-The `/memory` command ranks by heat. The notification agent picks the hottest eligible entity.
-
-Legacy `compute_interest_score()` (half-life decay over engagements) is still used by learn completion ranking and enrich priority.
+Heat is the single source of truth for entity interest. The `/memory` command ranks by heat. The notification agent picks the hottest eligible entity. The enrich agent prioritizes entities by heat.
 
 ### Search Trigger Tracking
 
@@ -540,6 +538,7 @@ Notable migrations:
 - 0028: `Event` and `EventEntity` tables (knowledge system v4 — time-aware events)
 - 0029: `FollowPrompt` table (ongoing monitoring subscriptions for event system)
 - 0032: `heat` and `heat_cooldown` columns on `entity` table (thermodynamic interest scoring)
+- 0033: `heat_decayed_at` and `heat_cooldown_until` columns on `entity` table, drops deprecated `heat_cooldown` (time-based decay)
 
 ## Extending
 

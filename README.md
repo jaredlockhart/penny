@@ -43,13 +43,13 @@ Embeddings are central to knowledge quality. Every entity and fact gets an embed
 
 ### Interest
 
-Penny builds a model of what you're interested in — not from explicit "like" buttons, but from how you naturally interact. Searching for something, mentioning a topic, reacting with an emoji, expressing an opinion — these all generate **engagement signals** with different strengths and sentiments. An interest score decays over time (30-day half-life), so Penny's attention shifts as yours does.
+Penny builds a model of what you're interested in — not from explicit "like" buttons, but from how you naturally interact. Searching for something, mentioning a topic, reacting with an emoji, expressing an opinion — these all generate **engagement signals** that add heat to entities. Heat decays over time (7-day half-life by default), so Penny's attention shifts as yours does.
 
-Interest scores drive everything downstream: which entities get researched first, which discoveries get surfaced, and how entities are ranked when you browse your knowledge base.
+Heat drives everything downstream: which entities get researched first, which discoveries get surfaced, and how entities are ranked when you browse your knowledge base.
 
 ### Learning
 
-When Penny is idle, she researches the things you're most interested in. The **LearnAgent** picks the highest-priority entity (interest score weighted by how little she knows about it), searches the web for new information, extracts facts from the results, and deduplicates them against existing knowledge using embedding similarity.
+When Penny is idle, she researches the things you're most interested in. The **EnrichAgent** picks the highest-priority entity (heat weighted by how little she knows about it), searches the web for new information, extracts facts from the results, and deduplicates them against existing knowledge using embedding similarity.
 
 You can also tell Penny to learn about something specific with `/learn <topic>`. She'll search immediately, discover entities from the results, and continue researching them in the background. When she's done, she sends a summary of what she found.
 

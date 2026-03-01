@@ -4,7 +4,7 @@ Uses the heat model for entity scoring: entities accumulate heat from
 engagement, radiate to semantic neighbors, and cool over time. Negative
 emoji reactions zero out heat. Ignored notifications penalize heat.
 
-Gated by per-user exponential backoff and per-entity cycle-based cooldown.
+Gated by per-user exponential backoff and per-entity time-based cooldown.
 """
 
 from __future__ import annotations
@@ -21,8 +21,7 @@ from croniter import croniter
 from penny.agents.backoff import BackoffState
 from penny.agents.base import Agent
 from penny.channels.base import MessageChannel
-from penny.database.models import Engagement, Entity, Event, Fact, FollowPrompt, LearnPrompt
-from penny.interest import compute_notification_interest
+from penny.database.models import Entity, Event, Fact, FollowPrompt, LearnPrompt
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
@@ -190,28 +189,18 @@ class NotificationAgent(Agent):
     def _group_facts_by_scored_entity(
         self, facts: list[Fact], user: str
     ) -> list[tuple[float, str]]:
-        """Group facts by entity and score each group by interest."""
+        """Group facts by entity and score each group by heat."""
         facts_by_entity: dict[int, list[Fact]] = defaultdict(list)
         for fact in facts:
             facts_by_entity[fact.entity_id].append(fact)
-
-        all_engagements = self.db.engagements.get_for_user(user)
-        engagements_by_entity: dict[int, list[Engagement]] = defaultdict(list)
-        for eng in all_engagements:
-            if eng.entity_id is not None:
-                engagements_by_entity[eng.entity_id].append(eng)
 
         sections: list[tuple[float, str]] = []
         for entity_id, entity_facts in facts_by_entity.items():
             entity = self.db.entities.get(entity_id)
             if entity is None:
                 continue
-            score = compute_notification_interest(
-                engagements_by_entity.get(entity_id, []),
-                half_life_days=self.config.runtime.INTEREST_SCORE_HALF_LIFE_DAYS,
-            )
             facts_text = "\n".join(f"- {f.content}" for f in entity_facts)
-            sections.append((score, f"{entity.name}:\n{facts_text}"))
+            sections.append((entity.heat, f"{entity.name}:\n{facts_text}"))
 
         return sections
 
@@ -483,13 +472,17 @@ class NotificationAgent(Agent):
 
         if entity.heat <= 0:
             return False
-        if entity.heat_cooldown > 0:
-            logger.debug(
-                "Notification: skipping '%s' (cooldown=%d cycles remaining)",
-                entity.name,
-                entity.heat_cooldown,
-            )
-            return False
+        if entity.heat_cooldown_until is not None:
+            cooldown_until = entity.heat_cooldown_until
+            if cooldown_until.tzinfo is None:
+                cooldown_until = cooldown_until.replace(tzinfo=UTC)
+            if cooldown_until > datetime.now(UTC):
+                logger.debug(
+                    "Notification: skipping '%s' (cooldown until %s)",
+                    entity.name,
+                    cooldown_until.isoformat(),
+                )
+                return False
         facts = facts_by_entity.get(entity.id, [])
         if self._is_same_learn_topic(facts, last_notified_learn_prompt_id):
             logger.debug(

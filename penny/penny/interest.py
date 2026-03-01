@@ -1,8 +1,8 @@
-"""Interest score computation and heat engine for entity scoring.
+"""Heat engine for entity interest scoring.
 
 The heat model is the single source of truth for entity interest:
 - Heat accumulates from user engagement (touch)
-- Heat decays multiplicatively each cycle
+- Heat decays based on wall-clock time (configurable half-life in days)
 - Hot entities radiate heat to cooler semantic neighbors (conservative transfer)
 - Negative engagement (thumbs down) zeroes heat
 - Ignored notifications penalize heat multiplicatively
@@ -13,11 +13,10 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from penny.constants import PennyConstants
-from penny.database.models import Engagement, Entity
+from penny.database.models import Entity
 from penny.ollama.embeddings import cosine_similarity, deserialize_embedding
 
 if TYPE_CHECKING:
@@ -26,87 +25,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SECONDS_PER_DAY = 86400.0
 
-# --- Legacy interest scoring (used by learn completion and enrich) ---
 
+def _time_decay_factor(elapsed_seconds: float, half_life_days: float) -> float:
+    """Compute multiplicative decay factor from elapsed wall-clock time.
 
-def _recency_weight(
-    created_at: datetime,
-    now: datetime | None = None,
-    *,
-    half_life_days: float,
-) -> float:
-    """Compute exponential recency decay weight for an engagement.
-
-    Uses a half-life decay: weight = 2^(-age_days / half_life_days).
-    A engagement at age 0 has weight 1.0.
-    A engagement at age = half_life has weight 0.5.
+    factor = 2^(-elapsed_seconds / (half_life_days * 86400))
+    At elapsed = 0: factor = 1.0 (no decay)
+    At elapsed = half_life: factor = 0.5
     """
-    if now is None:
-        now = datetime.now(UTC)
-    # SQLite returns naive datetimes; treat them as UTC
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=UTC)
-    age_days = (now - created_at).total_seconds() / 86400.0
-    if age_days < 0:
-        age_days = 0.0
-    return math.pow(2.0, -age_days / half_life_days)
-
-
-def _valence_sign(valence: str) -> float:
-    """Convert valence to a numeric sign multiplier.
-
-    Returns:
-        +1.0 for positive, -1.0 for negative, 0.0 for neutral
-    """
-    if valence == PennyConstants.EngagementValence.POSITIVE:
+    if elapsed_seconds <= 0:
         return 1.0
-    if valence == PennyConstants.EngagementValence.NEGATIVE:
-        return -1.0
-    return 0.0
-
-
-def compute_interest_score(
-    engagements: list[Engagement],
-    now: datetime | None = None,
-    *,
-    half_life_days: float,
-) -> float:
-    """Compute interest score from a list of engagements.
-
-    Formula: sum(valence_sign * strength * recency_decay(created_at))
-
-    This is a pure function that takes pre-fetched engagements. The caller
-    is responsible for fetching engagements from the database (e.g., via
-    db.get_entity_engagements()).
-    """
-    if not engagements:
-        return 0.0
-
-    score = 0.0
-    for engagement in engagements:
-        sign = _valence_sign(engagement.valence)
-        decay = _recency_weight(engagement.created_at, now=now, half_life_days=half_life_days)
-        score += sign * engagement.strength * decay
-
-    return score
-
-
-def compute_notification_interest(
-    engagements: list[Engagement],
-    now: datetime | None = None,
-    *,
-    half_life_days: float,
-) -> float:
-    """Compute interest score using only notification-relevant engagement types.
-
-    Filters to NOTIFICATION_ENGAGEMENT_TYPES (excludes USER_SEARCH and
-    SEARCH_DISCOVERY), then delegates to compute_interest_score.
-    """
-    notification_engs = [
-        e for e in engagements if e.engagement_type in PennyConstants.NOTIFICATION_ENGAGEMENT_TYPES
-    ]
-    return compute_interest_score(notification_engs, now=now, half_life_days=half_life_days)
+    return math.pow(2.0, -elapsed_seconds / (half_life_days * _SECONDS_PER_DAY))
 
 
 # --- Heat engine ---
@@ -116,8 +47,11 @@ class HeatEngine:
     """Thermodynamic heat model for entity interest scoring.
 
     Heat is the single persistent score for each entity. The engine runs
-    cycles (decay → radiate → tick cooldowns) and handles engagement-driven
-    heat touches, ignore penalties, veto resets, and intrinsic heat seeding.
+    cycles (decay → radiate) and handles engagement-driven heat touches,
+    ignore penalties, veto resets, and intrinsic heat seeding.
+
+    Decay is time-based: the decay factor is computed from wall-clock time
+    since the last decay, using a configurable half-life in days.
     """
 
     def __init__(self, db: Database, runtime: RuntimeParams) -> None:
@@ -125,10 +59,9 @@ class HeatEngine:
         self._runtime = runtime
 
     def run_cycle(self, user: str) -> None:
-        """Run one heat cycle: decay → radiate → tick cooldowns."""
+        """Run one heat cycle: decay → radiate."""
         self._decay(user)
         self._radiate(user)
-        self._tick_cooldowns(user)
 
     def touch(self, entity_id: int) -> None:
         """Add heat on positive engagement."""
@@ -155,7 +88,8 @@ class HeatEngine:
 
     def start_cooldown(self, entity_id: int) -> None:
         """Put an entity on cooldown after being notified."""
-        self._db.entities.update_heat_cooldown(entity_id, int(self._runtime.HEAT_COOLDOWN_CYCLES))
+        until = datetime.now(UTC) + timedelta(seconds=self._runtime.HEAT_COOLDOWN_SECONDS)
+        self._db.entities.update_heat_cooldown_until(entity_id, until)
 
     def seed_intrinsic_heat(self, entity_id: int, user: str) -> None:
         """Give a newly discovered entity starting heat from similar hot entities.
@@ -189,8 +123,26 @@ class HeatEngine:
     # --- Internal methods ---
 
     def _decay(self, user: str) -> None:
-        """Apply multiplicative decay to all entity heat for a user."""
-        self._db.entities.apply_heat_decay(user, self._runtime.HEAT_DECAY_RATE)
+        """Apply time-based multiplicative decay to all entity heat for a user.
+
+        Computes elapsed time since last decay and derives the decay factor
+        from the configured half-life. On first call (no prior timestamp),
+        stamps current time without decaying.
+        """
+        now = datetime.now(UTC)
+        last_decayed_at = self._db.entities.get_heat_decayed_at(user)
+
+        if last_decayed_at is None:
+            # First decay ever — stamp time, no decay applied
+            self._db.entities.apply_heat_decay(user, 1.0, now)
+            return
+
+        if last_decayed_at.tzinfo is None:
+            last_decayed_at = last_decayed_at.replace(tzinfo=UTC)
+
+        elapsed = (now - last_decayed_at).total_seconds()
+        factor = _time_decay_factor(elapsed, self._runtime.HEAT_DECAY_HALF_LIFE_DAYS)
+        self._db.entities.apply_heat_decay(user, factor, now)
 
     def _radiate(self, user: str) -> None:
         """Transfer heat from hot entities to cooler semantic neighbors.
@@ -226,7 +178,7 @@ class HeatEngine:
     ) -> dict[int, float]:
         """Compute net heat transfers for all entities.
 
-        Returns a dict of entity_id → net heat change (positive = gains, negative = losses).
+        Returns a dict of entity_id -> net heat change (positive = gains, negative = losses).
         """
         threshold = self._runtime.HEAT_RADIATION_THRESHOLD
         rate = self._runtime.HEAT_RADIATION_RATE
@@ -300,10 +252,6 @@ class HeatEngine:
                 continue
             new_heat = max(entity_map[eid].heat + delta, 0.0)
             self._db.entities.update_heat(eid, new_heat)
-
-    def _tick_cooldowns(self, user: str) -> None:
-        """Decrement cooldown counters for all entities."""
-        self._db.entities.decrement_cooldowns(user)
 
     def _get_heat(self, entity_id: int) -> float:
         """Get current heat for an entity."""
