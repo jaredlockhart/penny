@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
 
 from penny.agents.event import EventAgent, _normalize_headline
 from penny.constants import PennyConstants
-from penny.database.models import FollowPrompt
 from penny.tests.conftest import TEST_SENDER
 from penny.tools.news import NewsArticle
 
@@ -180,8 +179,8 @@ async def test_event_agent_dedup_by_url(
             query_terms='["tech"]',
         )
 
-        # Pre-create an event with the same URL
-        penny.db.events.add(
+        # Pre-create an event with the same URL (marked notified so polling proceeds)
+        existing = penny.db.events.add(
             user=TEST_SENDER,
             headline="Existing article",
             summary="Already in DB",
@@ -190,6 +189,8 @@ async def test_event_agent_dedup_by_url(
             source_url="https://example.com/existing",
             external_id="https://example.com/existing",
         )
+        assert existing is not None and existing.id is not None
+        penny.db.events.mark_notified([existing.id])
 
         agent = _create_event_agent(penny, config, news_tool=news_tool)
         result = await agent.execute()
@@ -229,8 +230,8 @@ async def test_event_agent_dedup_by_headline(
             query_terms='["spacex"]',
         )
 
-        # Pre-create event with same headline (different punctuation/case)
-        penny.db.events.add(
+        # Pre-create event with same headline (marked notified so polling proceeds)
+        existing = penny.db.events.add(
             user=TEST_SENDER,
             headline="spacex launches starship",
             summary="Existing",
@@ -239,6 +240,8 @@ async def test_event_agent_dedup_by_headline(
             source_url="https://example.com/old-url",
             external_id="https://example.com/old-url",
         )
+        assert existing is not None and existing.id is not None
+        penny.db.events.mark_notified([existing.id])
 
         agent = _create_event_agent(penny, config, news_tool=news_tool)
         result = await agent.execute()
@@ -399,8 +402,8 @@ async def test_event_agent_dedup_by_tcr(
             query_terms='["spacex"]',
         )
 
-        # Pre-create event — shares most tokens with the new article
-        penny.db.events.add(
+        # Pre-create event — shares most tokens (marked notified so polling proceeds)
+        existing = penny.db.events.add(
             user=TEST_SENDER,
             headline="SpaceX Launches Starship",
             summary="Existing",
@@ -409,6 +412,8 @@ async def test_event_agent_dedup_by_tcr(
             source_url="https://example.com/old-url",
             external_id="https://example.com/old-url",
         )
+        assert existing is not None and existing.id is not None
+        penny.db.events.mark_notified([existing.id])
 
         agent = _create_event_agent(penny, config, news_tool=news_tool)
         result = await agent.execute()
@@ -419,7 +424,7 @@ async def test_event_agent_dedup_by_tcr(
 
 
 @pytest.mark.asyncio
-async def test_event_agent_polls_hourly_skips_daily(
+async def test_event_agent_skips_prompt_with_unannounced_events(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -427,70 +432,49 @@ async def test_event_agent_polls_hourly_skips_daily(
     test_user_info,
     running_penny,
 ):
-    """Cron-aware polling: hourly follow is due, daily follow is skipped."""
+    """Follow prompt with unannounced events is skipped; announced prompt is polled."""
     config = make_config()
-    articles = [_make_article(url="https://example.com/hourly-article")]
+    articles = [_make_article(url="https://example.com/new-article")]
     news_tool = _make_mock_news_tool(articles)
 
-    mock_ollama.set_response_handler(
-        lambda req, count: mock_ollama._make_text_response(req, json.dumps({"entities": []}))
-    )
-
     async with running_penny(config) as penny:
-        # Daily follow polled 2 hours ago — not due (cron period ~24h)
-        daily = penny.db.follow_prompts.create(
+        # First prompt: has an unannounced event — should be skipped
+        blocked = penny.db.follow_prompts.create(
             user=TEST_SENDER,
-            prompt_text="daily topic",
-            query_terms='["daily"]',
-            cron_expression="0 9 * * *",
-            timing_description="daily",
+            prompt_text="blocked topic",
+            query_terms='["blocked"]',
         )
-        assert daily is not None and daily.id is not None
-        penny.db.follow_prompts.update_last_polled(daily.id)
-        # Backdate last_polled_at to 2 hours ago
-        with penny.db.get_session() as session:
-            row = session.get(FollowPrompt, daily.id)
-            assert row is not None
-            row.last_polled_at = datetime.now(UTC) - timedelta(hours=2)
-            session.add(row)
-            session.commit()
+        assert blocked is not None and blocked.id is not None
+        penny.db.events.add(
+            user=TEST_SENDER,
+            headline="Unannounced article",
+            summary="Waiting for notification",
+            occurred_at=datetime.now(UTC),
+            source_type=PennyConstants.EventSourceType.NEWS_API,
+            source_url="https://example.com/unannounced",
+            external_id="https://example.com/unannounced",
+            follow_prompt_id=blocked.id,
+        )
 
-        # Hourly follow polled 2 hours ago — due (cron period ~1h)
-        hourly = penny.db.follow_prompts.create(
+        # Second prompt: no unannounced events — should be polled
+        ready = penny.db.follow_prompts.create(
             user=TEST_SENDER,
-            prompt_text="hourly topic",
-            query_terms='["hourly"]',
-            cron_expression="0 * * * *",
-            timing_description="hourly",
+            prompt_text="ready topic",
+            query_terms='["ready"]',
         )
-        assert hourly is not None and hourly.id is not None
-        penny.db.follow_prompts.update_last_polled(hourly.id)
-        with penny.db.get_session() as session:
-            row = session.get(FollowPrompt, hourly.id)
-            assert row is not None
-            row.last_polled_at = datetime.now(UTC) - timedelta(hours=2)
-            session.add(row)
-            session.commit()
+        assert ready is not None and ready.id is not None
 
         agent = _create_event_agent(penny, config, news_tool=news_tool)
         result = await agent.execute()
 
         assert result is True
 
-        # Only the hourly follow was polled — check its last_polled_at updated
-        updated_hourly = penny.db.follow_prompts.get(hourly.id)
-        updated_daily = penny.db.follow_prompts.get(daily.id)
-        assert updated_hourly is not None and updated_daily is not None
-        assert updated_hourly.last_polled_at is not None
-        assert updated_daily.last_polled_at is not None
-        # Hourly was re-polled (recent), daily was not (still 2h ago)
-        # SQLite returns naive datetimes — add UTC for comparison
-        hourly_polled = updated_hourly.last_polled_at.replace(tzinfo=UTC)
-        daily_polled = updated_daily.last_polled_at.replace(tzinfo=UTC)
-        hourly_elapsed = (datetime.now(UTC) - hourly_polled).total_seconds()
-        daily_elapsed = (datetime.now(UTC) - daily_polled).total_seconds()
-        assert hourly_elapsed < 10  # just polled
-        assert daily_elapsed > 3600  # still ~2h ago (more than 1h hourly period)
+        # Only the ready prompt was polled
+        updated_ready = penny.db.follow_prompts.get(ready.id)
+        updated_blocked = penny.db.follow_prompts.get(blocked.id)
+        assert updated_ready is not None and updated_blocked is not None
+        assert updated_ready.last_polled_at is not None
+        assert updated_blocked.last_polled_at is None  # never polled
 
 
 @pytest.mark.asyncio

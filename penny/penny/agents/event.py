@@ -8,8 +8,6 @@ import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
 
-from croniter import croniter
-
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
 from penny.database.models import Event, FollowPrompt
@@ -26,15 +24,6 @@ from penny.tools.news import NewsArticle, NewsTool
 logger = logging.getLogger(__name__)
 
 _HEADLINE_STRIP_RE = re.compile(r"[^a-z0-9\s]")
-
-
-def _cron_period_seconds(cron_expression: str) -> float:
-    """Compute the typical period between consecutive cron firings."""
-    now = datetime.now(UTC)
-    cron = croniter(cron_expression, now)
-    first = cron.get_next(datetime)
-    second = cron.get_next(datetime)
-    return (second - first).total_seconds()
 
 
 class EventAgent(Agent):
@@ -90,20 +79,34 @@ class EventAgent(Agent):
             return None
 
         for prompt in self.db.follow_prompts.get_active_by_poll_priority():
-            if self._poll_interval_elapsed(prompt):
-                return prompt
+            if not self._poll_interval_elapsed(prompt):
+                continue
+            if self._has_unannounced_events(prompt):
+                continue
+            return prompt
         return None
 
+    def _has_unannounced_events(self, prompt: FollowPrompt) -> bool:
+        """Check if this follow prompt has events waiting to be announced."""
+        assert prompt.id is not None
+        unnotified = self.db.events.get_unnotified_for_follow_prompt(prompt.id)
+        if unnotified:
+            logger.debug(
+                "EventAgent: skipping '%s' — %d unannounced events",
+                prompt.prompt_text[:50],
+                len(unnotified),
+            )
+        return len(unnotified) > 0
+
     def _poll_interval_elapsed(self, prompt: FollowPrompt) -> bool:
-        """Check if the prompt's cron-derived interval has elapsed since last poll."""
+        """Check if the fixed poll interval has elapsed since last poll."""
         if prompt.last_polled_at is None:
             return True
-        interval = _cron_period_seconds(prompt.cron_expression)
         last = prompt.last_polled_at
         if last.tzinfo is None:
             last = last.replace(tzinfo=UTC)
         elapsed = (datetime.now(UTC) - last).total_seconds()
-        return elapsed >= interval
+        return elapsed >= self.config.runtime.EVENT_POLL_INTERVAL_SECONDS
 
     # --- Fetch ---
 

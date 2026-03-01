@@ -581,6 +581,15 @@ ConfigParam(
     group=GROUP_EVENTS,
 )
 
+ConfigParam(
+    key="EVENT_POLL_INTERVAL_SECONDS",
+    description="Fixed interval between polls for each follow prompt (seconds)",
+    type=float,
+    default=600.0,
+    validator=_validate_positive_float,
+    group=GROUP_EVENTS,
+)
+
 
 # ── Heat ────────────────────────────────────────────────────────────────────
 
