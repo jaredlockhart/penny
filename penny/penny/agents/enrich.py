@@ -707,12 +707,9 @@ class EnrichAgent(Agent):
             strength=relevance_score,
             entity_id=entity.id,
         )
+        # Seed novelty heat scaled by relevance to the search query
         if self._heat_engine:
-            self._heat_engine.touch(entity.id)
-
-        # Seed novelty heat (guaranteed base heat for notification eligibility)
-        if self._heat_engine:
-            self._heat_engine.seed_novelty(entity.id)
+            self._heat_engine.seed_novelty(entity.id, relevance=relevance_score)
 
         # Seed intrinsic heat from similarity to existing hot entities
         if self._heat_engine:

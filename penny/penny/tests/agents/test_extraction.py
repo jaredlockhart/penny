@@ -129,10 +129,10 @@ async def test_extraction_processes_search_log(
         assert search_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
         assert search_engagements[0].strength == 1.0
 
-        # Verify entity received heat (novelty from creation + touch from USER_SEARCH)
+        # Verify entity received heat (novelty seed from creation)
         refreshed = penny.db.entities.get(entity.id)
         assert refreshed is not None
-        assert refreshed.heat > 0, "Entity should have heat from novelty + engagement touch"
+        assert refreshed.heat > 0, "Entity should have heat from novelty seed"
 
         # Verify SearchLog is marked as extracted
         with penny.db.get_session() as session:

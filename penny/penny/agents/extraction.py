@@ -356,8 +356,6 @@ class ExtractionPipeline(Agent):
                             strength=self.config.runtime.ENGAGEMENT_STRENGTH_USER_SEARCH,
                             entity_id=entity.id,
                         )
-                        if self._heat_engine:
-                            self._heat_engine.touch(entity.id)
 
             self.db.searches.mark_extracted(search_log.id)
 
@@ -1074,6 +1072,7 @@ class ExtractionPipeline(Agent):
                 source_search_log_id,
                 source_message_id,
                 notified_at,
+                relevance=score,
             )
 
         if entity and record_discovery_score and score > 0.0:
@@ -1085,8 +1084,6 @@ class ExtractionPipeline(Agent):
                 strength=score,
                 entity_id=entity.id,
             )
-            if self._heat_engine:
-                self._heat_engine.touch(entity.id)
         return entity
 
     async def _merge_into_existing(
@@ -1129,6 +1126,7 @@ class ExtractionPipeline(Agent):
         source_search_log_id: int | None,
         source_message_id: int | None,
         notified_at: datetime | None,
+        relevance: float = 1.0,
     ) -> Entity | None:
         """Create a new entity from a candidate and store its facts."""
         entity = self.db.entities.get_or_create(user, candidate.name)
@@ -1156,7 +1154,10 @@ class ExtractionPipeline(Agent):
             self.db.entities.update_embedding(entity.id, serialize_embedding(candidate_embedding))
 
         if self._heat_engine:
-            self._heat_engine.seed_novelty(entity.id)
+            if relevance > 0.0:
+                self._heat_engine.seed_novelty(entity.id, relevance=relevance)
+            else:
+                self._heat_engine.seed_novelty(entity.id)
 
         return entity
 

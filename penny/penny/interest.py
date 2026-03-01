@@ -78,13 +78,15 @@ class HeatEngine:
         """Zero out heat on negative engagement (thumbs down)."""
         self._db.entities.update_heat(entity_id, 0.0)
 
-    def seed_novelty(self, entity_id: int) -> None:
-        """Give a newly created entity base novelty heat.
+    def seed_novelty(self, entity_id: int, relevance: float = 1.0) -> None:
+        """Give a newly created entity base novelty heat scaled by relevance.
 
-        Ensures entities are notifiable even on a fresh DB where
-        seed_intrinsic_heat would be a no-op (no hot neighbors).
+        Relevance is the cosine similarity to the search query that
+        discovered this entity (0.0–1.0).  Entities more central to
+        the search get more starting heat.  A value of 0.0 means
+        unscored (no embedding model), so defaults to full amount.
         """
-        self._db.entities.add_heat(entity_id, self._runtime.HEAT_NOVELTY_AMOUNT)
+        self._db.entities.add_heat(entity_id, self._runtime.HEAT_NOVELTY_AMOUNT * relevance)
 
     def start_cooldown(self, entity_id: int) -> None:
         """Put an entity on cooldown after being notified."""

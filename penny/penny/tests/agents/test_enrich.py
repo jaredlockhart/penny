@@ -669,10 +669,10 @@ async def test_enrichment_discovers_related_entities(
         assert len(discovery_engs) == 1
         assert discovery_engs[0].strength > 0.0
 
-        # Verify discovered entity received heat (novelty + SEARCH_DISCOVERY touch)
+        # Verify discovered entity received heat (novelty seed)
         refreshed = penny.db.entities.get(discovered.id)
         assert refreshed is not None
-        assert refreshed.heat > 0, "Discovered entity should have heat from novelty + touch"
+        assert refreshed.heat > 0, "Discovered entity should have heat from novelty seed"
 
 
 @pytest.mark.asyncio
