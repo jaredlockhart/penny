@@ -78,51 +78,56 @@ class HeatEngine:
         """Zero out heat on negative engagement (thumbs down)."""
         self._db.entities.update_heat(entity_id, 0.0)
 
-    def seed_novelty(self, entity_id: int, relevance: float = 1.0) -> None:
-        """Give a newly created entity base novelty heat scaled by relevance.
+    def seed_discovery_heat(
+        self, entity_id: int, user: str, relevance: float | None = None
+    ) -> None:
+        """Set starting heat for a newly discovered entity.
 
-        Relevance is the cosine similarity to the search query that
-        discovered this entity (0.0–1.0).  Entities more central to
-        the search get more starting heat.  A value of 0.0 means
-        unscored (no embedding model), so defaults to full amount.
+        Combines two additive signals:
+        - Novelty: HEAT_NOVELTY_AMOUNT scaled by relevance (None = full amount)
+        - Intrinsic: similarity to existing hot entities × their average heat
         """
-        self._db.entities.add_heat(entity_id, self._runtime.HEAT_NOVELTY_AMOUNT * relevance)
+        novelty = self._novelty_amount(relevance)
+        intrinsic = self._intrinsic_amount(entity_id, user)
+        heat = novelty + intrinsic
+        self._db.entities.update_heat(entity_id, heat)
+        logger.info(
+            "Seeded discovery heat %.2f for entity %d (novelty=%.2f, intrinsic=%.2f)",
+            heat,
+            entity_id,
+            novelty,
+            intrinsic,
+        )
 
     def start_cooldown(self, entity_id: int) -> None:
         """Put an entity on cooldown after being notified."""
         until = datetime.now(UTC) + timedelta(seconds=self._runtime.HEAT_COOLDOWN_SECONDS)
         self._db.entities.update_heat_cooldown_until(entity_id, until)
 
-    def seed_intrinsic_heat(self, entity_id: int, user: str) -> None:
-        """Give a newly discovered entity starting heat from similar hot entities.
+    # --- Internal methods ---
 
-        Computes max cosine similarity to the user's hot entities,
-        then sets initial heat proportional to similarity * average
-        heat of those hot neighbors.
-        """
+    def _novelty_amount(self, relevance: float | None) -> float:
+        """Compute novelty heat: base amount scaled by relevance (None = full)."""
+        amount = self._runtime.HEAT_NOVELTY_AMOUNT
+        if relevance is not None:
+            amount *= relevance
+        return amount
+
+    def _intrinsic_amount(self, entity_id: int, user: str) -> float:
+        """Compute intrinsic heat from similarity to existing hot entities."""
         entity = self._db.entities.get(entity_id)
         if entity is None or entity.embedding is None:
-            return
+            return 0.0
 
         hot_entities = self._get_hot_entities_with_embeddings(user)
         if not hot_entities:
-            return
+            return 0.0
 
         similarity, avg_heat = self._compute_intrinsic_params(entity, hot_entities)
         if similarity <= 0.0:
-            return
+            return 0.0
 
-        intrinsic = similarity * avg_heat
-        self._db.entities.update_heat(entity_id, intrinsic)
-        logger.info(
-            "Seeded intrinsic heat %.2f for '%s' (sim=%.2f, avg_heat=%.2f)",
-            intrinsic,
-            entity.name,
-            similarity,
-            avg_heat,
-        )
-
-    # --- Internal methods ---
+        return similarity * avg_heat
 
     def _decay(self, user: str) -> None:
         """Apply time-based multiplicative decay to all entity heat for a user.

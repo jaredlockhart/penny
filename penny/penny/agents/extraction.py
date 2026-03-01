@@ -404,27 +404,18 @@ class ExtractionPipeline(Agent):
                 if result.entities:
                     work_done = True
 
-                    # Create MESSAGE_MENTION engagements for identified entities
+                    # Build name→entity lookup for sentiment matching
                     entity_by_name: dict[str, Entity] = {
                         e.name: e for e in result.entities if e.id is not None
                     }
-                    for entity in result.entities:
-                        assert entity.id is not None
-                        self.db.engagements.add(
-                            user=sender,
-                            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
-                            valence=PennyConstants.EngagementValence.POSITIVE,
-                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_MESSAGE_MENTION,
-                            entity_id=entity.id,
-                            source_message_id=message.id,
-                        )
-                        if self._heat_engine:
-                            self._heat_engine.touch(entity.id)
 
-                    # Extract sentiment and create EXPLICIT_STATEMENT engagements
+                    # Extract sentiments first so heat is applied once per
+                    # entity with the correct polarity (no double-touch on
+                    # positive, no wasted touch before veto on negative)
                     sentiments = await self._extract_message_sentiments(
                         message.content, list(entity_by_name.keys())
                     )
+                    negative_entity_ids: set[int] = set()
                     for s in sentiments:
                         matched = entity_by_name.get(s.entity_name)
                         if not matched or matched.id is None:
@@ -437,11 +428,25 @@ class ExtractionPipeline(Agent):
                             entity_id=matched.id,
                             source_message_id=message.id,
                         )
+                        if s.sentiment == PennyConstants.EngagementValence.NEGATIVE:
+                            negative_entity_ids.add(matched.id)
+
+                    # Record mention engagements and apply heat once per entity
+                    for entity in result.entities:
+                        assert entity.id is not None
+                        self.db.engagements.add(
+                            user=sender,
+                            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
+                            valence=PennyConstants.EngagementValence.POSITIVE,
+                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_MESSAGE_MENTION,
+                            entity_id=entity.id,
+                            source_message_id=message.id,
+                        )
                         if self._heat_engine:
-                            if s.sentiment == PennyConstants.EngagementValence.POSITIVE:
-                                self._heat_engine.touch(matched.id)
-                            elif s.sentiment == PennyConstants.EngagementValence.NEGATIVE:
-                                self._heat_engine.veto(matched.id)
+                            if entity.id in negative_entity_ids:
+                                self._heat_engine.veto(entity.id)
+                            else:
+                                self._heat_engine.touch(entity.id)
 
             # --- Follow-up detection (separate from entity extraction, no min-length filter) ---
             for message in messages:
@@ -1154,10 +1159,8 @@ class ExtractionPipeline(Agent):
             self.db.entities.update_embedding(entity.id, serialize_embedding(candidate_embedding))
 
         if self._heat_engine:
-            if relevance > 0.0:
-                self._heat_engine.seed_novelty(entity.id, relevance=relevance)
-            else:
-                self._heat_engine.seed_novelty(entity.id)
+            rel = relevance if relevance > 0.0 else None
+            self._heat_engine.seed_discovery_heat(entity.id, user, relevance=rel)
 
         return entity
 

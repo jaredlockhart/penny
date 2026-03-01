@@ -101,27 +101,28 @@ class TestHeatEngine:
         assert refreshed is not None
         assert refreshed.heat == 0.0
 
-    def test_seed_novelty_adds_base_heat(self, heat_db, engine):
+    def test_discovery_heat_novelty_only(self, heat_db, engine):
+        """Entity with no embedding gets novelty heat only (no intrinsic)."""
         entity = heat_db.entities.get_or_create(_DEFAULT_USER, "brand new")
         assert entity is not None and entity.id is not None
         assert entity.heat == 0.0
 
-        engine.seed_novelty(entity.id)
+        engine.seed_discovery_heat(entity.id, _DEFAULT_USER)
 
         refreshed = heat_db.entities.get(entity.id)
         assert refreshed is not None
         assert refreshed.heat == pytest.approx(1.0)  # default HEAT_NOVELTY_AMOUNT
 
-    def test_seed_novelty_stacks_with_existing_heat(self, heat_db, engine):
-        entity = heat_db.entities.get_or_create(_DEFAULT_USER, "existing")
+    def test_discovery_heat_scaled_by_relevance(self, heat_db, engine):
+        """Relevance scales the novelty component."""
+        entity = heat_db.entities.get_or_create(_DEFAULT_USER, "partial match")
         assert entity is not None and entity.id is not None
-        heat_db.entities.update_heat(entity.id, 2.0)
 
-        engine.seed_novelty(entity.id)
+        engine.seed_discovery_heat(entity.id, _DEFAULT_USER, relevance=0.5)
 
         refreshed = heat_db.entities.get(entity.id)
         assert refreshed is not None
-        assert refreshed.heat == pytest.approx(3.0)  # 2.0 + 1.0
+        assert refreshed.heat == pytest.approx(0.5)  # 1.0 * 0.5
 
     def test_penalize_ignore_reduces_heat(self, heat_db, engine):
         entity = heat_db.entities.get_or_create(_DEFAULT_USER, "test")
@@ -252,8 +253,8 @@ class TestHeatEngine:
         # No radiation received — cold stays at 0
         assert r_cold.heat == pytest.approx(0.0)
 
-    def test_seed_intrinsic_heat(self, heat_db, engine):
-        """Newly discovered entity gets intrinsic heat from similar hot entities."""
+    def test_discovery_heat_includes_intrinsic(self, heat_db, engine):
+        """Discovery heat adds intrinsic heat from similar hot entities."""
         existing = heat_db.entities.get_or_create(_DEFAULT_USER, "existing hot")
         assert existing is not None and existing.id is not None
         heat_db.entities.update_heat(existing.id, 8.0)
@@ -261,24 +262,45 @@ class TestHeatEngine:
 
         new_entity = heat_db.entities.get_or_create(_DEFAULT_USER, "new discovery")
         assert new_entity is not None and new_entity.id is not None
-        # Similar embedding to existing hot entity
         heat_db.entities.update_embedding(new_entity.id, serialize_embedding([0.9, 0.1, 0.0]))
 
-        engine.seed_intrinsic_heat(new_entity.id, _DEFAULT_USER)
+        engine.seed_discovery_heat(new_entity.id, _DEFAULT_USER)
 
         refreshed = heat_db.entities.get(new_entity.id)
         assert refreshed is not None
-        # Should have some intrinsic heat (similarity * avg_heat)
-        assert refreshed.heat > 0
+        # novelty (1.0) + intrinsic (similarity * avg_heat > 0)
+        assert refreshed.heat > 1.0
 
-    def test_seed_intrinsic_heat_no_hot_entities(self, heat_db, engine):
-        """No intrinsic heat when there are no hot entities."""
+    def test_discovery_heat_no_hot_entities(self, heat_db, engine):
+        """Without hot entities, discovery heat is novelty only."""
         new_entity = heat_db.entities.get_or_create(_DEFAULT_USER, "lonely")
         assert new_entity is not None and new_entity.id is not None
         heat_db.entities.update_embedding(new_entity.id, serialize_embedding([1.0, 0.0, 0.0]))
 
-        engine.seed_intrinsic_heat(new_entity.id, _DEFAULT_USER)
+        engine.seed_discovery_heat(new_entity.id, _DEFAULT_USER)
 
         refreshed = heat_db.entities.get(new_entity.id)
         assert refreshed is not None
-        assert refreshed.heat == 0.0
+        assert refreshed.heat == pytest.approx(1.0)  # Novelty only
+
+    def test_discovery_heat_none_relevance_gives_full_novelty(self, heat_db, engine):
+        """None relevance (unscored) gives full novelty amount."""
+        entity = heat_db.entities.get_or_create(_DEFAULT_USER, "unscored")
+        assert entity is not None and entity.id is not None
+
+        engine.seed_discovery_heat(entity.id, _DEFAULT_USER, relevance=None)
+
+        refreshed = heat_db.entities.get(entity.id)
+        assert refreshed is not None
+        assert refreshed.heat == pytest.approx(1.0)
+
+    def test_discovery_heat_zero_relevance_gives_zero_novelty(self, heat_db, engine):
+        """Zero relevance gives zero novelty (not full amount)."""
+        entity = heat_db.entities.get_or_create(_DEFAULT_USER, "irrelevant")
+        assert entity is not None and entity.id is not None
+
+        engine.seed_discovery_heat(entity.id, _DEFAULT_USER, relevance=0.0)
+
+        refreshed = heat_db.entities.get(entity.id)
+        assert refreshed is not None
+        assert refreshed.heat == pytest.approx(0.0)
