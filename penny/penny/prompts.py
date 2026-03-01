@@ -346,17 +346,6 @@ Examples:
         'Headline: "{headline}"'
     )
 
-    # Event agent: extract entity names from a news article
-    EVENT_ENTITY_EXTRACTION_PROMPT = (
-        "Identify named entities mentioned in the following news article.\n"
-        "Return a JSON object with a single key 'entities': a list of entity names.\n\n"
-        "ENTITY NAME RULES:\n"
-        "- Use short canonical names (1-5 words)\n"
-        "- Include: products, people, organizations, scientific concepts, software\n"
-        "- Exclude: vague concepts, dates, locations, article titles\n\n"
-        "Return only the JSON object, no explanations."
-    )
-
     # Event notification prompt (for proactive event announcements)
     EVENT_NOTIFICATION_PROMPT = (
         "You just saw a news headline relevant to the user's follow topic. "

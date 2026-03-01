@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, select
 
-from penny.database.models import Entity, Event, EventEntity
+from penny.database.models import Event
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class EventStore:
             )
 
     def delete_for_follow_prompt(self, follow_prompt_id: int) -> int:
-        """Delete all events (and their entity links) for a follow prompt.
+        """Delete all events for a follow prompt.
 
         Returns the number of events deleted.
         """
@@ -127,26 +127,12 @@ class EventStore:
                 )
                 if not events:
                     return 0
-                event_ids = [e.id for e in events if e.id is not None]
-                # Delete entity links first
-                if event_ids:
-                    links = list(
-                        session.exec(
-                            select(EventEntity).where(
-                                EventEntity.event_id.in_(event_ids)  # type: ignore[union-attr]
-                            )
-                        ).all()
-                    )
-                    for link in links:
-                        session.delete(link)
-                # Delete events
                 for event in events:
                     session.delete(event)
                 session.commit()
                 logger.info(
-                    "Deleted %d events and %d entity links for follow prompt %d",
+                    "Deleted %d events for follow prompt %d",
                     len(events),
-                    len(links) if event_ids else 0,
                     follow_prompt_id,
                 )
                 return len(events)
@@ -182,52 +168,3 @@ class EventStore:
                     session.commit()
         except Exception as e:
             logger.error("Failed to update event %d embedding: %s", event_id, e)
-
-    def link_entity(self, event_id: int, entity_id: int) -> EventEntity | None:
-        """Link an event to an entity. Returns None if already linked or on failure."""
-        try:
-            with self._session() as session:
-                existing = session.exec(
-                    select(EventEntity).where(
-                        EventEntity.event_id == event_id,
-                        EventEntity.entity_id == entity_id,
-                    )
-                ).first()
-                if existing:
-                    return existing
-                link = EventEntity(event_id=event_id, entity_id=entity_id)
-                session.add(link)
-                session.commit()
-                session.refresh(link)
-                return link
-        except Exception as e:
-            logger.error("Failed to link event %d to entity %d: %s", event_id, entity_id, e)
-            return None
-
-    def get_entities_for_event(self, event_id: int) -> list[Entity]:
-        """Get all entities linked to an event."""
-        with self._session() as session:
-            links = session.exec(select(EventEntity).where(EventEntity.event_id == event_id)).all()
-            entity_ids = [link.entity_id for link in links]
-            if not entity_ids:
-                return []
-            return list(
-                session.exec(select(Entity).where(Entity.id.in_(entity_ids))).all()  # type: ignore[union-attr]
-            )
-
-    def get_events_for_entity(self, entity_id: int) -> list[Event]:
-        """Get all events linked to an entity, ordered by occurred_at descending."""
-        with self._session() as session:
-            links = session.exec(
-                select(EventEntity).where(EventEntity.entity_id == entity_id)
-            ).all()
-            event_ids = [link.event_id for link in links]
-            if not event_ids:
-                return []
-            return list(
-                session.exec(
-                    select(Event)
-                    .where(Event.id.in_(event_ids))  # type: ignore[union-attr]
-                    .order_by(Event.occurred_at.desc())  # type: ignore[unresolved-attribute]
-                ).all()
-            )

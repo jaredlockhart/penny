@@ -1,4 +1,4 @@
-"""EventAgent — polls news for followed topics, creates events, links entities."""
+"""EventAgent — polls news for followed topics, creates events."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import unicodedata
 from datetime import UTC, datetime, timedelta
 
 from croniter import croniter
-from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
@@ -38,12 +37,6 @@ def _cron_period_seconds(cron_expression: str) -> float:
     return (second - first).total_seconds()
 
 
-class ExtractedEntities(BaseModel):
-    """LLM-extracted entity names from a news article."""
-
-    entities: list[str] = Field(default_factory=list)
-
-
 class EventAgent(Agent):
     """Background agent that polls news for followed topics.
 
@@ -54,8 +47,7 @@ class EventAgent(Agent):
     4. Filters by relevance (embedding similarity to topic)
     5. Deduplicates (URL → headline → embedding similarity)
     6. Creates Event records for new articles
-    7. Links events to entities (full mode — creates new entities)
-    8. Updates last_polled_at
+    7. Updates last_polled_at
     """
 
     def __init__(self, news_tool: NewsTool | None = None, **kwargs: object) -> None:
@@ -245,14 +237,13 @@ class EventAgent(Agent):
     async def _create_events(
         self, articles: list[NewsArticle], follow_prompt: FollowPrompt
     ) -> list[Event]:
-        """Create Event records and link entities for each new article."""
+        """Create Event records for each new article."""
         events: list[Event] = []
         for article in articles:
             event = self._store_event(article, follow_prompt)
             if event is None:
                 continue
             await self._store_embedding(event, article)
-            await self._link_entities(event, article, follow_prompt.user)
             events.append(event)
         return events
 
@@ -276,31 +267,6 @@ class EventAgent(Agent):
         vec = await embed_text(self._embedding_model_client, article.title)
         if vec is not None:
             self.db.events.update_embedding(event.id, serialize_embedding(vec))
-
-    async def _link_entities(self, event: Event, article: NewsArticle, user: str) -> None:
-        """Extract entity names from article and link to event (full mode)."""
-        assert event.id is not None
-        entity_names = await self._extract_entity_names(article)
-
-        for name in entity_names:
-            entity = self.db.entities.get_or_create(user, name)
-            if entity and entity.id is not None:
-                self.db.events.link_entity(event.id, entity.id)
-
-    async def _extract_entity_names(self, article: NewsArticle) -> list[str]:
-        """Use LLM to extract entity names from a news article."""
-        content = f"Headline: {article.title}\n\n{article.description}"
-        prompt = f"{Prompt.EVENT_ENTITY_EXTRACTION_PROMPT}\n\nArticle:\n{content}"
-        try:
-            response = await self._background_model_client.generate(
-                prompt=prompt,
-                format="json",
-            )
-            result = ExtractedEntities.model_validate_json(response.message.content)
-            return result.entities
-        except Exception as e:
-            logger.warning("Failed to extract entities from article: %s", e)
-            return []
 
 
 def _normalize_headline(headline: str) -> str:

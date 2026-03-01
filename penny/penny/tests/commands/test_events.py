@@ -32,11 +32,11 @@ async def test_events_lists_recent(signal_server, mock_ollama, make_config, runn
 
 @pytest.mark.asyncio
 async def test_events_detail(signal_server, mock_ollama, make_config, running_penny):
-    """/events <N> shows full event detail including linked entities."""
+    """/events <N> shows full event detail."""
     config = make_config(news_api_key="test-key")
 
     async with running_penny(config) as penny:
-        event = penny.db.events.add(
+        penny.db.events.add(
             user=TEST_SENDER,
             headline="SpaceX Starship Launch",
             summary="SpaceX successfully launches Starship to orbit.",
@@ -44,11 +44,6 @@ async def test_events_detail(signal_server, mock_ollama, make_config, running_pe
             source_type=PennyConstants.EventSourceType.NEWS_API,
             source_url="https://example.com/starship",
         )
-        assert event is not None and event.id is not None
-
-        entity = penny.db.entities.get_or_create(TEST_SENDER, "SpaceX")
-        assert entity is not None and entity.id is not None
-        penny.db.events.link_entity(event.id, entity.id)
 
         await signal_server.push_message(sender=TEST_SENDER, content="/events 1")
         response = await signal_server.wait_for_message(timeout=5.0)
@@ -56,7 +51,6 @@ async def test_events_detail(signal_server, mock_ollama, make_config, running_pe
         assert "SpaceX Starship Launch" in response["message"]
         assert "successfully launches" in response["message"]
         assert "https://example.com/starship" in response["message"]
-        assert "SpaceX" in response["message"]
 
 
 @pytest.mark.asyncio

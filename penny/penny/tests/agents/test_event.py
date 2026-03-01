@@ -97,7 +97,7 @@ async def test_event_agent_skips_without_follow_prompts(
 
 
 @pytest.mark.asyncio
-async def test_event_agent_creates_events_and_links_entities(
+async def test_event_agent_creates_events(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -105,7 +105,7 @@ async def test_event_agent_creates_events_and_links_entities(
     test_user_info,
     running_penny,
 ):
-    """Full cycle: poll → create events → extract + link entities."""
+    """Full cycle: poll → create events (no entity extraction)."""
     config = make_config()
     articles = [
         _make_article(
@@ -120,14 +120,6 @@ async def test_event_agent_creates_events_and_links_entities(
         ),
     ]
     news_tool = _make_mock_news_tool(articles)
-
-    def handler(request: dict, count: int) -> dict:
-        return mock_ollama._make_text_response(
-            request,
-            json.dumps({"entities": ["SpaceX", "NASA"]}),
-        )
-
-    mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         penny.db.follow_prompts.create(
@@ -149,17 +141,9 @@ async def test_event_agent_creates_events_and_links_entities(
         for event in events:
             assert event.follow_prompt_id == follows[0].id
 
-        # Entities created (names are lowercased by entity store)
+        # No entities created from news articles
         all_entities = penny.db.entities.get_for_user(TEST_SENDER)
-        entity_names = {e.name for e in all_entities}
-        assert "spacex" in entity_names
-        assert "nasa" in entity_names
-
-        # Each event linked to both entities
-        for event in events:
-            assert event.id is not None
-            linked = penny.db.events.get_entities_for_event(event.id)
-            assert len(linked) == 2
+        assert len(all_entities) == 0
 
         # last_polled_at updated
         follows = penny.db.follow_prompts.get_active(TEST_SENDER)
