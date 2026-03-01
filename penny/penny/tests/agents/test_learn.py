@@ -4,24 +4,8 @@ import json
 
 import pytest
 
-from penny.agents.learn import LearnAgent
 from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
-
-
-def _create_learn_agent(penny, config):
-    """Create a LearnAgent wired to penny's DB and search tool."""
-    return LearnAgent(
-        search_tool=penny.learn_agent._search_tool,
-        system_prompt="",
-        background_model_client=penny.background_model_client,
-        foreground_model_client=penny.foreground_model_client,
-        tools=[],
-        db=penny.db,
-        max_steps=1,
-        tool_timeout=config.tool_timeout,
-        config=config,
-    )
 
 
 @pytest.mark.asyncio
@@ -52,7 +36,7 @@ async def test_learn_gated_by_unextracted_search_logs(
             learn_prompt_id=lp.id,
         )
 
-        agent = _create_learn_agent(penny, config)
+        agent = penny.learn_agent
 
         # Gate should be closed — agent should skip
         result = await agent.execute()
@@ -102,7 +86,7 @@ async def test_learn_proceeds_when_search_logs_extracted(
         search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
         penny.db.searches.mark_extracted(search_logs[0].id)
 
-        agent = _create_learn_agent(penny, config)
+        agent = penny.learn_agent
 
         # Gate is open — agent should execute a new search
         result = await agent.execute()
@@ -151,7 +135,7 @@ async def test_learn_not_gated_by_user_message_search_logs(
         )
         assert lp is not None
 
-        agent = _create_learn_agent(penny, config)
+        agent = penny.learn_agent
 
         # Gate should NOT be closed — user_message logs don't gate learn
         result = await agent.execute()
