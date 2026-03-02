@@ -1,19 +1,19 @@
-"""NewsAPI.org client for structured news article retrieval."""
+"""TheNewsAPI.com client for structured news article retrieval."""
 
-import asyncio
 import logging
 from datetime import datetime
-from functools import partial
 
-from newsapi import NewsApiClient
-from newsapi.newsapi_exception import NewsAPIException
+import httpx
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+THE_NEWS_API_BASE_URL = "https://api.thenewsapi.com/v1/news/all"
+THE_NEWS_API_PAGE_SIZE = 20
+
 
 class NewsArticle(BaseModel):
-    """A structured news article from NewsAPI.org."""
+    """A structured news article from TheNewsAPI.com."""
 
     title: str
     description: str
@@ -24,10 +24,11 @@ class NewsArticle(BaseModel):
 
 
 class NewsTool:
-    """Queries NewsAPI.org for structured news articles. Used by EventAgent directly."""
+    """Queries TheNewsAPI.com for structured news articles. Used by EventAgent directly."""
 
     def __init__(self, api_key: str):
-        self._client = NewsApiClient(api_key=api_key)
+        self._api_key = api_key
+        self._http = httpx.AsyncClient(timeout=30.0)
 
     async def search(
         self,
@@ -37,46 +38,46 @@ class NewsTool:
         """Search for news articles matching query terms.
 
         Args:
-            query_terms: Search terms to query (joined with OR).
+            query_terms: Search terms to query (joined with |).
             from_date: Oldest article date. Defaults to None (API default).
 
         Returns:
             List of NewsArticle results, or empty list on failure.
         """
-        query = " OR ".join(query_terms)
+        query = " | ".join(query_terms)
         return await self._fetch_articles(query, from_date)
 
     async def _fetch_articles(self, query: str, from_date: datetime | None) -> list[NewsArticle]:
-        """Execute the API call in a thread and parse results."""
+        """Execute the API call and parse results."""
         try:
-            response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                partial(self._call_api, query, from_date),
-            )
+            response = await self._call_api(query, from_date)
             return self._parse_articles(response)
-        except NewsAPIException as e:
-            logger.error("NewsAPI error: %s", e)
+        except httpx.HTTPStatusError as e:
+            logger.error("TheNewsAPI HTTP error %d: %s", e.response.status_code, e.response.text)
             return []
         except Exception as e:
             logger.error("Unexpected error fetching news: %s", e)
             return []
 
-    def _call_api(self, query: str, from_date: datetime | None) -> dict:
-        """Synchronous API call (runs in executor)."""
-        kwargs: dict = {
-            "q": query,
+    async def _call_api(self, query: str, from_date: datetime | None) -> dict:
+        """Call TheNewsAPI.com search endpoint."""
+        params: dict[str, str | int] = {
+            "api_token": self._api_key,
+            "search": query,
             "language": "en",
-            "sort_by": "publishedAt",
-            "page_size": 20,
+            "sort": "published_at",
+            "limit": THE_NEWS_API_PAGE_SIZE,
         }
         if from_date:
-            kwargs["from_param"] = from_date.strftime("%Y-%m-%dT%H:%M:%S")
-        return self._client.get_everything(**kwargs)
+            params["published_after"] = from_date.strftime("%Y-%m-%dT%H:%M:%S")
+        resp = await self._http.get(THE_NEWS_API_BASE_URL, params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     def _parse_articles(self, response: dict) -> list[NewsArticle]:
         """Parse API response into NewsArticle models."""
         articles: list[NewsArticle] = []
-        for raw in response.get("articles", []):
+        for raw in response.get("data", []):
             article = self._parse_single_article(raw)
             if article:
                 articles.append(article)
@@ -86,14 +87,14 @@ class NewsTool:
         """Parse a single article dict, returning None if essential fields are missing."""
         title = raw.get("title")
         url = raw.get("url")
-        published = raw.get("publishedAt")
+        published = raw.get("published_at")
         if not title or not url or not published:
             return None
         return NewsArticle(
             title=title,
-            description=raw.get("description") or "",
+            description=raw.get("description") or raw.get("snippet") or "",
             url=url,
             published_at=datetime.fromisoformat(published.replace("Z", "+00:00")),
-            source_name=(raw.get("source") or {}).get("name", ""),
-            url_to_image=raw.get("urlToImage"),
+            source_name=raw.get("source") or "",
+            url_to_image=raw.get("image_url"),
         )

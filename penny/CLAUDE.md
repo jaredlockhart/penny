@@ -34,7 +34,7 @@ flowchart TD
         Enrich -->|search| Search2[SearchTool]
         Search2 -.->|"new SearchLogs<br>trigger=enrichment"| DB
 
-        EventAg[EventAgent] -->|poll| NewsAPI["NewsAPI.org"]
+        EventAg[EventAgent] -->|poll| NewsAPI["TheNewsAPI.com"]
         EventAg -.->|"new Events<br>+ entity links"| DB
 
         LearnWorker[LearnAgent] -->|search| Search3[SearchTool]
@@ -83,7 +83,7 @@ penny/
     message.py        — MessageAgent: handles incoming user messages
     extraction.py     — ExtractionPipeline: unified entity/fact extraction from search results and messages (no notifications)
     enrich.py         — EnrichAgent: adaptive background research driven by interest scores (no notifications)
-    event.py          — EventAgent: polls NewsAPI for followed topics, creates events, links entities
+    event.py          — EventAgent: polls TheNewsAPI.com for followed topics, creates events, links entities
     learn.py          — LearnAgent: scheduled worker for /learn command — one search step per tick
     notification.py   — NotificationAgent: proactive notifications (learn completions, events, fact discoveries)
   scheduler/
@@ -115,7 +115,7 @@ penny/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult
     builtin.py        — SearchTool (Perplexity text + Serper images, run in parallel)
-    news.py           — NewsTool: NewsAPI.org client for structured news articles
+    news.py           — NewsTool: TheNewsAPI.com client for structured news articles
     email.py          — SearchEmailsTool, ReadEmailTool (Fastmail JMAP)
   jmap/
     client.py         — JmapClient: Fastmail JMAP API client (httpx)
@@ -225,9 +225,9 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Learn prompts and their searches processed oldest-first (ORDER BY created_at/timestamp ASC)
 
 **EventAgent** (`agents/event.py`)
-- Background agent that polls NewsAPI.org for followed topics
+- Background agent that polls TheNewsAPI.com for followed topics
 - Only instantiated if `NEWS_API_KEY` is configured
-- Each `execute()` call: gets next FollowPrompt (round-robin by `last_polled_at`), queries NewsAPI, deduplicates, creates Events, links entities
+- Each `execute()` call: gets next FollowPrompt (round-robin by `last_polled_at`), queries TheNewsAPI.com, deduplicates, creates Events, links entities
 - Three-layer dedup: URL match → normalized headline → embedding cosine similarity (0.90 threshold, 7-day window)
 - Entity linking: LLM extracts entity names from articles (full mode — creates new entities via `get_or_create`)
 - Config: `EVENT_POLL_INTERVAL` (3600s), `EVENT_DEDUP_SIMILARITY_THRESHOLD` (0.90), `EVENT_DEDUP_WINDOW_DAYS` (7)
@@ -422,9 +422,9 @@ Every SearchLog has a `trigger` field determining extraction behavior:
 
 ### Event System
 
-The event system adds time-awareness to Penny's knowledge graph. Users subscribe to topics via `/follow`, and the EventAgent polls NewsAPI.org for relevant articles. Events are linked to entities (M2M) and surfaced via proactive notifications.
+The event system adds time-awareness to Penny's knowledge graph. Users subscribe to topics via `/follow`, and the EventAgent polls TheNewsAPI.com for relevant articles. Events are linked to entities (M2M) and surfaced via proactive notifications.
 
-Flow: `/follow <topic>` → FollowPrompt → EventAgent polls NewsAPI → dedup → Event records → entity links → NotificationAgent sends heads-up
+Flow: `/follow <topic>` → FollowPrompt → EventAgent polls TheNewsAPI.com → dedup → Event records → entity links → NotificationAgent sends heads-up
 
 ### Two-Mode Extraction
 
@@ -502,7 +502,7 @@ Uses per-user exponential backoff: each message without a user reply doubles the
 
 ## Dependencies
 
-- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `ollama`, `perplexityai`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`, `newsapi-python`
+- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `ollama`, `perplexityai`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`
 - Dev: `ruff` (lint/format), `ty` (type check), `pytest`, `pytest-asyncio`, `aiohttp` (mock Signal server)
 - Python 3.12+
 
