@@ -14,14 +14,12 @@ from penny.config import Config
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog
 from penny.ollama import OllamaClient
-from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.commands import CommandRegistry
     from penny.database import Database
-    from penny.interest import HeatEngine
     from penny.scheduler import BackgroundScheduler
 
 logger = logging.getLogger(__name__)
@@ -44,7 +42,7 @@ class MessageChannel(ABC):
 
     def __init__(
         self,
-        message_agent: MessageAgent,
+        message_agent: ChatAgent,
         db: Database,
         command_registry: CommandRegistry | None = None,
     ):
@@ -61,11 +59,6 @@ class MessageChannel(ABC):
         self._command_registry = command_registry
         self._scheduler: BackgroundScheduler | None = None
         self._config: Config | None = None
-        self._heat_engine: HeatEngine | None = None
-
-    def set_heat_engine(self, engine: HeatEngine) -> None:
-        """Set the heat engine for reaction heat updates."""
-        self._heat_engine = engine
 
     def set_scheduler(self, scheduler: BackgroundScheduler) -> None:
         """Set the scheduler for message notifications."""
@@ -238,6 +231,7 @@ class MessageChannel(ABC):
         parent_id: int | None,
         attachments: list[str] | None = None,
         quote_message: MessageLog | None = None,
+        image_prompt: str | None = None,
     ) -> int | None:
         """
         Log and send an outgoing message.
@@ -248,10 +242,14 @@ class MessageChannel(ABC):
             parent_id: Parent message ID for thread linking
             attachments: Optional list of base64-encoded attachments
             quote_message: Optional message to quote-reply to
+            image_prompt: Optional search query to find and attach an image
 
         Returns:
             Database message ID if send was successful, None otherwise
         """
+        if image_prompt:
+            attachments = await self._resolve_image(image_prompt, attachments)
+
         # Apply channel-specific formatting
         # We log the prepared content so quote matching works correctly
         prepared = self.prepare_outgoing(content)
@@ -267,6 +265,23 @@ class MessageChannel(ABC):
             self._db.messages.set_external_id(message_id, str(external_id))
         logger.info("Sent response to %s (%d chars)", recipient, len(content))
         return message_id if external_id is not None else None
+
+    async def _resolve_image(
+        self, image_prompt: str, attachments: list[str] | None
+    ) -> list[str] | None:
+        """Search for an image and merge it into the attachments list."""
+        from penny.serper.client import search_image
+
+        serper_key = self._config.serper_api_key if self._config else None
+        image = await search_image(
+            image_prompt,
+            api_key=serper_key,
+            max_results=int(self._config.runtime.IMAGE_MAX_RESULTS) if self._config else 5,
+            timeout=self._config.runtime.IMAGE_DOWNLOAD_TIMEOUT if self._config else 10.0,
+        )
+        if image:
+            return (attachments or []) + [image]
+        return attachments
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -365,8 +380,13 @@ class MessageChannel(ABC):
             if self._scheduler:
                 self._scheduler.notify_foreground_start()
 
+            # Resolve parent thread from quoted message, if any
+            parent_id = None
+            if message.quoted_text:
+                parent_id, _ = self._db.messages.get_thread_context(message.quoted_text)
+
             logger.info("Dispatching to message agent for %s", message.sender)
-            parent_id, response = await self._message_agent.handle(
+            response = await self._message_agent.handle(
                 content=message.content,
                 sender=message.sender,
                 quoted_text=message.quoted_text,
@@ -403,16 +423,11 @@ class MessageChannel(ABC):
                 self._scheduler.notify_foreground_end()
 
     async def _handle_reaction(self, message: IncomingMessage) -> None:
-        """
-        Handle a reaction message by logging it as a message in the thread.
-
-        Reactions keep threads alive for followup without triggering an immediate response.
-        """
+        """Log a reaction as a regular incoming message in the thread."""
         if not message.reacted_to_external_id:
             logger.warning("Reaction message missing reacted_to_external_id")
             return
 
-        # Look up the message that was reacted to
         reacted_msg = self._db.messages.find_by_external_id(message.reacted_to_external_id)
         if not reacted_msg or not reacted_msg.id:
             logger.warning(
@@ -421,13 +436,11 @@ class MessageChannel(ABC):
             )
             return
 
-        # Log the reaction as an incoming message with is_reaction=True
         self._db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING,
             message.sender,
-            message.content,  # The emoji
+            message.content,
             parent_id=reacted_msg.id,
-            is_reaction=True,
         )
 
         logger.info(
@@ -436,95 +449,6 @@ class MessageChannel(ABC):
             message.content,
             reacted_msg.id,
         )
-
-        # Extract engagements from the reaction
-        await self._extract_reaction_engagements(message.sender, message.content, reacted_msg)
-
-    def _is_proactive_message(self, message: MessageLog) -> bool:
-        """Determine if an outgoing message was proactive (not a reply to user input).
-
-        Proactive messages are discovery, research reports, preference notifications
-        (parent_id=None) and followup continuations (parent is also outgoing).
-        """
-        if message.parent_id is None:
-            return True
-        parent = self._db.messages.get_by_id(message.parent_id)
-        return bool(parent and parent.direction == PennyConstants.MessageDirection.OUTGOING)
-
-    def _classify_reaction_emoji(self, emoji: str) -> str | None:
-        """Map an emoji to a valence string, or None if unrecognized."""
-        if emoji in PennyConstants.LIKE_REACTIONS:
-            return PennyConstants.EngagementValence.POSITIVE
-        if emoji in PennyConstants.DISLIKE_REACTIONS:
-            return PennyConstants.EngagementValence.NEGATIVE
-        return None
-
-    def _determine_reaction_strength(self, valence: str, is_proactive: bool) -> float:
-        """Compute engagement strength based on valence and whether message was proactive."""
-        assert self._config is not None
-        if valence == PennyConstants.EngagementValence.NEGATIVE and is_proactive:
-            return self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE
-        if is_proactive:
-            return self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE
-        return self._config.runtime.ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL
-
-    async def _find_entities_in_message(self, sender: str, content: str) -> list[tuple[int, float]]:
-        """Find entities matching message content via embedding similarity."""
-        assert self._embedding_model_client is not None
-        assert self._config is not None
-
-        entities = self._db.entities.get_with_embeddings(sender)
-        if not entities:
-            return []
-
-        vecs = await self._embedding_model_client.embed(content)
-        query_embedding = vecs[0]
-
-        candidates = []
-        for entity in entities:
-            assert entity.id is not None
-            assert entity.embedding is not None
-            candidates.append((entity.id, deserialize_embedding(entity.embedding)))
-
-        return find_similar(
-            query_embedding,
-            candidates,
-            top_k=int(self._config.runtime.ENTITY_CONTEXT_TOP_K),
-            threshold=self._config.runtime.ENTITY_CONTEXT_THRESHOLD,
-        )
-
-    async def _extract_reaction_engagements(
-        self, sender: str, emoji: str, reacted_msg: MessageLog
-    ) -> None:
-        """Create engagement records for entities mentioned in the reacted-to message."""
-        valence = self._classify_reaction_emoji(emoji)
-        if valence is None:
-            return
-
-        if not self._embedding_model_client or not self._config:
-            return
-
-        try:
-            is_proactive = self._is_proactive_message(reacted_msg)
-            strength = self._determine_reaction_strength(valence, is_proactive)
-            matches = await self._find_entities_in_message(sender, reacted_msg.content)
-
-            for entity_id, _score in matches:
-                self._db.engagements.add(
-                    user=sender,
-                    engagement_type=PennyConstants.EngagementType.EMOJI_REACTION,
-                    valence=valence,
-                    strength=strength,
-                    entity_id=entity_id,
-                    source_message_id=reacted_msg.id,
-                )
-                if self._heat_engine:
-                    if valence == PennyConstants.EngagementValence.POSITIVE:
-                        self._heat_engine.touch(entity_id)
-                    elif valence == PennyConstants.EngagementValence.NEGATIVE:
-                        self._heat_engine.veto(entity_id)
-        except Exception:
-            logger.debug("Reaction engagement extraction failed", exc_info=True)
 
     def _parse_command(self, text: str) -> tuple[str, str]:
         """Parse command name and arguments from a slash command string."""

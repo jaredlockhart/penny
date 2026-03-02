@@ -1,11 +1,12 @@
-"""Integration tests for the MessageAgent."""
+"""Integration tests for the ChatAgent."""
 
 import pytest
 from sqlmodel import select
 
+from penny.constants import PennyConstants
 from penny.database.models import MessageLog, SearchLog
 from penny.ollama.embeddings import serialize_embedding
-from penny.tests.conftest import TEST_SENDER
+from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 @pytest.mark.asyncio
@@ -234,9 +235,8 @@ async def test_entity_context_responds_from_knowledge(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
     """
-    When entity knowledge is sufficient to answer the question,
-    the agent uses KNOWLEDGE_PROMPT (not SEARCH_PROMPT) and can
-    respond directly without searching.
+    When entity knowledge matches the question, entity facts are injected
+    as context and the model can respond directly without searching.
     """
     config = make_config(ollama_embedding_model="test-embed-model")
 
@@ -247,7 +247,7 @@ async def test_entity_context_responds_from_knowledge(
 
     mock_ollama.set_embed_handler(embed_handler)
 
-    # Direct response (no tool call) since knowledge is sufficient
+    # Direct response (no tool call) since knowledge is in context
     def handler(request, count):
         return mock_ollama._make_text_response(
             request, "the KEF LS50 Meta costs $1,599 per pair! 🎵"
@@ -256,7 +256,7 @@ async def test_entity_context_responds_from_knowledge(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Seed entity with embedding and enough facts for sufficiency
+        # Seed entity with embedding and facts
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
         penny.db.facts.add(entity.id, "Costs $1,599 per pair")
@@ -271,12 +271,12 @@ async def test_entity_context_responds_from_knowledge(
 
         assert "1,599" in response["message"]
 
-        # Verify KNOWLEDGE_PROMPT used (not SEARCH_PROMPT)
+        # Verify CONVERSATION_PROMPT used with entity context injected
         first_request = mock_ollama.requests[0]
         system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
         all_system_text = " ".join(m.get("content", "") for m in system_msgs)
         assert "relevant knowledge" in all_system_text.lower()
-        assert "You MUST call the search tool" not in all_system_text
+        assert "Use your judgment" in all_system_text
 
         # Entity context was injected
         assert "kef ls50 meta" in all_system_text.lower()
@@ -287,22 +287,18 @@ async def test_entity_context_responds_from_knowledge(
 
 
 @pytest.mark.asyncio
-async def test_entity_context_searches_when_insufficient(
+async def test_entity_context_absent_when_below_threshold(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
     """
     When entity knowledge exists but similarity is below threshold,
-    the agent uses SEARCH_PROMPT and forces search.
+    no entity context is injected and the model decides to search.
     """
     config = make_config(ollama_embedding_model="test-embed-model")
 
     # Embed handler: message vector is orthogonal to entity vector → low similarity
-    call_count = [0]
-
     def embed_handler(model, input_text):
-        call_count[0] += 1
         texts = [input_text] if isinstance(input_text, str) else input_text
-        # Message embedding is orthogonal to entity embedding
         return [[0.0, 1.0, 0.0, 0.0]] * len(texts)
 
     mock_ollama.set_embed_handler(embed_handler)
@@ -321,11 +317,12 @@ async def test_entity_context_searches_when_insufficient(
         await signal_server.push_message(sender=TEST_SENDER, content="what's the weather today?")
         await signal_server.wait_for_message(timeout=10.0)
 
-        # SEARCH_PROMPT used (mandatory search)
+        # CONVERSATION_PROMPT used, no entity context injected
         first_request = mock_ollama.requests[0]
         system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
         all_system_text = " ".join(m.get("content", "") for m in system_msgs)
-        assert "You MUST call the search tool" in all_system_text
+        assert "Use your judgment" in all_system_text
+        assert "Costs $1,599 per pair" not in all_system_text
 
         # 2 Ollama calls (tool call + final)
         assert len(mock_ollama.requests) == 2
@@ -363,3 +360,66 @@ async def test_entity_context_graceful_on_embed_failure(
         # Falls back to normal search behavior
         assert "search result" in response["message"].lower()
         assert len(mock_ollama.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_quote_reply_to_thinking_agent_message_includes_context(
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+):
+    """
+    Regression test for #555: quote-reply to a ThinkingAgent (inner monologue) message
+    must pass the quoted context to the ChatAgent and link the incoming message to the
+    original outgoing message in the thread.
+
+    When a user quote-replies to a proactive message Penny sent (e.g. inner monologue),
+    two things must happen:
+    1. The agent receives the quoted context so it knows what message is being replied to.
+    2. The incoming message is linked to the quoted outgoing message via parent_id.
+    """
+
+    def direct_response(request, count):
+        return mock_ollama._make_text_response(request, "glad you asked about that!")
+
+    mock_ollama.set_response_handler(direct_response)
+
+    async with running_penny(test_config) as penny:
+        # Simulate a proactive ThinkingAgent outgoing message already in the DB
+        # (e.g. inner monologue message sent to user with parent_id=None)
+        proactive_msg = "Hey, I found something interesting about astronomy today!"
+        outgoing_id = penny.db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            penny.channel.sender_id,
+            proactive_msg,
+            parent_id=None,
+        )
+        assert outgoing_id is not None
+
+        # User quote-replies to that proactive message
+        quote = {"id": 1234567890, "author": penny.channel.sender_id, "text": proactive_msg}
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="tell me more!",
+            quote=quote,
+        )
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+
+        # 1. Verify the agent received the quoted context in the Ollama prompt
+        first_request = mock_ollama.requests[0]
+        system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
+        all_system_text = " ".join(m.get("content", "") for m in system_msgs)
+        assert proactive_msg in all_system_text, (
+            "Quoted message text should appear in the system context sent to the agent"
+        )
+        assert "reply-quoting" in all_system_text, (
+            "System context should indicate user is reply-quoting"
+        )
+
+        # 2. Verify the incoming message is linked to the outgoing message via parent_id
+        incoming_messages = penny.db.messages.get_user_messages(TEST_SENDER)
+        assert len(incoming_messages) >= 1
+        latest_incoming = incoming_messages[-1]
+        assert latest_incoming.parent_id == outgoing_id, (
+            f"Incoming message parent_id should be {outgoing_id} (the quoted outgoing message), "
+            f"got {latest_incoming.parent_id}"
+        )
