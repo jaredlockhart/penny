@@ -61,6 +61,7 @@ class MessageLog(SQLModel, table=True):
     content: str
     parent_id: int | None = Field(default=None, foreign_key="messagelog.id", index=True)
     signal_timestamp: int | None = Field(default=None)  # Original Signal timestamp (ms since epoch)
+    recipient: str | None = Field(default=None, index=True)  # Who the message was sent to
     external_id: str | None = Field(default=None, index=True)  # Platform-specific message ID
     is_reaction: bool = Field(default=False, index=True)  # True if this is a reaction message
     processed: bool = Field(
@@ -194,6 +195,15 @@ class Event(SQLModel, table=True):
     follow_prompt_id: int | None = Field(
         default=None, foreign_key="followprompt.id", index=True
     )  # Which follow prompt generated this event
+
+
+class Thought(SQLModel, table=True):
+    """A persistent inner monologue entry — Penny's stream of consciousness."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)
+    content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
 
 
 class FollowPrompt(SQLModel, table=True):

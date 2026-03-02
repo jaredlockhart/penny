@@ -1,4 +1,4 @@
-"""Integration tests for the MessageAgent."""
+"""Integration tests for the ChatAgent."""
 
 import pytest
 from sqlmodel import select
@@ -234,9 +234,8 @@ async def test_entity_context_responds_from_knowledge(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
     """
-    When entity knowledge is sufficient to answer the question,
-    the agent uses KNOWLEDGE_PROMPT (not SEARCH_PROMPT) and can
-    respond directly without searching.
+    When entity knowledge matches the question, entity facts are injected
+    as context and the model can respond directly without searching.
     """
     config = make_config(ollama_embedding_model="test-embed-model")
 
@@ -247,7 +246,7 @@ async def test_entity_context_responds_from_knowledge(
 
     mock_ollama.set_embed_handler(embed_handler)
 
-    # Direct response (no tool call) since knowledge is sufficient
+    # Direct response (no tool call) since knowledge is in context
     def handler(request, count):
         return mock_ollama._make_text_response(
             request, "the KEF LS50 Meta costs $1,599 per pair! 🎵"
@@ -256,7 +255,7 @@ async def test_entity_context_responds_from_knowledge(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Seed entity with embedding and enough facts for sufficiency
+        # Seed entity with embedding and facts
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
         penny.db.facts.add(entity.id, "Costs $1,599 per pair")
@@ -271,12 +270,12 @@ async def test_entity_context_responds_from_knowledge(
 
         assert "1,599" in response["message"]
 
-        # Verify KNOWLEDGE_PROMPT used (not SEARCH_PROMPT)
+        # Verify CONVERSATION_PROMPT used with entity context injected
         first_request = mock_ollama.requests[0]
         system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
         all_system_text = " ".join(m.get("content", "") for m in system_msgs)
         assert "relevant knowledge" in all_system_text.lower()
-        assert "You MUST call the search tool" not in all_system_text
+        assert "Use your judgment" in all_system_text
 
         # Entity context was injected
         assert "kef ls50 meta" in all_system_text.lower()
@@ -287,22 +286,18 @@ async def test_entity_context_responds_from_knowledge(
 
 
 @pytest.mark.asyncio
-async def test_entity_context_searches_when_insufficient(
+async def test_entity_context_absent_when_below_threshold(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
     """
     When entity knowledge exists but similarity is below threshold,
-    the agent uses SEARCH_PROMPT and forces search.
+    no entity context is injected and the model decides to search.
     """
     config = make_config(ollama_embedding_model="test-embed-model")
 
     # Embed handler: message vector is orthogonal to entity vector → low similarity
-    call_count = [0]
-
     def embed_handler(model, input_text):
-        call_count[0] += 1
         texts = [input_text] if isinstance(input_text, str) else input_text
-        # Message embedding is orthogonal to entity embedding
         return [[0.0, 1.0, 0.0, 0.0]] * len(texts)
 
     mock_ollama.set_embed_handler(embed_handler)
@@ -321,11 +316,12 @@ async def test_entity_context_searches_when_insufficient(
         await signal_server.push_message(sender=TEST_SENDER, content="what's the weather today?")
         await signal_server.wait_for_message(timeout=10.0)
 
-        # SEARCH_PROMPT used (mandatory search)
+        # CONVERSATION_PROMPT used, no entity context injected
         first_request = mock_ollama.requests[0]
         system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
         all_system_text = " ".join(m.get("content", "") for m in system_msgs)
-        assert "You MUST call the search tool" in all_system_text
+        assert "Use your judgment" in all_system_text
+        assert "Costs $1,599 per pair" not in all_system_text
 
         # 2 Ollama calls (tool call + final)
         assert len(mock_ollama.requests) == 2

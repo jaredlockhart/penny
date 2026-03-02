@@ -7,7 +7,6 @@ import logging
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.database.models import Entity
-from penny.interest import scored_entities_for_user
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -21,7 +20,7 @@ class MemoryCommand(Command):
     help_text = (
         "View what Penny has learned from searches.\n\n"
         "**Usage**:\n"
-        "• `/memory` — List all remembered entities ranked by heat\n"
+        "• `/memory` — List all remembered entities\n"
         "• `/memory <number>` — Show details for an entity\n\n"
         "To delete a memory, use `/forget <number>`.\n\n"
         "**Examples**:\n"
@@ -34,20 +33,20 @@ class MemoryCommand(Command):
         args = args.strip()
         parts = args.split() if args else []
 
-        # No args — list all entities ranked by heat
+        # No args — list all entities sorted by recency
         if not parts:
-            scored = self._scored_entities(context)
-            if not scored:
+            entities = self._sorted_entities(context)
+            if not entities:
                 return CommandResult(text=PennyResponse.MEMORY_EMPTY)
 
             lines = [PennyResponse.MEMORY_LIST_HEADER, ""]
-            for i, (score, entity) in enumerate(scored, 1):
+            for i, entity in enumerate(entities, 1):
                 assert entity.id is not None
                 facts = context.db.facts.get_for_entity(entity.id)
                 facts_label = f"{len(facts)} fact{'s' if len(facts) != 1 else ''}"
                 tagline_suffix = f" — {entity.tagline}" if entity.tagline else ""
                 name_part = f"{i}. **{entity.name}**{tagline_suffix}"
-                lines.append(f"{name_part} ({facts_label}, heat: {score:.2f})")
+                lines.append(f"{name_part} ({facts_label})")
             return CommandResult(text="\n".join(lines))
 
         # First arg must be a number
@@ -55,12 +54,12 @@ class MemoryCommand(Command):
             return CommandResult(text=PennyResponse.MEMORY_ENTITY_NOT_FOUND.format(number=parts[0]))
 
         position = int(parts[0])
-        scored = self._scored_entities(context)
+        entities = self._sorted_entities(context)
 
-        if position < 1 or position > len(scored):
+        if position < 1 or position > len(entities):
             return CommandResult(text=PennyResponse.MEMORY_ENTITY_NOT_FOUND.format(number=position))
 
-        _score, entity = scored[position - 1]
+        entity = entities[position - 1]
         assert entity.id is not None
 
         # Number only — show entity details
@@ -99,9 +98,7 @@ class MemoryCommand(Command):
         return None
 
     @staticmethod
-    def _scored_entities(context: CommandContext) -> list[tuple[float, Entity]]:
-        """Return (heat, entity) pairs sorted by heat descending."""
+    def _sorted_entities(context: CommandContext) -> list[Entity]:
+        """Return entities sorted by created_at descending."""
         entities = context.db.entities.get_for_user(context.user)
-        if not entities:
-            return []
-        return scored_entities_for_user(entities)
+        return sorted(entities, key=lambda e: e.created_at, reverse=True)

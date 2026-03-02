@@ -10,7 +10,8 @@ from penny.commands.models import CommandContext, CommandResult
 from penny.jmap.client import JmapClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
-from penny.tools.email import ReadEmailsTool, SearchEmailsTool
+from penny.tools.read_emails import ReadEmailsTool
+from penny.tools.search_emails import SearchEmailsTool
 
 logger = logging.getLogger(__name__)
 

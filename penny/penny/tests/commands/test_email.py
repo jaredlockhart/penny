@@ -13,7 +13,7 @@ from penny.config import Config
 from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary
 from penny.responses import PennyResponse
 from penny.tests.conftest import TEST_SENDER
-from penny.tools.email import NO_EMAILS_TO_READ, ReadEmailsTool
+from penny.tools.read_emails import NO_EMAILS_TO_READ, ReadEmailsTool
 
 FAKE_TOKEN = "fmu1-test-token"
 

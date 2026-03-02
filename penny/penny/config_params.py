@@ -17,11 +17,9 @@ GROUP_GLOBAL = "Global"
 GROUP_SCHEDULE = "Schedule"
 GROUP_KNOWLEDGE = "Knowledge"
 GROUP_EXTRACTION = "Extraction"
-GROUP_NOTIFICATION = "Notification"
 GROUP_LEARN = "Learn"
-GROUP_ENRICHMENT = "Enrichment"
 GROUP_EVENTS = "Events"
-GROUP_HEAT = "Heat"
+GROUP_INNER_MONOLOGUE = "Inner Monologue"
 
 # Ordered list for display
 CONFIG_GROUPS: list[str] = [
@@ -29,11 +27,9 @@ CONFIG_GROUPS: list[str] = [
     GROUP_SCHEDULE,
     GROUP_KNOWLEDGE,
     GROUP_EXTRACTION,
-    GROUP_NOTIFICATION,
     GROUP_LEARN,
-    GROUP_ENRICHMENT,
     GROUP_EVENTS,
-    GROUP_HEAT,
+    GROUP_INNER_MONOLOGUE,
 ]
 
 
@@ -228,6 +224,33 @@ ConfigParam(
     group=GROUP_KNOWLEDGE,
 )
 
+ConfigParam(
+    key="MESSAGE_CONTEXT_LIMIT",
+    description="Max recent conversation messages injected into message context",
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
+    group=GROUP_KNOWLEDGE,
+)
+
+ConfigParam(
+    key="EVENT_CONTEXT_TOP_K",
+    description="Number of top similar events to inject into message context",
+    type=int,
+    default=3,
+    validator=_validate_positive_int,
+    group=GROUP_KNOWLEDGE,
+)
+
+ConfigParam(
+    key="EVENT_CONTEXT_THRESHOLD",
+    description="Cosine similarity threshold for event context injection",
+    type=float,
+    default=0.3,
+    validator=_validate_unit_float,
+    group=GROUP_KNOWLEDGE,
+)
+
 # ── Extraction ────────────────────────────────────────────────────────────────
 
 ConfigParam(
@@ -311,134 +334,6 @@ ConfigParam(
     group=GROUP_EXTRACTION,
 )
 
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_EMOJI_REACTION_NORMAL",
-    description="Engagement strength for normal emoji reactions",
-    type=float,
-    default=0.3,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE",
-    description="Engagement strength for proactive emoji reactions",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_EMOJI_REACTION_PROACTIVE_NEGATIVE",
-    description="Engagement strength for proactive negative emoji reactions",
-    type=float,
-    default=0.8,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT",
-    description="Engagement strength for explicit positive/negative statements",
-    type=float,
-    default=0.7,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION",
-    description="Engagement strength for follow-up questions",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="ENGAGEMENT_STRENGTH_MESSAGE_MENTION",
-    description="Engagement strength for entity mentions in messages",
-    type=float,
-    default=0.2,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-# ── Notification ──────────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="NOTIFICATION_INITIAL_BACKOFF",
-    description="Initial backoff in seconds after sending a fact notification",
-    type=float,
-    default=300.0,
-    validator=_validate_positive_float,
-    group=GROUP_NOTIFICATION,
-)
-
-ConfigParam(
-    key="NOTIFICATION_MAX_BACKOFF",
-    description="Maximum backoff cap in seconds for fact notifications",
-    type=float,
-    default=3600.0,
-    validator=_validate_positive_float,
-    group=GROUP_NOTIFICATION,
-)
-
-ConfigParam(
-    key="NOTIFICATION_MIN_LENGTH",
-    description="Minimum character length for a fact notification to be sent",
-    type=int,
-    default=75,
-    validator=_validate_positive_int,
-    group=GROUP_NOTIFICATION,
-)
-
-ConfigParam(
-    key="NOTIFICATION_ENTITY_COOLDOWN",
-    description="Seconds an entity must wait after being notified before it can be picked again",
-    type=float,
-    default=86400.0,
-    validator=_validate_positive_float,
-    group=GROUP_NOTIFICATION,
-)
-
-ConfigParam(
-    key="NOTIFICATION_POOL_SIZE",
-    description="Number of top-scored entities to randomly select from for notifications",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_NOTIFICATION,
-)
-
-ConfigParam(
-    key="NOTIFICATION_IGNORE_STRENGTH",
-    description="Strength of the auto-tuning negative signal when a notification is ignored",
-    type=float,
-    default=0.15,
-    validator=_validate_unit_float,
-    group=GROUP_NOTIFICATION,
-)
-
-ConfigParam(
-    key="NOTIFICATION_LOYAL_POOL_SIZE",
-    description="Number of top loyal entities used for novelty similarity scoring",
-    type=int,
-    default=15,
-    validator=_validate_positive_int,
-    group=GROUP_NOTIFICATION,
-)
-
-ConfigParam(
-    key="NOTIFICATION_NOVELTY_WEIGHT",
-    description="Weight for novelty bonus (similarity to loyal entities * freshness)",
-    type=float,
-    default=0.5,
-    validator=_validate_positive_float,
-    group=GROUP_NOTIFICATION,
-)
-
 # ── Learn ─────────────────────────────────────────────────────────────────────
 
 ConfigParam(
@@ -459,60 +354,24 @@ ConfigParam(
     group=GROUP_LEARN,
 )
 
-# ── Enrichment ────────────────────────────────────────────────────────────────
+# ── Inner Monologue ──────────────────────────────────────────────────────────
 
 ConfigParam(
-    key="ENRICHMENT_INTERVAL",
-    description="Fixed interval in seconds between enrichment searches",
+    key="INNER_MONOLOGUE_INTERVAL",
+    description="Interval in seconds between inner monologue cycles",
     type=float,
-    default=900.0,
+    default=600.0,
     validator=_validate_positive_float,
-    group=GROUP_ENRICHMENT,
+    group=GROUP_INNER_MONOLOGUE,
 )
 
 ConfigParam(
-    key="ENRICHMENT_ENTITY_COOLDOWN",
-    description="Seconds an entity must wait after being enriched before it can be picked again",
-    type=float,
-    default=604800.0,
-    validator=_validate_positive_float,
-    group=GROUP_ENRICHMENT,
-)
-
-ConfigParam(
-    key="LEARN_ENRICHMENT_FACT_THRESHOLD",
-    description="Fact count below which an entity enters enrichment mode",
+    key="INNER_MONOLOGUE_MAX_STEPS",
+    description="Max agentic loop steps per inner monologue cycle",
     type=int,
-    default=5,
+    default=20,
     validator=_validate_positive_int,
-    group=GROUP_ENRICHMENT,
-)
-
-ConfigParam(
-    key="LEARN_MIN_INTEREST_SCORE",
-    description="Minimum interest score for an entity to be considered for enrichment",
-    type=float,
-    default=0.3,
-    validator=_validate_positive_float,
-    group=GROUP_ENRICHMENT,
-)
-
-ConfigParam(
-    key="ENRICHMENT_MAX_NEW_ENTITIES",
-    description="Max new entities created per enrichment cycle via entity discovery",
-    type=int,
-    default=2,
-    validator=_validate_positive_int,
-    group=GROUP_ENRICHMENT,
-)
-
-ConfigParam(
-    key="ENRICHMENT_DISCOVERY_SIMILARITY_THRESHOLD",
-    description="Cosine similarity threshold for enrichment entity discovery relevance gate",
-    type=float,
-    default=0.4,
-    validator=_validate_unit_float,
-    group=GROUP_ENRICHMENT,
+    group=GROUP_INNER_MONOLOGUE,
 )
 
 
@@ -570,81 +429,6 @@ ConfigParam(
     default=600.0,
     validator=_validate_positive_float,
     group=GROUP_EVENTS,
-)
-
-
-# ── Heat ────────────────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="HEAT_DECAY_HALF_LIFE_DAYS",
-    description="Half-life in days for heat decay (heat halves every N days)",
-    type=float,
-    default=7.0,
-    validator=_validate_positive_float,
-    group=GROUP_HEAT,
-)
-
-ConfigParam(
-    key="HEAT_TOUCH_AMOUNT",
-    description="Heat added to an entity on positive engagement",
-    type=float,
-    default=3.0,
-    validator=_validate_positive_float,
-    group=GROUP_HEAT,
-)
-
-ConfigParam(
-    key="HEAT_NOVELTY_AMOUNT",
-    description="Base heat given to newly created entities (novelty reward)",
-    type=float,
-    default=1.0,
-    validator=_validate_positive_float,
-    group=GROUP_HEAT,
-)
-
-ConfigParam(
-    key="HEAT_IGNORE_PENALTY",
-    description="Heat multiplier when a notification is ignored (e.g. 0.6 = lose 40%)",
-    type=float,
-    default=0.6,
-    validator=_validate_unit_float,
-    group=GROUP_HEAT,
-)
-
-ConfigParam(
-    key="HEAT_RADIATION_RATE",
-    description="Fraction of heat radiated to semantic neighbors per cycle",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-    group=GROUP_HEAT,
-)
-
-ConfigParam(
-    key="HEAT_RADIATION_THRESHOLD",
-    description="Min cosine similarity for radiation between entities",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-    group=GROUP_HEAT,
-)
-
-ConfigParam(
-    key="HEAT_RADIATION_TOP_K",
-    description="Max number of neighbors that receive radiation from a hot entity",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_HEAT,
-)
-
-ConfigParam(
-    key="HEAT_COOLDOWN_SECONDS",
-    description="Seconds an entity must sit out after being notified",
-    type=float,
-    default=3600.0,
-    validator=_validate_positive_float,
-    group=GROUP_HEAT,
 )
 
 

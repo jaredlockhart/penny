@@ -7,7 +7,6 @@ import logging
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.database.models import Entity
-from penny.interest import scored_entities_for_user
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -39,12 +38,12 @@ class ForgetCommand(Command):
             return CommandResult(text=PennyResponse.FORGET_NOT_FOUND.format(number=args))
 
         position = int(args)
-        scored = self._scored_entities(context)
+        entities = self._sorted_entities(context)
 
-        if position < 1 or position > len(scored):
+        if position < 1 or position > len(entities):
             return CommandResult(text=PennyResponse.FORGET_NOT_FOUND.format(number=position))
 
-        _score, entity = scored[position - 1]
+        entity = entities[position - 1]
         assert entity.id is not None
 
         facts = context.db.facts.get_for_entity(entity.id)
@@ -54,9 +53,7 @@ class ForgetCommand(Command):
         )
 
     @staticmethod
-    def _scored_entities(context: CommandContext) -> list[tuple[float, Entity]]:
-        """Return (heat, entity) pairs sorted by heat descending."""
+    def _sorted_entities(context: CommandContext) -> list[Entity]:
+        """Return entities sorted by created_at descending."""
         entities = context.db.entities.get_for_user(context.user)
-        if not entities:
-            return []
-        return scored_entities_for_user(entities)
+        return sorted(entities, key=lambda e: e.created_at, reverse=True)

@@ -11,7 +11,7 @@ from penny.tests.conftest import TEST_SENDER
 @pytest.mark.asyncio
 async def test_validate_connectivity_success(signal_server, test_config, mock_ollama):
     """Test that validate_connectivity succeeds with a reachable Signal API."""
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.prompts import Prompt
 
     db = Database(test_config.db_path)
@@ -24,8 +24,8 @@ async def test_validate_connectivity_success(signal_server, test_config, mock_ol
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
-    message_agent = MessageAgent(
-        system_prompt=Prompt.SEARCH_PROMPT,
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
         background_model_client=client,
         foreground_model_client=client,
         tools=[],
@@ -50,7 +50,7 @@ async def test_validate_connectivity_success(signal_server, test_config, mock_ol
 @pytest.mark.asyncio
 async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
     """Test that validate_connectivity raises ConnectionError on DNS failure."""
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.config import Config
     from penny.prompts import Prompt
 
@@ -78,8 +78,8 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
         max_retries=config.ollama_max_retries,
         retry_delay=config.ollama_retry_delay,
     )
-    message_agent = MessageAgent(
-        system_prompt=Prompt.SEARCH_PROMPT,
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
         background_model_client=client,
         foreground_model_client=client,
         tools=[],
@@ -109,7 +109,7 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
 @pytest.mark.asyncio
 async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
     """Test that validate_connectivity raises ConnectionError when server is unreachable."""
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.config import Config
     from penny.prompts import Prompt
 
@@ -138,8 +138,8 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
         max_retries=config.ollama_max_retries,
         retry_delay=config.ollama_retry_delay,
     )
-    message_agent = MessageAgent(
-        system_prompt=Prompt.SEARCH_PROMPT,
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
         background_model_client=client,
         foreground_model_client=client,
         tools=[],
@@ -170,7 +170,7 @@ async def test_send_message_rejects_empty_without_attachments(
     signal_server, test_config, mock_ollama
 ):
     """Test that send_message raises ValueError for empty text with no attachments."""
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.prompts import Prompt
 
     db = Database(test_config.db_path)
@@ -183,8 +183,8 @@ async def test_send_message_rejects_empty_without_attachments(
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
-    message_agent = MessageAgent(
-        system_prompt=Prompt.SEARCH_PROMPT,
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
         background_model_client=client,
         foreground_model_client=client,
         tools=[],
@@ -211,7 +211,7 @@ async def test_send_message_allows_empty_text_with_attachments(
     signal_server, test_config, mock_ollama
 ):
     """Test that send_message succeeds with empty text when attachments are provided."""
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.prompts import Prompt
 
     db = Database(test_config.db_path)
@@ -224,8 +224,8 @@ async def test_send_message_allows_empty_text_with_attachments(
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
-    message_agent = MessageAgent(
-        system_prompt=Prompt.SEARCH_PROMPT,
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
         background_model_client=client,
         foreground_model_client=client,
         tools=[],
@@ -256,7 +256,7 @@ async def test_send_message_retries_on_socket_exception_400(
     signal_server, test_config, mock_ollama
 ):
     """Test that send_message retries when signal-cli returns a 400 SocketException."""
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.prompts import Prompt
 
     db = Database(test_config.db_path)
@@ -269,8 +269,8 @@ async def test_send_message_retries_on_socket_exception_400(
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
-    message_agent = MessageAgent(
-        system_prompt=Prompt.SEARCH_PROMPT,
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
         background_model_client=client,
         foreground_model_client=client,
         tools=[],
@@ -310,7 +310,7 @@ async def test_send_message_retries_on_socket_exception_400(
 @pytest.mark.asyncio
 async def test_send_message_no_retry_on_non_transient_400(signal_server, test_config, mock_ollama):
     """Test that send_message does NOT retry on non-transient 400 errors."""
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.prompts import Prompt
 
     db = Database(test_config.db_path)
@@ -323,8 +323,8 @@ async def test_send_message_no_retry_on_non_transient_400(signal_server, test_co
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
-    message_agent = MessageAgent(
-        system_prompt=Prompt.SEARCH_PROMPT,
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
         background_model_client=client,
         foreground_model_client=client,
         tools=[],
@@ -362,7 +362,7 @@ async def test_send_message_no_retry_on_non_transient_400(signal_server, test_co
 @pytest.mark.asyncio
 async def test_send_message_gives_up_after_max_retries(signal_server, test_config, mock_ollama):
     """Test that send_message returns None after exhausting retries on persistent errors."""
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.prompts import Prompt
 
     db = Database(test_config.db_path)
@@ -375,8 +375,8 @@ async def test_send_message_gives_up_after_max_retries(signal_server, test_confi
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
-    message_agent = MessageAgent(
-        system_prompt=Prompt.SEARCH_PROMPT,
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
         background_model_client=client,
         foreground_model_client=client,
         tools=[],

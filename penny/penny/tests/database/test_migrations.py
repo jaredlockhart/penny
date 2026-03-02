@@ -89,7 +89,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 33  # 0001 through 0033
+        assert count == 35  # 0001 through 0035
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("PRAGMA table_info(messagelog)")
@@ -154,7 +154,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 32  # 0002 through 0033 are applied
+        assert count == 34  # 0002 through 0035 are applied
 
     def test_bootstrap_with_columns_already_present(self, tmp_path):
         """If columns already exist (from old migration system), 0001 should succeed."""
@@ -171,7 +171,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 33  # All migrations (0001 through 0033) recorded as applied
+        assert count == 35  # All migrations (0001 through 0035) recorded as applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")

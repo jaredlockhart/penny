@@ -3,6 +3,7 @@
 import logging
 import re
 from datetime import datetime
+from typing import Any
 
 from sqlmodel import Session, select
 
@@ -52,6 +53,7 @@ class MessageStore:
         signal_timestamp: int | None = None,
         external_id: str | None = None,
         is_reaction: bool = False,
+        recipient: str | None = None,
     ) -> int | None:
         """Log a user message or agent response. Returns the message ID or None."""
         if direction == PennyConstants.MessageDirection.OUTGOING:
@@ -66,6 +68,7 @@ class MessageStore:
                     signal_timestamp=signal_timestamp,
                     external_id=external_id,
                     is_reaction=is_reaction,
+                    recipient=recipient,
                 )
                 session.add(log)
                 session.commit()
@@ -262,6 +265,62 @@ class MessageStore:
             messages.reverse()
             return messages
 
+    def get_conversation(self, sender: str, limit: int = 20) -> list[MessageLog]:
+        """Get recent conversation messages (both directions), oldest first."""
+        with self._session() as session:
+            incoming = self._get_recent_incoming(session, sender, limit)
+            threaded = self._get_threaded_replies(session, incoming)
+            autonomous = self._get_autonomous_outgoing(session, sender, limit)
+            all_messages = incoming + threaded + autonomous
+            all_messages.sort(key=lambda m: m.timestamp)
+            return all_messages[-limit:]
+
+    def _get_recent_incoming(self, session: Any, sender: str, limit: int) -> list[MessageLog]:
+        """Fetch the most recent incoming messages from a user."""
+        return list(
+            session.exec(
+                select(MessageLog)
+                .where(
+                    MessageLog.sender == sender,
+                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                    MessageLog.is_reaction == False,  # noqa: E712
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(limit)
+            ).all()
+        )
+
+    def _get_threaded_replies(self, session: Any, incoming: list[MessageLog]) -> list[MessageLog]:
+        """Fetch outgoing messages that are direct replies to the given incoming messages."""
+        incoming_ids = [m.id for m in incoming if m.id is not None]
+        if not incoming_ids:
+            return []
+        return list(
+            session.exec(
+                select(MessageLog).where(
+                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                    MessageLog.parent_id.in_(incoming_ids),  # type: ignore[unresolved-attribute]
+                )
+            ).all()
+        )
+
+    def _get_autonomous_outgoing(
+        self, session: Any, recipient: str, limit: int
+    ) -> list[MessageLog]:
+        """Fetch autonomous outgoing messages (no parent thread) sent to a user."""
+        return list(
+            session.exec(
+                select(MessageLog)
+                .where(
+                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                    MessageLog.parent_id == None,  # noqa: E711
+                    MessageLog.recipient == recipient,
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(limit)
+            ).all()
+        )
+
     def get_unprocessed(self, sender: str, limit: int) -> list[MessageLog]:
         """Get recent unprocessed non-reaction messages from a specific user."""
         with self._session() as session:
@@ -358,7 +417,3 @@ class MessageStore:
                 .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                 .limit(1)
             ).first()
-
-    def get_latest_interaction_time(self, sender: str) -> datetime | None:
-        """Get timestamp of most recent user interaction (for backoff logic)."""
-        return self.get_latest_incoming_time(sender)

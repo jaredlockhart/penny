@@ -1,4 +1,4 @@
-"""Unified extraction pipeline for entities, facts, and engagements."""
+"""Unified extraction pipeline for entities and facts."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ from penny.prompts import Prompt
 
 if TYPE_CHECKING:
     from penny.database.models import MessageLog
-    from penny.interest import HeatEngine
 
 logger = logging.getLogger(__name__)
 
@@ -196,22 +195,6 @@ class ExtractedFacts(BaseModel):
     )
 
 
-class EntitySentiment(BaseModel):
-    """A single entity's sentiment from a user message."""
-
-    entity_name: str = Field(description="Name of the entity")
-    sentiment: str = Field(description="'positive' or 'negative'")
-
-
-class MessageSentiments(BaseModel):
-    """Schema for sentiment extraction from user messages."""
-
-    sentiments: list[EntitySentiment] = Field(
-        default_factory=list,
-        description="Entities with non-neutral sentiment expressed by the user",
-    )
-
-
 @dataclass
 class _ExtractionResult:
     """Result of _extract_and_store_entities."""
@@ -229,19 +212,10 @@ class _EntityCandidate:
 
 
 class ExtractionPipeline(Agent):
-    """Unified background agent that extracts entities, facts, and engagements.
+    """Unified background agent that extracts entities and facts.
 
     Processes SearchLog and MessageLog entries to discover entities and facts.
-    Does not send notifications — the NotificationAgent handles that separately.
     """
-
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
-        self._heat_engine: HeatEngine | None = None
-
-    def set_heat_engine(self, engine: HeatEngine) -> None:
-        """Set the heat engine for engagement heat touches."""
-        self._heat_engine = engine
 
     @property
     def name(self) -> str:
@@ -389,56 +363,6 @@ class ExtractionPipeline(Agent):
                     notified_at=datetime.now(UTC),  # User-sourced — don't notify
                 )
                 if result.entities:
-                    work_done = True
-
-                    # Build name→entity lookup for sentiment matching
-                    entity_by_name: dict[str, Entity] = {
-                        e.name: e for e in result.entities if e.id is not None
-                    }
-
-                    # Extract sentiments first so heat is applied once per
-                    # entity with the correct polarity (no double-touch on
-                    # positive, no wasted touch before veto on negative)
-                    sentiments = await self._extract_message_sentiments(
-                        message.content, list(entity_by_name.keys())
-                    )
-                    negative_entity_ids: set[int] = set()
-                    for s in sentiments:
-                        matched = entity_by_name.get(s.entity_name)
-                        if not matched or matched.id is None:
-                            continue
-                        self.db.engagements.add(
-                            user=sender,
-                            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
-                            valence=s.sentiment,
-                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_EXPLICIT_STATEMENT,
-                            entity_id=matched.id,
-                            source_message_id=message.id,
-                        )
-                        if s.sentiment == PennyConstants.EngagementValence.NEGATIVE:
-                            negative_entity_ids.add(matched.id)
-
-                    # Record mention engagements and apply heat once per entity
-                    for entity in result.entities:
-                        assert entity.id is not None
-                        self.db.engagements.add(
-                            user=sender,
-                            engagement_type=PennyConstants.EngagementType.MESSAGE_MENTION,
-                            valence=PennyConstants.EngagementValence.POSITIVE,
-                            strength=self.config.runtime.ENGAGEMENT_STRENGTH_MESSAGE_MENTION,
-                            entity_id=entity.id,
-                            source_message_id=message.id,
-                        )
-                        if self._heat_engine:
-                            if entity.id in negative_entity_ids:
-                                self._heat_engine.veto(entity.id)
-                            else:
-                                self._heat_engine.touch(entity.id)
-
-            # --- Follow-up detection (separate from entity extraction, no min-length filter) ---
-            for message in messages:
-                created = await self._create_follow_up_engagements(sender, message)
-                if created:
                     work_done = True
 
             # Mark messages as processed
@@ -1131,10 +1055,6 @@ class ExtractionPipeline(Agent):
         if self._embedding_model_client and candidate_embedding is not None:
             self.db.entities.update_embedding(entity.id, serialize_embedding(candidate_embedding))
 
-        if self._heat_engine:
-            rel = relevance if relevance > 0.0 else None
-            self._heat_engine.seed_discovery_heat(entity.id, user, relevance=rel)
-
         return entity
 
     def _find_duplicate_entity(
@@ -1247,101 +1167,6 @@ class ExtractionPipeline(Agent):
         if len(content) < self.config.runtime.EXTRACTION_MIN_MESSAGE_LENGTH:
             return False
         return not content.startswith("/")
-
-    # --- Follow-up detection ---
-
-    async def _create_follow_up_engagements(self, sender: str, message: MessageLog) -> bool:
-        """Create FOLLOW_UP_QUESTION engagements when user replies to Penny's message.
-
-        Embeds the parent message content and finds similar entities to determine
-        which entities the user is following up on.
-
-        Returns:
-            True if any engagements were created.
-        """
-        if not message.parent_id or not self._embedding_model_client:
-            return False
-
-        parent_msg = self.db.messages.get_by_id(message.parent_id)
-        if not parent_msg:
-            return False
-        if parent_msg.direction != PennyConstants.MessageDirection.OUTGOING:
-            return False
-
-        entities = self.db.entities.get_with_embeddings(sender)
-        if not entities:
-            return False
-
-        candidates = [
-            (e.id, deserialize_embedding(e.embedding)) for e in entities if e.id and e.embedding
-        ]
-        if not candidates:
-            return False
-
-        try:
-            vecs = await self._embedding_model_client.embed(parent_msg.content)
-            query_vec = vecs[0]
-            matches = find_similar(
-                query_vec,
-                candidates,
-                top_k=int(self.config.runtime.ENTITY_CONTEXT_TOP_K),
-                threshold=self.config.runtime.ENTITY_CONTEXT_THRESHOLD,
-            )
-
-            for entity_id, _score in matches:
-                self.db.engagements.add(
-                    user=sender,
-                    engagement_type=PennyConstants.EngagementType.FOLLOW_UP_QUESTION,
-                    valence=PennyConstants.EngagementValence.POSITIVE,
-                    strength=self.config.runtime.ENGAGEMENT_STRENGTH_FOLLOW_UP_QUESTION,
-                    entity_id=entity_id,
-                    source_message_id=message.id,
-                )
-                if self._heat_engine:
-                    self._heat_engine.touch(entity_id)
-
-            return len(matches) > 0
-        except Exception:
-            logger.debug("Follow-up engagement extraction failed", exc_info=True)
-            return False
-
-    # --- Sentiment extraction ---
-
-    async def _extract_message_sentiments(
-        self, message_content: str, entity_names: list[str]
-    ) -> list[EntitySentiment]:
-        """Extract user sentiment toward entities mentioned in their message.
-
-        Returns only non-neutral sentiments. Gracefully returns empty on failure.
-        """
-        entities_context = "\n".join(f"- {name}" for name in entity_names)
-        prompt = (
-            f"{Prompt.MESSAGE_SENTIMENT_EXTRACTION_PROMPT}\n\n"
-            f"Entities found in this message:\n{entities_context}\n\n"
-            f"User message:\n{message_content}"
-        )
-
-        try:
-            response = await self._background_model_client.generate(
-                prompt=prompt,
-                tools=None,
-                format=MessageSentiments.model_json_schema(),
-            )
-            if not response.content or not response.content.strip():
-                return []
-            result = MessageSentiments.model_validate_json(response.content)
-            return [
-                s
-                for s in result.sentiments
-                if s.sentiment
-                in (
-                    PennyConstants.EngagementValence.POSITIVE,
-                    PennyConstants.EngagementValence.NEGATIVE,
-                )
-            ]
-        except Exception:
-            logger.debug("Sentiment extraction failed", exc_info=True)
-            return []
 
     # --- Entity embedding updates ---
 

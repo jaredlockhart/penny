@@ -63,9 +63,9 @@ def _make_image_mock(images: list[dict] | None = None) -> AsyncMock:
 @pytest.fixture
 def mock_search(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fixture to patch Perplexity and image search with default mocks."""
-    monkeypatch.setattr("penny.tools.builtin.Perplexity", MockPerplexity)
+    monkeypatch.setattr("penny.tools.search.Perplexity", MockPerplexity)
     mock_image = _make_image_mock()
-    monkeypatch.setattr("penny.tools.builtin.search_image", mock_image)
+    monkeypatch.setattr("penny.tools.search.search_image", mock_image)
     monkeypatch.setattr("penny.agents.base.search_image", mock_image)
 
 
@@ -95,9 +95,9 @@ def mock_search_with_results(monkeypatch: pytest.MonkeyPatch):
                 self.api_key = api_key
                 self.responses = MockPerplexityResponses(response)
 
-        monkeypatch.setattr("penny.tools.builtin.Perplexity", ConfiguredPerplexity)
+        monkeypatch.setattr("penny.tools.search.Perplexity", ConfiguredPerplexity)
         mock_image = _make_image_mock(images)
-        monkeypatch.setattr("penny.tools.builtin.search_image", mock_image)
+        monkeypatch.setattr("penny.tools.search.search_image", mock_image)
         monkeypatch.setattr("penny.agents.base.search_image", mock_image)
 
     return _configure
