@@ -28,6 +28,26 @@ class SlowTool(Tool):
         return "completed"
 
 
+class FlakeyTool(Tool):
+    """Test tool that times out on the first N calls, then succeeds."""
+
+    name = "flakey_tool"
+    description = "A tool that fails the first few times"
+    parameters = {"type": "object", "properties": {}}
+
+    def __init__(self, fail_count: int, slow_duration: float = 1.0):
+        self.fail_count = fail_count
+        self.slow_duration = slow_duration
+        self.call_count = 0
+
+    async def execute(self, **kwargs):
+        """Sleep long enough to timeout on the first fail_count calls, then succeed."""
+        self.call_count += 1
+        if self.call_count <= self.fail_count:
+            await asyncio.sleep(self.slow_duration)
+        return "completed"
+
+
 class TestToolTimeout:
     """Test tool execution timeout behavior."""
 
@@ -63,6 +83,65 @@ class TestToolTimeout:
 
         assert result.error is None
         assert result.result == "completed"
+
+    @pytest.mark.asyncio
+    async def test_tool_retried_on_timeout(self):
+        """Tool should be retried once on timeout and succeed on the second attempt."""
+        registry = ToolRegistry()
+        # Tool times out on first call (sleeps 1s > 0.1s timeout), succeeds on second
+        flakey_tool = FlakeyTool(fail_count=1, slow_duration=1.0)
+        registry.register(flakey_tool)
+
+        executor = ToolExecutor(registry, timeout=0.1, max_retries=1)
+        tool_call = ToolCall(tool="flakey_tool", arguments={})
+        result = await executor.execute(tool_call)
+
+        assert result.error is None
+        assert result.result == "completed"
+        assert flakey_tool.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_tool_exhausts_retries_and_returns_error(self):
+        """Tool should return error after exhausting all retries."""
+        registry = ToolRegistry()
+        # Tool always times out (sleeps 1s > 0.1s timeout)
+        slow_tool = SlowTool(sleep_duration=1.0)
+        registry.register(slow_tool)
+
+        executor = ToolExecutor(registry, timeout=0.1, max_retries=1)
+        tool_call = ToolCall(tool="slow_tool", arguments={})
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "timeout" in result.error.lower()
+        assert result.result is None
+
+    @pytest.mark.asyncio
+    async def test_tool_no_retry_on_non_timeout_error(self):
+        """Non-timeout errors should not trigger a retry."""
+
+        class ErrorTool(Tool):
+            name = "error_tool"
+            description = "A tool that raises an error"
+            parameters = {"type": "object", "properties": {}}
+            call_count = 0
+
+            async def execute(self, **kwargs):
+                self.call_count += 1
+                raise ValueError("something went wrong")
+
+        registry = ToolRegistry()
+        error_tool = ErrorTool()
+        registry.register(error_tool)
+
+        executor = ToolExecutor(registry, timeout=5.0, max_retries=1)
+        tool_call = ToolCall(tool="error_tool", arguments={})
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "something went wrong" in result.error
+        # Should NOT retry on non-timeout errors
+        assert error_tool.call_count == 1
 
     @pytest.mark.asyncio
     async def test_agent_uses_configured_timeout(self, test_db):

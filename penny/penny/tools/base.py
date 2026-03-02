@@ -83,11 +83,12 @@ class ToolRegistry:
 
 
 class ToolExecutor:
-    """Executes tools with timeout and error handling."""
+    """Executes tools with timeout, retry on timeout, and error handling."""
 
-    def __init__(self, registry: ToolRegistry, timeout: float = 30.0):
+    def __init__(self, registry: ToolRegistry, timeout: float = 30.0, max_retries: int = 1):
         self.registry = registry
         self.timeout = timeout
+        self.max_retries = max_retries
 
     def _validate_arguments(self, tool: Tool, arguments: dict[str, Any]) -> str | None:
         """
@@ -150,30 +151,55 @@ class ToolExecutor:
         )
 
     async def _execute_with_timeout(self, tool: Tool, tool_call: ToolCall) -> ToolResult:
-        """Execute tool with timeout and error handling."""
-        try:
-            logger.info("Executing tool: %s", tool_call.tool)
-            logger.debug("Tool arguments: %s", tool_call.arguments)
-            result = await asyncio.wait_for(
-                tool.execute(**tool_call.arguments),
-                timeout=self.timeout,
-            )
-            logger.info("Tool executed successfully: %s", tool_call.tool)
-            logger.debug("Tool result: %s", result)
-            return ToolResult(tool=tool_call.tool, result=result, error=None, id=tool_call.id)
-        except TimeoutError:
-            logger.error("Tool execution timeout: %s", tool_call.tool)
-            return ToolResult(
-                tool=tool_call.tool,
-                result=None,
-                error=f"Tool execution timeout after {self.timeout}s",
-                id=tool_call.id,
-            )
-        except Exception as e:
-            logger.exception("Tool execution error: %s", tool_call.tool)
-            return ToolResult(
-                tool=tool_call.tool,
-                result=None,
-                error=f"Tool execution error: {str(e)}",
-                id=tool_call.id,
-            )
+        """Execute tool with timeout, retry on timeout, and error handling."""
+        total_attempts = max(1, self.max_retries + 1)
+        for attempt in range(total_attempts):
+            try:
+                if attempt > 0:
+                    logger.warning(
+                        "Retrying tool %s (attempt %d/%d)",
+                        tool_call.tool,
+                        attempt + 1,
+                        total_attempts,
+                    )
+                logger.info("Executing tool: %s", tool_call.tool)
+                logger.debug("Tool arguments: %s", tool_call.arguments)
+                result = await asyncio.wait_for(
+                    tool.execute(**tool_call.arguments),
+                    timeout=self.timeout,
+                )
+                logger.info("Tool executed successfully: %s", tool_call.tool)
+                logger.debug("Tool result: %s", result)
+                return ToolResult(tool=tool_call.tool, result=result, error=None, id=tool_call.id)
+            except TimeoutError:
+                if attempt < total_attempts - 1:
+                    logger.warning(
+                        "Tool execution timeout: %s (attempt %d/%d, retrying)",
+                        tool_call.tool,
+                        attempt + 1,
+                        total_attempts,
+                    )
+                    continue
+                logger.error("Tool execution timeout: %s", tool_call.tool)
+                return ToolResult(
+                    tool=tool_call.tool,
+                    result=None,
+                    error=f"Tool execution timeout after {self.timeout}s",
+                    id=tool_call.id,
+                )
+            except Exception as e:
+                logger.exception("Tool execution error: %s", tool_call.tool)
+                return ToolResult(
+                    tool=tool_call.tool,
+                    result=None,
+                    error=f"Tool execution error: {str(e)}",
+                    id=tool_call.id,
+                )
+        # Unreachable: loop always returns via success, timeout, or error path.
+        # Satisfies the type checker for the degenerate max_retries < 0 case.
+        return ToolResult(  # pragma: no cover
+            tool=tool_call.tool,
+            result=None,
+            error=f"Tool execution timeout after {self.timeout}s",
+            id=tool_call.id,
+        )
