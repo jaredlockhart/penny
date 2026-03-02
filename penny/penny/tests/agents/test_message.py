@@ -270,12 +270,15 @@ async def test_entity_context_responds_from_knowledge(
 
         assert "1,599" in response["message"]
 
-        # Verify CONVERSATION_PROMPT used with entity context injected
+        # Verify CONVERSATION_PROMPT used with entity context injected and anti-hallucination guard
         first_request = mock_ollama.requests[0]
         system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
         all_system_text = " ".join(m.get("content", "") for m in system_msgs)
         assert "relevant knowledge" in all_system_text.lower()
         assert "Use your judgment" in all_system_text
+        assert "do not add details, names, dates, or facts from your training memory" in (
+            all_system_text.lower()
+        ), "CONVERSATION_PROMPT must contain anti-hallucination instruction"
 
         # Entity context was injected
         assert "kef ls50 meta" in all_system_text.lower()
@@ -316,12 +319,15 @@ async def test_entity_context_absent_when_below_threshold(
         await signal_server.push_message(sender=TEST_SENDER, content="what's the weather today?")
         await signal_server.wait_for_message(timeout=10.0)
 
-        # CONVERSATION_PROMPT used, no entity context injected
+        # CONVERSATION_PROMPT used, no entity context injected, anti-hallucination guard present
         first_request = mock_ollama.requests[0]
         system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
         all_system_text = " ".join(m.get("content", "") for m in system_msgs)
         assert "Use your judgment" in all_system_text
         assert "Costs $1,599 per pair" not in all_system_text
+        assert "do not add details, names, dates, or facts from your training memory" in (
+            all_system_text.lower()
+        ), "CONVERSATION_PROMPT must contain anti-hallucination instruction"
 
         # 2 Ollama calls (tool call + final)
         assert len(mock_ollama.requests) == 2
