@@ -1,4 +1,4 @@
-"""Built-in tools."""
+"""Search tool — Perplexity text search with optional Serper image search."""
 
 import asyncio
 import logging
@@ -13,8 +13,8 @@ from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputI
 
 from penny.constants import PennyConstants
 from penny.responses import PennyResponse
+from penny.serper.client import search_image
 from penny.tools.base import Tool
-from penny.tools.image_search import search_image
 from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)

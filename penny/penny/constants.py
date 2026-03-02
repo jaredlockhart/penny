@@ -13,22 +13,6 @@ class PennyConstants:
         INCOMING = "incoming"
         OUTGOING = "outgoing"
 
-    class EngagementType(StrEnum):
-        """Type of user engagement with an entity."""
-
-        EXPLICIT_STATEMENT = "explicit_statement"
-        EMOJI_REACTION = "emoji_reaction"
-        FOLLOW_UP_QUESTION = "follow_up_question"
-        MESSAGE_MENTION = "message_mention"
-        NOTIFICATION_IGNORED = "notification_ignored"
-
-    class EngagementValence(StrEnum):
-        """Sentiment direction of an engagement."""
-
-        POSITIVE = "positive"
-        NEGATIVE = "negative"
-        NEUTRAL = "neutral"
-
     class SearchTrigger(StrEnum):
         """What triggered a search."""
 
@@ -41,10 +25,6 @@ class PennyConstants:
 
         ACTIVE = "active"
         COMPLETED = "completed"
-
-    # Reaction emoji mappings for sentiment analysis
-    LIKE_REACTIONS = ("❤️", "👍", "😆")
-    DISLIKE_REACTIONS = ("😠", "👎", "😢")
 
     # Search tool constants
     PERPLEXITY_PRESET = "pro-search"

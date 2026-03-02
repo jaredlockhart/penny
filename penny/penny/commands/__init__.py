@@ -47,7 +47,7 @@ def create_command_registry(
     Factory to create registry with builtin commands.
 
     Args:
-        message_agent_factory: Optional factory for creating MessageAgent instances
+        message_agent_factory: Optional factory for creating ChatAgent instances
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
         image_model_client: Optional image generation OllamaClient (required for draw command)

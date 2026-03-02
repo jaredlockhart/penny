@@ -5,7 +5,6 @@ from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine
 
-from penny.database.engagement_store import EngagementStore
 from penny.database.entity_store import EntityStore
 from penny.database.event_store import EventStore
 from penny.database.fact_store import FactStore
@@ -13,6 +12,7 @@ from penny.database.follow_prompt_store import FollowPromptStore
 from penny.database.learn_prompt_store import LearnPromptStore
 from penny.database.message_store import MessageStore
 from penny.database.search_store import SearchStore
+from penny.database.thought_store import ThoughtStore
 from penny.database.user_store import UserStore
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class Database:
         messages: Message/prompt/command logging, threading, queries
         learn_prompts: LearnPrompt lifecycle and cascading deletion
         searches: SearchLog creation and extraction tracking
-        engagements: Engagement recording and queries
+        thoughts: Inner monologue persistence (append-only thought log)
         users: UserInfo, sender queries, mute state
     """
 
@@ -45,7 +45,7 @@ class Database:
         self.messages = MessageStore(self.engine)
         self.learn_prompts = LearnPromptStore(self.engine)
         self.searches = SearchStore(self.engine)
-        self.engagements = EngagementStore(self.engine)
+        self.thoughts = ThoughtStore(self.engine)
         self.users = UserStore(self.engine)
 
         logger.info("Database initialized: %s", db_path)

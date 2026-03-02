@@ -120,11 +120,6 @@ async def test_extraction_processes_search_log(
         # Verify facts have source_search_log_id set
         assert all(f.source_search_log_id == search_logs[0].id for f in facts)
 
-        # Verify entity received heat (novelty seed from creation)
-        refreshed = penny.db.entities.get(entity.id)
-        assert refreshed is not None
-        assert refreshed.heat > 0, "Entity should have heat from novelty seed"
-
         # Verify SearchLog is marked as extracted
         with penny.db.get_session() as session:
             sl = session.get(SearchLog, search_logs[0].id)
@@ -167,7 +162,7 @@ async def test_extraction_skips_processed_search_logs(
     2. Run execute() again
     3. Verify no additional Ollama calls for extraction
     """
-    config = make_config(learn_min_interest_score=99999.0)
+    config = make_config()
 
     request_count = [0]
     extraction_calls = [0]
@@ -587,8 +582,7 @@ async def test_extraction_processes_messages_for_entities(
     running_penny,
 ):
     """
-    Test that ExtractionPipeline extracts entities from user messages
-    and creates MESSAGE_MENTION engagements.
+    Test that ExtractionPipeline extracts entities and facts from user messages.
     """
     config = make_config()
 
@@ -615,14 +609,6 @@ async def test_extraction_processes_messages_for_entities(
             return mock_ollama._make_text_response(
                 request,
                 json.dumps({"facts": ["User is interested in this speaker"]}),
-            )
-        elif request_count[0] == 5:
-            # Sentiment extraction from message
-            return mock_ollama._make_text_response(
-                request,
-                json.dumps(
-                    {"sentiments": [{"entity_name": "kef ls50 meta", "sentiment": "positive"}]}
-                ),
             )
         else:
             # Preference extraction passes (likes, dislikes)
@@ -653,168 +639,6 @@ async def test_extraction_processes_messages_for_entities(
         facts = penny.db.facts.get_for_entity(entity.id)
         message_sourced_facts = [f for f in facts if f.source_message_id is not None]
         assert len(message_sourced_facts) >= 1
-
-        # Verify MESSAGE_MENTION engagement was created
-        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
-        mention_engagements = [
-            e
-            for e in engagements
-            if e.engagement_type == PennyConstants.EngagementType.MESSAGE_MENTION
-        ]
-        assert len(mention_engagements) >= 1
-        assert mention_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert mention_engagements[0].strength == 0.2
-
-        # Verify EXPLICIT_STATEMENT engagement was created from sentiment extraction
-        statement_engagements = [
-            e
-            for e in engagements
-            if e.engagement_type == PennyConstants.EngagementType.EXPLICIT_STATEMENT
-        ]
-        assert len(statement_engagements) >= 1
-        assert statement_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert statement_engagements[0].strength == 0.7
-
-        # Verify entity received heat (MESSAGE_MENTION touch + EXPLICIT_STATEMENT touch)
-        refreshed = penny.db.entities.get(entity.id)
-        assert refreshed is not None
-        assert refreshed.heat > 0, "Entity should have heat from engagements"
-
-        # Verify diminishing touch: additional touch adds less than full HEAT_TOUCH_AMOUNT
-        heat_before = refreshed.heat
-        penny.heat_engine.touch(entity.id)
-        refreshed = penny.db.entities.get(entity.id)
-        assert refreshed is not None
-        increment = refreshed.heat - heat_before
-        assert 0 < increment < config.runtime.HEAT_TOUCH_AMOUNT, (
-            f"Diminishing touch: increment {increment:.2f} should be less than "
-            f"{config.runtime.HEAT_TOUCH_AMOUNT}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_extraction_creates_follow_up_engagements(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """
-    When a user quote-replies to Penny's message, FOLLOW_UP_QUESTION
-    engagements are created for entities related to the parent message.
-    Short follow-ups (< 20 chars) should still trigger detection.
-    """
-    config = make_config(ollama_embedding_model="test-embed-model")
-
-    # Embed handler: return identical vectors so everything matches
-    def embed_handler(model, input_text):
-        texts = [input_text] if isinstance(input_text, str) else input_text
-        return [[1.0, 0.0, 0.0, 0.0]] * len(texts)
-
-    mock_ollama.set_embed_handler(embed_handler)
-
-    async with running_penny(config) as penny:
-        # Seed entity with embedding
-        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
-        assert entity is not None and entity.id is not None
-        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
-        penny.db.facts.add(entity.id, "Costs $1,599 per pair")
-
-        # Simulate Penny's outgoing message about the entity
-        outgoing_id = penny.db.messages.log_message(
-            direction="outgoing",
-            sender="penny",
-            content="the KEF LS50 Meta costs $1,599 and uses Metamaterial Absorption Technology!",
-        )
-        assert outgoing_id is not None
-
-        # User replies with a short follow-up (< 20 chars, skipped by entity extraction)
-        incoming_id = penny.db.messages.log_message(
-            direction="incoming",
-            sender=TEST_SENDER,
-            content="how much?",  # 9 chars — below MIN_EXTRACTION_MESSAGE_LENGTH
-            parent_id=outgoing_id,
-        )
-        assert incoming_id is not None
-
-        work_done = await penny.extraction_pipeline.execute()
-        assert work_done, "Follow-up detection should count as work done"
-
-        # Verify FOLLOW_UP_QUESTION engagement was created
-        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
-        follow_up_engagements = [
-            e
-            for e in engagements
-            if e.engagement_type == PennyConstants.EngagementType.FOLLOW_UP_QUESTION
-        ]
-        assert len(follow_up_engagements) == 1
-        assert follow_up_engagements[0].valence == PennyConstants.EngagementValence.POSITIVE
-        assert follow_up_engagements[0].strength == 0.5
-        assert follow_up_engagements[0].source_message_id == incoming_id
-
-        # Verify entity received heat from FOLLOW_UP_QUESTION touch
-        refreshed = penny.db.entities.get(entity.id)
-        assert refreshed is not None
-        assert refreshed.heat > 0, "Entity should have heat from follow-up touch"
-
-
-@pytest.mark.asyncio
-async def test_extraction_no_follow_up_for_reply_to_user(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """
-    Replying to an incoming message (not Penny's) should NOT create
-    FOLLOW_UP_QUESTION engagements.
-    """
-    config = make_config(ollama_embedding_model="test-embed-model")
-
-    def embed_handler(model, input_text):
-        texts = [input_text] if isinstance(input_text, str) else input_text
-        return [[1.0, 0.0, 0.0, 0.0]] * len(texts)
-
-    mock_ollama.set_embed_handler(embed_handler)
-
-    async with running_penny(config) as penny:
-        entity = penny.db.entities.get_or_create(TEST_SENDER, "test entity")
-        assert entity is not None and entity.id is not None
-        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
-
-        # Parent is an incoming message (user's own message, not Penny's)
-        parent_id = penny.db.messages.log_message(
-            direction="incoming",
-            sender=TEST_SENDER,
-            content="I love this test entity so much!",
-        )
-        assert parent_id is not None
-        penny.db.messages.mark_processed([parent_id])
-
-        # Reply to own message
-        reply_id = penny.db.messages.log_message(
-            direction="incoming",
-            sender=TEST_SENDER,
-            content="actually let me tell you more about it",
-            parent_id=parent_id,
-        )
-        assert reply_id is not None
-
-        await penny.extraction_pipeline.execute()
-
-        engagements = penny.db.engagements.get_for_entity(TEST_SENDER, entity.id)
-        follow_up_engagements = [
-            e
-            for e in engagements
-            if e.engagement_type == PennyConstants.EngagementType.FOLLOW_UP_QUESTION
-        ]
-        assert len(follow_up_engagements) == 0, (
-            "No FOLLOW_UP_QUESTION for replies to user's own messages"
-        )
 
 
 @pytest.mark.asyncio
@@ -1703,83 +1527,6 @@ async def test_extraction_user_message_facts_pre_marked_notified(
         facts = penny.db.facts.get_for_entity(entity.id)
         assert len(facts) >= 1
         assert all(f.notified_at is not None for f in facts)
-
-
-# --- Enrichment phase gating ---
-
-
-@pytest.mark.asyncio
-async def test_enrichment_runs_independently(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """
-    EnrichAgent runs as an independent schedule and creates new search logs.
-    (Previously embedded in ExtractionPipeline as phase 3, now a separate schedule.)
-    """
-    config = make_config()
-
-    call_count = [0]
-
-    def handler(request: dict, count: int) -> dict:
-        call_count[0] += 1
-        messages = request.get("messages", [])
-        last_content = messages[-1].get("content", "") if messages else ""
-
-        if "Extract specific" in last_content or "ENTITY_FACT" in last_content:
-            return mock_ollama._make_text_response(
-                request,
-                json.dumps({"facts": ["Costs $1,599 per pair"]}),
-            )
-        else:
-            return mock_ollama._make_text_response(
-                request,
-                "Found some cool new facts about kef ls50 meta!",
-            )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        # Create sender
-        await signal_server.push_message(sender=TEST_SENDER, content="hello")
-        await signal_server.wait_for_message(timeout=10.0)
-
-        # Mark all existing search logs as extracted
-        for sl in penny.db.searches.get_unprocessed(limit=100):
-            penny.db.searches.mark_extracted(sl.id)
-
-        # Mark all messages as processed
-        msgs = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
-        if msgs:
-            penny.db.messages.mark_processed([m.id for m in msgs if m.id is not None])
-
-        # Create entity with positive interest (needed for enrichment candidate scoring)
-        entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
-        assert entity is not None and entity.id is not None
-        penny.db.entities.update_heat(entity.id, 1.0)
-        penny.db.engagements.add(
-            user=TEST_SENDER,
-            engagement_type=PennyConstants.EngagementType.EXPLICIT_STATEMENT,
-            valence=PennyConstants.EngagementValence.POSITIVE,
-            strength=1.0,
-            entity_id=entity.id,
-        )
-
-        # Run enrich agent directly (now a separate schedule, not part of extraction)
-        work_done = await penny.enrich_agent.execute()
-        assert work_done, "Enrichment should have run and produced work"
-
-        # Verify enrichment created a penny_enrichment search log
-        enrichment_logs = [
-            sl
-            for sl in penny.db.searches.get_unprocessed(limit=100)
-            if sl.trigger == PennyConstants.SearchTrigger.PENNY_ENRICHMENT
-        ]
-        assert len(enrichment_logs) >= 1, "Enrichment should have created a search log"
 
 
 @pytest.mark.asyncio

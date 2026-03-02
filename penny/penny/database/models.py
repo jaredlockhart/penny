@@ -196,6 +196,15 @@ class Event(SQLModel, table=True):
     )  # Which follow prompt generated this event
 
 
+class Thought(SQLModel, table=True):
+    """A persistent inner monologue entry — Penny's stream of consciousness."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)
+    content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+
+
 class FollowPrompt(SQLModel, table=True):
     """An ongoing monitoring subscription for event tracking."""
 

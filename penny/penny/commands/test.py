@@ -12,7 +12,7 @@ from penny.constants import PennyConstants
 from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
-    from penny.agents.message import MessageAgent
+    from penny.agents.chat import ChatAgent
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class TestCommand(Command):
         Initialize with message agent factory.
 
         Args:
-            message_agent_factory: Callable that creates a MessageAgent with a given database
+            message_agent_factory: Callable that creates a ChatAgent with a given database
         """
         self._message_agent_factory = message_agent_factory
 
@@ -60,15 +60,14 @@ class TestCommand(Command):
         test_db_path = Path(context.db.db_path).parent / PennyConstants.TEST_DB_PATH.name
         test_db = Database(str(test_db_path))
 
-        # Create message agent with test database
-        test_agent: MessageAgent = self._message_agent_factory(test_db)
+        # Create chat agent with test database
+        test_agent: ChatAgent = self._message_agent_factory(test_db)
 
         try:
-            # Execute agent with test database (no threading support)
-            _, response = await test_agent.handle(
+            # Execute agent with test database
+            response = await test_agent.handle(
                 content=prompt,
                 sender=context.user,
-                quoted_text=None,
             )
 
             # Prepend [TEST] to response

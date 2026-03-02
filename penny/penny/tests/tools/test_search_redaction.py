@@ -2,7 +2,7 @@
 
 import pytest
 
-from penny.tools.builtin import SearchTool
+from penny.tools.search import SearchTool
 
 
 class MockResponseNullOutput:

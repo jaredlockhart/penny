@@ -9,19 +9,17 @@ from typing import Any
 
 from penny.agents import (
     Agent,
-    EnrichAgent,
+    ChatAgent,
     EventAgent,
     ExtractionPipeline,
     LearnAgent,
-    MessageAgent,
-    NotificationAgent,
+    ThinkingAgent,
 )
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
 from penny.database import Database
 from penny.database.migrate import migrate
-from penny.interest import HeatEngine
 from penny.ollama.client import OllamaClient
 from penny.ollama.embeddings import build_entity_embed_text, serialize_embedding
 from penny.prompts import Prompt
@@ -105,8 +103,8 @@ class Penny:
             )
         ]
 
-    def _create_message_agent(self, db: Database) -> MessageAgent:
-        """Factory for creating MessageAgent with a given database.
+    def _create_chat_agent(self, db: Database) -> ChatAgent:
+        """Factory for creating ChatAgent with a given database.
 
         Creates its own OllamaClient because the /test command needs
         prompt logging against a separate test database.
@@ -118,11 +116,14 @@ class Penny:
             max_retries=self.config.ollama_max_retries,
             retry_delay=self.config.ollama_retry_delay,
         )
-        return MessageAgent(
-            system_prompt=Prompt.SEARCH_PROMPT,
+        search_tools = self._create_search_tools(db)
+        return ChatAgent(
+            search_tool=search_tools[0] if search_tools else None,
+            news_tool=self._news_tool,
+            system_prompt=Prompt.CONVERSATION_PROMPT,
             background_model_client=client,
             foreground_model_client=client,
-            tools=self._create_search_tools(db),
+            tools=[],
             db=db,
             config=self.config,
             max_steps=int(self.config.runtime.MESSAGE_MAX_STEPS),
@@ -133,11 +134,16 @@ class Penny:
 
     def _init_agents(self, config: Config) -> None:
         """Create message agent and background processing agents."""
-        self.message_agent = MessageAgent(
-            system_prompt=Prompt.SEARCH_PROMPT,
+        shared_search_tools = self._create_search_tools(self.db)
+        self._shared_search_tool = shared_search_tools[0] if shared_search_tools else None
+        self._news_tool = self._create_news_tool(config)
+        self.chat_agent = ChatAgent(
+            search_tool=self._shared_search_tool,
+            news_tool=self._news_tool,
+            system_prompt=Prompt.CONVERSATION_PROMPT,
             background_model_client=self.foreground_model_client,
             foreground_model_client=self.foreground_model_client,
-            tools=self._create_search_tools(self.db),
+            tools=[],
             db=self.db,
             config=config,
             max_steps=int(config.runtime.MESSAGE_MAX_STEPS),
@@ -145,8 +151,6 @@ class Penny:
             vision_model_client=self.vision_model_client,
             embedding_model_client=self.embedding_model_client,
         )
-        shared_search_tools = self._create_search_tools(self.db)
-        self._shared_search_tool = shared_search_tools[0] if shared_search_tools else None
         self._init_background_agents(config)
 
     def _background_agent_kwargs(self, config: Config) -> dict:
@@ -163,26 +167,21 @@ class Penny:
         }
 
     def _init_background_agents(self, config: Config) -> None:
-        """Create learn, extraction, notification, enrich, event, and schedule agents."""
+        """Create learn, extraction, event, monologue, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
         search_tool = self._shared_search_tool
         self.learn_agent = LearnAgent(search_tool=search_tool, **kwargs)
         self.extraction_pipeline = ExtractionPipeline(
             embedding_model_client=self.embedding_model_client, **kwargs
         )
-        self.heat_engine = HeatEngine(db=self.db, runtime=config.runtime)
-        self.extraction_pipeline.set_heat_engine(self.heat_engine)
-        self.notification_agent = NotificationAgent(**kwargs)
-        self.notification_agent.set_heat_engine(self.heat_engine)
-        self.enrich_agent = EnrichAgent(
-            search_tool=search_tool,
+        self.event_agent = EventAgent(
+            news_tool=self._news_tool,
             embedding_model_client=self.embedding_model_client,
             **kwargs,
         )
-        self.enrich_agent.set_heat_engine(self.heat_engine)
-        self.event_agent = EventAgent(
-            news_tool=self._create_news_tool(config),
-            embedding_model_client=self.embedding_model_client,
+        self.thinking_agent = ThinkingAgent(
+            search_tool=search_tool,
+            news_tool=self._news_tool,
             **kwargs,
         )
         self.schedule_executor = ScheduleExecutor(**kwargs)
@@ -232,7 +231,7 @@ class Penny:
         """Create command registry with GitHub client and message agent factory."""
         github_api = self._init_github_client(config)
         self.command_registry = create_command_registry(
-            message_agent_factory=self._create_message_agent,
+            message_agent_factory=self._create_chat_agent,
             github_api=github_api,
             image_model_client=self.image_model_client,
             fastmail_api_token=config.fastmail_api_token,
@@ -242,12 +241,11 @@ class Penny:
         """Create channel and connect agents that send proactive messages."""
         self.channel = channel or create_channel(
             config=config,
-            message_agent=self.message_agent,
+            message_agent=self.chat_agent,
             db=self.db,
             command_registry=self.command_registry,
         )
-        self.notification_agent.set_channel(self.channel)
-        self.channel.set_heat_engine(self.heat_engine)
+        self.thinking_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
 
     def _init_scheduler(self, config: Config) -> None:
@@ -255,8 +253,8 @@ class Penny:
         schedules = [
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
-                agent=self.notification_agent,
-                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
+                agent=self.thinking_agent,
+                interval=config.runtime.INNER_MONOLOGUE_INTERVAL,
             ),
             PeriodicSchedule(
                 agent=self.extraction_pipeline,
@@ -268,10 +266,6 @@ class Penny:
             ),
             PeriodicSchedule(
                 agent=self.learn_agent,
-                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
-            ),
-            PeriodicSchedule(
-                agent=self.enrich_agent,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
         ]

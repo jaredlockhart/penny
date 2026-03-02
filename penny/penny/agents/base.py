@@ -13,8 +13,8 @@ from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
+from penny.serper.client import search_image
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
-from penny.tools.image_search import search_image
 from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -234,6 +234,9 @@ class Agent:
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
 
+            if step == steps - 1:
+                self._inject_final_step_nudge(messages)
+
             response = await self._call_model_with_xml_retry(messages, tools)
             if response is None:
                 return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
@@ -250,6 +253,11 @@ class Agent:
         return ControllerResponse(
             answer=PennyResponse.AGENT_MAX_STEPS, tool_calls=tool_call_records
         )
+
+    @staticmethod
+    def _inject_final_step_nudge(messages: list[dict]) -> None:
+        """On the last step, tell the model it must respond now."""
+        messages.append({"role": "system", "content": Prompt.FINAL_STEP_NUDGE})
 
     async def _call_model_with_xml_retry(self, messages: list[dict], tools: list[dict]):
         """Call the model, retrying if it emits XML markup instead of structured tool calls."""

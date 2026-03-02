@@ -262,6 +262,40 @@ class MessageStore:
             messages.reverse()
             return messages
 
+    def get_conversation(self, sender: str, limit: int = 20) -> list[MessageLog]:
+        """Get recent conversation messages (both directions), oldest first."""
+        with self._session() as session:
+            incoming = list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                        MessageLog.is_reaction == False,  # noqa: E712
+                    )
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+            if not incoming:
+                return []
+            incoming_ids = [m.id for m in incoming if m.id is not None]
+            outgoing = (
+                list(
+                    session.exec(
+                        select(MessageLog).where(
+                            MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                            MessageLog.parent_id.in_(incoming_ids),  # type: ignore[unresolved-attribute]
+                        )
+                    ).all()
+                )
+                if incoming_ids
+                else []
+            )
+            all_messages = incoming + outgoing
+            all_messages.sort(key=lambda m: m.timestamp)
+            return all_messages[-limit:]
+
     def get_unprocessed(self, sender: str, limit: int) -> list[MessageLog]:
         """Get recent unprocessed non-reaction messages from a specific user."""
         with self._session() as session:
@@ -358,7 +392,3 @@ class MessageStore:
                 .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                 .limit(1)
             ).first()
-
-    def get_latest_interaction_time(self, sender: str) -> datetime | None:
-        """Get timestamp of most recent user interaction (for backoff logic)."""
-        return self.get_latest_incoming_time(sender)

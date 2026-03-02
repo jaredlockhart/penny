@@ -1,9 +1,9 @@
 """Tools for agentic capabilities."""
 
+from penny.serper.client import search_image
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
-from penny.tools.builtin import SearchTool
-from penny.tools.image_search import search_image
 from penny.tools.models import SearchResult, ToolCall, ToolDefinition, ToolResult
+from penny.tools.search import SearchTool
 
 __all__ = [
     "Tool",

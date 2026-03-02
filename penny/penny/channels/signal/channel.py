@@ -33,7 +33,7 @@ from penny.constants import PennyConstants
 _TRANSIENT_ERROR_INDICATORS = ("SocketException", "UnexpectedErrorException")
 
 if TYPE_CHECKING:
-    from penny.agents import MessageAgent
+    from penny.agents import ChatAgent
     from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.database.models import MessageLog
@@ -48,7 +48,7 @@ class SignalChannel(MessageChannel):
         self,
         api_url: str,
         phone_number: str,
-        message_agent: MessageAgent,
+        message_agent: ChatAgent,
         db: Database,
         command_registry: CommandRegistry | None = None,
         max_retries: int = 3,

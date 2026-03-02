@@ -17,28 +17,24 @@ class Prompt:
         "Finish every message with an emoji."
     )
 
-    # Search-focused agent prompt (used by MessageAgent)
-    SEARCH_PROMPT = (
-        "You MUST call the search tool on EVERY message - no exceptions. "
-        "Never respond without searching first. Never ask clarifying questions. "
-        "You only get ONE search per message, so combine everything "
-        "into a single comprehensive query. "
-        "Just search for something relevant and share what you find. "
-        "Include a URL from the results. "
-        "Format your response with **bold** for key names and terms, "
-        "and use bullet points when listing multiple items or findings."
-    )
-
-    # Knowledge-augmented agent prompt (used when entity context is sufficient)
-    KNOWLEDGE_PROMPT = (
-        "You have relevant knowledge about this topic (see context above). "
-        "If the knowledge is sufficient to answer the question, respond directly — "
-        "no need to search. "
-        "If the question asks for current/recent information or goes beyond what you know, "
-        "use the search tool. "
-        "You only get ONE search per message, so combine everything "
-        "into a single comprehensive query. "
-        "Include a URL from the results if you search. "
+    # Conversation mode prompt (used by ChatAgent)
+    CONVERSATION_PROMPT = (
+        "The user is talking to you. You have context injected above — "
+        "recent conversation history, relevant knowledge, recent events, "
+        "and your own recent thoughts.\n\n"
+        "You have tools available: search the web, fetch news, "
+        "recall your memory, think (to note observations), "
+        "learn (to queue background research), "
+        "and follow (to subscribe to ongoing news monitoring).\n\n"
+        "Use your judgment:\n"
+        "- If your context already answers the question, respond directly\n"
+        "- If the question needs current information, search the web\n"
+        "- If something is worth remembering, use think to note it\n"
+        "- If a topic deserves deeper research, use learn\n\n"
+        "IMPORTANT: Never make up news, events, or facts. If you don't know "
+        "something current, search for it. Only share information that comes "
+        "from your injected context or from tool results.\n\n"
+        "Always include a URL from search results when you search. "
         "Format your response with **bold** for key names and terms, "
         "and use bullet points when listing multiple items or findings."
     )
@@ -97,74 +93,6 @@ Examples:
 
     VISION_RESPONSE_PROMPT = (
         "The user sent an image. Respond naturally to the image description provided."
-    )
-
-    # Fact discovery notification prompts (extraction pipeline)
-    FACT_DISCOVERY_NEW_ENTITY_PROMPT = (
-        "You just came across a new topic: {entity_name}. "
-        "Write a short, casual message sharing what you found. "
-        "Open by telling the user you found a new topic "
-        "worth tracking: **{entity_name}**{descriptor}. "
-        "Synthesize the facts below into natural sentences "
-        "— don't just list them verbatim. "
-        "Use **bold** for the topic name."
-    )
-
-    FACT_DISCOVERY_KNOWN_ENTITY_PROMPT = (
-        "You just came across some new information about {entity_name}. "
-        "Write a short, casual message sharing what's new. "
-        "Open by telling the user this is an update "
-        "on **{entity_name}**{descriptor}. "
-        "Synthesize the facts below into natural sentences "
-        "— don't just list them verbatim. "
-        "Use **bold** for the topic name."
-    )
-
-    # Learn-topic-aware variants (when facts originated from a /learn command)
-    FACT_DISCOVERY_NEW_ENTITY_LEARN_PROMPT = (
-        "While researching {learn_topic} (something the user asked you to look into), "
-        "you came across a new topic: {entity_name}. "
-        "Write a short, casual message sharing what you found. "
-        "Open by telling the user you found a new topic "
-        "while looking into **{learn_topic}**: "
-        "**{entity_name}**{descriptor}. "
-        "Synthesize the facts below into natural sentences "
-        "— don't just list them verbatim. "
-        "Use **bold** for topic names."
-    )
-
-    FACT_DISCOVERY_KNOWN_ENTITY_LEARN_PROMPT = (
-        "While researching {learn_topic} (something the user asked you to look into), "
-        "you came across some new information about {entity_name}. "
-        "Write a short, casual message sharing what's new. "
-        "Open by telling the user this is an update on "
-        "**{entity_name}**{descriptor}, found while "
-        "looking into **{learn_topic}**. "
-        "Synthesize the facts below into natural sentences "
-        "— don't just list them verbatim. "
-        "Use **bold** for topic names."
-    )
-
-    # Learn completion summary prompt
-    LEARN_COMPLETION_SUMMARY_PROMPT = (
-        "You just finished researching **{topic}** (something the user asked you to look into). "
-        'Open with "Here\'s what I learned about {topic}" then write a casual '
-        "summary of what you found. "
-        "Group findings by topic, highlight the most interesting facts, "
-        "and use **bold** for topic names and bullet points for key facts. "
-        "Keep it concise but informative."
-    )
-
-    # Learn agent message composition prompts
-    LEARN_ENRICHMENT_MESSAGE_PROMPT = (
-        "You just learned new facts about {entity_name}. "
-        "Write a short, casual message sharing what you discovered. "
-        "Include the most interesting 2-3 findings. Keep it under 200 words."
-    )
-
-    LEARN_BRIEFING_MESSAGE_PROMPT = (
-        "You just found new developments about {entity_name}. "
-        "Write a brief, casual message sharing what's new. Keep it under 150 words."
     )
 
     # /learn command: iterative search query generation
@@ -346,68 +274,31 @@ Examples:
         'Headline: "{headline}"'
     )
 
-    # Event notification prompt (for proactive event announcements — single event)
-    EVENT_NOTIFICATION_PROMPT = (
-        "You just saw a news headline relevant to the user's follow topic. "
-        "Write a short, casual heads-up message about it. "
-        "Open by telling the user this is an update on their "
-        "follow topic (mention the topic by name). "
-        "Only use information from the provided headline and summary — "
-        "do not add details, dates, names, or facts not present in the source. "
-        "Use **bold** for key names and topics. "
-        "Keep it concise — one short paragraph. "
-        "End with the source URL on its own line so the user can read the full story."
+    # Inner monologue prompts
+    INNER_MONOLOGUE_SYSTEM_PROMPT = (
+        "You are Penny's inner thoughts. You are thinking to yourself — "
+        "the user cannot see this unless you choose to message them.\n\n"
+        "Your job is to find interesting things the user might enjoy. "
+        "You know their interests from past conversations — look for news, "
+        "discoveries, or updates that would genuinely delight them.\n\n"
+        "You have tools to think, recall your memory, search the web, "
+        "fetch news, and message the user. You can also start background "
+        "research on a topic (learn) or subscribe to ongoing news monitoring "
+        "for a topic (follow).\n\n"
+        "Start by recalling recent messages to understand what the user "
+        "has been interested in lately. Then search for news or information "
+        "related to those interests. If you find something the user would "
+        "genuinely enjoy hearing about, message them. Keep messages focused "
+        "and relevant — share one great find rather than a generic roundup.\n\n"
+        "IMPORTANT: Never make up news, events, or facts. Only share "
+        "information you found via your tools (search, fetch_news). "
+        "If you can't find anything interesting, that's fine.\n\n"
+        "If nothing notable is happening, just record a brief thought and stop. "
+        "Don't force activity — it's fine to have quiet cycles."
     )
 
-    # Event digest prompt (for proactive event announcements — multiple events)
-    EVENT_DIGEST_PROMPT = (
-        "You just received {count} news headlines relevant to the user's follow topic. "
-        "Write a casual digest summarizing what happened. "
-        "Open by telling the user this is an update on their "
-        "follow topic (mention the topic by name). "
-        "Synthesize related stories together into natural paragraphs — "
-        "don't just list them verbatim. "
-        "Only use information from the provided headlines and summaries — "
-        "do not add details, dates, names, or facts not present in the sources. "
-        "Use **bold** for key names and topics. "
-        "End with source URLs, each on its own line."
-    )
-
-    # Enrichment entity discovery prompt
-    ENRICHMENT_ENTITY_DISCOVERY_PROMPT = (
-        "Identify notable entities RELATED TO {entity_name} "
-        "mentioned in the following search results.\n"
-        "Return only NEW entities — do NOT include {entity_name} itself "
-        "or any entity from the known list.\n\n"
-        "ENTITY NAME RULES:\n"
-        "- Use short canonical names (1-5 words). "
-        "No parenthetical annotations or descriptions.\n"
-        "- Good: 'Uni-Q driver', 'Andrew Jones', 'Metamaterial Absorption Technology'\n"
-        "- Bad: 'Uni-Q driver (coaxial driver by KEF)', "
-        "'Andrew Jones (speaker designer)'\n\n"
-        "WHAT TO INCLUDE:\n"
-        "- Sub-components, technologies, people, related products, "
-        "organizations closely tied to {entity_name}\n\n"
-        "WHAT TO SKIP:\n"
-        "- Vague concepts ('audio quality', 'speaker design')\n"
-        "- Dates, years, locations\n"
-        "- Entities only loosely mentioned in passing\n"
-        "- The entity being researched: {entity_name}\n\n"
-        "TAGLINE:\n"
-        "For each entity, provide a short tagline (3-8 words) describing what it is.\n"
-        "- 'Uni-Q driver' → 'coaxial driver array by kef'\n"
-        "- 'Andrew Jones' → 'speaker designer at kef'"
-    )
-
-    MESSAGE_SENTIMENT_EXTRACTION_PROMPT = (
-        "Analyze the user's sentiment toward each named entity in their message.\n\n"
-        "Return ONLY entities where the user expresses a clear opinion:\n"
-        "- 'positive': explicit liking, enthusiasm, or praise "
-        "('I love X', 'X is amazing', 'really into X')\n"
-        "- 'negative': explicit dislike, frustration, or criticism "
-        "('I hate X', 'tired of X', 'X is terrible')\n\n"
-        "Do NOT return entities that are merely mentioned without sentiment. "
-        "A casual reference like 'Tell me about X' is NOT positive — "
-        "the user must express a clear opinion.\n\n"
-        "If no entity has clear sentiment, return an empty list."
+    # Agent loop control
+    FINAL_STEP_NUDGE = (
+        "This is your final step. You MUST respond to the user now with what you have. "
+        "Do not call any more tools."
     )
