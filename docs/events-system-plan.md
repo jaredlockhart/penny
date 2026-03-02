@@ -7,16 +7,15 @@ V4 introduces **Events** — things that happen at a point in time, potentially 
 The three new primitives:
 - **Event**: A time-stamped occurrence linking multiple entities (M2M)
 - **FollowPrompt**: An ongoing monitoring subscription (like LearnPrompt but never-ending)
-- **NewsAPI.org integration**: Structured news feed for event discovery
+- **TheNewsAPI.com integration**: Structured news feed for event discovery
 
-## News API: NewsAPI.org
+## News API: TheNewsAPI.com
 
-**Endpoint**: `GET https://newsapi.org/v2/everything`
-- Query by keyword, date range, language
-- Returns structured articles: `title`, `description`, `url`, `publishedAt`, `source`
-- Free tier: 100 req/day, 24h article delay, 1-month history
+**Endpoint**: `GET https://api.thenewsapi.com/v1/news/all`
+- Query by keyword (`search`), date range (`published_after`), language
+- Returns structured articles: `title`, `description`, `url`, `published_at`, `source`
 
-**Client**: `NewsTool` in `tools/news.py` — wraps `newsapi-python` with async executor.
+**Client**: `NewsTool` in `tools/news.py` — uses `httpx` async HTTP client.
 
 ## Data Model
 
@@ -37,7 +36,7 @@ The three new primitives:
 ### EventAgent
 Runs on PeriodicSchedule (between ExtractionPipeline and LearnAgent). Each tick:
 1. Get next FollowPrompt to poll (oldest `last_polled_at`)
-2. Query NewsAPI `/everything` with prompt's `query_terms`
+2. Query TheNewsAPI.com `/all` with prompt's `query_terms`
 3. Three-layer dedup: URL match → normalized headline → embedding similarity (0.90, 7-day window)
 4. Create Event records for new articles
 5. Link entities via LLM extraction (full mode — creates new entities)
@@ -70,7 +69,7 @@ Event scoring: `sum(linked_entity_interest) + timeliness_bonus` where timeliness
 
 1. PR #484: Event + EventEntity data models, migration, EventStore
 2. PR #485: FollowPrompt data model, migration, FollowPromptStore
-3. PR #486: NewsAPI.org client (NewsTool)
+3. PR #486: TheNewsAPI.com client (NewsTool)
 4. PR #487: /follow and /unfollow commands
 5. PR #488: /events command
 6. PR #489: EventAgent
