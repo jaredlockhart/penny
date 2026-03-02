@@ -4,12 +4,30 @@ import logging
 from datetime import datetime
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 THE_NEWS_API_BASE_URL = "https://api.thenewsapi.com/v1/news/all"
 THE_NEWS_API_PAGE_SIZE = 20
+
+
+class _RawArticle(BaseModel):
+    """Raw article shape from TheNewsAPI.com response."""
+
+    title: str | None = None
+    description: str | None = None
+    snippet: str | None = None
+    url: str | None = None
+    image_url: str | None = None
+    published_at: str | None = None
+    source: str | None = None
+
+
+class _ApiResponse(BaseModel):
+    """TheNewsAPI.com response envelope."""
+
+    data: list[_RawArticle] = Field(default_factory=list)
 
 
 class NewsArticle(BaseModel):
@@ -59,7 +77,7 @@ class NewsTool:
             logger.error("Unexpected error fetching news: %s", e)
             return []
 
-    async def _call_api(self, query: str, from_date: datetime | None) -> dict:
+    async def _call_api(self, query: str, from_date: datetime | None) -> _ApiResponse:
         """Call TheNewsAPI.com search endpoint."""
         params: dict[str, str | int] = {
             "api_token": self._api_key,
@@ -72,29 +90,26 @@ class NewsTool:
             params["published_after"] = from_date.strftime("%Y-%m-%dT%H:%M:%S")
         resp = await self._http.get(THE_NEWS_API_BASE_URL, params=params)
         resp.raise_for_status()
-        return resp.json()
+        return _ApiResponse.model_validate(resp.json())
 
-    def _parse_articles(self, response: dict) -> list[NewsArticle]:
-        """Parse API response into NewsArticle models."""
+    def _parse_articles(self, response: _ApiResponse) -> list[NewsArticle]:
+        """Convert raw API articles into NewsArticle models."""
         articles: list[NewsArticle] = []
-        for raw in response.get("data", []):
-            article = self._parse_single_article(raw)
+        for raw in response.data:
+            article = self._to_news_article(raw)
             if article:
                 articles.append(article)
         return articles
 
-    def _parse_single_article(self, raw: dict) -> NewsArticle | None:
-        """Parse a single article dict, returning None if essential fields are missing."""
-        title = raw.get("title")
-        url = raw.get("url")
-        published = raw.get("published_at")
-        if not title or not url or not published:
+    def _to_news_article(self, raw: _RawArticle) -> NewsArticle | None:
+        """Convert a raw API article, returning None if essential fields are missing."""
+        if not raw.title or not raw.url or not raw.published_at:
             return None
         return NewsArticle(
-            title=title,
-            description=raw.get("description") or raw.get("snippet") or "",
-            url=url,
-            published_at=datetime.fromisoformat(published.replace("Z", "+00:00")),
-            source_name=raw.get("source") or "",
-            url_to_image=raw.get("image_url"),
+            title=raw.title,
+            description=raw.description or raw.snippet or "",
+            url=raw.url,
+            published_at=datetime.fromisoformat(raw.published_at.replace("Z", "+00:00")),
+            source_name=raw.source or "",
+            url_to_image=raw.image_url,
         )
