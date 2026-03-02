@@ -183,3 +183,63 @@ async def test_has_unextracted_learn_search_logs_db_method(
         search_logs = penny.db.searches.get_by_learn_prompt(lp.id)
         penny.db.searches.mark_extracted(search_logs[0].id)
         assert penny.db.searches.has_unextracted_learn_logs() is False
+
+
+@pytest.mark.asyncio
+async def test_learn_rotates_between_multiple_active_prompts(
+    signal_server,
+    mock_ollama,
+    _mock_search,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """LearnAgent interleaves search steps across multiple active learn prompts.
+
+    With two active prompts (A and B), the agent should alternate — one step
+    for A, then one for B, rather than exhausting all searches for A first.
+    """
+    config = make_config()
+
+    def handler(request: dict, count: int) -> dict:
+        messages = request.get("messages", [])
+        last_content = messages[-1].get("content", "") if messages else ""
+        if "search query" in last_content.lower() or "generate" in last_content.lower():
+            return mock_ollama._make_text_response(
+                request, json.dumps({"query": "test search query"})
+            )
+        return mock_ollama._make_text_response(request, "ok")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        agent = penny.learn_agent
+
+        # Create two active learn prompts with enough searches
+        lp_a = penny.db.learn_prompts.create(
+            user=TEST_SENDER, prompt_text="quantum computing", searches_remaining=3
+        )
+        lp_b = penny.db.learn_prompts.create(
+            user=TEST_SENDER, prompt_text="machine learning", searches_remaining=3
+        )
+        assert lp_a is not None and lp_a.id is not None
+        assert lp_b is not None and lp_b.id is not None
+
+        # Cycle 1: A (oldest updated_at) gets first search step
+        result = await agent.execute()
+        assert result is True
+        logs_a_after_1 = penny.db.searches.get_by_learn_prompt(lp_a.id)
+        logs_b_after_1 = penny.db.searches.get_by_learn_prompt(lp_b.id)
+
+        # Mark the search log extracted so the gate opens for the next step
+        for log in logs_a_after_1 + logs_b_after_1:
+            penny.db.searches.mark_extracted(log.id)
+
+        # Cycle 2: B (now has older updated_at) should get the next search step
+        result = await agent.execute()
+        assert result is True
+        logs_b_after_2 = penny.db.searches.get_by_learn_prompt(lp_b.id)
+        assert len(logs_b_after_2) == 1, (
+            "Expected B to be researched on cycle 2 (rotation), "
+            f"but it has {len(logs_b_after_2)} search log(s)"
+        )

@@ -49,12 +49,18 @@ class LearnPromptStore:
             return session.get(LearnPrompt, learn_prompt_id)
 
     def get_next_active(self) -> LearnPrompt | None:
-        """Get the oldest active LearnPrompt across all users."""
+        """Get the least-recently-searched active LearnPrompt across all users.
+
+        Orders by updated_at ascending so that after each search step
+        (which updates updated_at via decrement_searches), the next cycle
+        picks a different active prompt. This naturally interleaves research
+        across all active /learn topics rather than exhausting one at a time.
+        """
         with self._session() as session:
             return session.exec(
                 select(LearnPrompt)
                 .where(LearnPrompt.status == PennyConstants.LearnPromptStatus.ACTIVE)
-                .order_by(LearnPrompt.created_at.asc())  # type: ignore[union-attr]
+                .order_by(LearnPrompt.updated_at.asc())  # type: ignore[union-attr]
                 .limit(1)
             ).first()
 
