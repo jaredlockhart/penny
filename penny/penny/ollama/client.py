@@ -245,6 +245,12 @@ class OllamaClient:
                 if not embeddings:
                     raise ValueError("Ollama returned an empty embeddings list")
 
+                input_count = 1 if isinstance(text, str) else len(text)
+                if len(embeddings) != input_count:
+                    raise ValueError(
+                        f"Ollama returned {len(embeddings)} embedding(s) for {input_count} input(s)"
+                    )
+
                 logger.debug(
                     "Generated %d embedding(s), dim=%d", len(embeddings), len(embeddings[0])
                 )

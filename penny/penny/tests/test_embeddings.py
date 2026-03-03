@@ -327,6 +327,65 @@ class TestOllamaClientEmbed:
         # Must have called embed exactly once — empty embeddings won't change on retry
         assert call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_embed_count_mismatch_raises_value_error(self, mock_ollama):
+        """Fewer embeddings than inputs raises ValueError with a descriptive message."""
+        from penny.ollama.client import OllamaClient
+
+        # Return only 1 embedding for a 3-input batch
+        mock_ollama.set_embed_handler(lambda model, input: [[0.1, 0.2]])
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError, match="3 input"):
+            await client.embed(["a", "b", "c"])
+
+    @pytest.mark.asyncio
+    async def test_embed_count_mismatch_does_not_retry(self, mock_ollama):
+        """Count mismatch is a non-transient error — should not be retried."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def short_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return [[0.1, 0.2]]  # Only 1 embedding for however many inputs
+
+        mock_ollama.set_embed_handler(short_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError):
+            await client.embed(["x", "y", "z"])
+
+        # Must have called embed exactly once — mismatched count won't change on retry
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_embed_single_input_correct_count_succeeds(self, mock_ollama):
+        """Single string input with exactly one returned embedding succeeds."""
+        from penny.ollama.client import OllamaClient
+
+        mock_ollama.set_embed_handler(lambda model, input: [[0.1, 0.2, 0.3]])
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=1,
+            retry_delay=0.0,
+        )
+        result = await client.embed("hello")
+        assert result == [[0.1, 0.2, 0.3]]
+
 
 class TestBuildEntityEmbedText:
     """Tests for build_entity_embed_text utility."""
