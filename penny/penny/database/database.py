@@ -9,6 +9,7 @@ from penny.database.entity_store import EntityStore
 from penny.database.event_store import EventStore
 from penny.database.fact_store import FactStore
 from penny.database.follow_prompt_store import FollowPromptStore
+from penny.database.history_store import HistoryStore
 from penny.database.learn_prompt_store import LearnPromptStore
 from penny.database.message_store import MessageStore
 from penny.database.search_store import SearchStore
@@ -26,6 +27,7 @@ class Database:
         events: Event CRUD, entity linking, dedup, notification tracking
         facts: Fact CRUD, embeddings, notification tracking
         follow_prompts: FollowPrompt lifecycle for event monitoring
+        history: Conversation topic summaries for long-term context
         messages: Message/prompt/command logging, threading, queries
         learn_prompts: LearnPrompt lifecycle and cascading deletion
         searches: SearchLog creation and extraction tracking
@@ -42,6 +44,7 @@ class Database:
         self.events = EventStore(self.engine)
         self.facts = FactStore(self.engine)
         self.follow_prompts = FollowPromptStore(self.engine)
+        self.history = HistoryStore(self.engine)
         self.messages = MessageStore(self.engine)
         self.learn_prompts = LearnPromptStore(self.engine)
         self.searches = SearchStore(self.engine)

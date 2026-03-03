@@ -39,13 +39,28 @@ class Tool(ABC):
         )
 
     def to_ollama_tool(self) -> dict[str, Any]:
-        """Convert to Ollama tool calling format."""
+        """Convert to Ollama tool calling format.
+
+        Injects a ``reasoning`` property so the model can explain why
+        it is making this tool call.  The field is stripped before the
+        tool is actually executed (see ``Agent._execute_single_tool``).
+        """
+        params = dict(self.parameters)
+        props = dict(params.get("properties", {}))
+        props["reasoning"] = {
+            "type": "string",
+            "description": (
+                "Explain what you're looking for and what you'll do with the result. "
+                "This is your inner monologue — think out loud."
+            ),
+        }
+        params["properties"] = props
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.parameters,
+                "parameters": params,
             },
         }
 

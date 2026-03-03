@@ -30,6 +30,7 @@ class ToolCallRecord(BaseModel):
 
     tool: str = Field(description="Tool name")
     arguments: dict = Field(description="Arguments passed to the tool")
+    reasoning: str | None = Field(default=None, description="Model's reasoning for this tool call")
 
 
 class GeneratedQuery(BaseModel):

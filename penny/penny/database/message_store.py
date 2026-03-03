@@ -321,6 +321,79 @@ class MessageStore:
             ).all()
         )
 
+    def get_messages_in_range(
+        self, sender: str, start: datetime, end: datetime
+    ) -> list[MessageLog]:
+        """Get conversation messages within a date range, oldest first.
+
+        Includes both incoming (from sender) and outgoing (to sender) messages.
+        """
+        with self._session() as session:
+            incoming = list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                        MessageLog.is_reaction == False,  # noqa: E712
+                        MessageLog.timestamp >= start,
+                        MessageLog.timestamp < end,
+                    )
+                    .order_by(MessageLog.timestamp)  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+            outgoing = list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                        MessageLog.recipient == sender,
+                        MessageLog.timestamp >= start,
+                        MessageLog.timestamp < end,
+                    )
+                    .order_by(MessageLog.timestamp)  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+            all_messages = incoming + outgoing
+            all_messages.sort(key=lambda m: m.timestamp)
+            return all_messages
+
+    def get_messages_since(
+        self, sender: str, since: datetime, limit: int = 100
+    ) -> list[MessageLog]:
+        """Get conversation messages since a timestamp, oldest first, capped at limit."""
+        with self._session() as session:
+            incoming = list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                        MessageLog.is_reaction == False,  # noqa: E712
+                        MessageLog.timestamp >= since,
+                    )
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+            threaded = self._get_threaded_replies(session, incoming)
+            autonomous = list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                        MessageLog.parent_id == None,  # noqa: E711
+                        MessageLog.recipient == sender,
+                        MessageLog.timestamp >= since,
+                    )
+                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+            all_messages = incoming + threaded + autonomous
+            all_messages.sort(key=lambda m: m.timestamp)
+            return all_messages[-limit:]
+
     def get_unprocessed(self, sender: str, limit: int) -> list[MessageLog]:
         """Get recent unprocessed non-reaction messages from a specific user."""
         with self._session() as session:
@@ -415,5 +488,19 @@ class MessageStore:
                     MessageLog.is_reaction == False,  # noqa: E712
                 )
                 .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+
+    def get_first_message_time(self, sender: str) -> datetime | None:
+        """Get timestamp of the earliest incoming message from a user."""
+        with self._session() as session:
+            return session.exec(
+                select(MessageLog.timestamp)
+                .where(
+                    MessageLog.sender == sender,
+                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                    MessageLog.is_reaction == False,  # noqa: E712
+                )
+                .order_by(MessageLog.timestamp)  # type: ignore[unresolved-attribute]
                 .limit(1)
             ).first()

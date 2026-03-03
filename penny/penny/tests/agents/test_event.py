@@ -405,60 +405,6 @@ async def test_event_agent_dedup_by_tcr(
 
 
 @pytest.mark.asyncio
-async def test_event_agent_skips_prompt_with_unannounced_events(
-    signal_server,
-    mock_ollama,
-    _mock_search,
-    make_config,
-    test_user_info,
-    running_penny,
-):
-    """Follow prompt with unannounced events is skipped; announced prompt is polled."""
-    config = make_config()
-    articles = [_make_article(url="https://example.com/new-article")]
-    news_tool = _make_mock_news_tool(articles)
-
-    async with running_penny(config) as penny:
-        # First prompt: has an unannounced event — should be skipped
-        blocked = penny.db.follow_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="blocked topic",
-            query_terms='["blocked"]',
-        )
-        assert blocked is not None and blocked.id is not None
-        penny.db.events.add(
-            user=TEST_SENDER,
-            headline="Unannounced article",
-            summary="Waiting for notification",
-            occurred_at=datetime.now(UTC),
-            source_type=PennyConstants.EventSourceType.NEWS_API,
-            source_url="https://example.com/unannounced",
-            external_id="https://example.com/unannounced",
-            follow_prompt_id=blocked.id,
-        )
-
-        # Second prompt: no unannounced events — should be polled
-        ready = penny.db.follow_prompts.create(
-            user=TEST_SENDER,
-            prompt_text="ready topic",
-            query_terms='["ready"]',
-        )
-        assert ready is not None and ready.id is not None
-
-        penny.event_agent._news_tool = news_tool
-        result = await penny.event_agent.execute()
-
-        assert result is True
-
-        # Only the ready prompt was polled
-        updated_ready = penny.db.follow_prompts.get(ready.id)
-        updated_blocked = penny.db.follow_prompts.get(blocked.id)
-        assert updated_ready is not None and updated_blocked is not None
-        assert updated_ready.last_polled_at is not None
-        assert updated_blocked.last_polled_at is None  # never polled
-
-
-@pytest.mark.asyncio
 async def test_event_agent_caps_by_relevance(
     signal_server,
     mock_ollama,

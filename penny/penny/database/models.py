@@ -206,6 +206,20 @@ class Thought(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
 
 
+class ConversationHistory(SQLModel, table=True):
+    """A topic summary for a conversation period (daily, weekly, monthly)."""
+
+    __tablename__ = "conversationhistory"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)
+    period_start: datetime = Field(index=True)
+    period_end: datetime
+    duration: str  # PennyConstants.HistoryDuration enum value
+    topics: str  # Bullet-point list of topics discussed
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class FollowPrompt(SQLModel, table=True):
     """An ongoing monitoring subscription for event tracking."""
 

@@ -64,16 +64,13 @@ async def embed_text(
 def check_relevance(
     candidate_vec: list[float],
     reference_vec: list[float],
-    threshold: float,
-) -> float | None:
-    """Compare two pre-computed vectors and return score if relevant.
+) -> float:
+    """Compute cosine similarity between two pre-computed vectors.
 
-    Returns the cosine similarity score if >= threshold, else None.
+    Returns the raw cosine similarity score. Callers decide whether
+    the score meets their threshold.
     """
-    score = cosine_similarity(candidate_vec, reference_vec)
-    if score >= threshold:
-        return score
-    return None
+    return cosine_similarity(candidate_vec, reference_vec)
 
 
 # ── Embedding dedup ───────────────────────────────────────────────────────────

@@ -70,5 +70,12 @@ class PennyConstants:
         FollowCadence.WEEKLY: 604800,
     }
 
+    class HistoryDuration(StrEnum):
+        """Duration granularity for conversation history summaries."""
+
+        DAILY = "daily"
+        WEEKLY = "weekly"
+        MONTHLY = "monthly"
+
     # Vision constants
     VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")

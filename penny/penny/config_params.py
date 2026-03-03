@@ -20,6 +20,7 @@ GROUP_EXTRACTION = "Extraction"
 GROUP_LEARN = "Learn"
 GROUP_EVENTS = "Events"
 GROUP_INNER_MONOLOGUE = "Inner Monologue"
+GROUP_HISTORY = "History"
 
 # Ordered list for display
 CONFIG_GROUPS: list[str] = [
@@ -30,6 +31,7 @@ CONFIG_GROUPS: list[str] = [
     GROUP_LEARN,
     GROUP_EVENTS,
     GROUP_INNER_MONOLOGUE,
+    GROUP_HISTORY,
 ]
 
 
@@ -326,6 +328,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="EXTRACTION_MAX_NEW_ENTITIES",
+    description="Max new entity candidates per extraction (ranked by relevance)",
+    type=int,
+    default=10,
+    validator=_validate_positive_int,
+    group=GROUP_EXTRACTION,
+)
+
+ConfigParam(
     key="EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD",
     description="Embedding similarity threshold for fact deduplication",
     type=float,
@@ -429,6 +440,36 @@ ConfigParam(
     default=600.0,
     validator=_validate_positive_float,
     group=GROUP_EVENTS,
+)
+
+
+# ── History ──────────────────────────────────────────────────────────────────
+
+ConfigParam(
+    key="HISTORY_INTERVAL",
+    description="Interval in seconds between history summarization runs",
+    type=float,
+    default=3600.0,
+    validator=_validate_positive_float,
+    group=GROUP_HISTORY,
+)
+
+ConfigParam(
+    key="HISTORY_MAX_DAYS_PER_RUN",
+    description="Max days to summarize per history agent execution",
+    type=int,
+    default=3,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
+)
+
+ConfigParam(
+    key="HISTORY_CONTEXT_LIMIT",
+    description="Max daily history entries to show in context",
+    type=int,
+    default=14,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
 )
 
 

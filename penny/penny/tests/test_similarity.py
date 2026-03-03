@@ -65,24 +65,20 @@ class TestEmbedText:
 
 
 class TestCheckRelevance:
-    def test_above_threshold_returns_score(self) -> None:
+    def test_identical_vectors(self) -> None:
         vec = [1.0, 0.0, 0.0]
-        score = check_relevance(vec, vec, threshold=0.5)
-        assert score is not None
-        assert score == pytest.approx(1.0)
+        assert check_relevance(vec, vec) == pytest.approx(1.0)
 
-    def test_below_threshold_returns_none(self) -> None:
+    def test_orthogonal_vectors(self) -> None:
         a = [1.0, 0.0, 0.0]
         b = [0.0, 1.0, 0.0]
-        assert check_relevance(a, b, threshold=0.5) is None
+        assert check_relevance(a, b) == pytest.approx(0.0)
 
-    def test_at_threshold_returns_score(self) -> None:
+    def test_angled_vectors(self) -> None:
         # cos(45°) ≈ 0.707
         a = [1.0, 1.0, 0.0]
         b = [1.0, 0.0, 0.0]
-        score = check_relevance(a, b, threshold=0.7)
-        assert score is not None
-        assert score == pytest.approx(1.0 / math.sqrt(2), abs=0.01)
+        assert check_relevance(a, b) == pytest.approx(1.0 / math.sqrt(2), abs=0.01)
 
 
 # ── is_embedding_duplicate ────────────────────────────────────────────────────

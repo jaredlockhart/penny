@@ -425,6 +425,12 @@ class ExtractionPipeline(Agent):
             return _ExtractionResult()
         entities_to_process, candidates = result
 
+        # Rank and cap new candidates before expensive fact extraction
+        if allow_new_entities and candidates:
+            candidates = await self._rank_and_cap_candidates(
+                candidates, relevance_reference or context_value
+            )
+
         # Pass 2a: extract facts for existing entities (already in DB)
         entities_with_new_facts = await self._extract_facts_for_existing(
             entities_to_process,
@@ -834,6 +840,51 @@ class ExtractionPipeline(Agent):
             logger.warning("Entity pre-filter failed, using full list: %s", e)
             return entities
 
+    async def _rank_and_cap_candidates(
+        self,
+        candidates: list[_EntityCandidate],
+        trigger_text: str,
+    ) -> list[_EntityCandidate]:
+        """Rank new candidates by embedding similarity to trigger text and cap at max.
+
+        Cheap pre-filter (name + tagline only, 1 embedding call) that runs before
+        the expensive per-entity fact extraction LLM calls. Candidates below the
+        semantic threshold are dropped; survivors are sorted by score and capped.
+        """
+        max_new = int(self.config.runtime.EXTRACTION_MAX_NEW_ENTITIES)
+        if not self._embedding_model_client or len(candidates) <= max_new:
+            return candidates
+
+        texts = [f"{c.name} {c.tagline}" if c.tagline else c.name for c in candidates]
+        try:
+            vecs = await self._embedding_model_client.embed(texts + [trigger_text])
+        except Exception:
+            logger.warning("Pre-fact candidate ranking failed, keeping all", exc_info=True)
+            return candidates
+
+        trigger_vec = vecs[-1]
+        candidate_vecs = vecs[:-1]
+
+        scored: list[tuple[_EntityCandidate, float]] = []
+        for candidate, vec in zip(candidates, candidate_vecs, strict=True):
+            score = check_relevance(vec, trigger_vec)
+            scored.append((candidate, score))
+
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        survivors = scored[:max_new]
+        dropped = scored[max_new:]
+
+        for candidate, score in dropped:
+            logger.info("Pre-fact filter dropped '%s' (similarity %.2f)", candidate.name, score)
+
+        logger.info(
+            "Pre-fact filter: %d -> %d candidates (top %d)",
+            len(candidates),
+            len(survivors),
+            max_new,
+        )
+        return [c for c, _score in survivors]
+
     async def _prune_and_commit_candidates(
         self,
         candidates: list[_EntityCandidate],
@@ -909,10 +960,8 @@ class ExtractionPipeline(Agent):
         survivors: list[tuple[_EntityCandidate, float]] = []
 
         for i, candidate in enumerate(candidates):
-            s_result = check_relevance(stripped_vecs[i], trigger_vec, threshold)
-            i_result = check_relevance(included_vecs[i], trigger_vec, threshold)
-            s_score = s_result if s_result is not None else 0.0
-            i_score = i_result if i_result is not None else 0.0
+            s_score = check_relevance(stripped_vecs[i], trigger_vec)
+            i_score = check_relevance(included_vecs[i], trigger_vec)
             best = "included" if i_score > s_score else "stripped"
             score = round(max(s_score, i_score), 2)
             if score >= threshold:

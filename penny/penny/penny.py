@@ -12,6 +12,7 @@ from penny.agents import (
     ChatAgent,
     EventAgent,
     ExtractionPipeline,
+    HistoryAgent,
     LearnAgent,
     ThinkingAgent,
 )
@@ -167,7 +168,7 @@ class Penny:
         }
 
     def _init_background_agents(self, config: Config) -> None:
-        """Create learn, extraction, event, monologue, and schedule agents."""
+        """Create learn, extraction, event, monologue, history, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
         search_tool = self._shared_search_tool
         self.learn_agent = LearnAgent(search_tool=search_tool, **kwargs)
@@ -182,8 +183,10 @@ class Penny:
         self.thinking_agent = ThinkingAgent(
             search_tool=search_tool,
             news_tool=self._news_tool,
+            embedding_model_client=self.embedding_model_client,
             **kwargs,
         )
+        self.history_agent = HistoryAgent(**kwargs)
         self.schedule_executor = ScheduleExecutor(**kwargs)
 
     def _create_news_tool(self, config: Config) -> NewsTool | None:
@@ -253,12 +256,12 @@ class Penny:
         schedules = [
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
-                agent=self.thinking_agent,
-                interval=config.runtime.INNER_MONOLOGUE_INTERVAL,
-            ),
-            PeriodicSchedule(
                 agent=self.extraction_pipeline,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
+            ),
+            PeriodicSchedule(
+                agent=self.thinking_agent,
+                interval=config.runtime.INNER_MONOLOGUE_INTERVAL,
             ),
             PeriodicSchedule(
                 agent=self.event_agent,
@@ -267,6 +270,10 @@ class Penny:
             PeriodicSchedule(
                 agent=self.learn_agent,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
+            ),
+            PeriodicSchedule(
+                agent=self.history_agent,
+                interval=config.runtime.HISTORY_INTERVAL,
             ),
         ]
         self.scheduler = BackgroundScheduler(

@@ -81,22 +81,8 @@ class EventAgent(Agent):
         for prompt in self.db.follow_prompts.get_active_by_poll_priority():
             if not self._poll_interval_elapsed(prompt):
                 continue
-            if self._has_unannounced_events(prompt):
-                continue
             return prompt
         return None
-
-    def _has_unannounced_events(self, prompt: FollowPrompt) -> bool:
-        """Check if this follow prompt has events waiting to be announced."""
-        assert prompt.id is not None
-        unnotified = self.db.events.get_unnotified_for_follow_prompt(prompt.id)
-        if unnotified:
-            logger.debug(
-                "EventAgent: skipping '%s' — %d unannounced events",
-                prompt.prompt_text[:50],
-                len(unnotified),
-            )
-        return len(unnotified) > 0
 
     def _poll_interval_elapsed(self, prompt: FollowPrompt) -> bool:
         """Check if the fixed poll interval has elapsed since last poll."""
@@ -169,14 +155,15 @@ class EventAgent(Agent):
         article_vec = await embed_text(self._embedding_model_client, article.title)
         if article_vec is None:
             return 1.0  # Can't embed — let it through with default score
-        score = check_relevance(article_vec, topic_vec, threshold)
-        if score is not None:
+        score = check_relevance(article_vec, topic_vec)
+        if score >= threshold:
             return score
         # Title didn't match — try extracting topic tags from the headline
         tags_vec = await self._extract_tag_embedding(article.title)
         if tags_vec is None:
             return None
-        return check_relevance(tags_vec, topic_vec, threshold)
+        tag_score = check_relevance(tags_vec, topic_vec)
+        return tag_score if tag_score >= threshold else None
 
     async def _extract_tag_embedding(self, headline: str) -> list[float] | None:
         """Extract topic tags from a headline and return their embedding."""

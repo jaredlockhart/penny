@@ -8,23 +8,23 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from penny.agents.base import Agent
-from penny.agents.models import MessageRole
+from penny.agents.models import MessageRole, ToolCallRecord
 from penny.commands.models import CommandContext
 from penny.constants import PennyConstants
-from penny.database.models import Entity, Event
+from penny.database.models import Entity
 from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.ollama.similarity import embed_text
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
 from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.follow import FollowTool
 from penny.tools.learn import LearnTool
+from penny.tools.message_user import MessageUserTool
 from penny.tools.recall import RecallTool
 from penny.tools.search import SearchTool
-from penny.tools.think import ThinkTool
 
 if TYPE_CHECKING:
     from penny.tools.news import NewsTool
@@ -46,6 +46,7 @@ class PennyAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._search_tool = search_tool
         self._news_tool = news_tool
+        self._current_user: str | None = None
 
     # ── Tool building ──────────────────────────────────────────────────────
 
@@ -53,7 +54,6 @@ class PennyAgent(Agent):
         """Build the shared tool list. Subclasses can extend via override."""
         searches = int(self.config.runtime.LEARN_PROMPT_DEFAULT_SEARCHES)
         tools: list[Tool] = [
-            ThinkTool(db=self.db, user=user),
             RecallTool(db=self.db, user=user),
             LearnTool(db=self.db, user=user, searches_remaining=searches),
         ]
@@ -89,20 +89,19 @@ class PennyAgent(Agent):
         user: str,
         content: str | None = None,
     ) -> list[tuple[str, str]] | None:
-        """Build shared context for both conversation and thinking modes.
+        """Build shared context: timeless → historical → recent.
 
-        When content is provided (conversation mode), also injects
-        embedding-similar entity and event context using recent
-        conversation as the embedding anchor.
+        Order: profile, interests, events, history summaries, timeline,
+        then entity context (async, query-dependent) when content is provided.
         """
         history = self._inject_profile_context(user, None, content)
-        history = self._inject_message_context(user, history)
         history = self._inject_interest_context(user, history)
+        history = self._inject_recent_events(user, history)
+        history = self._inject_history_context(user, history)
+        history = self._inject_timeline_context(user, history)
         if content:
             query = self._build_embedding_query(content, user)
             history = await self._inject_entity_context(query, user, history)
-            history = await self._inject_event_context(query, user, history)
-        history = self._inject_thought_context(user, history)
         return history
 
     def _build_embedding_query(self, content: str, user: str) -> str:
@@ -144,33 +143,78 @@ class PennyAgent(Agent):
 
         return history
 
-    def _inject_message_context(
+    def _inject_timeline_context(
         self,
         sender: str,
         history: list[tuple[str, str]] | None,
     ) -> list[tuple[str, str]] | None:
-        """Inject recent conversation messages as context."""
+        """Inject today's messages and thoughts as individual entries, interleaved by time."""
         try:
             limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
-            messages = self.db.messages.get_conversation(sender, limit=limit)
-            if not messages:
+            midnight = self._midnight_today()
+            messages = self.db.messages.get_messages_since(sender, since=midnight, limit=limit)
+            all_thoughts = self.db.thoughts.get_recent(sender, limit=self.THOUGHT_CONTEXT_LIMIT)
+            thoughts = [t for t in all_thoughts if t.created_at >= midnight]
+            if not messages and not thoughts:
                 return history
 
-            lines = []
+            entries: list[tuple[datetime, str, str]] = []
             for msg in messages:
                 ts = msg.timestamp.strftime("%H:%M")
-                direction = (
-                    "User" if msg.direction == PennyConstants.MessageDirection.INCOMING else "Penny"
+                if msg.direction == PennyConstants.MessageDirection.INCOMING:
+                    entries.append((msg.timestamp, MessageRole.USER.value, f"[{ts}] {msg.content}"))
+                else:
+                    entries.append(
+                        (msg.timestamp, MessageRole.SYSTEM.value, f"[{ts}] Penny: {msg.content}")
+                    )
+            for t in thoughts:
+                ts = t.created_at.strftime("%H:%M")
+                entries.append(
+                    (t.created_at, MessageRole.SYSTEM.value, f"[{ts}] You thought: {t.content}")
                 )
-                lines.append(f"[{ts}] {direction}: {msg.content}")
+            entries.sort(key=lambda e: e[0])
 
-            context = "Recent conversation:\n" + "\n".join(lines)
             history = history or []
-            history = [*history, (MessageRole.SYSTEM.value, context)]
-            logger.debug("Injected message context (%d messages)", len(messages))
+            for _, role, content in entries:
+                history.append((role, content))
+            logger.debug(
+                "Injected timeline context (%d messages, %d thoughts)", len(messages), len(thoughts)
+            )
         except Exception:
-            logger.warning("Message context retrieval failed, proceeding without")
+            logger.warning("Timeline context retrieval failed, proceeding without")
         return history
+
+    def _inject_history_context(
+        self,
+        sender: str,
+        history: list[tuple[str, str]] | None,
+    ) -> list[tuple[str, str]] | None:
+        """Inject daily conversation history summaries as individual entries."""
+        try:
+            limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
+            entries = self.db.history.get_recent(
+                sender, PennyConstants.HistoryDuration.DAILY, limit=limit
+            )
+            if not entries:
+                return history
+
+            history = history or []
+            for entry in entries:
+                date_label = entry.period_start.strftime("%b %-d")
+                content = f"{date_label}:\n{entry.topics}"
+                history.append((MessageRole.SYSTEM.value, content))
+            logger.debug("Injected history context (%d entries)", len(entries))
+        except Exception:
+            logger.warning("History context retrieval failed, proceeding without")
+        return history
+
+    @staticmethod
+    def _midnight_today() -> datetime:
+        """Return midnight UTC for today as a naive datetime.
+
+        Naive because SQLite strips timezone info — all stored datetimes are naive UTC.
+        """
+        return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
     def _inject_interest_context(
         self,
@@ -206,41 +250,33 @@ class PennyAgent(Agent):
             logger.warning("Entity context retrieval failed, proceeding without")
         return history
 
-    async def _inject_event_context(
+    def _inject_recent_events(
         self,
-        content: str,
         sender: str,
         history: list[tuple[str, str]] | None,
     ) -> list[tuple[str, str]] | None:
-        """Embed message and find similar events to inject as context."""
+        """Inject recent events directly (no embedding needed)."""
         try:
-            event_context = await self._retrieve_event_context(content, sender)
-            if event_context:
-                history = history or []
-                history = [*history, (MessageRole.SYSTEM.value, event_context)]
-                logger.debug("Injected event context (%d chars)", len(event_context))
+            events = self.db.events.get_for_user(sender)
+            if not events:
+                return history
+            top_k = int(self.config.runtime.EVENT_CONTEXT_TOP_K)
+            recent = sorted(events, key=lambda e: e.occurred_at, reverse=True)[:top_k]
+            lines = []
+            for event in recent:
+                date = event.occurred_at.strftime("%Y-%m-%d")
+                line = f"- [{date}] **{event.headline}**"
+                if event.summary:
+                    line += f": {event.summary[:200]}"
+                if event.source_url:
+                    line += f" ({event.source_url})"
+                lines.append(line)
+            context = "## Recent Events\n" + "\n".join(lines)
+            history = history or []
+            history = [*history, (MessageRole.SYSTEM.value, context)]
+            logger.debug("Injected event context (%d events)", len(recent))
         except Exception:
             logger.warning("Event context retrieval failed, proceeding without")
-        return history
-
-    def _inject_thought_context(
-        self,
-        sender: str,
-        history: list[tuple[str, str]] | None,
-    ) -> list[tuple[str, str]] | None:
-        """Inject recent inner monologue thoughts as context."""
-        try:
-            thoughts = self.db.thoughts.get_recent(sender, limit=self.THOUGHT_CONTEXT_LIMIT)
-            if not thoughts:
-                return history
-            thought_text = "Your recent thoughts:\n" + "\n".join(
-                f"- [{t.created_at.strftime('%Y-%m-%d %H:%M')}] {t.content}" for t in thoughts
-            )
-            history = history or []
-            history = [*history, (MessageRole.SYSTEM.value, thought_text)]
-            logger.debug("Injected thought context (%d thoughts)", len(thoughts))
-        except Exception:
-            logger.warning("Thought context retrieval failed, proceeding without")
         return history
 
     # ── Interest profile ───────────────────────────────────────────────────
@@ -248,21 +284,11 @@ class PennyAgent(Agent):
     def _build_interest_profile(self, user: str) -> str | None:
         """Build a compact summary of the user's known interests."""
         sections: list[str] = []
-        self._add_entity_interests(user, sections)
         self._add_learn_interests(user, sections)
         self._add_follow_interests(user, sections)
         if not sections:
             return None
-        return "User's known interests:\n" + "\n".join(sections)
-
-    def _add_entity_interests(self, user: str, sections: list[str]) -> None:
-        """Add top entities by recency to interest sections."""
-        entities = self.db.entities.get_for_user(user)
-        if not entities:
-            return
-        sorted_ents = sorted(entities, key=lambda e: e.created_at, reverse=True)[:30]
-        names = [f"{e.name} ({e.tagline})" if e.tagline else e.name for e in sorted_ents]
-        sections.append("Topics: " + ", ".join(names))
+        return "## Your Interests\n" + "\n".join(sections)
 
     def _add_learn_interests(self, user: str, sections: list[str]) -> None:
         """Add past learn topics to interest sections."""
@@ -355,75 +381,55 @@ class PennyAgent(Agent):
         if not context_lines:
             return None, 0
 
-        context_text = "Relevant knowledge:\n" + "\n".join(context_lines)
+        context_text = "## Relevant Knowledge\n" + "\n".join(context_lines)
         return context_text, total_facts
 
-    # ── Event context retrieval ───────────────────────────────────────────
+    # ── Per-step hooks ─────────────────────────────────────────────────────
 
-    async def _retrieve_event_context(self, content: str, sender: str) -> str | None:
-        """Embed message, find similar events, format as context."""
-        if not self._embedding_model_client:
-            return None
+    async def _after_step(self, step_records: list[ToolCallRecord], messages: list[dict]) -> None:
+        """Persist reasoning as thoughts and inject entity context for next step."""
+        self._persist_step_reasoning(step_records)
+        await self._inject_reasoning_entity_context(step_records, messages)
 
-        candidates = self._load_event_candidates(sender)
-        if not candidates:
-            return None
+    def _should_stop_loop(self, step_records: list[ToolCallRecord]) -> bool:
+        """Stop the agentic loop after message_user is called."""
+        return any(r.tool == MessageUserTool.name for r in step_records)
 
-        query_vec = await embed_text(self._embedding_model_client, content)
-        if query_vec is None:
-            return None
+    def _persist_step_reasoning(self, step_records: list[ToolCallRecord]) -> None:
+        """Write reasoning from this step's tool calls to the thought log."""
+        if not self._current_user:
+            return
+        for record in step_records:
+            if not record.reasoning:
+                continue
+            args_summary = self._summarize_args(record)
+            thought = f"[{record.tool}({args_summary})] {record.reasoning}"
+            self.db.thoughts.add(self._current_user, thought)
+            logger.info("[thought] %s", thought[:200])
 
-        matches = find_similar(
-            query_vec,
-            candidates,
-            top_k=int(self.config.runtime.EVENT_CONTEXT_TOP_K),
-            threshold=self.config.runtime.EVENT_CONTEXT_THRESHOLD,
-        )
-        if not matches:
-            return None
+    @staticmethod
+    def _summarize_args(record: ToolCallRecord) -> str:
+        """One-line summary of tool arguments for thought log."""
+        if not record.arguments:
+            return ""
+        for v in record.arguments.values():
+            if isinstance(v, str):
+                return v[:60]
+        return str(next(iter(record.arguments.values())))[:60]
 
-        events = self.db.events.get_for_user(sender)
-        context_text = self._build_event_context_text(matches, events)
-        if context_text:
-            logger.info(
-                "Event context: %d matches, top_score=%.2f",
-                len(matches),
-                matches[0][1],
+    async def _inject_reasoning_entity_context(
+        self, step_records: list[ToolCallRecord], messages: list[dict]
+    ) -> None:
+        """Embed reasoning from this step, find similar entities, inject as context."""
+        if not self._current_user or not self._embedding_model_client:
+            return
+        reasoning_texts = [r.reasoning for r in step_records if r.reasoning]
+        if not reasoning_texts:
+            return
+        anchor = " ".join(reasoning_texts)
+        entity_context = await self._retrieve_entity_context(anchor, self._current_user)
+        if entity_context:
+            messages.append({"role": "system", "content": entity_context})
+            logger.debug(
+                "Injected mid-step entity context from reasoning (%d chars)", len(entity_context)
             )
-        return context_text
-
-    def _load_event_candidates(self, sender: str) -> list[tuple[int, list[float]]]:
-        """Load user events with embeddings as (id, vector) pairs."""
-        events = self.db.events.get_for_user(sender)
-        candidates: list[tuple[int, list[float]]] = []
-        for event in events:
-            if event.embedding is None or event.id is None:
-                continue
-            candidates.append((event.id, deserialize_embedding(event.embedding)))
-        return candidates
-
-    def _build_event_context_text(
-        self,
-        matches: list[tuple[int, float]],
-        events: list[Event],
-    ) -> str | None:
-        """Build formatted context text from matched events."""
-        event_map = {e.id: e for e in events if e.id is not None}
-        context_lines: list[str] = []
-
-        for event_id, _score in matches:
-            event = event_map.get(event_id)
-            if not event:
-                continue
-            date = event.occurred_at.strftime("%Y-%m-%d")
-            line = f"- [{date}] {event.headline}"
-            if event.summary:
-                line += f": {event.summary[:200]}"
-            if event.source_url:
-                line += f" ({event.source_url})"
-            context_lines.append(line)
-
-        if not context_lines:
-            return None
-
-        return "Recent relevant events:\n" + "\n".join(context_lines)
