@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from penny.agents.event import _normalize_headline
 from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
-from penny.tools.news import NewsArticle
+from penny.tools.news import NewsArticle, NewsTool
 
 
 def _make_article(
@@ -468,3 +469,35 @@ def test_normalize_headline():
     assert _normalize_headline("  Hello, World!  ") == "hello world"
     assert _normalize_headline("AI: The Future?") == "ai the future"
     assert _normalize_headline("café résumé") == "cafe resume"
+
+
+@pytest.mark.asyncio
+async def test_news_tool_logs_exception_with_traceback_on_unexpected_error(caplog):
+    """NewsTool logs full traceback (not just str(e)) when an unexpected error occurs.
+
+    Regression test for #618: bare 'Unexpected error fetching news:' log with no message
+    when the exception's str() representation is empty.
+    """
+    tool = NewsTool(api_key="test-key")
+
+    class _NoMessageError(Exception):
+        """Exception whose str() returns an empty string."""
+
+        def __str__(self) -> str:
+            return ""
+
+    with (
+        patch.object(tool, "_call_api", side_effect=_NoMessageError()),
+        caplog.at_level(logging.ERROR, logger="penny.tools.news"),
+    ):
+        result = await tool.search(["test query"])
+
+    assert result == []
+    # The log record must exist and include exc_info (full traceback)
+    records = [r for r in caplog.records if "Unexpected error fetching news" in r.message]
+    assert records, "Expected at least one log record for unexpected news error"
+    assert records[0].exc_info is not None, "logger.exception() must capture exc_info"
+    # repr(e) includes the exception class name even when str(e) is empty
+    assert "_NoMessageError" in records[0].getMessage() or "_NoMessageError" in str(
+        records[0].exc_info
+    )
