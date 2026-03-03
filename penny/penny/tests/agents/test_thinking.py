@@ -153,7 +153,7 @@ async def test_thinking_receives_event_context(
         system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
         all_system_text = " ".join(m.get("content", "") for m in system_msgs)
         assert "SpaceX launches Starship" in all_system_text
-        assert "## Recent Events" in all_system_text
+        assert "I saw in the news" in all_system_text
 
 
 @pytest.mark.asyncio
@@ -188,20 +188,14 @@ async def test_thinking_receives_interest_profile_without_entities(
         await penny.thinking_agent.execute()
 
         assert len(requests_seen) >= 1
-        system_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "system"]
-        all_system_text = " ".join(m.get("content", "") for m in system_msgs)
 
-        # Learn topic should appear in interests
-        assert "quantum computing" in all_system_text
-        # Entity name should NOT appear in interests section
+        # Learn topic should appear as user-voice interest message
+        user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
+        all_user_text = " ".join(m.get("content", "") for m in user_msgs)
+        assert "quantum computing" in all_user_text
+        # Entity name should NOT appear in interest messages
         # (entities are injected via embedding similarity, not the interest profile)
-        interest_section = ""
-        for msg in system_msgs:
-            content = msg.get("content", "")
-            if "## Your Interests" in content:
-                interest_section = content
-        if interest_section:
-            assert "kef ls50 meta" not in interest_section.lower()
+        assert "kef ls50 meta" not in all_user_text.lower()
 
 
 @pytest.mark.asyncio
@@ -320,14 +314,16 @@ async def test_thinking_context_has_timeline_and_interests(
 
         # Penny message appears with system role
         system_msgs = [m for m in first_msgs if m.get("role") == "system"]
-        assert any("Penny: hey there!" in m.get("content", "") for m in system_msgs)
+        assert any("hey there!" in m.get("content", "") for m in system_msgs)
 
         # Thought appears with system role
-        assert any("You thought: test thought" in m.get("content", "") for m in system_msgs)
+        assert any("I thought: test thought" in m.get("content", "") for m in system_msgs)
 
-        # Interest header still present
-        all_system_text = " ".join(m.get("content", "") for m in system_msgs)
-        assert "## Your Interests" in all_system_text
+        # Learn topic appears as user-voice interest message
+        all_user_text = " ".join(
+            m.get("content", "") for m in first_msgs if m.get("role") == "user"
+        )
+        assert "I'm interested in" in all_user_text
 
 
 @pytest.mark.asyncio
@@ -368,9 +364,8 @@ async def test_thinking_loop_uses_lean_context(
         orient_user_msgs = [m for m in orient_msgs if m.get("role") == "user"]
         orient_system_msgs = [m for m in orient_msgs if m.get("role") == "system"]
         assert any("hello penny" in m.get("content", "") for m in orient_user_msgs)
-        orient_system_text = " ".join(m.get("content", "") for m in orient_system_msgs)
-        assert "## Your Interests" in orient_system_text
-        assert any("You thought:" in m.get("content", "") for m in orient_system_msgs)
+        assert any("I'm interested in" in m.get("content", "") for m in orient_user_msgs)
+        assert any("I thought:" in m.get("content", "") for m in orient_system_msgs)
 
         # Agentic loop (request 1) should have lean context
         loop_msgs = requests_seen[1]["messages"]
@@ -379,9 +374,9 @@ async def test_thinking_loop_uses_lean_context(
         assert "## Your Plan" in loop_system_text
         assert "cyberpunk anime" in loop_system_text
         # Full context sections should NOT be in the loop
-        assert "## Your Interests" not in loop_system_text
-        assert not any("You thought:" in m.get("content", "") for m in loop_system_msgs)
         loop_user_msgs = [m for m in loop_msgs if m.get("role") == "user"]
+        assert not any("I'm interested in" in m.get("content", "") for m in loop_user_msgs)
+        assert not any("I thought:" in m.get("content", "") for m in loop_system_msgs)
         assert not any("hello penny" in m.get("content", "") for m in loop_user_msgs)
 
 

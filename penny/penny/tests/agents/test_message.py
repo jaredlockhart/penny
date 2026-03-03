@@ -195,14 +195,13 @@ async def test_profile_context_excludes_dob_and_redacts_name_from_search(
         # Verify DOB is NOT in the Ollama prompt messages
         first_request = mock_ollama.requests[0]
         messages = first_request.get("messages", [])
-        system_messages = [m for m in messages if m.get("role") == "system"]
-        all_system_text = " ".join(m.get("content", "") for m in system_messages)
-        assert "1990-01-01" not in all_system_text, "DOB should not be in profile context"
-        assert "born" not in all_system_text.lower(), "DOB field should not be in profile context"
+        all_text = " ".join(m.get("content", "") for m in messages)
+        assert "1990-01-01" not in all_text, "DOB should not be in profile context"
+        assert "born" not in all_text.lower(), "DOB field should not be in profile context"
 
         # Verify profile context IS present (name only, not location)
-        assert "Test User" in all_system_text, "Name should be in profile context"
-        assert "Seattle" not in all_system_text, "Location should not be in profile context"
+        assert "Test User" in all_text, "Name should be in profile context"
+        assert "Seattle" not in all_text, "Location should not be in profile context"
 
         # Verify user name was redacted from the search query logged to DB
         with penny.db.get_session() as session:
@@ -289,10 +288,10 @@ async def test_entity_context_responds_from_knowledge(
         first_request = mock_ollama.requests[0]
         system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
         all_system_text = " ".join(m.get("content", "") for m in system_msgs)
-        assert "## Relevant Knowledge" in all_system_text
         assert "Use your judgment" in all_system_text
 
-        # Entity context was injected
+        # Entity context was injected as individual messages
+        assert "I know about" in all_system_text
         assert "kef ls50 meta" in all_system_text.lower()
         assert "$1,599" in all_system_text
 
