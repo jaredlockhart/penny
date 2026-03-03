@@ -285,6 +285,75 @@ class TestOllamaClientEmbed:
         # Should have retried all 3 times
         assert call_count == 3
 
+    @pytest.mark.asyncio
+    async def test_embed_empty_response_raises_value_error(self, mock_ollama):
+        """Empty embeddings list from Ollama raises ValueError with a descriptive message."""
+        from penny.ollama.client import OllamaClient
+
+        mock_ollama.set_embed_handler(lambda model, input: [])
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError, match="empty embeddings"):
+            await client.embed("hello")
+
+    @pytest.mark.asyncio
+    async def test_embed_empty_response_does_not_retry(self, mock_ollama):
+        """Empty embeddings list is a non-transient error — should not be retried."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def empty_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return []
+
+        mock_ollama.set_embed_handler(empty_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError):
+            await client.embed("hello")
+
+        # Must have called embed exactly once — empty embeddings won't change on retry
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_embed_count_mismatch_raises_value_error(self, mock_ollama):
+        """Mismatched embedding count raises ValueError without retry."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def short_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            # Return only 1 embedding for a 3-item batch
+            return [[0.1, 0.2, 0.3]]
+
+        mock_ollama.set_embed_handler(short_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError, match="3 input"):
+            await client.embed(["a", "b", "c"])
+
+        # Must not retry — count mismatch is non-transient
+        assert call_count == 1
+
 
 class TestBuildEntityEmbedText:
     """Tests for build_entity_embed_text utility."""
