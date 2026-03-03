@@ -300,6 +300,14 @@ class Agent:
                 break
 
             content = response.content.strip()
+            if not content:
+                logger.warning(
+                    "Model returned empty content; retrying (attempt %d/%d)",
+                    xml_attempt + 1,
+                    max_xml_retries,
+                )
+                continue
+
             if not _has_xml_tags(content):
                 break
 

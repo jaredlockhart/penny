@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
@@ -178,6 +179,49 @@ class TestRepeatCallGuard:
         assert response.answer == "done"
         # Only first call should have executed
         assert len(response.tool_calls) == 1
+
+        await agent.close()
+
+
+class TestEmptyContentRetry:
+    """Test that empty model content in the agentic loop triggers a retry."""
+
+    @pytest.mark.asyncio
+    async def test_empty_content_retried_then_succeeds(self, test_db, mock_ollama):
+        """When the model returns empty content, _call_model_with_xml_retry retries."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        call_count = [0]
+
+        def handler(request, count):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call: empty content — should trigger a retry
+                return mock_ollama._make_text_response(request, "")
+            # Second call: valid response
+            return mock_ollama._make_text_response(request, "recovered answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        # Use default use_tools=True so the agentic loop runs _call_model_with_xml_retry
+        response = await agent.run("test")
+        assert response.answer == "recovered answer"
+        assert call_count[0] == 2
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_content_all_retries_exhausted_returns_error(self, test_db, mock_ollama):
+        """When all retries return empty content, AGENT_EMPTY_RESPONSE is returned."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test")
+        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
 
         await agent.close()
 
