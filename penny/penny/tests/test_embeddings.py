@@ -285,6 +285,22 @@ class TestOllamaClientEmbed:
         # Should have retried all 3 times
         assert call_count == 3
 
+    @pytest.mark.asyncio
+    async def test_embed_empty_response_raises_value_error(self, mock_ollama):
+        """Empty embeddings list from Ollama raises ValueError with a descriptive message."""
+        from penny.ollama.client import OllamaClient
+
+        mock_ollama.set_embed_handler(lambda model, input: [])
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=1,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError, match="empty embeddings"):
+            await client.embed("hello")
+
 
 class TestBuildEntityEmbedText:
     """Tests for build_entity_embed_text utility."""

@@ -242,6 +242,9 @@ class OllamaClient:
                 response = await self.client.embed(model=self.model, input=text)
                 embeddings = [list(e) for e in response.embeddings]
 
+                if not embeddings:
+                    raise ValueError("Ollama returned an empty embeddings list")
+
                 logger.debug(
                     "Generated %d embedding(s), dim=%d", len(embeddings), len(embeddings[0])
                 )
