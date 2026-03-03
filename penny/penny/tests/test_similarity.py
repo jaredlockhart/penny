@@ -60,6 +60,18 @@ class TestEmbedText:
         result = await embed_text(client, "hello")
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_returns_none_on_value_error_from_empty_embed(self) -> None:
+        """embed_text() returns None when embed() raises ValueError (empty embeddings).
+
+        OllamaClient.embed() raises ValueError — not IndexError — when Ollama
+        returns zero vectors.  Callers must handle ValueError gracefully.
+        """
+        client = AsyncMock()
+        client.embed.side_effect = ValueError("Ollama returned an empty embeddings list")
+        result = await embed_text(client, "hello")
+        assert result is None
+
 
 # ── check_relevance ───────────────────────────────────────────────────────────
 
@@ -207,6 +219,20 @@ class TestDedupFactsByEmbedding:
     async def test_exception_returns_all(self) -> None:
         client = AsyncMock()
         client.embed.side_effect = RuntimeError("boom")
+        existing = [(0, serialize_embedding([1.0]))]
+        survivors, matched = await dedup_facts_by_embedding(client, ["fact1"], existing, 0.85)
+        assert survivors == ["fact1"]
+        assert matched == []
+
+    @pytest.mark.asyncio
+    async def test_value_error_from_empty_embed_returns_all(self) -> None:
+        """dedup returns all candidates when embed() raises ValueError (empty embeddings).
+
+        OllamaClient.embed() raises ValueError — not IndexError — when Ollama
+        returns zero vectors.  dedup_facts_by_embedding() must handle it gracefully.
+        """
+        client = AsyncMock()
+        client.embed.side_effect = ValueError("Ollama returned an empty embeddings list")
         existing = [(0, serialize_embedding([1.0]))]
         survivors, matched = await dedup_facts_by_embedding(client, ["fact1"], existing, 0.85)
         assert survivors == ["fact1"]
