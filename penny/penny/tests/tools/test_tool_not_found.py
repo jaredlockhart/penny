@@ -7,10 +7,98 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.ollama.models import OllamaToolCallFunction
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
 _IMAGE_TIMEOUT = RUNTIME_CONFIG_PARAMS["IMAGE_DOWNLOAD_TIMEOUT"].default
+
+
+class TestFunctionsPrefixNormalization:
+    """Test that the 'functions.' prefix emitted by some Ollama models is stripped."""
+
+    def test_functions_prefix_stripped_from_name(self):
+        """OllamaToolCallFunction strips 'functions.' prefix at parse time."""
+        fn = OllamaToolCallFunction(name="functions.search", arguments={})
+        assert fn.name == "search"
+
+    def test_bare_name_unchanged(self):
+        """OllamaToolCallFunction leaves bare names unchanged."""
+        fn = OllamaToolCallFunction(name="search", arguments={})
+        assert fn.name == "search"
+
+    def test_other_prefix_unchanged(self):
+        """OllamaToolCallFunction does not strip prefixes other than 'functions.'."""
+        fn = OllamaToolCallFunction(name="tools.search", arguments={})
+        assert fn.name == "tools.search"
+
+    @pytest.mark.asyncio
+    async def test_agent_executes_tool_with_functions_prefix(self, test_db, mock_ollama):
+        """Agent successfully executes a tool when model emits 'functions.<name>' prefix."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            ollama_api_url="http://localhost:11434",
+            ollama_foreground_model="test-model",
+            ollama_background_model="test-model",
+            perplexity_api_key=None,
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        search_tool = SearchTool(
+            perplexity_api_key="test-key",
+            db=db,
+            image_max_results=_IMAGE_MAX_RESULTS,
+            image_download_timeout=_IMAGE_TIMEOUT,
+        )
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            background_model_client=client,
+            foreground_model_client=client,
+            tools=[search_tool],
+            db=db,
+            config=config,
+            max_steps=3,
+        )
+
+        tool_messages_received = []
+
+        def handler(request: dict, count: int) -> dict:
+            if count == 1:
+                # Model emits 'functions.search' (OpenAI legacy prefix)
+                return mock_ollama._make_tool_call_response(
+                    request, "functions.search", {"query": "test query"}
+                )
+            # Capture tool result messages to inspect them
+            tool_messages_received.extend(m for m in request["messages"] if m.get("role") == "tool")
+            return mock_ollama._make_text_response(request, "all done")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("search for something")
+
+        assert response.answer == "all done"
+        # The tool result should not contain a "not found" error
+        assert len(tool_messages_received) > 0
+        assert "not found" not in tool_messages_received[0]["content"].lower()
+        # Exactly one tool call executed
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].tool == "search"
+
+        await agent.close()
 
 
 class TestToolNotFound:

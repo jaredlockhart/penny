@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChunkType(StrEnum):
@@ -76,6 +76,14 @@ class OllamaToolCallFunction(BaseModel):
 
     name: str = ""
     arguments: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_functions_prefix(cls, v: str) -> str:
+        """Strip the OpenAI legacy 'functions.' prefix some Ollama models emit."""
+        if isinstance(v, str) and v.startswith("functions."):
+            return v[len("functions.") :]
+        return v
 
 
 class OllamaToolCall(BaseModel):
