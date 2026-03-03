@@ -285,6 +285,85 @@ class TestOllamaClientEmbed:
         # Should have retried all 3 times
         assert call_count == 3
 
+    @pytest.mark.asyncio
+    async def test_embed_empty_response_raises_immediately_without_retry(self, mock_ollama):
+        """Empty embeddings list must raise ValueError immediately — no retries."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def empty_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return []
+
+        mock_ollama.set_embed_handler(empty_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError, match="empty embeddings"):
+            await client.embed("hello")
+
+        # Must have called embed exactly once — empty response is not transient
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_embed_count_mismatch_raises_immediately_without_retry(self, mock_ollama):
+        """Count mismatch (fewer embeddings than inputs) must raise ValueError — no retries."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def short_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            # Return only 1 embedding for 3 inputs
+            return [[0.1, 0.2, 0.3]]
+
+        mock_ollama.set_embed_handler(short_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError, match="3 input"):
+            await client.embed(["a", "b", "c"])
+
+        # Must have called embed exactly once — count mismatch is structural, not transient
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_embed_index_error_raises_immediately_without_retry(self, mock_ollama):
+        """IndexError from SDK must raise immediately — no retries."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def index_error_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            raise IndexError("list index out of range")
+
+        mock_ollama.set_embed_handler(index_error_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="some-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(IndexError, match="list index out of range"):
+            await client.embed("hello")
+
+        # Must have called embed exactly once — IndexError is structural, not transient
+        assert call_count == 1
+
 
 class TestBuildEntityEmbedText:
     """Tests for build_entity_embed_text utility."""
