@@ -47,8 +47,10 @@ async def embed_text(
     client: OllamaClient | None,
     text: str,
 ) -> list[float] | None:
-    """Embed a single text string.  Returns None if no client or on failure."""
+    """Embed a single text string.  Returns None if no client, empty text, or on failure."""
     if client is None:
+        return None
+    if not text.strip():
         return None
     try:
         vecs = await client.embed(text)

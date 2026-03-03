@@ -60,6 +60,20 @@ class TestEmbedText:
         result = await embed_text(client, "hello")
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_returns_none_for_empty_text(self) -> None:
+        client = AsyncMock()
+        result = await embed_text(client, "")
+        assert result is None
+        client.embed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_whitespace_text(self) -> None:
+        client = AsyncMock()
+        result = await embed_text(client, "   ")
+        assert result is None
+        client.embed.assert_not_called()
+
 
 # ── check_relevance ───────────────────────────────────────────────────────────
 
