@@ -285,6 +285,59 @@ class TestOllamaClientEmbed:
         # Should have retried all 3 times
         assert call_count == 3
 
+    @pytest.mark.asyncio
+    async def test_embed_empty_list_raises_immediately(self, mock_ollama):
+        """Empty embeddings response must raise ValueError immediately — no retries."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def empty_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return []
+
+        mock_ollama.set_embed_handler(empty_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="embed-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError, match="empty embeddings"):
+            await client.embed("hello")
+
+        # Must not retry — structural error, not transient
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_embed_count_mismatch_raises_immediately(self, mock_ollama):
+        """Count mismatch must raise ValueError immediately — no retries."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def mismatch_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            # Return only 1 embedding for a 3-text batch
+            return [[0.1, 0.2, 0.3]]
+
+        mock_ollama.set_embed_handler(mismatch_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="embed-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(ValueError, match="embeddings for 3 input"):
+            await client.embed(["a", "b", "c"])
+
+        # Must not retry — structural error, not transient
+        assert call_count == 1
+
 
 class TestBuildEntityEmbedText:
     """Tests for build_entity_embed_text utility."""
