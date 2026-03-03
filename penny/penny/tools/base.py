@@ -123,7 +123,8 @@ class ToolExecutor:
         if missing_params:
             return (
                 f"Missing required parameter(s): {', '.join(missing_params)}. "
-                f"Please call the tool again with all required parameters."
+                f"Determine these values from the conversation context, "
+                f"then call the tool again with all required parameters."
             )
 
         return None

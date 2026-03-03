@@ -18,14 +18,23 @@ class FetchNewsTool(Tool):
 
     name = "fetch_news"
     description = (
-        "Search for recent news articles on a topic. Returns headlines, summaries, and URLs."
+        "Search for recent news articles on a specific topic. "
+        "Always infer the topic from the user's message context — for example, if they mention "
+        "'Tesla' or 'climate change', use that as the topic. "
+        "If the user's request is too vague to identify a clear topic (e.g. 'any news?'), "
+        "ask them what topic they are interested in before calling this tool."
     )
     parameters = {
         "type": "object",
         "properties": {
             "topic": {
                 "type": "string",
-                "description": "The topic to search news for",
+                "description": (
+                    "The specific topic or keyword to search for "
+                    "(e.g. 'climate change', 'SpaceX', 'US election'). "
+                    "Must be a non-empty word or phrase derived from the user's message. "
+                    "Do not call this tool without a clear topic from the conversation."
+                ),
             }
         },
         "required": ["topic"],
