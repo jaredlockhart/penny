@@ -25,8 +25,7 @@ class SearchTool(Tool):
 
     name = "search"
     description = (
-        "Search the web for information and a relevant image. "
-        "Use this for every message to research your answer. "
+        "Search the web for current information on a specific topic. "
         "Returns search results text and attaches a relevant image."
     )
     parameters = {

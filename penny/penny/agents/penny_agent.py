@@ -15,7 +15,7 @@ from penny.agents.base import Agent
 from penny.agents.models import MessageRole, ToolCallRecord
 from penny.commands.models import CommandContext
 from penny.constants import PennyConstants
-from penny.database.models import Entity
+from penny.database.models import Entity, Event
 from penny.ollama.embeddings import deserialize_embedding, find_similar
 from penny.ollama.similarity import embed_text
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
@@ -89,32 +89,19 @@ class PennyAgent(Agent):
         user: str,
         content: str | None = None,
     ) -> list[tuple[str, str]] | None:
-        """Build shared context: timeless → historical → recent.
+        """Build shared context: identity → knowledge → conversation.
 
-        Order: profile, interests, events, history summaries, timeline,
-        then entity context (async, query-dependent) when content is provided.
+        Order: profile, interests, entity knowledge (anchored to user message),
+        recent events, history summaries, timeline (messages + thoughts).
         """
         history = self._inject_profile_context(user, None, content)
         history = self._inject_interest_context(user, history)
+        if content:
+            history = await self._inject_entity_context(content, user, history)
         history = self._inject_recent_events(user, history)
         history = self._inject_history_context(user, history)
         history = self._inject_timeline_context(user, history)
-        if content:
-            query = self._build_embedding_query(content, user)
-            history = await self._inject_entity_context(query, user, history)
         return history
-
-    def _build_embedding_query(self, content: str, user: str) -> str:
-        """Build embedding query from current message + recent conversation."""
-        try:
-            limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
-            messages = self.db.messages.get_conversation(user, limit=limit)
-            if not messages:
-                return content
-            recent = "\n".join(msg.content for msg in messages)
-            return f"{content}\n{recent}"
-        except Exception:
-            return content
 
     def _inject_profile_context(
         self,
@@ -128,9 +115,8 @@ class PennyAgent(Agent):
             if not user_info:
                 return history
 
-            profile_summary = f"The user's name is {user_info.name}."
             history = history or []
-            history = [(MessageRole.SYSTEM.value, profile_summary), *history]
+            history = [(MessageRole.USER.value, f"My name is {user_info.name}."), *history]
             logger.debug("Injected profile context for %s", sender)
 
             if content is not None:
@@ -160,18 +146,12 @@ class PennyAgent(Agent):
 
             entries: list[tuple[datetime, str, str]] = []
             for msg in messages:
-                ts = msg.timestamp.strftime("%H:%M")
                 if msg.direction == PennyConstants.MessageDirection.INCOMING:
-                    entries.append((msg.timestamp, MessageRole.USER.value, f"[{ts}] {msg.content}"))
+                    entries.append((msg.timestamp, MessageRole.USER.value, msg.content))
                 else:
-                    entries.append(
-                        (msg.timestamp, MessageRole.SYSTEM.value, f"[{ts}] Penny: {msg.content}")
-                    )
+                    entries.append((msg.timestamp, MessageRole.SYSTEM.value, msg.content))
             for t in thoughts:
-                ts = t.created_at.strftime("%H:%M")
-                entries.append(
-                    (t.created_at, MessageRole.SYSTEM.value, f"[{ts}] You thought: {t.content}")
-                )
+                entries.append((t.created_at, MessageRole.SYSTEM.value, f"I thought: {t.content}"))
             entries.sort(key=lambda e: e[0])
 
             history = history or []
@@ -199,11 +179,15 @@ class PennyAgent(Agent):
                 return history
 
             history = history or []
+            count = 0
             for entry in entries:
-                date_label = entry.period_start.strftime("%b %-d")
-                content = f"{date_label}:\n{entry.topics}"
-                history.append((MessageRole.SYSTEM.value, content))
-            logger.debug("Injected history context (%d entries)", len(entries))
+                for line in entry.topics.strip().splitlines():
+                    line = line.strip().lstrip("- ").strip()
+                    if line:
+                        content = f"I remember we talked about {line}"
+                        history.append((MessageRole.SYSTEM.value, content))
+                        count += 1
+            logger.debug("Injected history context (%d topics)", count)
         except Exception:
             logger.warning("History context retrieval failed, proceeding without")
         return history
@@ -221,14 +205,20 @@ class PennyAgent(Agent):
         sender: str,
         history: list[tuple[str, str]] | None,
     ) -> list[tuple[str, str]] | None:
-        """Inject a broad interest profile from entities, learn topics, and follows."""
+        """Inject learn and follow topics as individual user-voice messages."""
         try:
-            context = self._build_interest_profile(sender)
-            if not context:
-                return history
             history = history or []
-            history = [*history, (MessageRole.SYSTEM.value, context)]
-            logger.debug("Injected interest context")
+            count = 0
+            learn_prompts = self.db.learn_prompts.get_for_user(sender)
+            for lp in learn_prompts:
+                history.append((MessageRole.USER.value, f"I'm interested in {lp.prompt_text}."))
+                count += 1
+            follow_prompts = self.db.follow_prompts.get_active(sender)
+            for fp in follow_prompts:
+                history.append((MessageRole.USER.value, f"Keep me updated on {fp.prompt_text}."))
+                count += 1
+            if count:
+                logger.debug("Injected interest context (%d topics)", count)
         except Exception:
             logger.warning("Interest context retrieval failed, proceeding without")
         return history
@@ -239,13 +229,13 @@ class PennyAgent(Agent):
         sender: str,
         history: list[tuple[str, str]] | None,
     ) -> list[tuple[str, str]] | None:
-        """Retrieve entity knowledge and append it to history."""
+        """Retrieve entity knowledge as individual system messages per entity."""
         try:
-            entity_context = await self._retrieve_entity_context(content, sender)
-            if entity_context:
+            entity_messages = await self._retrieve_entity_messages(content, sender)
+            if entity_messages:
                 history = history or []
-                history = [*history, (MessageRole.SYSTEM.value, entity_context)]
-                logger.debug("Injected entity context (%d chars)", len(entity_context))
+                history = [*history, *entity_messages]
+                logger.debug("Injected entity context (%d entities)", len(entity_messages))
         except Exception:
             logger.warning("Entity context retrieval failed, proceeding without")
         return history
@@ -255,61 +245,54 @@ class PennyAgent(Agent):
         sender: str,
         history: list[tuple[str, str]] | None,
     ) -> list[tuple[str, str]] | None:
-        """Inject recent events directly (no embedding needed)."""
+        """Inject recent events as individual system messages."""
         try:
             events = self.db.events.get_for_user(sender)
             if not events:
                 return history
-            top_k = int(self.config.runtime.EVENT_CONTEXT_TOP_K)
-            recent = sorted(events, key=lambda e: e.occurred_at, reverse=True)[:top_k]
-            lines = []
-            for event in recent:
-                date = event.occurred_at.strftime("%Y-%m-%d")
-                line = f"- [{date}] **{event.headline}**"
-                if event.summary:
-                    line += f": {event.summary[:200]}"
-                if event.source_url:
-                    line += f" ({event.source_url})"
-                lines.append(line)
-            context = "## Recent Events\n" + "\n".join(lines)
+            recent = self._pick_latest_per_follow(events)
+            follow_topics = self._load_follow_topics(sender)
             history = history or []
-            history = [*history, (MessageRole.SYSTEM.value, context)]
+            for event in recent:
+                content = self._format_event(event, follow_topics)
+                history.append((MessageRole.SYSTEM.value, content))
             logger.debug("Injected event context (%d events)", len(recent))
         except Exception:
             logger.warning("Event context retrieval failed, proceeding without")
         return history
 
-    # ── Interest profile ───────────────────────────────────────────────────
+    @staticmethod
+    def _pick_latest_per_follow(events: list[Event]) -> list[Event]:
+        """Pick the most recent event per follow_prompt_id."""
+        latest: dict[int | None, Event] = {}
+        for event in events:
+            key = event.follow_prompt_id
+            if key not in latest or event.occurred_at > latest[key].occurred_at:
+                latest[key] = event
+        return sorted(latest.values(), key=lambda e: e.occurred_at, reverse=True)
 
-    def _build_interest_profile(self, user: str) -> str | None:
-        """Build a compact summary of the user's known interests."""
-        sections: list[str] = []
-        self._add_learn_interests(user, sections)
-        self._add_follow_interests(user, sections)
-        if not sections:
-            return None
-        return "## Your Interests\n" + "\n".join(sections)
+    def _load_follow_topics(self, sender: str) -> dict[int, str]:
+        """Load follow prompt ID → topic text mapping for a user."""
+        follows = self.db.follow_prompts.get_active(sender)
+        return {fp.id: fp.prompt_text for fp in follows if fp.id is not None}
 
-    def _add_learn_interests(self, user: str, sections: list[str]) -> None:
-        """Add past learn topics to interest sections."""
-        prompts = self.db.learn_prompts.get_for_user(user)
-        if not prompts:
-            return
-        topics = [lp.prompt_text for lp in prompts]
-        sections.append("Topics the user asked you to research: " + ", ".join(topics))
-
-    def _add_follow_interests(self, user: str, sections: list[str]) -> None:
-        """Add active follow subscriptions to interest sections."""
-        follows = self.db.follow_prompts.get_active(user)
-        if not follows:
-            return
-        topics = [fp.prompt_text for fp in follows]
-        sections.append("Topics the user has you actively following: " + ", ".join(topics))
+    @staticmethod
+    def _format_event(event: Event, follow_topics: dict[int, str]) -> str:
+        """Format a single event for context injection."""
+        date = event.occurred_at.strftime("%Y-%m-%d")
+        topic = follow_topics.get(event.follow_prompt_id, "") if event.follow_prompt_id else ""
+        topic_label = f" [{topic}]" if topic else ""
+        line = f"I saw in the news [{date}]{topic_label}: {event.headline}"
+        if event.source_url:
+            line += f"\n{event.source_url}"
+        return line
 
     # ── Entity context retrieval ──────────────────────────────────────────
 
-    async def _retrieve_entity_context(self, content: str, sender: str) -> str | None:
-        """Embed message, find similar entities, format their facts as context."""
+    async def _retrieve_entity_messages(
+        self, content: str, sender: str
+    ) -> list[tuple[str, str]] | None:
+        """Embed message, find similar entities, return individual (role, content) per entity."""
         if not self._embedding_model_client:
             return None
 
@@ -330,15 +313,15 @@ class PennyAgent(Agent):
         if not matches:
             return None
 
-        context_text, total_facts = self._build_entity_context_text(matches, entities)
-        if context_text:
+        messages, total_facts = self._build_entity_messages(matches, entities)
+        if messages:
             logger.info(
                 "Entity context: %d matches, %d facts, top_score=%.2f",
                 len(matches),
                 total_facts,
                 matches[0][1],
             )
-        return context_text
+        return messages or None
 
     def _load_entity_candidates(
         self, sender: str
@@ -352,14 +335,14 @@ class PennyAgent(Agent):
             candidates.append((entity.id, deserialize_embedding(entity.embedding)))
         return candidates, entities
 
-    def _build_entity_context_text(
+    def _build_entity_messages(
         self,
         matches: list[tuple[int, float]],
         entities: list[Entity],
-    ) -> tuple[str | None, int]:
-        """Build formatted context text from matched entities and their facts."""
+    ) -> tuple[list[tuple[str, str]], int]:
+        """Build individual (role, content) messages per matched entity."""
         entity_map = {e.id: e for e in entities if e.id is not None}
-        context_lines: list[str] = []
+        messages: list[tuple[str, str]] = []
         total_facts = 0
 
         for entity_id, _score in matches:
@@ -375,14 +358,11 @@ class PennyAgent(Agent):
                 f.content for f in facts[: int(self.config.runtime.ENTITY_CONTEXT_MAX_FACTS)]
             ]
             label = f"{entity.name} ({entity.tagline})" if entity.tagline else entity.name
-            context_lines.append(f"- {label}: {'; '.join(fact_texts)}")
+            content = f"I know about {label}: {'; '.join(fact_texts)}"
+            messages.append((MessageRole.SYSTEM.value, content))
             total_facts += len(fact_texts)
 
-        if not context_lines:
-            return None, 0
-
-        context_text = "## Relevant Knowledge\n" + "\n".join(context_lines)
-        return context_text, total_facts
+        return messages, total_facts
 
     # ── Per-step hooks ─────────────────────────────────────────────────────
 
@@ -427,9 +407,11 @@ class PennyAgent(Agent):
         if not reasoning_texts:
             return
         anchor = " ".join(reasoning_texts)
-        entity_context = await self._retrieve_entity_context(anchor, self._current_user)
-        if entity_context:
-            messages.append({"role": "system", "content": entity_context})
+        entity_messages = await self._retrieve_entity_messages(anchor, self._current_user)
+        if entity_messages:
+            for role, content in entity_messages:
+                messages.append({"role": role, "content": content})
             logger.debug(
-                "Injected mid-step entity context from reasoning (%d chars)", len(entity_context)
+                "Injected mid-step entity context from reasoning (%d entities)",
+                len(entity_messages),
             )
