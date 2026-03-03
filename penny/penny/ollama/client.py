@@ -242,6 +242,11 @@ class OllamaClient:
                 response = await self.client.embed(model=self.model, input=text)
                 embeddings = [list(e) for e in response.embeddings]
 
+                if not embeddings:
+                    raise ValueError(
+                        "Ollama returned empty embeddings list — model may not be loaded"
+                    )
+
                 logger.debug(
                     "Generated %d embedding(s), dim=%d", len(embeddings), len(embeddings[0])
                 )
@@ -257,6 +262,9 @@ class OllamaClient:
                 )
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
+            except ValueError as e:
+                logger.error("Ollama embed failed (non-retryable): %s", e)
+                raise
             except Exception as e:
                 last_error = e
                 logger.warning(
