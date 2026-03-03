@@ -240,13 +240,31 @@ class OllamaClient:
                 )
 
                 response = await self.client.embed(model=self.model, input=text)
-                embeddings = [list(e) for e in response.embeddings]
+                raw = response.embeddings
+                if not raw:
+                    logger.warning(
+                        "Ollama embed returned empty response: model=%s, raw=%r",
+                        self.model,
+                        raw,
+                    )
+                    raise ValueError(f"Ollama returned empty or null embeddings (raw={raw!r})")
+                embeddings = [list(e) for e in raw]
+
+                expected_count = 1 if isinstance(text, str) else len(text)
+                if len(embeddings) != expected_count:
+                    raise ValueError(
+                        f"Ollama returned {len(embeddings)} embedding(s)"
+                        f" for {expected_count} input(s)"
+                    )
 
                 logger.debug(
                     "Generated %d embedding(s), dim=%d", len(embeddings), len(embeddings[0])
                 )
                 return embeddings
 
+            except ValueError:
+                # Non-transient: empty/null/mismatched embeddings won't be fixed by retrying.
+                raise
             except ollama.ResponseError as e:
                 last_error = e
                 if e.status_code == 404:
