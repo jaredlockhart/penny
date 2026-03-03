@@ -260,6 +260,32 @@ class TestOllamaClientEmbed:
         assert call_count == 1
 
     @pytest.mark.asyncio
+    async def test_embed_empty_response_raises_runtime_error(self, mock_ollama):
+        """Empty embeddings list raises RuntimeError, not IndexError."""
+        from penny.ollama.client import OllamaClient
+
+        call_count = 0
+
+        def empty_handler(model: str, input: str | list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return []
+
+        mock_ollama.set_embed_handler(empty_handler)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="nomic-embed-text",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        with pytest.raises(RuntimeError, match="empty embeddings"):
+            await client.embed("hello world")
+
+        # Should have retried all 3 times before giving up
+        assert call_count == 3
+
+    @pytest.mark.asyncio
     async def test_embed_transient_error_retries(self, mock_ollama):
         """Non-404 errors should still be retried up to max_retries."""
         from penny.ollama.client import OllamaClient
