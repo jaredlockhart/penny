@@ -107,6 +107,13 @@ async def test_basic_message_flow(
         tool_messages = [m for m in messages if m.get("role") == "tool"]
         assert len(tool_messages) >= 1, "Second request should include tool result"
 
+        # Context uses markdown headers
+        first_request_msgs = first_request.get("messages", [])
+        system_text = " ".join(
+            m.get("content", "") for m in first_request_msgs if m.get("role") == "system"
+        )
+        assert "reasoning" in system_text.lower(), "Prompt should mention reasoning field"
+
         # Verify typing indicators were sent
         assert len(signal_server.typing_events) >= 1, "Should have sent typing indicator"
 
@@ -125,6 +132,14 @@ async def test_basic_message_flow(
             search_logs = list(session.exec(select(SearchLog)).all())
         if search_logs:
             assert search_logs[0].trigger == "user_message"
+
+        # No conversation echo thoughts should be logged
+        # (old _log_conversation_thought is removed; thoughts come from tool reasoning only)
+        thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        conversation_echoes = [
+            t for t in thoughts if t.content.startswith("Conversation: user said")
+        ]
+        assert len(conversation_echoes) == 0, "Conversation echo thoughts should not be logged"
 
 
 @pytest.mark.asyncio
@@ -274,7 +289,7 @@ async def test_entity_context_responds_from_knowledge(
         first_request = mock_ollama.requests[0]
         system_msgs = [m for m in first_request["messages"] if m.get("role") == "system"]
         all_system_text = " ".join(m.get("content", "") for m in system_msgs)
-        assert "relevant knowledge" in all_system_text.lower()
+        assert "## Relevant Knowledge" in all_system_text
         assert "Use your judgment" in all_system_text
 
         # Entity context was injected

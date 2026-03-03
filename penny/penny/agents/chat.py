@@ -28,32 +28,35 @@ class ChatAgent(PennyAgent):
     ) -> ControllerResponse:
         """Handle an incoming message — summary method.
 
-        Builds shared context, processes images, runs agentic loop, logs thought.
+        Builds shared context, processes images, runs agentic loop.
         """
-        history = await self._build_context(sender, content)
-        content, has_images = await self._process_images(content, images)
+        self._current_user = sender
+        try:
+            history = await self._build_context(sender, content)
+            content, has_images = await self._process_images(content, images)
 
-        if has_images:
-            logger.info("Handling vision message from %s", sender)
-            response = await self.run(
-                prompt=content,
-                history=history,
-                use_tools=False,
-                max_steps=1,
-                system_prompt=Prompt.VISION_RESPONSE_PROMPT,
-            )
-        else:
-            logger.info("Handling message from %s (conversation mode)", sender)
-            self._install_tools(self._build_tools(sender))
-            response = await self.run(
-                prompt=content,
-                history=history,
-                use_tools=True,
-                system_prompt=Prompt.CONVERSATION_PROMPT,
-            )
+            if has_images:
+                logger.info("Handling vision message from %s", sender)
+                response = await self.run(
+                    prompt=content,
+                    history=history,
+                    use_tools=False,
+                    max_steps=1,
+                    system_prompt=Prompt.VISION_RESPONSE_PROMPT,
+                )
+            else:
+                logger.info("Handling message from %s (conversation mode)", sender)
+                self._install_tools(self._build_tools(sender))
+                response = await self.run(
+                    prompt=content,
+                    history=history,
+                    use_tools=True,
+                    system_prompt=Prompt.CONVERSATION_PROMPT,
+                )
 
-        self._log_conversation_thought(sender, content, response.answer)
-        return response
+            return response
+        finally:
+            self._current_user = None
 
     # ── Image processing ──────────────────────────────────────────────────
 
@@ -70,18 +73,3 @@ class ChatAgent(PennyAgent):
             content = PennyResponse.VISION_IMAGE_ONLY_CONTEXT.format(caption=caption)
         logger.info("Built vision prompt: %s", content[:200])
         return content, True
-
-    # ── Post-response ─────────────────────────────────────────────────────
-
-    def _log_conversation_thought(
-        self, sender: str, user_message: str, response: str | None
-    ) -> None:
-        """Log a thought summarizing the conversation for inner monologue continuity."""
-        try:
-            reply = (response or "")[:150]
-            msg = user_message[:150]
-            thought = f'Conversation: user said "{msg}" — I replied "{reply}"'
-            self.db.thoughts.add(sender, thought)
-            logger.info("[conversation_thought] %s", thought[:200])
-        except Exception:
-            logger.warning("Failed to log conversation thought")

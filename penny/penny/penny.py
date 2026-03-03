@@ -182,6 +182,7 @@ class Penny:
         self.thinking_agent = ThinkingAgent(
             search_tool=search_tool,
             news_tool=self._news_tool,
+            embedding_model_client=self.embedding_model_client,
             **kwargs,
         )
         self.schedule_executor = ScheduleExecutor(**kwargs)
@@ -253,12 +254,12 @@ class Penny:
         schedules = [
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
-                agent=self.thinking_agent,
-                interval=config.runtime.INNER_MONOLOGUE_INTERVAL,
-            ),
-            PeriodicSchedule(
                 agent=self.extraction_pipeline,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
+            ),
+            PeriodicSchedule(
+                agent=self.thinking_agent,
+                interval=config.runtime.INNER_MONOLOGUE_INTERVAL,
             ),
             PeriodicSchedule(
                 agent=self.event_agent,

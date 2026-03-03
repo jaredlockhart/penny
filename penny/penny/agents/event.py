@@ -81,22 +81,8 @@ class EventAgent(Agent):
         for prompt in self.db.follow_prompts.get_active_by_poll_priority():
             if not self._poll_interval_elapsed(prompt):
                 continue
-            if self._has_unannounced_events(prompt):
-                continue
             return prompt
         return None
-
-    def _has_unannounced_events(self, prompt: FollowPrompt) -> bool:
-        """Check if this follow prompt has events waiting to be announced."""
-        assert prompt.id is not None
-        unnotified = self.db.events.get_unnotified_for_follow_prompt(prompt.id)
-        if unnotified:
-            logger.debug(
-                "EventAgent: skipping '%s' — %d unannounced events",
-                prompt.prompt_text[:50],
-                len(unnotified),
-            )
-        return len(unnotified) > 0
 
     def _poll_interval_elapsed(self, prompt: FollowPrompt) -> bool:
         """Check if the fixed poll interval has elapsed since last poll."""

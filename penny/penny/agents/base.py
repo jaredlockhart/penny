@@ -123,6 +123,8 @@ class Agent:
         system_parts.append(Prompt.PENNY_IDENTITY)
 
         if effective_prompt:
+            if "{tools}" in effective_prompt:
+                effective_prompt = effective_prompt.format(tools=self._build_tool_summary())
             system_parts.append("")
             system_parts.append(effective_prompt)
 
@@ -137,6 +139,16 @@ class Agent:
         messages.append(user_msg.to_dict())
 
         return messages
+
+    def _build_tool_summary(self) -> str:
+        """Build a dynamic tool summary from registered tools for prompt injection."""
+        tools = self._tool_registry.get_all()
+        if not tools:
+            return ""
+        names = [t.name for t in tools]
+        logger.debug("Injecting tool summary into prompt: %s", ", ".join(names))
+        lines = [f"- **{t.name}**: {t.description}" for t in tools]
+        return "\n".join(lines)
 
     async def _compose_user_facing(
         self,
@@ -228,23 +240,28 @@ class Agent:
         """Execute the step loop: call model, process tool calls, or return final answer."""
         attachments: list[str] = []
         source_urls: list[str] = []
-        called_tools: set[str] = set()
+        called_tools: set[tuple[str, ...]] = set()
         tool_call_records: list[ToolCallRecord] = []
 
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
 
-            if step == steps - 1:
-                self._inject_final_step_nudge(messages)
+            is_final_step = step == steps - 1
+            step_tools = [] if is_final_step else tools
+            if is_final_step:
+                logger.debug("Final step — tools removed, model must produce text")
 
-            response = await self._call_model_with_xml_retry(messages, tools)
+            response = await self._call_model_with_xml_retry(messages, step_tools)
             if response is None:
                 return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
 
             if response.has_tool_calls:
+                records_before = len(tool_call_records)
                 await self._process_tool_calls(
                     response, messages, called_tools, tool_call_records, source_urls, attachments
                 )
+                step_records = tool_call_records[records_before:]
+                await self._after_step(step_records, messages)
                 continue
 
             return self._build_final_response(response, source_urls, attachments, tool_call_records)
@@ -254,19 +271,20 @@ class Agent:
             answer=PennyResponse.AGENT_MAX_STEPS, tool_calls=tool_call_records
         )
 
-    @staticmethod
-    def _inject_final_step_nudge(messages: list[dict]) -> None:
-        """On the last step, tell the model it must respond now."""
-        messages.append({"role": "system", "content": Prompt.FINAL_STEP_NUDGE})
+    async def _after_step(self, step_records: list[ToolCallRecord], messages: list[dict]) -> None:
+        """Hook called after each step's tool calls. Override in subclasses."""
 
     async def _call_model_with_xml_retry(self, messages: list[dict], tools: list[dict]):
         """Call the model, retrying if it emits XML markup instead of structured tool calls."""
         max_xml_retries = 3
         response = None
+        effective_tools = tools if tools else None
 
         for xml_attempt in range(max_xml_retries):
             try:
-                response = await self._background_model_client.chat(messages=messages, tools=tools)
+                response = await self._background_model_client.chat(
+                    messages=messages, tools=effective_tools
+                )
             except Exception as e:
                 logger.error("Error calling Ollama: %s", e)
                 return None
@@ -275,6 +293,14 @@ class Agent:
                 break
 
             content = response.content.strip()
+            if not content:
+                logger.warning(
+                    "Model returned empty content; retrying (attempt %d/%d)",
+                    xml_attempt + 1,
+                    max_xml_retries,
+                )
+                continue
+
             if not _has_xml_tags(content):
                 break
 
@@ -290,7 +316,7 @@ class Agent:
         self,
         response,
         messages: list[dict],
-        called_tools: set[str],
+        called_tools: set[tuple[str, ...]],
         tool_call_records: list[ToolCallRecord],
         source_urls: list[str],
         attachments: list[str],
@@ -303,14 +329,25 @@ class Agent:
             tool_name = ollama_tool_call.function.name
             arguments = ollama_tool_call.function.arguments
 
-            if not self.allow_repeat_tools and tool_name in called_tools:
-                logger.info("Skipping repeat call to tool: %s", tool_name)
-                repeat_msg = "Tool already called. DO NOT search again. Write your response NOW."
+            # Pop reasoning before dedup (same args + different reasoning = repeat)
+            reasoning = arguments.pop("reasoning", None)
+            call_key = self._make_call_key(tool_name, arguments)
+
+            if not self.allow_repeat_tools and call_key in called_tools:
+                logger.info("Skipping repeat: %s(%s)", tool_name, arguments)
+                repeat_msg = "You already made this exact tool call. Try a different query or tool."
                 messages.append(ChatMessage(role=MessageRole.TOOL, content=repeat_msg).to_dict())
                 continue
 
             result_str = await self._execute_single_tool(
-                tool_name, arguments, called_tools, tool_call_records, source_urls, attachments
+                tool_name,
+                arguments,
+                reasoning,
+                call_key,
+                called_tools,
+                tool_call_records,
+                source_urls,
+                attachments,
             )
             messages.append(ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict())
 
@@ -318,15 +355,21 @@ class Agent:
         self,
         tool_name: str,
         arguments: dict,
-        called_tools: set[str],
+        reasoning: str | None,
+        call_key: tuple[str, ...],
+        called_tools: set[tuple[str, ...]],
         tool_call_records: list[ToolCallRecord],
         source_urls: list[str],
         attachments: list[str],
     ) -> str:
         """Execute one tool call, update tracking state, return result string."""
         logger.info("Executing tool: %s", tool_name)
-        called_tools.add(tool_name)
-        tool_call_records.append(ToolCallRecord(tool=tool_name, arguments=arguments))
+        called_tools.add(call_key)
+        if reasoning:
+            logger.debug("Tool reasoning: %s", reasoning[:200])
+        tool_call_records.append(
+            ToolCallRecord(tool=tool_name, arguments=arguments, reasoning=reasoning)
+        )
 
         tool_call = ToolCall(tool=tool_name, arguments=arguments)
         tool_result = await self._tool_executor.execute(tool_call)
@@ -341,6 +384,12 @@ class Agent:
         logger.debug("Tool result: %s", result_str[:200])
         return result_str
 
+    @staticmethod
+    def _make_call_key(tool_name: str, arguments: dict) -> tuple[str, ...]:
+        """Build a hashable key from tool name + arguments for dedup."""
+        arg_parts = tuple(f"{k}={v}" for k, v in sorted(arguments.items()))
+        return (tool_name, *arg_parts)
+
     def _format_search_result(
         self, result: SearchResult, source_urls: list[str], attachments: list[str]
     ) -> str:
@@ -351,7 +400,6 @@ class Agent:
             text += f"\n\nSources:\n{'\n'.join(result.urls)}"
         if result.image_base64:
             attachments.append(result.image_base64)
-        text += "\n\nDO NOT search again. Write your response NOW using these results."
         return text
 
     def _build_final_response(

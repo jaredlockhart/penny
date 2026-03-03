@@ -1,10 +1,10 @@
 """ThinkingAgent — Penny's autonomous thinking layer.
 
-Runs on the scheduler with high priority. Each cycle:
-1. Builds shared context (profile, messages, interests, thoughts)
-2. Builds per-user tools (think, recall, search, fetch_news, message_user)
-3. Runs an agentic loop where the model decides what to do
-4. Thoughts get persisted; messages get sent; or nothing happens (quiet cycle)
+Runs on the scheduler after extraction. Each cycle:
+1. Builds full context (profile, messages, interests, events, thoughts)
+2. Orientation step: model reads full context, writes a focused plan (no tools)
+3. Agentic loop: lean context (profile + plan + entities) with tools
+4. Reasoning from tool calls gets persisted as thoughts
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from penny.agents.models import MessageRole
 from penny.agents.penny_agent import PennyAgent
 from penny.prompts import Prompt
 from penny.tools.base import Tool
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 class ThinkingAgent(PennyAgent):
     """Autonomous inner monologue — Penny's conscious mind.
 
-    Runs an agentic loop with tools for thinking, recalling memory,
+    Runs an agentic loop with tools for recalling memory,
     searching the web, fetching news, and messaging the user.
     """
 
@@ -64,20 +65,32 @@ class ThinkingAgent(PennyAgent):
         return True
 
     async def _run_cycle(self, user: str) -> None:
-        """One thinking cycle: build context, build tools, run agentic loop."""
-        history = await self._build_context(user)
+        """One thinking cycle — summary method.
+
+        Orientation reads full context, agentic loop gets lean context.
+        """
+        self._current_user = user
+        full_history = await self._build_context(user)
         tools = self._build_tools(user)
         if not tools:
+            self._current_user = None
             return
 
         self._install_tools(tools)
 
         try:
             logger.info("Inner monologue cycle starting for %s", user)
+            orientation = await self._orient(full_history)
+            loop_history = self._build_loop_context(user, orientation)
+            loop_history = await self._inject_entity_context(
+                orientation,
+                user,
+                loop_history,
+            )
             max_steps = int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
             await self.run(
-                prompt="Begin your thinking cycle.",
-                history=history,
+                prompt=Prompt.INNER_MONOLOGUE_BEGIN_PROMPT,
+                history=loop_history,
                 use_tools=True,
                 max_steps=max_steps,
                 system_prompt=Prompt.INNER_MONOLOGUE_SYSTEM_PROMPT,
@@ -85,6 +98,38 @@ class ThinkingAgent(PennyAgent):
             logger.info("Inner monologue cycle complete for %s", user)
         except Exception:
             logger.exception("Inner monologue cycle failed for %s", user)
+        finally:
+            self._current_user = None
+
+    # ── Context ────────────────────────────────────────────────────────────
+
+    def _build_loop_context(
+        self,
+        user: str,
+        orientation: str,
+    ) -> list[tuple[str, str]]:
+        """Build lean context for the agentic loop: profile + plan only."""
+        history = self._inject_profile_context(user, None, None)
+        history = history or []
+        history.append((MessageRole.SYSTEM.value, f"## Your Plan\n{orientation}"))
+        return history
+
+    # ── Orientation ────────────────────────────────────────────────────────
+
+    async def _orient(self, history: list[tuple[str, str]] | None) -> str:
+        """Orientation step — model reads all context, emits planning text."""
+        response = await self._compose_user_facing(
+            prompt=Prompt.ORIENTATION_PROMPT,
+            history=history,
+            system_prompt=Prompt.INNER_MONOLOGUE_SYSTEM_PROMPT,
+        )
+        thought = response.answer or ""
+        if thought and self._current_user:
+            self.db.thoughts.add(self._current_user, f"[orientation] {thought}")
+            logger.info("[orientation] %s", thought[:200])
+        return thought
+
+    # ── Tools ──────────────────────────────────────────────────────────────
 
     def _build_tools(self, user: str) -> list[Tool]:
         """Extend base tools with MessageUserTool when channel is available."""
