@@ -250,16 +250,16 @@ class Penny:
                 interval=config.runtime.HISTORY_INTERVAL,
             ),
             PeriodicSchedule(
-                agent=self.extraction_pipeline,
-                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
-            ),
-            PeriodicSchedule(
                 agent=self.chat_agent,
                 interval=config.runtime.PROACTIVE_CHECK_INTERVAL,
             ),
             PeriodicSchedule(
                 agent=self.thinking_agent,
                 interval=config.runtime.INNER_MONOLOGUE_INTERVAL,
+            ),
+            PeriodicSchedule(
+                agent=self.extraction_pipeline,
+                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
         ]
         self.scheduler = BackgroundScheduler(

@@ -76,6 +76,8 @@ class ChatAgent(Agent):
         with VISION_RESPONSE_PROMPT. No tools, no agentic loop.
     """
 
+    name: str = "chat"
+
     def set_channel(self, channel: MessageChannel) -> None:
         """Set the channel for sending proactive messages."""
         self._channel: MessageChannel | None = channel
