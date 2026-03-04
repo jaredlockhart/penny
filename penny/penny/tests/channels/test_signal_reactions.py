@@ -95,7 +95,7 @@ async def test_signal_reaction_message(
 
 @pytest.mark.asyncio
 async def test_signal_reaction_raw_format(
-    signal_server, mock_ollama, _mock_search, make_config, running_penny
+    signal_server, mock_ollama, _mock_search, make_config, test_user_info, running_penny
 ):
     """
     Test Signal reaction handling with the raw format that Signal actually sends.

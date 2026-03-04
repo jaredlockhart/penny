@@ -40,7 +40,7 @@ def feature_context(feature_db):
     return CommandContext(
         db=feature_db,
         config=config,
-        foreground_model_client=ollama,
+        model_client=ollama,
         user=TEST_SENDER,
         channel_type="signal",
         start_time=datetime.now(UTC),

@@ -21,7 +21,7 @@ async def test_config_list(signal_server, test_config, mock_ollama, running_penn
         assert "**Schedule**" in response["message"]
         assert "**Knowledge**" in response["message"]
         assert "**Extraction**" in response["message"]
-        assert "**Learn**" in response["message"]
+        assert "**Inner Monologue**" in response["message"]
         assert "MESSAGE_MAX_STEPS" in response["message"]
         assert "IDLE_SECONDS" in response["message"]
         assert "MAINTENANCE_INTERVAL_SECONDS" in response["message"]

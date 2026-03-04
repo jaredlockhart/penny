@@ -16,14 +16,7 @@ async def test_startup_announcement_with_commit(
     mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
 
     async with running_penny(test_config) as penny:
-        await signal_server.push_message(sender=TEST_SENDER, content="hey penny")
-        await signal_server.wait_for_message(timeout=10.0)
-
-        # Verify sender is in database
-        senders = penny.db.users.get_all_senders()
-        assert TEST_SENDER in senders
-
-        # Create user profile so they get startup announcements
+        # Create user profile before messaging (required for chat dispatch)
         penny.db.users.save_info(
             sender=TEST_SENDER,
             name="Test User",
@@ -31,6 +24,13 @@ async def test_startup_announcement_with_commit(
             timezone="America/Los_Angeles",
             date_of_birth="1990-01-01",
         )
+
+        await signal_server.push_message(sender=TEST_SENDER, content="hey penny")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify sender is in database
+        senders = penny.db.users.get_all_senders()
+        assert TEST_SENDER in senders
 
     # Clear messages from first run
     signal_server.outgoing_messages.clear()
@@ -75,13 +75,7 @@ async def test_startup_announcement_fallback_no_git(
     mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
 
     async with running_penny(test_config) as penny:
-        await signal_server.push_message(sender=TEST_SENDER, content="hey penny")
-        await signal_server.wait_for_message(timeout=10.0)
-
-        senders = penny.db.users.get_all_senders()
-        assert TEST_SENDER in senders
-
-        # Create user profile so they get startup announcements
+        # Create user profile before messaging (required for chat dispatch)
         penny.db.users.save_info(
             sender=TEST_SENDER,
             name="Test User",
@@ -89,6 +83,9 @@ async def test_startup_announcement_fallback_no_git(
             timezone="America/Los_Angeles",
             date_of_birth="1990-01-01",
         )
+
+        await signal_server.push_message(sender=TEST_SENDER, content="hey penny")
+        await signal_server.wait_for_message(timeout=10.0)
 
     # Clear messages
     signal_server.outgoing_messages.clear()
@@ -118,13 +115,7 @@ async def test_startup_announcement_fallback_llm_error(
     mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
 
     async with running_penny(test_config) as penny:
-        await signal_server.push_message(sender=TEST_SENDER, content="hey penny")
-        await signal_server.wait_for_message(timeout=10.0)
-
-        senders = penny.db.users.get_all_senders()
-        assert TEST_SENDER in senders
-
-        # Create user profile so they get startup announcements
+        # Create user profile before messaging (required for chat dispatch)
         penny.db.users.save_info(
             sender=TEST_SENDER,
             name="Test User",
@@ -132,6 +123,9 @@ async def test_startup_announcement_fallback_llm_error(
             timezone="America/Los_Angeles",
             date_of_birth="1990-01-01",
         )
+
+        await signal_server.push_message(sender=TEST_SENDER, content="hey penny")
+        await signal_server.wait_for_message(timeout=10.0)
 
     # Clear messages
     signal_server.outgoing_messages.clear()
@@ -182,20 +176,7 @@ async def test_startup_announcement_multiple_recipients(
     sender2 = "+15559998888"
 
     async with running_penny(test_config) as penny:
-        # Send from first sender
-        await signal_server.push_message(sender=sender1, content="hey penny")
-        await signal_server.wait_for_message(timeout=10.0)
-
-        # Send from second sender
-        await signal_server.push_message(sender=sender2, content="hello")
-        await signal_server.wait_for_message(timeout=10.0)
-
-        # Verify both senders are in database
-        senders = penny.db.users.get_all_senders()
-        assert sender1 in senders
-        assert sender2 in senders
-
-        # Create user profiles for both senders so they get startup announcements
+        # Create user profiles before messaging (required for chat dispatch)
         penny.db.users.save_info(
             sender=sender1,
             name="Test User 1",
@@ -210,6 +191,19 @@ async def test_startup_announcement_multiple_recipients(
             timezone="America/New_York",
             date_of_birth="1985-05-15",
         )
+
+        # Send from first sender
+        await signal_server.push_message(sender=sender1, content="hey penny")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Send from second sender
+        await signal_server.push_message(sender=sender2, content="hello")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # Verify both senders are in database
+        senders = penny.db.users.get_all_senders()
+        assert sender1 in senders
+        assert sender2 in senders
 
     # Clear messages from first run
     signal_server.outgoing_messages.clear()

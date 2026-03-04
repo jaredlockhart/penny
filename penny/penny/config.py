@@ -72,7 +72,7 @@ def _validate_channel_config(channel_type: str) -> None:
 
 def _collect_env_vars(channel_type: str) -> dict:
     """Read all config environment variables and return as constructor kwargs."""
-    ollama_foreground_model = os.getenv("OLLAMA_FOREGROUND_MODEL", "gpt-oss:20b")
+    ollama_model = os.getenv("OLLAMA_MODEL", os.getenv("OLLAMA_FOREGROUND_MODEL", "gpt-oss:20b"))
     return {
         "channel_type": channel_type,
         "signal_number": os.getenv("SIGNAL_NUMBER"),
@@ -80,8 +80,7 @@ def _collect_env_vars(channel_type: str) -> dict:
         "discord_bot_token": os.getenv("DISCORD_BOT_TOKEN"),
         "discord_channel_id": os.getenv("DISCORD_CHANNEL_ID"),
         "ollama_api_url": os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434"),
-        "ollama_foreground_model": ollama_foreground_model,
-        "ollama_background_model": os.getenv("OLLAMA_BACKGROUND_MODEL", ollama_foreground_model),
+        "ollama_model": ollama_model,
         "ollama_vision_model": os.getenv("OLLAMA_VISION_MODEL"),
         "ollama_image_model": os.getenv("OLLAMA_IMAGE_MODEL"),
         "ollama_embedding_model": os.getenv("OLLAMA_EMBEDDING_MODEL"),
@@ -129,8 +128,7 @@ class Config:
 
     # Ollama configuration
     ollama_api_url: str
-    ollama_foreground_model: str  # Fast model for user-facing messages
-    ollama_background_model: str  # Smart model for background tasks
+    ollama_model: str  # Text model for all agents
 
     # API keys
     perplexity_api_key: str | None
@@ -169,7 +167,7 @@ class Config:
     fastmail_api_token: str | None = None
     email_max_steps: int = 5
 
-    # News API configuration (optional, enables /follow command and event monitoring)
+    # News API configuration (optional, enables news search tool for agents)
     news_api_key: str | None = None
 
     # Runtime-configurable params (DB override → env override → default)

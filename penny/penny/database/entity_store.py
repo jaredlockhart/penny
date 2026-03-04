@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
-from penny.database.models import Engagement, Entity, Fact
+from penny.database.models import Entity, Fact
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class EntityStore:
             )
 
     def delete(self, entity_id: int) -> bool:
-        """Delete an entity and its associated facts and engagements."""
+        """Delete an entity and its associated facts."""
         try:
             with self._session() as session:
                 entity = session.get(Entity, entity_id)
@@ -106,9 +106,7 @@ class EntityStore:
             return False
 
     def _delete_related(self, session: Session, entity_id: int) -> None:
-        """Delete engagements and facts associated with an entity."""
-        for eng in session.exec(select(Engagement).where(Engagement.entity_id == entity_id)).all():
-            session.delete(eng)
+        """Delete facts associated with an entity."""
         for fact in session.exec(select(Fact).where(Fact.entity_id == entity_id)).all():
             session.delete(fact)
 

@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from penny.agents.models import MessageRole
 from penny.constants import PennyConstants
@@ -358,6 +358,25 @@ class MessageStore:
             all_messages.sort(key=lambda m: m.timestamp)
             return all_messages
 
+    def get_reactions_in_range(
+        self, sender: str, start: datetime, end: datetime
+    ) -> list[MessageLog]:
+        """Get reaction messages from a user within a date range, oldest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                        MessageLog.is_reaction == True,  # noqa: E712
+                        MessageLog.timestamp >= start,
+                        MessageLog.timestamp < end,
+                    )
+                    .order_by(MessageLog.timestamp)  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
     def get_messages_since(
         self, sender: str, since: datetime, limit: int = 100
     ) -> list[MessageLog]:
@@ -490,6 +509,33 @@ class MessageStore:
                 .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                 .limit(1)
             ).first()
+
+    def get_latest_autonomous_outgoing_time(self, recipient: str) -> datetime | None:
+        """Get timestamp of the most recent autonomous outgoing message to a user."""
+        with self._session() as session:
+            return session.exec(
+                select(MessageLog.timestamp)
+                .where(
+                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                    MessageLog.parent_id == None,  # noqa: E711
+                    MessageLog.recipient == recipient,
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+
+    def count_autonomous_since_last_incoming(self, user: str) -> int:
+        """Count autonomous outgoing messages since the user's last incoming message."""
+        latest_incoming = self.get_latest_incoming_time(user)
+        with self._session() as session:
+            query = select(func.count(MessageLog.id)).where(
+                MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                MessageLog.parent_id == None,  # noqa: E711
+                MessageLog.recipient == user,
+            )
+            if latest_incoming is not None:
+                query = query.where(MessageLog.timestamp > latest_incoming)
+            return session.exec(query).one()
 
     def get_first_message_time(self, sender: str) -> datetime | None:
         """Get timestamp of the earliest incoming message from a user."""

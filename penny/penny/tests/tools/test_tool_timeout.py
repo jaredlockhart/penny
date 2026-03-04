@@ -77,8 +77,7 @@ class TestToolTimeout:
             discord_bot_token=None,
             discord_channel_id=None,
             ollama_api_url="http://localhost:11434",
-            ollama_foreground_model="test-model",
-            ollama_background_model="test-model",
+            ollama_model="test-model",
             perplexity_api_key=None,
             log_level="DEBUG",
             db_path=test_db,
@@ -93,8 +92,7 @@ class TestToolTimeout:
         )
         agent = Agent(
             system_prompt="test",
-            background_model_client=client,
-            foreground_model_client=client,
+            model_client=client,
             tools=[],
             db=db,
             config=config,

@@ -17,10 +17,9 @@ GROUP_GLOBAL = "Global"
 GROUP_SCHEDULE = "Schedule"
 GROUP_KNOWLEDGE = "Knowledge"
 GROUP_EXTRACTION = "Extraction"
-GROUP_LEARN = "Learn"
-GROUP_EVENTS = "Events"
 GROUP_INNER_MONOLOGUE = "Inner Monologue"
 GROUP_HISTORY = "History"
+GROUP_PROACTIVE = "Proactive"
 
 # Ordered list for display
 CONFIG_GROUPS: list[str] = [
@@ -28,10 +27,9 @@ CONFIG_GROUPS: list[str] = [
     GROUP_SCHEDULE,
     GROUP_KNOWLEDGE,
     GROUP_EXTRACTION,
-    GROUP_LEARN,
-    GROUP_EVENTS,
     GROUP_INNER_MONOLOGUE,
     GROUP_HISTORY,
+    GROUP_PROACTIVE,
 ]
 
 
@@ -235,24 +233,6 @@ ConfigParam(
     group=GROUP_KNOWLEDGE,
 )
 
-ConfigParam(
-    key="EVENT_CONTEXT_TOP_K",
-    description="Number of top similar events to inject into message context",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
-    key="EVENT_CONTEXT_THRESHOLD",
-    description="Cosine similarity threshold for event context injection",
-    type=float,
-    default=0.3,
-    validator=_validate_unit_float,
-    group=GROUP_KNOWLEDGE,
-)
-
 # ── Extraction ────────────────────────────────────────────────────────────────
 
 ConfigParam(
@@ -345,26 +325,6 @@ ConfigParam(
     group=GROUP_EXTRACTION,
 )
 
-# ── Learn ─────────────────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="LEARN_PROMPT_DEFAULT_SEARCHES",
-    description="Number of searches performed per /learn command",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
-    group=GROUP_LEARN,
-)
-
-ConfigParam(
-    key="LEARN_STATUS_DISPLAY_LIMIT",
-    description="Max learn prompts shown in /learn status",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_LEARN,
-)
-
 # ── Inner Monologue ──────────────────────────────────────────────────────────
 
 ConfigParam(
@@ -378,68 +338,11 @@ ConfigParam(
 
 ConfigParam(
     key="INNER_MONOLOGUE_MAX_STEPS",
-    description="Max agentic loop steps per inner monologue cycle",
+    description="Max thinking loop steps per inner monologue cycle",
     type=int,
-    default=20,
+    default=10,
     validator=_validate_positive_int,
     group=GROUP_INNER_MONOLOGUE,
-)
-
-
-# ── Events ───────────────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="EVENT_DEDUP_SIMILARITY_THRESHOLD",
-    description="Embedding cosine similarity threshold for headline dedup",
-    type=float,
-    default=0.60,
-    validator=_validate_unit_float,
-    group=GROUP_EVENTS,
-)
-
-ConfigParam(
-    key="EVENT_DEDUP_TCR_THRESHOLD",
-    description="Token containment ratio threshold for headline dedup",
-    type=float,
-    default=0.60,
-    validator=_validate_unit_float,
-    group=GROUP_EVENTS,
-)
-
-ConfigParam(
-    key="EVENT_DEDUP_WINDOW_DAYS",
-    description="Number of days to look back for dedup comparison",
-    type=int,
-    default=7,
-    validator=_validate_positive_int,
-    group=GROUP_EVENTS,
-)
-
-ConfigParam(
-    key="EVENT_RELEVANCE_THRESHOLD",
-    description="Cosine similarity threshold for article-to-topic relevance",
-    type=float,
-    default=0.40,
-    validator=_validate_positive_float,
-    group=GROUP_EVENTS,
-)
-
-ConfigParam(
-    key="EVENT_MAX_PER_POLL",
-    description="Maximum number of events to store per follow prompt poll cycle",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_EVENTS,
-)
-
-ConfigParam(
-    key="EVENT_POLL_INTERVAL_SECONDS",
-    description="Fixed interval between polls for each follow prompt (seconds)",
-    type=float,
-    default=600.0,
-    validator=_validate_positive_float,
-    group=GROUP_EVENTS,
 )
 
 
@@ -470,6 +373,45 @@ ConfigParam(
     default=14,
     validator=_validate_positive_int,
     group=GROUP_HISTORY,
+)
+
+
+# ── Proactive ────────────────────────────────────────────────────────────────
+
+ConfigParam(
+    key="PROACTIVE_CHECK_INTERVAL",
+    description="Interval in seconds between proactive check cycles",
+    type=float,
+    default=300.0,
+    validator=_validate_positive_float,
+    group=GROUP_PROACTIVE,
+)
+
+ConfigParam(
+    key="PROACTIVE_IDLE_THRESHOLD",
+    description="Seconds since last user message before proactive send",
+    type=float,
+    default=3600.0,
+    validator=_validate_positive_float,
+    group=GROUP_PROACTIVE,
+)
+
+ConfigParam(
+    key="PROACTIVE_COOLDOWN_MIN",
+    description="Initial cooldown in seconds between autonomous messages",
+    type=float,
+    default=600.0,
+    validator=_validate_positive_float,
+    group=GROUP_PROACTIVE,
+)
+
+ConfigParam(
+    key="PROACTIVE_COOLDOWN_MAX",
+    description="Max cooldown in seconds (ceiling for exponential backoff)",
+    type=float,
+    default=14400.0,
+    validator=_validate_positive_float,
+    group=GROUP_PROACTIVE,
 )
 
 

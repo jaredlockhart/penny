@@ -217,10 +217,7 @@ class ExtractionPipeline(Agent):
     Processes SearchLog and MessageLog entries to discover entities and facts.
     """
 
-    @property
-    def name(self) -> str:
-        """Task name for logging."""
-        return "extraction"
+    name = "extraction"
 
     async def execute(self) -> bool:
         """Run the knowledge pipeline in strict priority order.
@@ -249,16 +246,7 @@ class ExtractionPipeline(Agent):
     # --- Phase 1: Search log processing ---
 
     def _resolve_user(self, search_log: SearchLog) -> str | None:
-        """Resolve the user who triggered a search log.
-
-        For learn_command searches, the user is on the LearnPrompt record
-        (background searches have no nearby messagelog entry). Falls back
-        to the messagelog timestamp heuristic for other triggers.
-        """
-        if search_log.learn_prompt_id is not None:
-            learn_prompt = self.db.learn_prompts.get(search_log.learn_prompt_id)
-            if learn_prompt:
-                return learn_prompt.user
+        """Resolve the user who triggered a search log."""
         return self.db.users.find_sender_for_timestamp(search_log.timestamp)
 
     async def _process_search_logs(self) -> bool:
@@ -287,12 +275,7 @@ class ExtractionPipeline(Agent):
                 else Prompt.KNOWN_ENTITY_IDENTIFICATION_PROMPT
             )
 
-            # Resolve learn prompt text for semantic relevance gate
             relevance_ref: str | None = None
-            if search_log.learn_prompt_id is not None:
-                learn_prompt = self.db.learn_prompts.get(search_log.learn_prompt_id)
-                if learn_prompt:
-                    relevance_ref = learn_prompt.prompt_text
 
             logger.info(
                 "Extracting entities from search: %s (mode=%s)",
@@ -400,8 +383,7 @@ class ExtractionPipeline(Agent):
         Args:
             relevance_reference: Text to compare entity names against for semantic
                 relevance gating. Defaults to context_value when not provided.
-                For /learn searches, this should be the original learn prompt text
-                rather than the intermediate search query.
+                When provided, overrides context_value for relevance comparison.
             notified_at: Pre-mark stored facts as notified (e.g. user-sourced facts).
 
         Returns _ExtractionResult with all identified entities.
@@ -729,7 +711,7 @@ class ExtractionPipeline(Agent):
         )
 
         try:
-            response = await self._background_model_client.generate(
+            response = await self._model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=IdentifiedEntities.model_json_schema(),
@@ -767,7 +749,7 @@ class ExtractionPipeline(Agent):
         )
 
         try:
-            response = await self._background_model_client.generate(
+            response = await self._model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=IdentifiedKnownEntities.model_json_schema(),
@@ -1157,7 +1139,7 @@ class ExtractionPipeline(Agent):
         )
 
         try:
-            response = await self._background_model_client.generate(
+            response = await self._model_client.generate(
                 prompt=prompt,
                 tools=None,
                 format=ExtractedFacts.model_json_schema(),

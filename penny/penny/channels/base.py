@@ -69,7 +69,7 @@ class MessageChannel(ABC):
         config: Config,
         channel_type: str,
         start_time: datetime,
-        foreground_model_client: OllamaClient,
+        model_client: OllamaClient,
         embedding_model_client: OllamaClient | None = None,
         image_model_client: OllamaClient | None = None,
     ) -> None:
@@ -80,12 +80,12 @@ class MessageChannel(ABC):
             config: Penny config
             channel_type: Channel type ("signal" or "discord")
             start_time: Penny startup time
-            foreground_model_client: Shared foreground OllamaClient for commands
+            model_client: Shared OllamaClient for commands
             embedding_model_client: Shared embedding OllamaClient for similarity
             image_model_client: Shared image generation OllamaClient for /draw
         """
         self._config = config
-        self._foreground_model_client = foreground_model_client
+        self._model_client = model_client
         self._embedding_model_client = embedding_model_client
 
         from penny.commands import CommandContext
@@ -93,7 +93,7 @@ class MessageChannel(ABC):
         self._command_context = CommandContext(
             db=self._db,
             config=config,
-            foreground_model_client=foreground_model_client,
+            model_client=model_client,
             user="",  # Will be set per-command
             channel_type=channel_type,
             start_time=start_time,
@@ -374,8 +374,25 @@ class MessageChannel(ABC):
 
         return False
 
+    def _needs_profile(self, sender: str) -> bool:
+        """Check if the sender has no profile set up."""
+        try:
+            return self._db.users.get_info(sender) is None
+        except Exception:
+            return False
+
     async def _dispatch_to_agent(self, message: IncomingMessage) -> None:
         """Run the message through the agent loop with typing indicators."""
+        if self._needs_profile(message.sender):
+            self._db.messages.log_message(
+                PennyConstants.MessageDirection.INCOMING,
+                message.sender,
+                message.content,
+                signal_timestamp=message.signal_timestamp,
+            )
+            await self.send_status_message(message.sender, PennyResponse.PROFILE_REQUIRED)
+            return
+
         typing_task = asyncio.create_task(self._typing_loop(message.sender))
         try:
             if self._scheduler:

@@ -71,7 +71,7 @@ def email_context():
     return CommandContext(
         db=MagicMock(),
         config=config,
-        foreground_model_client=MagicMock(),
+        model_client=MagicMock(),
         user=TEST_SENDER,
         channel_type="signal",
         start_time=datetime.now(UTC),

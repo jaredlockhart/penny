@@ -16,9 +16,9 @@ class MemoryCommand(Command):
     """View Penny's knowledge base."""
 
     name = "memory"
-    description = "View what Penny has learned and remembered"
+    description = "View what Penny has remembered"
     help_text = (
-        "View what Penny has learned from searches.\n\n"
+        "View what Penny remembers from conversations and searches.\n\n"
         "**Usage**:\n"
         "• `/memory` — List all remembered entities\n"
         "• `/memory <number>` — Show details for an entity\n\n"
@@ -83,17 +83,13 @@ class MemoryCommand(Command):
 
     @staticmethod
     def _get_origin(facts: list, context: CommandContext) -> str | None:
-        """Trace facts back to their originating learn topic or search query."""
+        """Trace facts back to their originating search query."""
         for fact in facts:
             if fact.source_search_log_id is None:
                 continue
             search_log = context.db.searches.get(fact.source_search_log_id)
             if search_log is None:
                 continue
-            if search_log.learn_prompt_id is not None:
-                learn_prompt = context.db.learn_prompts.get(search_log.learn_prompt_id)
-                if learn_prompt is not None:
-                    return f"/learn {learn_prompt.prompt_text}"
             return f"search: {search_log.query[:80]}"
         return None
 

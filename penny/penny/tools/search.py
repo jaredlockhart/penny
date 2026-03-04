@@ -79,23 +79,21 @@ class SearchTool(Tool):
         Accepts optional kwargs beyond the tool schema (not exposed to the model):
             skip_images: Override instance default for this call
             trigger: SearchTrigger value for log_search (default: user_message)
-            learn_prompt_id: LearnPrompt FK for /learn searches (default: None)
         """
         query: str = kwargs["query"]
         skip_images: bool = kwargs.get("skip_images", self.skip_images)
         trigger: str = kwargs.get("trigger", PennyConstants.SearchTrigger.USER_MESSAGE)
-        learn_prompt_id: int | None = kwargs.get("learn_prompt_id")
         redacted_query = self._redact_query(query)
 
         if skip_images:
-            text_result = await self._search_text(redacted_query, trigger, learn_prompt_id)
+            text_result = await self._search_text(redacted_query, trigger)
             if isinstance(text_result, Exception):
                 return SearchResult(text=PennyResponse.SEARCH_ERROR.format(error=text_result))
             text, urls = text_result
             return SearchResult(text=text, urls=urls)
 
         text_result, image_result = await asyncio.gather(
-            self._search_text(redacted_query, trigger, learn_prompt_id),
+            self._search_text(redacted_query, trigger),
             self._search_image(redacted_query),
             return_exceptions=True,
         )
@@ -127,7 +125,6 @@ class SearchTool(Tool):
         self,
         query: str,
         trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
-        learn_prompt_id: int | None = None,
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
         start = time.time()
@@ -136,7 +133,7 @@ class SearchTool(Tool):
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)
         urls = self._extract_urls(response)
-        self._log_search(query, result, duration_ms, trigger, learn_prompt_id)
+        self._log_search(query, result, duration_ms, trigger)
         return result, urls
 
     async def _call_perplexity(self, query: str):
@@ -182,7 +179,6 @@ class SearchTool(Tool):
         result: str,
         duration_ms: int,
         trigger: str,
-        learn_prompt_id: int | None,
     ) -> None:
         """Log search to database if available."""
         if self.db:
@@ -191,7 +187,6 @@ class SearchTool(Tool):
                 response=result,
                 duration_ms=duration_ms,
                 trigger=trigger,
-                learn_prompt_id=learn_prompt_id,
             )
 
     async def _search_image(self, query: str) -> str | None:

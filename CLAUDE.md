@@ -120,8 +120,8 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 
 **Ollama**:
 - `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
-- `OLLAMA_FOREGROUND_MODEL`: Fast model for user-facing messages (default: gpt-oss:20b)
-- `OLLAMA_BACKGROUND_MODEL`: Smart model for background tasks (default: same as foreground). Also used by the Quality agent for response evaluation — if set, the Quality agent is registered in penny-team
+- `OLLAMA_MODEL`: Text model for all agents (default: gpt-oss:20b). Falls back to `OLLAMA_FOREGROUND_MODEL` if set
+- `OLLAMA_BACKGROUND_MODEL`: Used by the penny-team Quality agent for response evaluation — if set, the Quality agent is registered
 - `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
 - `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables the `/draw` command when set
 - `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model for semantic validation and dedup (e.g., embeddinggemma). Optional; if unset, uses the background model for embeddings
@@ -133,8 +133,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `SERPER_API_KEY`: API key for Serper image search (optional; if unset, messages won't include images)
 - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
 - `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email` command)
-- `NEWS_API_KEY`: API key for TheNewsAPI.com (optional; enables `/follow`, `/unfollow`, `/events` commands and EventAgent)
-
+- `NEWS_API_KEY`: API key for TheNewsAPI.com (optional; enables news search tool for chat and thinking agents)
 **GitHub App** (required for agent containers and `/bug` command):
 - `GITHUB_APP_ID`: GitHub App ID for authenticated API access
 - `GITHUB_APP_PRIVATE_KEY_PATH`: Path to GitHub App private key file

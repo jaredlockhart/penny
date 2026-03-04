@@ -19,15 +19,14 @@ async def test_validate_connectivity_success(signal_server, test_config, mock_ol
 
     client = OllamaClient(
         api_url=test_config.ollama_api_url,
-        model=test_config.ollama_foreground_model,
+        model=test_config.ollama_model,
         db=db,
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
     message_agent = ChatAgent(
         system_prompt=Prompt.CONVERSATION_PROMPT,
-        background_model_client=client,
-        foreground_model_client=client,
+        model_client=client,
         tools=[],
         db=db,
         config=test_config,
@@ -61,8 +60,7 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
         discord_bot_token=None,
         discord_channel_id=None,
         ollama_api_url="http://localhost:11434",
-        ollama_foreground_model="test-model",
-        ollama_background_model="test-model",
+        ollama_model="test-model",
         perplexity_api_key=None,
         log_level="DEBUG",
         db_path=test_db,
@@ -73,15 +71,14 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
 
     client = OllamaClient(
         api_url=config.ollama_api_url,
-        model=config.ollama_foreground_model,
+        model=config.ollama_model,
         db=db,
         max_retries=config.ollama_max_retries,
         retry_delay=config.ollama_retry_delay,
     )
     message_agent = ChatAgent(
         system_prompt=Prompt.CONVERSATION_PROMPT,
-        background_model_client=client,
-        foreground_model_client=client,
+        model_client=client,
         tools=[],
         db=db,
         config=config,
@@ -121,8 +118,7 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
         discord_bot_token=None,
         discord_channel_id=None,
         ollama_api_url="http://localhost:11434",
-        ollama_foreground_model="test-model",
-        ollama_background_model="test-model",
+        ollama_model="test-model",
         perplexity_api_key=None,
         log_level="DEBUG",
         db_path=test_db,
@@ -133,15 +129,14 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
 
     client = OllamaClient(
         api_url=config.ollama_api_url,
-        model=config.ollama_foreground_model,
+        model=config.ollama_model,
         db=db,
         max_retries=config.ollama_max_retries,
         retry_delay=config.ollama_retry_delay,
     )
     message_agent = ChatAgent(
         system_prompt=Prompt.CONVERSATION_PROMPT,
-        background_model_client=client,
-        foreground_model_client=client,
+        model_client=client,
         tools=[],
         db=db,
         config=config,
@@ -178,15 +173,14 @@ async def test_send_message_rejects_empty_without_attachments(
 
     client = OllamaClient(
         api_url=test_config.ollama_api_url,
-        model=test_config.ollama_foreground_model,
+        model=test_config.ollama_model,
         db=db,
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
     message_agent = ChatAgent(
         system_prompt=Prompt.CONVERSATION_PROMPT,
-        background_model_client=client,
-        foreground_model_client=client,
+        model_client=client,
         tools=[],
         db=db,
         config=test_config,
@@ -219,15 +213,14 @@ async def test_send_message_allows_empty_text_with_attachments(
 
     client = OllamaClient(
         api_url=test_config.ollama_api_url,
-        model=test_config.ollama_foreground_model,
+        model=test_config.ollama_model,
         db=db,
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
     message_agent = ChatAgent(
         system_prompt=Prompt.CONVERSATION_PROMPT,
-        background_model_client=client,
-        foreground_model_client=client,
+        model_client=client,
         tools=[],
         db=db,
         config=test_config,
@@ -264,15 +257,14 @@ async def test_send_message_retries_on_socket_exception_400(
 
     client = OllamaClient(
         api_url=test_config.ollama_api_url,
-        model=test_config.ollama_foreground_model,
+        model=test_config.ollama_model,
         db=db,
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
     message_agent = ChatAgent(
         system_prompt=Prompt.CONVERSATION_PROMPT,
-        background_model_client=client,
-        foreground_model_client=client,
+        model_client=client,
         tools=[],
         db=db,
         config=test_config,
@@ -318,15 +310,14 @@ async def test_send_message_no_retry_on_non_transient_400(signal_server, test_co
 
     client = OllamaClient(
         api_url=test_config.ollama_api_url,
-        model=test_config.ollama_foreground_model,
+        model=test_config.ollama_model,
         db=db,
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
     message_agent = ChatAgent(
         system_prompt=Prompt.CONVERSATION_PROMPT,
-        background_model_client=client,
-        foreground_model_client=client,
+        model_client=client,
         tools=[],
         db=db,
         config=test_config,
@@ -370,15 +361,14 @@ async def test_send_message_gives_up_after_max_retries(signal_server, test_confi
 
     client = OllamaClient(
         api_url=test_config.ollama_api_url,
-        model=test_config.ollama_foreground_model,
+        model=test_config.ollama_model,
         db=db,
         max_retries=test_config.ollama_max_retries,
         retry_delay=test_config.ollama_retry_delay,
     )
     message_agent = ChatAgent(
         system_prompt=Prompt.CONVERSATION_PROMPT,
-        background_model_client=client,
-        foreground_model_client=client,
+        model_client=client,
         tools=[],
         db=db,
         config=test_config,

@@ -19,7 +19,7 @@ class TestDiscovery:
     def test_discover_finds_migrations(self):
         migrations = _discover_migrations()
         assert len(migrations) >= 1
-        assert migrations[0][0] == "0001_add_reaction_fields"
+        assert migrations[0][0] == "0001_initial_schema"
 
     def test_discover_returns_sorted(self):
         migrations = _discover_migrations()
@@ -70,60 +70,61 @@ class TestMigrate:
         assert not Path(db_path).exists()
 
     def test_applies_to_existing_db(self, tmp_path):
-        """Migration 0001 should add columns to an existing messagelog table."""
+        """Migration 0001 should create all tables in a bare database."""
         db_path = str(tmp_path / "test.db")
         conn = sqlite3.connect(db_path)
-        conn.execute(
-            """CREATE TABLE messagelog (
-                id INTEGER PRIMARY KEY,
-                timestamp TEXT,
-                direction TEXT,
-                sender TEXT,
-                content TEXT,
-                parent_id INTEGER,
-                parent_summary TEXT,
-                signal_timestamp INTEGER
-            )"""
-        )
+        # Create a minimal table so the DB file exists
+        conn.execute("CREATE TABLE _bootstrap (id INTEGER PRIMARY KEY)")
         conn.commit()
         conn.close()
 
         count = migrate(db_path)
-        assert count == 36  # 0001 through 0036
+        assert count == 1
 
         conn = sqlite3.connect(db_path)
-        cursor = conn.execute("PRAGMA table_info(messagelog)")
-        columns = {row[1] for row in cursor.fetchall()}
-        assert "is_reaction" in columns
-        assert "external_id" in columns
-        assert "processed" in columns
-        assert "parent_summary" not in columns  # Should be removed by migration 0008
-
-        # Verify learnprompt table created by 0019
-        has_learnprompt = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='learnprompt'"
-        ).fetchone()
-        assert has_learnprompt is not None
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\'"
+            ).fetchall()
+        }
+        expected = {
+            "promptlog",
+            "searchlog",
+            "messagelog",
+            "userinfo",
+            "command_logs",
+            "runtime_config",
+            "schedule",
+            "entity",
+            "mutestate",
+            "fact",
+            "thought",
+            "preference",
+            "conversationhistory",
+        }
+        assert expected.issubset(tables)
         conn.close()
 
     def test_idempotent(self, tmp_path):
         """Running migrate twice should not fail or re-apply."""
         db_path = str(tmp_path / "test.db")
         conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE messagelog (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE _bootstrap (id INTEGER PRIMARY KEY)")
         conn.commit()
         conn.close()
 
         count1 = migrate(db_path)
         count2 = migrate(db_path)
-        assert count1 >= 1
+        assert count1 == 1
         assert count2 == 0
 
     def test_tracks_in_migrations_table(self, tmp_path):
         """Applied migrations should be recorded in _migrations."""
         db_path = str(tmp_path / "test.db")
         conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE messagelog (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE _bootstrap (id INTEGER PRIMARY KEY)")
         conn.commit()
         conn.close()
 
@@ -132,59 +133,58 @@ class TestMigrate:
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
         applied = {row[0] for row in cursor.fetchall()}
-        assert "0001_add_reaction_fields" in applied
+        assert "0001_initial_schema" in applied
         conn.close()
 
     def test_skips_already_applied(self, tmp_path):
         """If _migrations already records a migration, it should not be re-run."""
         db_path = str(tmp_path / "test.db")
         conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE messagelog (id INTEGER PRIMARY KEY)")
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS _migrations (
+        conn.execute("CREATE TABLE _bootstrap (id INTEGER PRIMARY KEY)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS _migrations (
                 name TEXT PRIMARY KEY,
                 applied_at TEXT NOT NULL
-            )"""
-        )
+            )
+        """)
         conn.execute(
             "INSERT INTO _migrations (name, applied_at) VALUES (?, ?)",
-            ("0001_add_reaction_fields", "2025-01-01T00:00:00"),
+            ("0001_initial_schema", "2025-01-01T00:00:00"),
         )
         conn.commit()
         conn.close()
 
         count = migrate(db_path)
-        assert count == 35  # 0002 through 0036 are applied
+        assert count == 0
 
-    def test_bootstrap_with_columns_already_present(self, tmp_path):
-        """If columns already exist (from old migration system), 0001 should succeed."""
+    def test_bootstrap_with_tables_already_present(self, tmp_path):
+        """If tables already exist (from SQLModel.create_tables), migration should succeed."""
         db_path = str(tmp_path / "test.db")
         conn = sqlite3.connect(db_path)
-        conn.execute(
-            """CREATE TABLE messagelog (
-                id INTEGER PRIMARY KEY,
-                is_reaction BOOLEAN DEFAULT 0,
-                external_id VARCHAR DEFAULT NULL
-            )"""
-        )
+        # Simulate a table already created by SQLModel.create_tables() with full schema
+        conn.execute("""
+            CREATE TABLE messagelog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TIMESTAMP NOT NULL,
+                direction TEXT NOT NULL,
+                sender TEXT NOT NULL,
+                content TEXT NOT NULL,
+                parent_id INTEGER REFERENCES messagelog(id),
+                signal_timestamp INTEGER,
+                recipient TEXT,
+                external_id TEXT,
+                is_reaction BOOLEAN NOT NULL DEFAULT 0,
+                processed BOOLEAN NOT NULL DEFAULT 0
+            )
+        """)
         conn.commit()
         conn.close()
 
         count = migrate(db_path)
-        assert count == 36  # All migrations (0001 through 0036) recorded as applied
+        assert count == 1  # 0001 applied (CREATE IF NOT EXISTS is safe)
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
         applied = {row[0] for row in cursor.fetchall()}
-        assert "0001_add_reaction_fields" in applied
-        assert "0002_add_runtime_config_table" in applied
-        assert "0003_split_user_profiles" in applied
-        assert "0004_add_preference_table" in applied
-        assert "0005_add_reaction_processed_field" in applied
-        assert "0006_reset_message_processed_flags" in applied
-        assert "0007_add_schedule_table" in applied
-        assert "0008_drop_parent_summary" in applied
-        assert "0010_add_research_focus" in applied
-        assert "0011_add_research_options" in applied
-        assert "0018_drop_research_tables" in applied
+        assert "0001_initial_schema" in applied
         conn.close()

@@ -50,13 +50,12 @@ class EmailCommand(Command):
         try:
             tools = [
                 SearchEmailsTool(jmap_client),
-                ReadEmailsTool(jmap_client, context.foreground_model_client, prompt),
+                ReadEmailsTool(jmap_client, context.model_client, prompt),
             ]
 
             agent = Agent(
                 system_prompt=Prompt.EMAIL_SYSTEM_PROMPT,
-                background_model_client=context.foreground_model_client,
-                foreground_model_client=context.foreground_model_client,
+                model_client=context.model_client,
                 tools=tools,
                 db=context.db,
                 config=context.config,

@@ -34,18 +34,6 @@ class PennyResponse:
     VISION_IMAGE_CONTEXT = "User said '{user_text}' and included an image of: {caption}"
     VISION_IMAGE_ONLY_CONTEXT = "User sent an image of: {caption}"
 
-    # ── Learn ────────────────────────────────────────────────────────────────
-
-    LEARN_ACKNOWLEDGED = "Okay, I'll learn more about {topic}"
-    LEARN_EMPTY = (
-        "Nothing being actively researched right now. "
-        "Use `/learn <topic>` to start learning about something."
-    )
-    LEARN_STATUS_HEADER = "**Learning Status**"
-    LEARN_COMPLETE_HEADER = "I finished learning about **{topic}**"
-    LEARN_COMPLETE_ENTITY_LINE = "• **{name}** ({fact_count} facts, heat: {score})"
-    LEARN_COMPLETE_NO_ENTITIES = "I didn't find any specific topics to track from that."
-
     # ── Memory ───────────────────────────────────────────────────────────────
 
     MEMORY_EMPTY = "You don't have any stored memories yet."
@@ -76,6 +64,12 @@ class PennyResponse:
     PROFILE_NO_PROFILE = (
         "You don't have a profile yet! Set it up with:\n"
         "`/profile <name> <location> <date of birth>`\n\n"
+        "For example: `/profile sam denver march 5 1990` \U0001f4dd"
+    )
+    PROFILE_REQUIRED = (
+        "Hey! I need to collect some basic info about you before we can chat. "
+        "Please run `/profile <name> <location> <date of birth>` "
+        "to set up your profile.\n\n"
         "For example: `/profile sam denver march 5 1990` \U0001f4dd"
     )
     PROFILE_HEADER = "**Your Profile**"
@@ -165,7 +159,7 @@ class PennyResponse:
 **Uptime**: {uptime}
 **Channel**: {channel}
 **Database**: {messages:,} messages, {threads} active threads
-**Models**: {fg_model} (foreground), {bg_model} (background)
+**Model**: {model}
 **Memory**: {memory}
 
 **Background Tasks**:
@@ -184,48 +178,12 @@ class PennyResponse:
     COMMANDS_UNKNOWN = "Unknown command: /{name}. Use /commands to see available commands."
     COMMANDS_HELP_HEADER = "**Command: /{name}**"
 
-    # ── Unlearn ────────────────────────────────────────────────────────────────
-
-    UNLEARN_EMPTY = "No learn history yet. Use `/learn <topic>` to start learning about something."
-    UNLEARN_LIST_HEADER = "**Learn History**"
-    UNLEARN_INVALID_NUMBER = "#{number} doesn't match any topic. Use /unlearn to see the list."
-    UNLEARN_HEADER = "Forgetting what I learned about **{topic}**"
-    UNLEARN_ENTITY_LINE = "• {name} ({fact_count} facts)"
-    UNLEARN_NO_ENTITIES = "No entities were discovered from this topic."
-
     # ── Mute ──────────────────────────────────────────────────────────────────
 
     MUTE_ENABLED = "Notifications muted. Use /unmute when you want them back."
     MUTE_ALREADY = "Notifications are already muted."
     UNMUTE_ENABLED = "Notifications unmuted."
     UNMUTE_ALREADY = "Notifications aren't muted."
-
-    # ── Follow ────────────────────────────────────────────────────────────────
-
-    NEWS_NOT_CONFIGURED = (
-        "Event tracking requires a NewsAPI.org key. Set NEWS_API_KEY in your .env and restart."
-    )
-
-    FOLLOW_ACKNOWLEDGED = "Got it, I'll keep track of **{topic}** for you ({timing} updates)."
-    FOLLOW_NEED_TIMEZONE = (
-        "I need to know your timezone first. Send me your location or tell me your city \U0001f4cd"
-    )
-    FOLLOW_PARSE_ERROR = (
-        "Sorry, I couldn't understand that. Try something like: /follow daily 9:30am usa news"
-    )
-    FOLLOW_EMPTY = (
-        "You're not following anything yet. Use `/follow <topic>` to start monitoring something."
-    )
-    FOLLOW_LIST_HEADER = "**Following**"
-    FOLLOW_CANCELLED = "Stopped following **{topic}**."
-    FOLLOW_NOT_FOUND = "#{number} doesn't match any follow. Use /follow to see the list."
-    FOLLOW_QUERY_TERMS_ERROR = "Sorry, I couldn't generate search terms for that topic."
-
-    # ── Events ─────────────────────────────────────────────────────────────────
-
-    EVENTS_EMPTY = "No recent events. Use `/follow <topic>` to start tracking."
-    EVENTS_LIST_HEADER = "**Recent Events**"
-    EVENTS_NOT_FOUND = "#{number} doesn't match any event. Use /events to see the list."
 
     # ── Search ───────────────────────────────────────────────────────────────
 

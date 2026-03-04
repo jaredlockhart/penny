@@ -23,7 +23,7 @@ class CommandContext:
 
     db: Database
     config: Config
-    foreground_model_client: OllamaClient
+    model_client: OllamaClient
     user: str  # Signal number or Discord user ID
     channel_type: str  # "signal" or "discord"
     start_time: datetime  # Penny startup time for uptime calculation

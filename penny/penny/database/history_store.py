@@ -28,6 +28,7 @@ class HistoryStore:
         period_end: datetime,
         duration: str,
         topics: str,
+        embedding: bytes | None = None,
     ) -> ConversationHistory | None:
         """Insert a history entry. Returns the created record or None."""
         try:
@@ -38,6 +39,7 @@ class HistoryStore:
                     period_end=period_end,
                     duration=duration,
                     topics=topics,
+                    embedding=embedding,
                     created_at=datetime.now(UTC),
                 )
                 session.add(entry)
@@ -78,6 +80,40 @@ class HistoryStore:
             )
             entries.reverse()
             return entries
+
+    def upsert(
+        self,
+        user: str,
+        period_start: datetime,
+        period_end: datetime,
+        duration: str,
+        topics: str,
+        embedding: bytes | None = None,
+    ) -> ConversationHistory | None:
+        """Create or update a history entry for the given period."""
+        try:
+            with self._session() as session:
+                existing = session.exec(
+                    select(ConversationHistory).where(
+                        ConversationHistory.user == user,
+                        ConversationHistory.period_start == period_start,
+                        ConversationHistory.duration == duration,
+                    )
+                ).first()
+                if existing:
+                    existing.topics = topics
+                    existing.embedding = embedding
+                    existing.created_at = datetime.now(UTC)
+                    session.add(existing)
+                    session.commit()
+                    session.refresh(existing)
+                    return existing
+                return self.add(
+                    user, period_start, period_end, duration, topics, embedding=embedding
+                )
+        except Exception as e:
+            logger.error("Failed to upsert history entry: %s", e)
+            return None
 
     def exists(self, user: str, period_start: datetime, duration: str) -> bool:
         """Check if an entry already exists for a given period."""

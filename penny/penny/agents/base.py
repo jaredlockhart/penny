@@ -1,20 +1,23 @@
-"""Base Agent class with agentic loop."""
+"""Base Agent class with agentic loop and context building."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
+from penny.constants import PennyConstants
 from penny.database import Database
+from penny.database.models import Entity
 from penny.ollama import OllamaClient
+from penny.ollama.embeddings import deserialize_embedding, find_similar
+from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
-from penny.serper.client import search_image
-from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
+from penny.tools import SearchTool, Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,16 @@ def _has_xml_tags(content: str) -> bool:
     return bool(_XML_TAG_PATTERN.search(content))
 
 
+@dataclass
+class _StepResult:
+    """Result of processing all tool calls in one agentic loop step."""
+
+    messages: list[dict]
+    records: list[ToolCallRecord]
+    source_urls: list[str]
+    attachments: list[str]
+
+
 class Agent:
     """
     AI agent with a specific persona and capabilities.
@@ -41,25 +54,75 @@ class Agent:
 
     _instances: list[Agent] = []
 
-    @property
-    def name(self) -> str:
-        """Task name for logging. Override in subclasses."""
-        return self.__class__.__name__
+    THOUGHT_CONTEXT_LIMIT = 10
+    name: str = "Agent"
+
+    def get_users(self) -> list[str]:
+        """Return users to process. Override to filter."""
+        return self.db.users.get_all_senders()
+
+    def get_prompt(self, user: str) -> str | None:
+        """Build the prompt for the agentic loop. Return None to skip this user."""
+        return None
+
+    async def get_context(self, user: str) -> str:
+        """Build context text for the system prompt. Override for custom context."""
+        context, _ = await self._build_context(user)
+        return context
+
+    def get_history(self, user: str) -> list[tuple[str, str]] | None:
+        """Conversation history for the agentic loop. Override for conversation agents."""
+        return None
+
+    async def after_run(self, user: str) -> bool:
+        """Post-processing after the agentic loop. Return True if work was done."""
+        return True
+
+    async def execute_for_user(self, user: str) -> bool:
+        """Standard scheduled cycle: build tools, get prompt, run loop, post-process."""
+        self._current_user = user
+        try:
+            tools = self.get_tools(user)
+            if not tools:
+                return False
+            self._install_tools(tools)
+
+            prompt = self.get_prompt(user)
+            if not prompt:
+                return False
+
+            logger.info("%s starting for %s", self.name, user)
+            context = await self.get_context(user)
+            history = self.get_history(user)
+            await self.run(prompt=prompt, context=context, history=history)
+            did_work = await self.after_run(user)
+            logger.info("%s complete for %s", self.name, user)
+            return did_work
+        except Exception:
+            logger.exception("%s failed for %s", self.name, user)
+            return False
+        finally:
+            self._current_user = None
 
     async def execute(self) -> bool:
-        """
-        Execute a scheduled task. Override in subclasses.
+        """Run a scheduled cycle — iterate users and delegate to execute_for_user.
 
-        Returns:
-            True if work was done, False otherwise
+        Override execute_for_user for per-user work, or override execute
+        entirely for non-user-based work (e.g. ExtractionPipeline).
         """
-        return False
+        users = self.get_users()
+        if not users:
+            return False
+        did_work = False
+        for user in users:
+            if await self.execute_for_user(user):
+                did_work = True
+        return did_work
 
     def __init__(
         self,
         system_prompt: str,
-        background_model_client: OllamaClient,
-        foreground_model_client: OllamaClient,
+        model_client: OllamaClient,
         tools: list[Tool],
         db: Database,
         config: Config,
@@ -68,6 +131,8 @@ class Agent:
         vision_model_client: OllamaClient | None = None,
         embedding_model_client: OllamaClient | None = None,
         allow_repeat_tools: bool = False,
+        search_tool: Tool | None = None,
+        news_tool: Tool | None = None,
     ):
         self.config = config
         self.system_prompt = system_prompt
@@ -76,10 +141,13 @@ class Agent:
         self.max_steps = max_steps
         self.allow_repeat_tools = allow_repeat_tools
 
-        self._background_model_client = background_model_client
-        self._foreground_model_client = foreground_model_client
+        self._model_client = model_client
         self._vision_model_client = vision_model_client
         self._embedding_model_client = embedding_model_client
+
+        self._search_tool = search_tool
+        self._news_tool = news_tool
+        self._current_user: str | None = None
 
         self._tool_registry = ToolRegistry()
         for tool in self.tools:
@@ -91,16 +159,37 @@ class Agent:
 
         logger.info(
             "Initialized agent: model=%s, tools=%d, max_steps=%d",
-            self._background_model_client.model,
+            self._model_client.model,
             len(self.tools),
             max_steps,
         )
+
+    # ── Tool management ───────────────────────────────────────────────────
+
+    def get_tools(self, user: str) -> list[Tool]:
+        """Build tool list for this agent. Override in subclasses for custom tools."""
+        tools: list[Tool] = []
+        if self._search_tool:
+            tools.append(self._search_tool)
+        if self._news_tool:
+            tools.append(self._news_tool)
+        return tools
+
+    def _install_tools(self, tools: list[Tool]) -> None:
+        """Replace the agent's tool registry and executor."""
+        self._tool_registry = ToolRegistry()
+        for tool in tools:
+            self._tool_registry.register(tool)
+        self._tool_executor = ToolExecutor(self._tool_registry, timeout=self.config.tool_timeout)
+
+    # ── Message building ──────────────────────────────────────────────────
 
     def _build_messages(
         self,
         prompt: str,
         history: list[tuple[str, str]] | None = None,
         system_prompt: str | None = None,
+        context: str | None = None,
     ) -> list[dict]:
         """Build message list for Ollama chat API.
 
@@ -108,6 +197,7 @@ class Agent:
             prompt: The user message/prompt to respond to
             history: Optional conversation history as (role, content) tuples
             system_prompt: Optional system prompt override
+            context: Optional context text appended to system prompt (profile, events, etc.)
 
         Returns:
             List of message dicts for Ollama chat API
@@ -117,10 +207,14 @@ class Agent:
         effective_prompt = system_prompt or self.system_prompt
         now = datetime.now(UTC).strftime("%A, %B %d, %Y at %I:%M %p UTC")
 
-        # Build system prompt: timestamp → identity → agent-specific prompt
+        # Build system prompt: timestamp → identity → context → agent-specific prompt
         system_parts = [f"Current date and time: {now}", ""]
 
         system_parts.append(Prompt.PENNY_IDENTITY)
+
+        if context:
+            system_parts.append("")
+            system_parts.append(context)
 
         if effective_prompt:
             if "{tools}" in effective_prompt:
@@ -150,47 +244,189 @@ class Agent:
         lines = [f"- **{t.name}**: {t.description}" for t in tools]
         return "\n".join(lines)
 
-    async def _compose_user_facing(
+    # ── Context building ──────────────────────────────────────────────────
+
+    async def _build_context(
         self,
-        prompt: str,
-        history: list[tuple[str, str]] | None = None,
-        system_prompt: str | None = None,
-        image_query: str | None = None,
-    ) -> ControllerResponse:
-        """Compose a user-facing message with system prompt for consistent tone.
+        user: str,
+        content: str | None = None,
+    ) -> tuple[str, list[tuple[str, str]]]:
+        """Build context text for system prompt and conversation history.
 
-        This is the shared primitive for all user-facing model calls.
-        Builds messages with the identity prompt and timestamp, calls the model,
-        and returns a ControllerResponse with optional image attachment.
-
-        Used directly by proactive notifications (learn agent, extraction),
-        and by run() for the no-tool path (e.g. image messages).
+        Returns (context_text, conversation) where context_text is appended
+        to the system prompt and conversation is user/assistant turns.
         """
-        messages = self._build_messages(prompt, history, system_prompt)
+        sections: list[str | None] = [
+            self._build_profile_context(user, content),
+            await self._build_entity_context(user, content),
+            self._build_history_context(user),
+            self._build_thought_context(user),
+        ]
+        context_text = "\n\n".join(s for s in sections if s)
+        conversation = self._build_conversation(user)
+        return context_text, conversation
 
-        # Run model call and image search concurrently
+    def _build_profile_context(self, sender: str, content: str | None) -> str | None:
+        """Build user profile context string and configure search redaction."""
         try:
-            if image_query:
-                response, image = await asyncio.gather(
-                    self._foreground_model_client.chat(messages=messages),
-                    search_image(
-                        image_query,
-                        api_key=self.config.serper_api_key,
-                        max_results=int(self.config.runtime.IMAGE_MAX_RESULTS),
-                        timeout=self.config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
-                    ),
-                )
-            else:
-                response = await self._foreground_model_client.chat(messages=messages)
-                image = None
-        except Exception as e:
-            logger.error("Failed to compose user-facing message: %s", e)
-            return ControllerResponse(answer="")
+            user_info = self.db.users.get_info(sender)
+            if not user_info:
+                return None
 
-        content = response.content.strip()
-        thinking = response.thinking or response.message.thinking
-        attachments = [image] if image else []
-        return ControllerResponse(answer=content, thinking=thinking, attachments=attachments)
+            if content is not None:
+                name = user_info.name
+                user_said_name = bool(re.search(rf"\b{re.escape(name)}\b", content, re.IGNORECASE))
+                if self._search_tool and isinstance(self._search_tool, SearchTool):
+                    self._search_tool.redact_terms = [] if user_said_name else [name]
+
+            logger.debug("Built profile context for %s", sender)
+            return f"The user's name is {user_info.name}."
+        except Exception:
+            return None
+
+    def _build_history_context(self, sender: str) -> str | None:
+        """Build daily conversation history summary context."""
+        try:
+            limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
+            entries = self.db.history.get_recent(
+                sender, PennyConstants.HistoryDuration.DAILY, limit=limit
+            )
+            if not entries:
+                return None
+
+            topics: list[str] = []
+            for entry in entries:
+                for line in entry.topics.strip().splitlines():
+                    line = line.strip().lstrip("- ").strip()
+                    if line:
+                        topics.append(line)
+            if not topics:
+                return None
+
+            logger.debug("Built history context (%d topics)", len(topics))
+            return "You have previously discussed:\n" + "\n".join(f"- {t}" for t in topics)
+        except Exception:
+            logger.warning("History context retrieval failed, proceeding without")
+            return None
+
+    def _build_thought_context(self, sender: str) -> str | None:
+        """Build recent thinking summary context."""
+        try:
+            midnight = self._midnight_today()
+            all_thoughts = self.db.thoughts.get_recent(sender, limit=self.THOUGHT_CONTEXT_LIMIT)
+            thoughts = [t for t in all_thoughts if t.created_at >= midnight]
+            if not thoughts:
+                return None
+            lines = [t.content for t in thoughts]
+            logger.debug("Built thought context (%d thoughts)", len(thoughts))
+            return "## Recent Background Thinking\n" + "\n\n".join(lines)
+        except Exception:
+            logger.warning("Thought context retrieval failed, proceeding without")
+            return None
+
+    async def _build_entity_context(self, sender: str, content: str | None) -> str | None:
+        """Build semantically relevant entity context."""
+        if content is None:
+            return None
+        try:
+            query_vec = await embed_text(self._embedding_model_client, content)
+            if query_vec is None:
+                return None
+
+            entities = self.db.entities.get_with_embeddings(sender)
+            if not entities:
+                return None
+
+            candidates = self._build_entity_candidates(entities)
+            top_k = int(self.config.runtime.ENTITY_CONTEXT_TOP_K)
+            threshold = float(self.config.runtime.ENTITY_CONTEXT_THRESHOLD)
+            matches = find_similar(query_vec, candidates, top_k=top_k, threshold=threshold)
+            if not matches:
+                return None
+
+            max_facts = int(self.config.runtime.ENTITY_CONTEXT_MAX_FACTS)
+            entity_map = {e.id: e for e in entities}
+            lines = self._format_entity_matches(matches, entity_map, max_facts)
+            if not lines:
+                return None
+
+            logger.debug("Built entity context (%d entities)", len(lines))
+            return "## Relevant Knowledge\n" + "\n".join(lines)
+        except Exception:
+            logger.warning("Entity context retrieval failed, proceeding without")
+            return None
+
+    @staticmethod
+    def _build_entity_candidates(entities: list[Entity]) -> list[tuple[int, list[float]]]:
+        """Build (id, embedding_vector) tuples for similarity search."""
+        candidates: list[tuple[int, list[float]]] = []
+        for entity in entities:
+            if entity.embedding and entity.id is not None:
+                vec = deserialize_embedding(entity.embedding)
+                candidates.append((entity.id, vec))
+        return candidates
+
+    def _format_entity_matches(
+        self,
+        matches: list[tuple[int, float]],
+        entity_map: dict[int | None, Entity],
+        max_facts: int,
+    ) -> list[str]:
+        """Format matched entities with their facts for context injection."""
+        lines: list[str] = []
+        for entity_id, _score in matches:
+            entity = entity_map.get(entity_id)
+            if not entity:
+                continue
+            facts = self.db.facts.get_for_entity(entity_id)
+            fact_texts = [f.content for f in facts[:max_facts]]
+            tagline = f" ({entity.tagline})" if entity.tagline else ""
+            if fact_texts:
+                lines.append(f"- **{entity.name}**{tagline}: {'; '.join(fact_texts)}")
+            else:
+                lines.append(f"- **{entity.name}**{tagline}")
+        return lines
+
+    def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
+        """Build conversation history as user/assistant turns."""
+        conversation: list[tuple[str, str]] = []
+        try:
+            limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
+            midnight = self._midnight_today()
+            messages = self.db.messages.get_messages_since(sender, since=midnight, limit=limit)
+            for msg in messages:
+                if msg.direction == PennyConstants.MessageDirection.INCOMING:
+                    conversation.append((MessageRole.USER, msg.content))
+                else:
+                    conversation.append((MessageRole.ASSISTANT, msg.content))
+            if conversation:
+                logger.debug("Built conversation (%d turns)", len(conversation))
+        except Exception:
+            logger.warning("Conversation building failed, proceeding without")
+        return conversation
+
+    @staticmethod
+    def _midnight_today() -> datetime:
+        """Return midnight UTC for today as a naive datetime.
+
+        Naive because SQLite strips timezone info — all stored datetimes are naive UTC.
+        """
+        return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+
+    # ── Model calls ───────────────────────────────────────────────────────
+
+    async def _summarize_text(self, content: str, prompt: str) -> str:
+        """Summarize content using the background model. Returns empty string on failure."""
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": content},
+        ]
+        try:
+            response = await self._model_client.chat(messages=messages)
+            return response.content.strip()
+        except Exception as e:
+            logger.error("Summarization failed: %s", e)
+            return ""
 
     async def caption_image(self, image_b64: str) -> str:
         """Caption an image using the vision model.
@@ -212,24 +448,17 @@ class Agent:
         self,
         prompt: str,
         history: list[tuple[str, str]] | None = None,
-        use_tools: bool = True,
         max_steps: int | None = None,
         system_prompt: str | None = None,
+        context: str | None = None,
     ) -> ControllerResponse:
-        """Run the agent — summary method.
-
-        No-tool path delegates to _compose_user_facing.
-        Tool path runs the full agentic loop.
-        """
-        tools = self._tool_registry.get_ollama_tools() if use_tools else None
-        logger.debug("Using %d tools", len(tools) if tools else 0)
-
-        if not tools:
-            return await self._compose_user_facing(prompt, history, system_prompt)
-
-        messages = self._build_messages(prompt, history, system_prompt)
+        """Run the agentic loop — prompt in, response out."""
+        messages = self._build_messages(prompt, history, system_prompt, context=context)
+        tools = self._tool_registry.get_ollama_tools()
         steps = max_steps if max_steps is not None else self.max_steps
         return await self._run_agentic_loop(messages, tools, steps)
+
+    # ── Agentic loop ──────────────────────────────────────────────────────
 
     async def _run_agentic_loop(
         self,
@@ -255,16 +484,21 @@ class Agent:
             if response is None:
                 return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
 
+            self.on_response(response)
+
             if response.has_tool_calls:
-                records_before = len(tool_call_records)
-                await self._process_tool_calls(
-                    response, messages, called_tools, tool_call_records, source_urls, attachments
-                )
-                step_records = tool_call_records[records_before:]
-                await self._after_step(step_records, messages)
-                if self._should_stop_loop(step_records):
+                result = await self._process_tool_calls(response, called_tools)
+                messages.extend(result.messages)
+                tool_call_records.extend(result.records)
+                source_urls.extend(result.source_urls)
+                attachments.extend(result.attachments)
+                await self.after_step(result.records, messages)
+                if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
                     break
+                continue
+
+            if await self.handle_text_step(response, messages, step, is_final_step):
                 continue
 
             return self._build_final_response(response, source_urls, attachments, tool_call_records)
@@ -274,10 +508,26 @@ class Agent:
             answer=PennyResponse.AGENT_MAX_STEPS, tool_calls=tool_call_records
         )
 
-    async def _after_step(self, step_records: list[ToolCallRecord], messages: list[dict]) -> None:
+    def on_response(self, response) -> None:
+        """Hook called after every model response, before tool/text branching.
+
+        Override to capture content from all responses (e.g. inner monologue).
+        """
+
+    async def handle_text_step(
+        self, response, messages: list[dict], step: int, is_final: bool
+    ) -> bool:
+        """Handle a text-only model response. Return True to continue, False to stop.
+
+        Base returns False — text response = final answer.
+        Override to inject continuation messages and keep the loop going.
+        """
+        return False
+
+    async def after_step(self, step_records: list[ToolCallRecord], messages: list[dict]) -> None:
         """Hook called after each step's tool calls. Override in subclasses."""
 
-    def _should_stop_loop(self, step_records: list[ToolCallRecord]) -> bool:
+    def should_stop_loop(self, step_records: list[ToolCallRecord]) -> bool:
         """Check if the loop should stop early. Override in subclasses."""
         return False
 
@@ -289,9 +539,7 @@ class Agent:
 
         for xml_attempt in range(max_xml_retries):
             try:
-                response = await self._background_model_client.chat(
-                    messages=messages, tools=effective_tools
-                )
+                response = await self._model_client.chat(messages=messages, tools=effective_tools)
             except Exception as e:
                 logger.error("Error calling Ollama: %s", e)
                 return None
@@ -314,15 +562,14 @@ class Agent:
     async def _process_tool_calls(
         self,
         response,
-        messages: list[dict],
         called_tools: set[tuple[str, ...]],
-        tool_call_records: list[ToolCallRecord],
-        source_urls: list[str],
-        attachments: list[str],
-    ) -> None:
-        """Handle all tool calls from a single model response."""
+    ) -> _StepResult:
+        """Process all tool calls from a model response. Returns results to append."""
         logger.info("Model requested %d tool call(s)", len(response.message.tool_calls or []))
-        messages.append(response.message.to_input_message())
+        messages: list[dict] = [response.message.to_input_message()]
+        records: list[ToolCallRecord] = []
+        source_urls: list[str] = []
+        attachments: list[str] = []
 
         for ollama_tool_call in response.message.tool_calls or []:
             tool_name = ollama_tool_call.function.name
@@ -338,50 +585,51 @@ class Agent:
                 messages.append(ChatMessage(role=MessageRole.TOOL, content=repeat_msg).to_dict())
                 continue
 
-            result_str = await self._execute_single_tool(
-                tool_name,
-                arguments,
-                reasoning,
-                call_key,
-                called_tools,
-                tool_call_records,
-                source_urls,
-                attachments,
+            called_tools.add(call_key)
+            result_str, record, urls, image = await self._execute_single_tool(
+                tool_name, arguments, reasoning
             )
+            records.append(record)
+            source_urls.extend(urls)
+            if image:
+                attachments.append(image)
             messages.append(ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict())
+
+        return _StepResult(
+            messages=messages,
+            records=records,
+            source_urls=source_urls,
+            attachments=attachments,
+        )
 
     async def _execute_single_tool(
         self,
         tool_name: str,
         arguments: dict,
         reasoning: str | None,
-        call_key: tuple[str, ...],
-        called_tools: set[tuple[str, ...]],
-        tool_call_records: list[ToolCallRecord],
-        source_urls: list[str],
-        attachments: list[str],
-    ) -> str:
-        """Execute one tool call, update tracking state, return result string."""
+    ) -> tuple[str, ToolCallRecord, list[str], str | None]:
+        """Execute one tool call. Returns (result_str, record, source_urls, image)."""
         logger.info("Executing tool: %s", tool_name)
-        called_tools.add(call_key)
         if reasoning:
             logger.debug("Tool reasoning: %s", reasoning[:200])
-        tool_call_records.append(
-            ToolCallRecord(tool=tool_name, arguments=arguments, reasoning=reasoning)
-        )
 
+        record = ToolCallRecord(tool=tool_name, arguments=arguments, reasoning=reasoning)
         tool_call = ToolCall(tool=tool_name, arguments=arguments)
         tool_result = await self._tool_executor.execute(tool_call)
 
         if tool_result.error:
             result_str = f"Error: {tool_result.error}"
-        elif isinstance(tool_result.result, SearchResult):
-            result_str = self._format_search_result(tool_result.result, source_urls, attachments)
-        else:
-            result_str = str(tool_result.result)
+            logger.debug("Tool result: %s", result_str[:200])
+            return result_str, record, [], None
 
+        if isinstance(tool_result.result, SearchResult):
+            result_str, urls, image = self._format_search_result(tool_result.result)
+            logger.debug("Tool result: %s", result_str[:200])
+            return result_str, record, urls, image
+
+        result_str = str(tool_result.result)
         logger.debug("Tool result: %s", result_str[:200])
-        return result_str
+        return result_str, record, [], None
 
     @staticmethod
     def _make_call_key(tool_name: str, arguments: dict) -> tuple[str, ...]:
@@ -389,17 +637,15 @@ class Agent:
         arg_parts = tuple(f"{k}={v}" for k, v in sorted(arguments.items()))
         return (tool_name, *arg_parts)
 
-    def _format_search_result(
-        self, result: SearchResult, source_urls: list[str], attachments: list[str]
-    ) -> str:
-        """Format a SearchResult into a string, collecting URLs and images."""
+    @staticmethod
+    def _format_search_result(result: SearchResult) -> tuple[str, list[str], str | None]:
+        """Format a SearchResult. Returns (text, urls, image_base64)."""
         text = result.text
-        if result.urls:
-            source_urls.extend(result.urls)
-            text += f"\n\nSources:\n{'\n'.join(result.urls)}"
-        if result.image_base64:
-            attachments.append(result.image_base64)
-        return text
+        urls = result.urls or []
+        if urls:
+            sources = "\n".join(urls)
+            text += f"\n\nSources:\n{sources}"
+        return text, urls, result.image_base64
 
     def _build_final_response(
         self,

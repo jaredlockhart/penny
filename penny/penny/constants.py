@@ -17,14 +17,7 @@ class PennyConstants:
         """What triggered a search."""
 
         USER_MESSAGE = "user_message"
-        LEARN_COMMAND = "learn_command"
         PENNY_ENRICHMENT = "penny_enrichment"
-
-    class LearnPromptStatus(StrEnum):
-        """Status of a LearnPrompt lifecycle."""
-
-        ACTIVE = "active"
-        COMPLETED = "completed"
 
     # Search tool constants
     PERPLEXITY_PRESET = "pro-search"
@@ -43,39 +36,50 @@ class PennyConstants:
     GITHUB_REPO_OWNER = "jaredlockhart"
     GITHUB_REPO_NAME = "penny"
 
-    class EventSourceType(StrEnum):
-        """Source that produced an event."""
-
-        NEWS_API = "news_api"
-        SEARCH = "search"
-
-    class FollowPromptStatus(StrEnum):
-        """Status of a FollowPrompt lifecycle."""
-
-        ACTIVE = "active"
-        CANCELLED = "cancelled"
-
-    class FollowCadence(StrEnum):
-        """Notification frequency for a follow prompt."""
-
-        HOURLY = "hourly"
-        DAILY = "daily"
-        WEEKLY = "weekly"
-
-    FOLLOW_DEFAULT_CADENCE = FollowCadence.DAILY
-
-    FOLLOW_CADENCE_SECONDS: dict[str, int] = {
-        FollowCadence.HOURLY: 3600,
-        FollowCadence.DAILY: 86400,
-        FollowCadence.WEEKLY: 604800,
-    }
-
     class HistoryDuration(StrEnum):
         """Duration granularity for conversation history summaries."""
 
         DAILY = "daily"
         WEEKLY = "weekly"
         MONTHLY = "monthly"
+
+    class PreferenceValence(StrEnum):
+        """Valence of a user preference."""
+
+        POSITIVE = "positive"
+        NEGATIVE = "negative"
+
+    POSITIVE_REACTION_EMOJIS = frozenset(
+        {
+            "\U0001f44d",  # 👍
+            "\u2764\ufe0f",  # ❤️
+            "\U0001f525",  # 🔥
+            "\U0001f44f",  # 👏
+            "\U0001f60d",  # 😍
+            "\U0001f64c",  # 🙌
+            "\U0001f4af",  # 💯
+            "\u2b50",  # ⭐
+            "\U0001f60a",  # 😊
+            "\U0001f389",  # 🎉
+            "\U0001f4aa",  # 💪
+            "\u2705",  # ✅
+            "\U0001f929",  # 🤩
+        }
+    )
+
+    NEGATIVE_REACTION_EMOJIS = frozenset(
+        {
+            "\U0001f44e",  # 👎
+            "\U0001f621",  # 😡
+            "\U0001f92e",  # 🤮
+            "\U0001f4a9",  # 💩
+            "\U0001f624",  # 😤
+            "\u274c",  # ❌
+            "\U0001f61e",  # 😞
+            "\U0001f612",  # 😒
+            "\U0001f644",  # 🙄
+        }
+    )
 
     # Vision constants
     VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")

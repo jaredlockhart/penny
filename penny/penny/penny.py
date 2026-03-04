@@ -10,10 +10,8 @@ from typing import Any
 from penny.agents import (
     Agent,
     ChatAgent,
-    EventAgent,
     ExtractionPipeline,
     HistoryAgent,
-    LearnAgent,
     ThinkingAgent,
 )
 from penny.channels import MessageChannel, create_channel
@@ -24,6 +22,7 @@ from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
 from penny.ollama.embeddings import build_entity_embed_text, serialize_embedding
 from penny.prompts import Prompt
+from penny.responses import PennyResponse
 from penny.scheduler import (
     AlwaysRunSchedule,
     BackgroundScheduler,
@@ -32,6 +31,7 @@ from penny.scheduler import (
 from penny.scheduler.schedule_runner import ScheduleExecutor
 from penny.startup import get_restart_message
 from penny.tools import SearchTool, Tool
+from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.news import NewsTool
 
 logger = logging.getLogger(__name__)
@@ -72,8 +72,7 @@ class Penny:
 
     def _init_ollama_clients(self, config: Config) -> None:
         """Create shared Ollama model clients."""
-        self.foreground_model_client = self._create_ollama_client(config.ollama_foreground_model)
-        self.background_model_client = self._create_ollama_client(config.ollama_background_model)
+        self.model_client = self._create_ollama_client(config.ollama_model)
         self.vision_model_client = (
             self._create_ollama_client(config.ollama_vision_model)
             if config.ollama_vision_model
@@ -112,7 +111,7 @@ class Penny:
         """
         client = OllamaClient(
             api_url=self.config.ollama_api_url,
-            model=self.config.ollama_foreground_model,
+            model=self.config.ollama_model,
             db=db,
             max_retries=self.config.ollama_max_retries,
             retry_delay=self.config.ollama_retry_delay,
@@ -122,8 +121,7 @@ class Penny:
             search_tool=search_tools[0] if search_tools else None,
             news_tool=self._news_tool,
             system_prompt=Prompt.CONVERSATION_PROMPT,
-            background_model_client=client,
-            foreground_model_client=client,
+            model_client=client,
             tools=[],
             db=db,
             config=self.config,
@@ -132,6 +130,12 @@ class Penny:
             vision_model_client=self.vision_model_client,
             embedding_model_client=self.embedding_model_client,
         )
+
+    def _create_news_tool(self, config: Config) -> FetchNewsTool | None:
+        """Create FetchNewsTool if NEWS_API_KEY is configured."""
+        if not config.news_api_key:
+            return None
+        return FetchNewsTool(news_tool=NewsTool(api_key=config.news_api_key))
 
     def _init_agents(self, config: Config) -> None:
         """Create message agent and background processing agents."""
@@ -142,8 +146,7 @@ class Penny:
             search_tool=self._shared_search_tool,
             news_tool=self._news_tool,
             system_prompt=Prompt.CONVERSATION_PROMPT,
-            background_model_client=self.foreground_model_client,
-            foreground_model_client=self.foreground_model_client,
+            model_client=self.model_client,
             tools=[],
             db=self.db,
             config=config,
@@ -158,8 +161,7 @@ class Penny:
         """Common kwargs shared by all background processing agents."""
         return {
             "system_prompt": "",
-            "background_model_client": self.background_model_client,
-            "foreground_model_client": self.foreground_model_client,
+            "model_client": self.model_client,
             "tools": [],
             "db": self.db,
             "max_steps": 1,
@@ -168,17 +170,11 @@ class Penny:
         }
 
     def _init_background_agents(self, config: Config) -> None:
-        """Create learn, extraction, event, monologue, history, and schedule agents."""
+        """Create extraction, monologue, history, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
         search_tool = self._shared_search_tool
-        self.learn_agent = LearnAgent(search_tool=search_tool, **kwargs)
         self.extraction_pipeline = ExtractionPipeline(
             embedding_model_client=self.embedding_model_client, **kwargs
-        )
-        self.event_agent = EventAgent(
-            news_tool=self._news_tool,
-            embedding_model_client=self.embedding_model_client,
-            **kwargs,
         )
         self.thinking_agent = ThinkingAgent(
             search_tool=search_tool,
@@ -188,12 +184,6 @@ class Penny:
         )
         self.history_agent = HistoryAgent(**kwargs)
         self.schedule_executor = ScheduleExecutor(**kwargs)
-
-    def _create_news_tool(self, config: Config) -> NewsTool | None:
-        """Create NewsTool if NEWS_API_KEY is configured."""
-        if not config.news_api_key:
-            return None
-        return NewsTool(api_key=config.news_api_key)
 
     def _init_github_client(self, config: Config) -> Any:
         """Initialize GitHub API client if configured. Returns GitHubAPI or None."""
@@ -248,32 +238,28 @@ class Penny:
             db=self.db,
             command_registry=self.command_registry,
         )
-        self.thinking_agent.set_channel(self.channel)
         self.schedule_executor.set_channel(self.channel)
+        self.chat_agent.set_channel(self.channel)
 
     def _init_scheduler(self, config: Config) -> None:
         """Create background scheduler with prioritized schedules."""
         schedules = [
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
+                agent=self.history_agent,
+                interval=config.runtime.HISTORY_INTERVAL,
+            ),
+            PeriodicSchedule(
                 agent=self.extraction_pipeline,
                 interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
             PeriodicSchedule(
+                agent=self.chat_agent,
+                interval=config.runtime.PROACTIVE_CHECK_INTERVAL,
+            ),
+            PeriodicSchedule(
                 agent=self.thinking_agent,
                 interval=config.runtime.INNER_MONOLOGUE_INTERVAL,
-            ),
-            PeriodicSchedule(
-                agent=self.event_agent,
-                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
-            ),
-            PeriodicSchedule(
-                agent=self.learn_agent,
-                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
-            ),
-            PeriodicSchedule(
-                agent=self.history_agent,
-                interval=config.runtime.HISTORY_INTERVAL,
             ),
         ]
         self.scheduler = BackgroundScheduler(
@@ -290,7 +276,7 @@ class Penny:
             config=config,
             channel_type=config.channel_type,
             start_time=self.start_time,
-            foreground_model_client=self.foreground_model_client,
+            model_client=self.model_client,
             embedding_model_client=self.embedding_model_client,
             image_model_client=self.image_model_client,
         )
@@ -319,7 +305,7 @@ class Penny:
         if not optional_models:
             return
 
-        available = await self.foreground_model_client.list_models()
+        available = await self.model_client.list_models()
         for model_name, env_var in optional_models:
             # Strip tag for comparison since some models report without tag
             base_name = model_name.split(":")[0]
@@ -402,9 +388,7 @@ class Penny:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
         logger.info("Channel: %s (sender_id=%s)", self.config.channel_type, self.channel.sender_id)
-        logger.info("Ollama model: %s (messages)", self.config.ollama_foreground_model)
-        if self.config.ollama_background_model != self.config.ollama_foreground_model:
-            logger.info("Ollama model: %s (background)", self.config.ollama_background_model)
+        logger.info("Ollama model: %s", self.config.ollama_model)
         if self.config.ollama_vision_model:
             logger.info("Ollama model: %s (vision)", self.config.ollama_vision_model)
         if self.config.ollama_image_model:
@@ -438,7 +422,7 @@ class Penny:
                 return
 
             # Generate restart message
-            restart_msg = await get_restart_message(self.foreground_model_client)
+            restart_msg = await get_restart_message(self.model_client)
 
             # Combine wave with restart message
             announcement = f"👋 {restart_msg}"
@@ -460,20 +444,15 @@ class Penny:
                 logger.info("No recipients to check for missing profiles")
                 return
 
-            prompt_msg = (
-                "Hey! I need to collect some basic info about you before we can chat. "
-                "Please run `/profile <name> <location> <date of birth>` "
-                "to set up your profile.\n\n"
-                "For example: `/profile sam denver march 5 1990` 📝"
-            )
-
             for sender in senders:
                 try:
                     user_info = self.db.users.get_info(sender)
                     if not user_info:
                         logger.info("User %s has no profile, sending prompt", sender)
                         try:
-                            await self.channel.send_status_message(sender, prompt_msg)
+                            await self.channel.send_status_message(
+                                sender, PennyResponse.PROFILE_REQUIRED
+                            )
                         except Exception as e:
                             logger.warning("Failed to send profile prompt to %s: %s", sender, e)
                 except Exception:
@@ -488,8 +467,7 @@ class Penny:
         self.scheduler.stop()
         await self.channel.close()
         await Agent.close_all()
-        await self.foreground_model_client.close()
-        await self.background_model_client.close()
+        await self.model_client.close()
         if self.vision_model_client:
             await self.vision_model_client.close()
         if self.embedding_model_client:
@@ -506,8 +484,7 @@ async def main() -> None:
 
     logger.info("Starting Penny with config:")
     logger.info("  channel_type: %s", config.channel_type)
-    logger.info("  ollama_model: %s", config.ollama_foreground_model)
-    logger.info("  ollama_background_model: %s", config.ollama_background_model)
+    logger.info("  ollama_model: %s", config.ollama_model)
     logger.info("  ollama_api_url: %s", config.ollama_api_url)
     logger.info("  idle_threshold: %.0fs", config.runtime.IDLE_SECONDS)
     logger.info("  maintenance_interval: %.0fs", config.runtime.MAINTENANCE_INTERVAL_SECONDS)

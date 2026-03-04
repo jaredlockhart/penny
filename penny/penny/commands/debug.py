@@ -78,17 +78,13 @@ class DebugCommand(Command):
                 logger.warning("Failed to get memory info: %s", e)
                 mem_str = "unknown"
 
-        fg_model = context.config.ollama_foreground_model
-        bg_model = context.config.ollama_background_model
-
         response = PennyResponse.DEBUG_TEMPLATE.format(
             commit=commit,
             uptime=uptime_str,
             channel=context.channel_type.title(),
             messages=total_messages,
             threads=active_threads,
-            fg_model=fg_model,
-            bg_model=bg_model,
+            model=context.config.ollama_model,
             task_status=task_status,
             memory=mem_str,
         )

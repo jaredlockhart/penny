@@ -24,7 +24,7 @@ async def test_debug_command(signal_server, test_config, mock_ollama, running_pe
         assert "**Channel**: Signal" in response["message"]
         assert "**Database**:" in response["message"]
         assert "messages" in response["message"]
-        assert "**Models**:" in response["message"]
+        assert "**Model**:" in response["message"]
         assert "**Background Tasks**:" in response["message"]
         assert "**Memory**:" in response["message"]
 

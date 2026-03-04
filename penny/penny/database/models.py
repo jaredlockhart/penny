@@ -35,20 +35,6 @@ class SearchLog(SQLModel, table=True):
     duration_ms: int | None = None
     extracted: bool = Field(default=False)  # True after entity extraction processing
     trigger: str = Field(default="user_message", index=True)  # SearchTrigger enum value
-    learn_prompt_id: int | None = Field(default=None, foreign_key="learnprompt.id", index=True)
-
-
-class LearnPrompt(SQLModel, table=True):
-    """A user-initiated learning prompt with lifecycle tracking."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    user: str = Field(index=True)  # Signal number or Discord user ID
-    prompt_text: str  # Original user text (e.g., "find me stuff about speakers")
-    status: str = Field(default="active", index=True)  # LearnPromptStatus enum value
-    searches_remaining: int = Field(default=0)  # Searches left to execute
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    announced_at: datetime | None = Field(default=None)  # When completion announcement was sent
 
 
 class MessageLog(SQLModel, table=True):
@@ -141,19 +127,6 @@ class Entity(SQLModel, table=True):
     )
 
 
-class Engagement(SQLModel, table=True):
-    """A user engagement event recording interest in an entity."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    user: str = Field(index=True)  # Signal number or Discord user ID
-    entity_id: int | None = Field(default=None, foreign_key="entity.id", index=True)
-    engagement_type: str = Field(index=True)  # EngagementType enum value
-    valence: str  # EngagementValence enum value
-    strength: float  # Weight 0.0-1.0
-    source_message_id: int | None = Field(default=None, foreign_key="messagelog.id", index=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
-
-
 class MuteState(SQLModel, table=True):
     """Per-user mute state for proactive notifications.
 
@@ -178,31 +151,25 @@ class Fact(SQLModel, table=True):
     embedding: bytes | None = None  # Serialized float32 embedding vector
 
 
-class Event(SQLModel, table=True):
-    """A time-stamped occurrence that can involve multiple entities."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    user: str = Field(index=True)  # Signal number or Discord user ID
-    headline: str  # Short event title
-    summary: str  # Event description/body
-    occurred_at: datetime = Field(index=True)  # When the event happened
-    discovered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    source_url: str | None = None  # Article URL
-    source_type: str = Field(index=True)  # EventSourceType enum value
-    external_id: str | None = Field(default=None, index=True)  # Article URL for dedup
-    notified_at: datetime | None = None  # When user was told
-    embedding: bytes | None = None  # Serialized float32 embedding vector
-    follow_prompt_id: int | None = Field(
-        default=None, foreign_key="followprompt.id", index=True
-    )  # Which follow prompt generated this event
-
-
 class Thought(SQLModel, table=True):
     """A persistent inner monologue entry — Penny's stream of consciousness."""
 
     id: int | None = Field(default=None, primary_key=True)
     user: str = Field(index=True)
     content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+
+
+class Preference(SQLModel, table=True):
+    """A user preference extracted from conversation sentiment or emoji reactions."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user: str = Field(index=True)
+    content: str  # The preference topic (e.g., "dark roast coffee", "cold weather")
+    valence: str = Field(index=True)  # PreferenceValence enum value
+    embedding: bytes | None = None  # Serialized float32 embedding vector
+    source_period_start: datetime  # Start of source conversation period
+    source_period_end: datetime  # End of source conversation period
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
 
 
@@ -217,24 +184,5 @@ class ConversationHistory(SQLModel, table=True):
     period_end: datetime
     duration: str  # PennyConstants.HistoryDuration enum value
     topics: str  # Bullet-point list of topics discussed
+    embedding: bytes | None = None  # Serialized float32 embedding vector
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class FollowPrompt(SQLModel, table=True):
-    """An ongoing monitoring subscription for event tracking."""
-
-    __tablename__ = "followprompt"
-
-    id: int | None = Field(default=None, primary_key=True)
-    user: str = Field(index=True)  # Signal number or Discord user ID
-    prompt_text: str  # User's natural language topic (e.g., "AI news")
-    status: str = Field(default="active", index=True)  # FollowPromptStatus enum value
-    query_terms: str = ""  # LLM-generated search terms (JSON list)
-    cadence: str = Field(default="daily")  # Legacy — kept for backward compat
-    cron_expression: str = Field(default="0 9 * * *")  # 5-field cron schedule
-    timing_description: str = Field(default="daily")  # Human-readable timing
-    user_timezone: str = Field(default="UTC")  # IANA timezone for cron evaluation
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    last_polled_at: datetime | None = None  # When this subscription was last checked
-    last_notified_at: datetime | None = None  # When this prompt last triggered a notification

@@ -1440,18 +1440,17 @@ async def test_extraction_does_not_send_notifications(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Learn command searches happen in the background — no messagelog entry
-        # exists nearby. The user must be resolved from the LearnPrompt record.
-        lp = penny.db.learn_prompts.create(
-            user=TEST_SENDER, prompt_text="test topic", searches_remaining=0
+        # Log a message so extraction can resolve the user from it
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "tell me about silent entity 1",
         )
-        assert lp is not None and lp.id is not None
 
         penny.db.searches.log(
             query="test query",
             response="Info about silent entity 1.",
-            trigger=PennyConstants.SearchTrigger.LEARN_COMMAND,
-            learn_prompt_id=lp.id,
+            trigger=PennyConstants.SearchTrigger.USER_MESSAGE,
         )
 
         signal_server.outgoing_messages.clear()
@@ -1463,14 +1462,13 @@ async def test_extraction_does_not_send_notifications(
             f"got: {[m['message'][:80] for m in signal_server.outgoing_messages]}"
         )
 
-        # But facts should be stored with notified_at=NULL (eligible for notification)
+        # Facts should still be stored (pre-marked notified since user_message trigger)
         entities = penny.db.entities.get_for_user(TEST_SENDER)
         assert any(e.name == "silent entity 1" for e in entities)
         entity = next(e for e in entities if e.name == "silent entity 1")
         assert entity.id is not None
         facts = penny.db.facts.get_for_entity(entity.id)
         assert len(facts) >= 1
-        assert all(f.notified_at is None for f in facts)
 
 
 @pytest.mark.asyncio

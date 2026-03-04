@@ -1,139 +1,144 @@
-"""ThinkingAgent — Penny's autonomous thinking layer.
+"""ThinkingAgent — Penny's autonomous inner monologue.
 
-Runs on the scheduler after extraction. Each cycle:
-1. Builds full context (profile, messages, interests, events, thoughts)
-2. Orientation step: model reads full context, writes a focused plan (no tools)
-3. Agentic loop: lean context (profile + plan + entities) with tools
-4. Reasoning from tool calls gets persisted as thoughts
+Runs on the scheduler after extraction. Each cycle is a continuous
+thinking loop where Penny thinks out loud, uses tools, and accumulates
+reasoning. At the end, the monologue is summarized and stored as a thought.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import random
 
-from penny.agents.models import MessageRole
-from penny.agents.penny_agent import PennyAgent
+from penny.agents.base import Agent
+from penny.agents.models import ChatMessage, MessageRole
 from penny.prompts import Prompt
-from penny.tools.base import Tool
-from penny.tools.message_user import MessageUserTool
-
-if TYPE_CHECKING:
-    from penny.channels.base import MessageChannel
-    from penny.tools.news import NewsTool
 
 logger = logging.getLogger(__name__)
 
 
-class ThinkingAgent(PennyAgent):
+class ThinkingAgent(Agent):
     """Autonomous inner monologue — Penny's conscious mind.
 
-    Runs an agentic loop with tools for recalling memory,
-    searching the web, fetching news, and messaging the user.
+    Each cycle picks ONE random seed topic from history
+    to focus on, keeping thinking rotating across interests.
+
+    System message (slim — profile, entities, thoughts only)::
+
+        [system]
+        <current datetime>
+        <Prompt.PENNY_IDENTITY>
+        <user profile>
+
+        ## Relevant Knowledge
+        - <top K entities by embedding similarity to accumulated monologue>
+
+        ## Recent Background Thinking
+        <today's thought summaries — used to avoid repetition>
+
+        <Prompt.THINKING_SYSTEM_PROMPT with {tools} listing>
+
+    Thinking loop::
+
+        [user]       Think about {seed topic} and explore interesting related topics.
+        [assistant]  <inner monologue text>          ← captured
+        [user]       keep exploring
+        [assistant]  <tool call: search(...)>         ← tool executed
+        [tool]       <search results>
+        [assistant]  <inner monologue reflecting>     ← captured
+        ...
+        <INNER_MONOLOGUE_MAX_STEPS iterations. Entity context rebuilt
+        each text step, anchored to accumulated monologue.>
+
+    Summary step::
+
+        [system]  <Prompt.SUMMARIZE_TO_PARAGRAPH>
+        [user]    <all inner monologue text joined with --->
+        <background model, no tools. Result stored in db.thoughts.>
+
+    Seed topic sources:
+        - history entries (daily conversation topic bullets)
     """
 
     THOUGHT_CONTEXT_LIMIT = 50
 
-    def __init__(
-        self,
-        search_tool: Tool | None = None,
-        news_tool: NewsTool | None = None,
-        **kwargs: object,
-    ) -> None:
-        super().__init__(search_tool=search_tool, news_tool=news_tool, **kwargs)
-        self._channel: MessageChannel | None = None
+    name = "inner_monologue"
 
-    @property
-    def name(self) -> str:
-        return "inner_monologue"
+    def __init__(self, **kwargs: object) -> None:
+        kwargs["system_prompt"] = Prompt.THINKING_SYSTEM_PROMPT
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.max_steps = int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
+        self._inner_monologue: list[str] = []
 
-    def set_channel(self, channel: MessageChannel) -> None:
-        """Set the channel for sending messages to users."""
-        self._channel = channel
+    # ── Execution hooks ──────────────────────────────────────────────────
 
-    async def execute(self) -> bool:
-        """Run one inner monologue cycle for each user."""
-        users = self.db.users.get_all_senders()
-        if not users:
+    def get_prompt(self, user: str) -> str | None:
+        """Pick a random seed topic from conversation history, or browse news."""
+        self._inner_monologue = []
+        topics: list[str] = []
+        limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
+        for entry in self.db.history.get_recent(user, "daily", limit=limit):
+            for line in entry.topics.splitlines():
+                topic = line.strip().lstrip("- ").strip()
+                if topic:
+                    topics.append(topic)
+        if not topics:
+            logger.info("No seed topics for %s, browsing news", user)
+            return Prompt.THINKING_BROWSE_NEWS
+        seed = random.choice(topics)
+        logger.info("Thinking seed: %s", seed)
+        return Prompt.THINKING_SEED.format(seed=seed)
+
+    async def get_context(self, user: str) -> str:
+        """Slim context — profile, entities, and thoughts only."""
+        sections: list[str | None] = [
+            self._build_profile_context(user, None),
+            await self._build_entity_context(user, None),
+            self._build_thought_context(user),
+        ]
+        return "\n\n".join(s for s in sections if s)
+
+    async def after_run(self, user: str) -> bool:
+        """Summarize the inner monologue and store as a thought."""
+        if not self._inner_monologue:
             return False
-
-        for user in users:
-            if self.db.users.is_muted(user):
-                continue
-            await self._run_cycle(user)
-
+        combined = "\n\n---\n\n".join(self._inner_monologue)
+        summary = await self._summarize_text(combined, Prompt.SUMMARIZE_TO_PARAGRAPH)
+        if summary:
+            self.db.thoughts.add(user, summary)
+            logger.info("[inner_monologue] %s", summary[:200])
         return True
 
-    async def _run_cycle(self, user: str) -> None:
-        """One thinking cycle — summary method.
+    # ── Loop hooks ─────────────────────────────────────────────────────────
 
-        Orientation reads full context, agentic loop gets lean context.
-        """
-        self._current_user = user
-        full_history = await self._build_context(user)
-        tools = self._build_tools(user)
-        if not tools:
-            self._current_user = None
-            return
+    def on_response(self, response) -> None:
+        """Capture text content from every response (even tool-call ones)."""
+        content = response.content.strip()
+        if content:
+            self._inner_monologue.append(content)
 
-        self._install_tools(tools)
-
-        try:
-            logger.info("Inner monologue cycle starting for %s", user)
-            orientation = await self._orient(full_history)
-            loop_history = self._build_loop_context(user, orientation)
-            loop_history = await self._inject_entity_context(
-                orientation,
-                user,
-                loop_history,
-            )
-            max_steps = int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
-            await self.run(
-                prompt=Prompt.INNER_MONOLOGUE_BEGIN_PROMPT,
-                history=loop_history,
-                use_tools=True,
-                max_steps=max_steps,
-                system_prompt=Prompt.INNER_MONOLOGUE_SYSTEM_PROMPT,
-            )
-            logger.info("Inner monologue cycle complete for %s", user)
-        except Exception:
-            logger.exception("Inner monologue cycle failed for %s", user)
-        finally:
-            self._current_user = None
-
-    # ── Context ────────────────────────────────────────────────────────────
-
-    def _build_loop_context(
-        self,
-        user: str,
-        orientation: str,
-    ) -> list[tuple[str, str]]:
-        """Build lean context for the agentic loop: profile + plan only."""
-        history = self._inject_profile_context(user, None, None)
-        history = history or []
-        history.append((MessageRole.SYSTEM.value, f"## Your Plan\n{orientation}"))
-        return history
-
-    # ── Orientation ────────────────────────────────────────────────────────
-
-    async def _orient(self, history: list[tuple[str, str]] | None) -> str:
-        """Orientation step — model reads all context, emits planning text."""
-        response = await self._compose_user_facing(
-            prompt=Prompt.ORIENTATION_PROMPT,
-            history=history,
-            system_prompt=Prompt.INNER_MONOLOGUE_SYSTEM_PROMPT,
+    async def handle_text_step(
+        self, response, messages: list[dict], step: int, is_final: bool
+    ) -> bool:
+        """Inject 'keep exploring' continuation to drive the thinking loop."""
+        if is_final:
+            return False
+        content = response.content.strip()
+        messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=content).to_dict())
+        assert self._current_user is not None
+        anchor = "\n".join(self._inner_monologue)
+        sections: list[str | None] = [
+            self._build_profile_context(self._current_user, anchor),
+            await self._build_entity_context(self._current_user, anchor),
+            self._build_thought_context(self._current_user),
+        ]
+        context_text = "\n\n".join(s for s in sections if s)
+        fresh = self._build_messages(
+            prompt="",
+            history=None,
+            system_prompt=Prompt.THINKING_SYSTEM_PROMPT,
+            context=context_text,
         )
-        thought = response.answer or ""
-        if thought and self._current_user:
-            self.db.thoughts.add(self._current_user, f"[orientation] {thought}")
-            logger.info("[orientation] %s", thought[:200])
-        return thought
-
-    # ── Tools ──────────────────────────────────────────────────────────────
-
-    def _build_tools(self, user: str) -> list[Tool]:
-        """Extend base tools with MessageUserTool when channel is available."""
-        tools = super()._build_tools(user)
-        if self._channel:
-            tools.append(MessageUserTool(channel=self._channel, user=user))
-        return tools
+        messages[0] = fresh[0]
+        messages.append(ChatMessage(role=MessageRole.USER, content="keep exploring").to_dict())
+        return True

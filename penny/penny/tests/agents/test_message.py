@@ -243,6 +243,7 @@ async def test_name_not_redacted_when_user_says_it(
         assert "Test User" in logged_query, "Name should NOT be redacted when user said it"
 
 
+@pytest.mark.skip(reason="Entity context injection temporarily disabled")
 @pytest.mark.asyncio
 async def test_entity_context_responds_from_knowledge(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
@@ -299,6 +300,7 @@ async def test_entity_context_responds_from_knowledge(
         assert len(mock_ollama.requests) == 1
 
 
+@pytest.mark.skip(reason="Entity context injection temporarily disabled")
 @pytest.mark.asyncio
 async def test_entity_context_absent_when_below_threshold(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
@@ -341,6 +343,7 @@ async def test_entity_context_absent_when_below_threshold(
         assert len(mock_ollama.requests) == 2
 
 
+@pytest.mark.skip(reason="Entity context injection temporarily disabled")
 @pytest.mark.asyncio
 async def test_entity_context_graceful_on_embed_failure(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny

@@ -6,19 +6,14 @@ from typing import TYPE_CHECKING
 from penny.commands.base import Command, CommandRegistry
 from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
-from penny.commands.events import EventsCommand
-from penny.commands.follow import FollowCommand
 from penny.commands.forget import ForgetCommand
 from penny.commands.index import IndexCommand
-from penny.commands.learn import LearnCommand
 from penny.commands.memory import MemoryCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
 from penny.commands.mute import MuteCommand
 from penny.commands.profile import ProfileCommand
 from penny.commands.schedule import ScheduleCommand
 from penny.commands.test import TestCommand
-from penny.commands.unfollow import UnfollowCommand
-from penny.commands.unlearn import UnlearnCommand
 from penny.commands.unmute import UnmuteCommand
 from penny.commands.unschedule import UnscheduleCommand
 
@@ -68,14 +63,9 @@ def create_command_registry(
     registry.register(ScheduleCommand())
     registry.register(MemoryCommand())
     registry.register(ForgetCommand())
-    registry.register(LearnCommand())
     registry.register(MuteCommand())
-    registry.register(UnlearnCommand())
     registry.register(UnmuteCommand())
     registry.register(UnscheduleCommand())
-    registry.register(EventsCommand())
-    registry.register(FollowCommand())
-    registry.register(UnfollowCommand())
 
     # Register test command if factory provided
     if message_agent_factory:

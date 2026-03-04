@@ -28,7 +28,7 @@ def draw_context(mock_image_client):
     return CommandContext(
         db=MagicMock(),
         config=config,
-        foreground_model_client=AsyncMock(),
+        model_client=AsyncMock(),
         user=TEST_SENDER,
         channel_type="signal",
         start_time=datetime.now(UTC),

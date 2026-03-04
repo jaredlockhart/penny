@@ -1,4 +1,4 @@
-"""Tests for agentic loop changes: reasoning, last step, and _after_step hook."""
+"""Tests for agentic loop changes: reasoning, last step, and after_step hook."""
 
 import pytest
 
@@ -24,8 +24,7 @@ def _make_agent(test_db, mock_ollama, *, max_steps=3):
         discord_bot_token=None,
         discord_channel_id=None,
         ollama_api_url="http://localhost:11434",
-        ollama_foreground_model="test-model",
-        ollama_background_model="test-model",
+        ollama_model="test-model",
         perplexity_api_key=None,
         log_level="DEBUG",
         db_path=test_db,
@@ -45,8 +44,7 @@ def _make_agent(test_db, mock_ollama, *, max_steps=3):
     )
     agent = Agent(
         system_prompt="test",
-        background_model_client=client,
-        foreground_model_client=client,
+        model_client=client,
         tools=[search_tool],
         db=db,
         config=config,
@@ -183,19 +181,19 @@ class TestRepeatCallGuard:
 
 
 class TestAfterStepHook:
-    """Test the _after_step hook fires after tool calls."""
+    """Test the after_step hook fires after tool calls."""
 
     @pytest.mark.asyncio
-    async def test_after_step_called_with_step_records(self, test_db, mock_ollama):
-        """_after_step receives only the records from the current step."""
+    async def testafter_step_called_with_step_records(self, test_db, mock_ollama):
+        """after_step receives only the records from the current step."""
         agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
 
         captured_step_records = []
 
-        async def capture_after_step(step_records, messages):
+        async def captureafter_step(step_records, messages):
             captured_step_records.append(list(step_records))
 
-        agent._after_step = capture_after_step
+        agent.after_step = captureafter_step
 
         def handler(request, count):
             if count == 1:
@@ -214,7 +212,7 @@ class TestAfterStepHook:
         response = await agent.run("test")
         assert response.answer == "done"
 
-        # Two steps with tool calls → two _after_step calls
+        # Two steps with tool calls → two after_step calls
         assert len(captured_step_records) == 2
         assert len(captured_step_records[0]) == 1
         assert captured_step_records[0][0].reasoning == "step 1 reason"
