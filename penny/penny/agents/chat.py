@@ -8,6 +8,7 @@ Also runs on a schedule to proactively share thoughts when users are idle.
 from __future__ import annotations
 
 import logging
+import random
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -135,15 +136,25 @@ class ChatAgent(Agent):
         thoughts = self.db.thoughts.get_recent(user, limit=1)
         return thoughts[0].content if thoughts else None
 
+    def _pick_proactive_mode(self, user: str) -> tuple[str, str | None]:
+        """Choose between thought-sharing and check-in prompt.
+
+        Returns (prompt, entity_anchor). ~1/6 chance of check-in.
+        """
+        if random.random() < 1 / 6:
+            logger.info("Proactive check-in for %s", user)
+            return Prompt.PROACTIVE_CHECKIN, None
+        return Prompt.PROACTIVE_PROMPT, self._get_latest_thought_content(user)
+
     async def _send_proactive(self, user: str) -> bool:
-        """Generate a thought-sharing response and send it to the user."""
+        """Generate a proactive message — thought-sharing or check-in."""
         assert self._channel is not None
         try:
-            thought_content = self._get_latest_thought_content(user)
+            prompt, anchor = self._pick_proactive_mode(user)
             response = await self.handle(
-                content=Prompt.PROACTIVE_PROMPT,
+                content=prompt,
                 sender=user,
-                entity_anchor=thought_content,
+                entity_anchor=anchor,
             )
             answer = response.answer.strip() if response.answer else None
             if not answer:

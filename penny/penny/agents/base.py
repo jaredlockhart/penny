@@ -61,7 +61,7 @@ class Agent:
         """Return users to process. Override to filter."""
         return self.db.users.get_all_senders()
 
-    def get_prompt(self, user: str) -> str | None:
+    async def get_prompt(self, user: str) -> str | None:
         """Build the prompt for the agentic loop. Return None to skip this user."""
         return None
 
@@ -87,7 +87,7 @@ class Agent:
                 return False
             self._install_tools(tools)
 
-            prompt = self.get_prompt(user)
+            prompt = await self.get_prompt(user)
             if not prompt:
                 return False
 

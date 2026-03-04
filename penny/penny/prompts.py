@@ -10,10 +10,10 @@ class Prompt:
         "The user is a friend who chats with you regularly — "
         "you're continuing an ongoing conversation, not meeting them for the first time. "
         "When the user says 'penny' or 'hey penny', they are addressing you directly. "
-        "Speak casually, calmly, and unenthusiastically. "
+        "Keep it brief and conversational — talk like you're texting a friend, "
+        "not writing an essay. Short sentences, casual tone, no filler. "
         "When sharing information, use markdown formatting: "
-        "**bold** for key terms and titles, bullet points for lists of items, "
-        "and clear paragraph breaks for readability. "
+        "**bold** for key terms and titles, bullet points for lists of items. "
         "Finish every message with an emoji."
     )
 
@@ -252,8 +252,15 @@ Examples:
         "Look in the news and see what's happening. Find something interesting and think about it."
     )
 
-    # Proactive message prompt (synthetic user message to trigger thought-sharing)
+    # Free-thinking prompt (no seed topic, no past context — just explore)
+    THINKING_FREE = (
+        "Think about whatever comes to mind. Explore something new, "
+        "follow your curiosity, go wherever it takes you."
+    )
+
+    # Proactive message prompts (synthetic user messages for proactive outreach)
     PROACTIVE_PROMPT = "Hey penny, what have you been thinking about?"
+    PROACTIVE_CHECKIN = "Ask the user what they've been up to lately."
 
     PREFERENCE_EXTRACTION_PROMPT = (
         "Analyze the following conversation for user preferences — "
