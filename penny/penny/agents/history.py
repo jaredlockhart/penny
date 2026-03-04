@@ -71,6 +71,9 @@ class HistoryAgent(Agent):
         day_start = self._midnight_today()
         day_end = datetime.now(UTC).replace(tzinfo=None)
 
+        if self._already_rolled_up(user, day_start, day_end):
+            return False
+
         messages = self.db.messages.get_messages_in_range(user, day_start, day_end)
         if not messages:
             return False
@@ -92,6 +95,16 @@ class HistoryAgent(Agent):
         )
         logger.info("Today's history updated for %s", user)
         return True
+
+    def _already_rolled_up(self, user: str, day_start: datetime, day_end: datetime) -> bool:
+        """Check if the history entry is already up-to-date with the latest message."""
+        existing = self.db.history.get_latest(user, PennyConstants.HistoryDuration.DAILY)
+        if not existing or existing.period_start != day_start:
+            return False
+        latest_msg = self.db.messages.get_latest_message_time_in_range(user, day_start, day_end)
+        if not latest_msg:
+            return True
+        return existing.created_at >= latest_msg
 
     async def _summarize_day(self, user: str, day_start: datetime, day_end: datetime) -> None:
         """Get messages for a day and call model to summarize topics."""

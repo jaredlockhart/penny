@@ -98,8 +98,6 @@ class ChatAgent(Agent):
             return False
         if not self._has_recent_thoughts(user):
             return False
-        if not self._user_idle_long_enough(user):
-            return False
         return self._cooldown_elapsed(user)
 
     def _has_recent_thoughts(self, user: str) -> bool:
@@ -107,14 +105,6 @@ class ChatAgent(Agent):
         midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
         thoughts = self.db.thoughts.get_recent(user)
         return any(t.created_at >= midnight for t in thoughts)
-
-    def _user_idle_long_enough(self, user: str) -> bool:
-        """Check if enough time has passed since user's last incoming message."""
-        latest = self.db.messages.get_latest_incoming_time(user)
-        if latest is None:
-            return False
-        elapsed = (datetime.now(UTC).replace(tzinfo=None) - latest).total_seconds()
-        return elapsed >= self.config.runtime.PROACTIVE_IDLE_THRESHOLD
 
     def _cooldown_elapsed(self, user: str) -> bool:
         """Check if enough time since last autonomous outgoing message.

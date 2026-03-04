@@ -190,9 +190,17 @@ async def test_thinking_seed_topic_drives_prompt(
 
 @pytest.mark.asyncio
 async def test_thinking_context_has_no_raw_conversation(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
 ):
     """Thinking gets thought summaries but NOT raw conversation turns."""
+    # Force non-free-thinking path so context is injected
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=1,

@@ -537,6 +537,38 @@ class MessageStore:
                 query = query.where(MessageLog.timestamp > latest_incoming)
             return session.exec(query).one()
 
+    def get_latest_message_time_in_range(
+        self, sender: str, start: datetime, end: datetime
+    ) -> datetime | None:
+        """Get timestamp of the most recent message (incoming or outgoing) in a range."""
+        with self._session() as session:
+            incoming_ts = session.exec(
+                select(MessageLog.timestamp)
+                .where(
+                    MessageLog.sender == sender,
+                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                    MessageLog.is_reaction == False,  # noqa: E712
+                    MessageLog.timestamp >= start,
+                    MessageLog.timestamp < end,
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+            outgoing_ts = session.exec(
+                select(MessageLog.timestamp)
+                .where(
+                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                    MessageLog.recipient == sender,
+                    MessageLog.timestamp >= start,
+                    MessageLog.timestamp < end,
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+            if incoming_ts and outgoing_ts:
+                return max(incoming_ts, outgoing_ts)
+            return incoming_ts or outgoing_ts
+
     def get_first_message_time(self, sender: str) -> datetime | None:
         """Get timestamp of the earliest incoming message from a user."""
         with self._session() as session:

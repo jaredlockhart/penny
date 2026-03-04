@@ -388,15 +388,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="PROACTIVE_IDLE_THRESHOLD",
-    description="Seconds since last user message before proactive send",
-    type=float,
-    default=3600.0,
-    validator=_validate_positive_float,
-    group=GROUP_PROACTIVE,
-)
-
-ConfigParam(
     key="PROACTIVE_COOLDOWN_MIN",
     description="Initial cooldown in seconds between autonomous messages",
     type=float,
