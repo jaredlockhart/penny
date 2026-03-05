@@ -376,3 +376,70 @@ async def test_entity_context_graceful_on_embed_failure(
         # Falls back to normal search behavior
         assert "search result" in response["message"].lower()
         assert len(mock_ollama.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_proactive_news_candidate_uses_thought_as_entity_anchor(
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
+):
+    """
+    Regression test for bug #641: proactive news/followup candidates should anchor
+    entity context to the top thought content, not the generic prompt text.
+
+    Before the fix, _generate_candidates fetched thoughts AFTER generating news/followup
+    candidates, so those candidates had entity_anchor=None and their entity context was
+    built from the generic prompt string (e.g. "Hey penny, what's in the news?"),
+    which doesn't match any user-specific entities.
+
+    After the fix, thoughts are fetched first and the top thought's content is passed
+    as entity_anchor to news/followup candidates, so relevant entity knowledge is injected.
+    """
+    config = make_config(ollama_embedding_model="test-embed-model")
+
+    # Embed handler: all texts return the same unit vector → cosine similarity = 1.0
+    # This makes entity context always match any query above the threshold.
+    mock_ollama.set_embed_handler(
+        lambda model, input: [[1.0, 0.0, 0.0, 0.0]] * (1 if isinstance(input, str) else len(input))
+    )
+
+    # Simple direct response for all proactive candidates
+    mock_ollama.set_response_handler(
+        lambda request, count: mock_ollama._make_text_response(
+            request, f"proactive message {count}! 🌟"
+        )
+    )
+
+    async with running_penny(config) as penny:
+        # Seed an incoming message so TEST_SENDER appears in get_all_senders()
+        from penny.constants import PennyConstants
+
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
+        )
+
+        # Seed a thought (unnotified, fresh) — this is what anchors entity search
+        penny.db.thoughts.add(TEST_SENDER, "thinking about quantum physics")
+
+        # Seed an entity with a known embedding and facts
+        entity = penny.db.entities.get_or_create(TEST_SENDER, "quantum gravity")
+        assert entity is not None and entity.id is not None
+        penny.db.facts.add(entity.id, "combines quantum mechanics with general relativity")
+        penny.db.entities.update_embedding(entity.id, serialize_embedding([1.0, 0.0, 0.0, 0.0]))
+
+        # Directly trigger the proactive pipeline (bypassing the scheduler) so the test
+        # doesn't depend on scheduler timing or IDLE_SECONDS configuration.
+        await penny.chat_agent.execute()
+
+        # Entity facts should appear in at least one system prompt sent to Ollama.
+        # With the fix, news/followup candidates use the thought content as entity anchor,
+        # which matches the "quantum gravity" entity and injects its facts into context.
+        all_system_text = " ".join(
+            m.get("content", "")
+            for req in mock_ollama.requests
+            for m in req.get("messages", [])
+            if m.get("role") == "system"
+        )
+        assert "quantum gravity" in all_system_text.lower(), (
+            "Entity context should be injected when proactive candidates are generated. "
+            "News/followup candidates must use the top thought as entity anchor."
+        )

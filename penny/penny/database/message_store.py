@@ -2,7 +2,7 @@
 
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session, func, select
@@ -546,6 +546,38 @@ class MessageStore:
             if cutoff is not None:
                 query = query.where(MessageLog.timestamp > cutoff)
             return session.exec(query).one()
+
+    def get_last_checkin_time(self, prompt_text: str, hours: int = 48) -> datetime | None:
+        """Get timestamp of the most recent prompt log containing the check-in prompt."""
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
+        with self._session() as session:
+            return session.exec(
+                select(PromptLog.timestamp)
+                .where(
+                    PromptLog.messages.contains(prompt_text),  # type: ignore[unresolved-attribute]
+                    PromptLog.timestamp >= cutoff,
+                )
+                .order_by(PromptLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+
+    def get_recent_outgoing_content(
+        self, recipient: str, hours: int = 24, limit: int = 20
+    ) -> list[str]:
+        """Get content of recent outgoing messages for novelty scoring."""
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
+        with self._session() as session:
+            messages = session.exec(
+                select(MessageLog.content)
+                .where(
+                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                    MessageLog.recipient == recipient,
+                    MessageLog.timestamp >= cutoff,
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(limit)
+            ).all()
+            return [m for m in messages if m]
 
     def get_latest_message_time_in_range(
         self, sender: str, start: datetime, end: datetime

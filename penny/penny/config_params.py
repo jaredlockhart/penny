@@ -396,6 +396,15 @@ ConfigParam(
     group=GROUP_PROACTIVE,
 )
 
+ConfigParam(
+    key="PROACTIVE_CANDIDATES",
+    description="Number of candidate messages to generate per proactive cycle",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_PROACTIVE,
+)
+
 
 class RuntimeParams:
     """Accessor for runtime-configurable parameters.
