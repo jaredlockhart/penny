@@ -1,8 +1,12 @@
 """Integration tests for the ChatAgent."""
 
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
+
 import pytest
 from sqlmodel import select
 
+from penny.constants import PennyConstants
 from penny.database.models import MessageLog, SearchLog
 from penny.ollama.embeddings import serialize_embedding
 from penny.tests.conftest import TEST_SENDER
@@ -376,3 +380,63 @@ async def test_entity_context_graceful_on_embed_failure(
         # Falls back to normal search behavior
         assert "search result" in response["message"].lower()
         assert len(mock_ollama.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_proactive_message_includes_image_from_thought_topic(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    monkeypatch,
+    test_user_info,
+    running_penny,
+):
+    """Proactive messages include a Serper image fetched from the thought anchor.
+
+    When the model answers from context without calling search, _send_proactive
+    should still attach an image by passing image_prompt=anchor to send_response.
+    """
+    fake_image = "fake_base64_image_data"
+    mock_image_search = AsyncMock(return_value=fake_image)
+    monkeypatch.setattr("penny.serper.client.search_image", mock_image_search)
+    # Force thought-sharing mode (not check-in) so anchor is always set
+    monkeypatch.setattr("penny.agents.chat.random.random", lambda: 0.5)
+
+    config = make_config(
+        proactive_idle_threshold=0.001,
+        proactive_cooldown_min=0.001,
+    )
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(
+            request, "I've been thinking about quantum physics! 🔬"
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Seed an old incoming message so the idle check passes
+        old_ts = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=2)
+        with penny.db.get_session() as session:
+            session.add(
+                MessageLog(
+                    direction=PennyConstants.MessageDirection.INCOMING,
+                    sender=TEST_SENDER,
+                    content="hello penny",
+                    timestamp=old_ts,
+                )
+            )
+            session.commit()
+
+        # Seed a thought for today (required by _has_recent_thoughts)
+        penny.db.thoughts.add(TEST_SENDER, "quantum gravity experiments are fascinating")
+
+        did_work = await penny.chat_agent.execute_for_user(TEST_SENDER)
+
+        assert did_work, "Proactive message should have been sent"
+        assert signal_server.outgoing_messages, "No message sent to Signal"
+        response = signal_server.outgoing_messages[-1]
+        assert response.get("base64_attachments"), (
+            "Proactive message should include an image attachment"
+        )

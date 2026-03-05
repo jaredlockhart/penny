@@ -161,12 +161,15 @@ class ChatAgent(Agent):
                 logger.warning("Proactive message produced empty response for %s", user)
                 return False
 
+            attachments = response.attachments or None
+            image_prompt = anchor if (not attachments and anchor) else None
             await self._channel.send_response(
                 user,
                 answer,
                 parent_id=None,
-                attachments=response.attachments or None,
+                attachments=attachments,
                 quote_message=None,
+                image_prompt=image_prompt,
             )
             logger.info("Proactive message sent to %s", user)
             return True
