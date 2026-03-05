@@ -75,6 +75,30 @@ class PreferenceStore:
                 ).all()
             )
 
+    def get_without_embeddings(self, limit: int) -> list[Preference]:
+        """Get preferences that don't have embeddings yet, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Preference)
+                    .where(Preference.embedding == None)  # noqa: E711
+                    .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+
+    def update_embedding(self, pref_id: int, embedding: bytes) -> None:
+        """Update the embedding for a preference."""
+        try:
+            with self._session() as session:
+                pref = session.get(Preference, pref_id)
+                if pref:
+                    pref.embedding = embedding
+                    session.add(pref)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update preference embedding: %s", e)
+
     def exists_for_period(self, user: str, period_start: datetime) -> bool:
         """Check if preferences have already been extracted for a period."""
         with self._session() as session:

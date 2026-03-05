@@ -182,7 +182,9 @@ class Penny:
             embedding_model_client=self.embedding_model_client,
             **kwargs,
         )
-        self.history_agent = HistoryAgent(**kwargs)
+        self.history_agent = HistoryAgent(
+            embedding_model_client=self.embedding_model_client, **kwargs
+        )
         self.schedule_executor = ScheduleExecutor(**kwargs)
 
     def _init_github_client(self, config: Config) -> Any:
@@ -327,11 +329,13 @@ class Penny:
         batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
         total_facts = await self._backfill_fact_embeddings(batch_limit)
         total_entities = await self._backfill_entity_embeddings(batch_limit)
-        if total_facts or total_entities:
+        total_prefs = await self._backfill_preference_embeddings(batch_limit)
+        if total_facts or total_entities or total_prefs:
             logger.info(
-                "Startup embedding backfill complete: %d facts, %d entities",
+                "Startup embedding backfill complete: %d facts, %d entities, %d preferences",
                 total_facts,
                 total_entities,
+                total_prefs,
             )
 
     async def _backfill_fact_embeddings(self, batch_limit: int) -> int:
@@ -381,6 +385,27 @@ class Penny:
                 total += len(entities)
             except Exception as e:
                 logger.warning("Startup embedding backfill failed for entities: %s", e)
+                break
+        return total
+
+    async def _backfill_preference_embeddings(self, batch_limit: int) -> int:
+        """Backfill preferences with missing embeddings. Returns count embedded."""
+        assert self.embedding_model_client is not None
+        total = 0
+        while True:
+            prefs = self.db.preferences.get_without_embeddings(limit=batch_limit)
+            if not prefs:
+                break
+            try:
+                texts = [p.content for p in prefs]
+                vecs = await self.embedding_model_client.embed(texts)
+                for pref, vec in zip(prefs, vecs, strict=True):
+                    assert pref.id is not None
+                    self.db.preferences.update_embedding(pref.id, serialize_embedding(vec))
+                    logger.info("Embedded preference %d: %s", pref.id, pref.content[:120])
+                total += len(prefs)
+            except Exception as e:
+                logger.warning("Startup embedding backfill failed for preferences: %s", e)
                 break
         return total
 

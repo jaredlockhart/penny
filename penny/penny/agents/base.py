@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
@@ -13,7 +13,7 @@ from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.models import Entity
 from penny.ollama import OllamaClient
-from penny.ollama.embeddings import deserialize_embedding, find_similar
+from penny.ollama.embeddings import cosine_similarity, deserialize_embedding, find_similar
 from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -55,6 +55,7 @@ class Agent:
     _instances: list[Agent] = []
 
     THOUGHT_CONTEXT_LIMIT = 10
+    PREFERRED_POOL_SIZE = 5
     name: str = "Agent"
 
     def get_users(self) -> list[str]:
@@ -261,6 +262,7 @@ class Agent:
             await self._build_entity_context(user, content),
             self._build_history_context(user),
             self._build_thought_context(user),
+            self._build_dislike_context(user),
         ]
         context_text = "\n\n".join(s for s in sections if s)
         conversation = self._build_conversation(user)
@@ -310,11 +312,12 @@ class Agent:
             return None
 
     def _build_thought_context(self, sender: str) -> str | None:
-        """Build recent thinking summary context."""
+        """Build recent thinking summary context within freshness window."""
         try:
-            midnight = self._midnight_today()
+            hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
+            cutoff = self._freshness_cutoff(hours)
             all_thoughts = self.db.thoughts.get_recent(sender, limit=self.THOUGHT_CONTEXT_LIMIT)
-            thoughts = [t for t in all_thoughts if t.created_at >= midnight]
+            thoughts = [t for t in all_thoughts if t.created_at >= cutoff]
             if not thoughts:
                 return None
             lines = [t.content for t in thoughts]
@@ -322,6 +325,28 @@ class Agent:
             return "## Recent Background Thinking\n" + "\n\n".join(lines)
         except Exception:
             logger.warning("Thought context retrieval failed, proceeding without")
+            return None
+
+    def _build_dislike_context(self, user: str) -> str | None:
+        """Build textual list of topics the user dislikes."""
+        try:
+            prefs = self.db.preferences.get_for_user(user)
+            negative = [
+                p.content for p in prefs if p.valence == PennyConstants.PreferenceValence.NEGATIVE
+            ]
+            if not negative:
+                return None
+            seen: set[str] = set()
+            unique: list[str] = []
+            for text in negative:
+                key = text.strip().lower()
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(text.strip())
+            lines = "\n".join(f"- {t}" for t in unique)
+            return f"## Topics to Avoid\n{lines}"
+        except Exception:
+            logger.warning("Dislike context retrieval failed, proceeding without")
             return None
 
     async def _build_entity_context(self, sender: str, content: str | None) -> str | None:
@@ -412,6 +437,43 @@ class Agent:
         Naive because SQLite strips timezone info — all stored datetimes are naive UTC.
         """
         return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+
+    @staticmethod
+    def _freshness_cutoff(hours: int) -> datetime:
+        """Rolling cutoff: now minus N hours, as naive UTC."""
+        return datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
+
+    # ── Preference scoring ─────────────────────────────────────────────────
+
+    def _load_preference_vectors(self, user: str) -> tuple[list[list[float]], list[list[float]]]:
+        """Load like and dislike embedding vectors from the preference store."""
+        prefs = self.db.preferences.get_with_embeddings(user)
+        likes: list[list[float]] = []
+        dislikes: list[list[float]] = []
+        for p in prefs:
+            if not p.embedding:
+                continue
+            vec = deserialize_embedding(p.embedding)
+            if p.valence == PennyConstants.PreferenceValence.POSITIVE:
+                likes.append(vec)
+            elif p.valence == PennyConstants.PreferenceValence.NEGATIVE:
+                dislikes.append(vec)
+        return likes, dislikes
+
+    @staticmethod
+    def _compute_sentiment_score(
+        vec: list[float],
+        likes: list[list[float]],
+        dislikes: list[list[float]],
+    ) -> float:
+        """Score = avg similarity to likes - avg similarity to dislikes."""
+        like_score = 0.0
+        if likes:
+            like_score = sum(cosine_similarity(vec, lv) for lv in likes) / len(likes)
+        dislike_score = 0.0
+        if dislikes:
+            dislike_score = sum(cosine_similarity(vec, dv) for dv in dislikes) / len(dislikes)
+        return like_score - dislike_score
 
     # ── Model calls ───────────────────────────────────────────────────────
 

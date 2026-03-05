@@ -6,7 +6,6 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -28,9 +27,6 @@ from penny.ollama.similarity import (
     normalize_fact,
 )
 from penny.prompts import Prompt
-
-if TYPE_CHECKING:
-    from penny.database.models import MessageLog
 
 logger = logging.getLogger(__name__)
 
@@ -214,30 +210,24 @@ class _EntityCandidate:
 class ExtractionPipeline(Agent):
     """Unified background agent that extracts entities and facts.
 
-    Processes SearchLog and MessageLog entries to discover entities and facts.
+    Processes SearchLog entries to discover entities and facts,
+    acting as a local indexable search cache.
     """
 
     name = "extraction"
 
     async def execute(self) -> bool:
-        """Run the knowledge pipeline in strict priority order.
-
-        Phase 1: User messages (highest priority — freshest signals)
-        Phase 2: Search logs (drain backlog)
-        Phase 3: Embedding backfill
+        """Run the knowledge pipeline: search extraction then embedding backfill.
 
         Returns:
             True if any work was done.
         """
         work_done = False
 
-        # Phase 1: Extract entities/facts from user messages (highest priority)
-        work_done |= await self._process_messages()
-
-        # Phase 2: Extract entities/facts from search results (newest first)
+        # Phase 1: Extract entities/facts from search results (newest first)
         work_done |= await self._process_search_logs()
 
-        # Phase 3: Backfill embeddings for items that don't have them
+        # Phase 2: Backfill embeddings for items that don't have them
         if self._embedding_model_client:
             work_done |= await self._backfill_embeddings()
 
@@ -305,57 +295,7 @@ class ExtractionPipeline(Agent):
 
         return work_done
 
-    # --- Phase 2: Message processing ---
-
-    async def _process_messages(self) -> bool:
-        """Process unprocessed messages for entity/fact extraction."""
-        senders = self.db.users.get_all_senders()
-        if not senders:
-            return False
-
-        work_done = False
-
-        for sender in senders:
-            messages = self.db.messages.get_unprocessed(
-                sender, limit=int(self.config.runtime.MESSAGE_EXTRACTION_BATCH_LIMIT)
-            )
-
-            if not messages:
-                continue
-
-            logger.info(
-                "Processing messages for %s: %d messages",
-                sender,
-                len(messages),
-            )
-
-            # --- Entity/fact extraction from messages ---
-            for message in messages:
-                if not self._should_process_message(message):
-                    continue
-
-                assert message.id is not None
-                result = await self._extract_and_store_entities(
-                    user=sender,
-                    identification_prompt=Prompt.MESSAGE_ENTITY_IDENTIFICATION_PROMPT,
-                    fact_prompt=Prompt.MESSAGE_FACT_EXTRACTION_PROMPT,
-                    context_label="User message",
-                    context_value=message.content,
-                    content=message.content,
-                    source_message_id=message.id,
-                    notified_at=datetime.now(UTC),  # User-sourced — don't notify
-                )
-                if result.entities:
-                    work_done = True
-
-            # Mark messages as processed
-            message_ids = [m.id for m in messages if m.id is not None]
-            if message_ids:
-                self.db.messages.mark_processed(message_ids)
-
-            logger.info("Finished processing messages for %s", sender)
-
-        return work_done
+    # --- Entity/fact extraction (search logs) ---
 
     # --- Entity/fact extraction (shared by search logs and messages) ---
 
@@ -1190,15 +1130,6 @@ class ExtractionPipeline(Agent):
             existing_normalized.add(normalized)
         return candidates
 
-    # --- Message filtering ---
-
-    def _should_process_message(self, message: MessageLog) -> bool:
-        """Lightweight pre-filter to skip low-signal messages before LLM calls."""
-        content = message.content.strip()
-        if len(content) < self.config.runtime.EXTRACTION_MIN_MESSAGE_LENGTH:
-            return False
-        return not content.startswith("/")
-
     # --- Entity embedding updates ---
 
     async def _update_entity_embeddings(self, entities: list[Entity]) -> None:
@@ -1237,7 +1168,8 @@ class ExtractionPipeline(Agent):
 
         facts_done = await self._backfill_fact_embeddings(batch_limit)
         entities_done = await self._backfill_entity_embeddings(batch_limit)
-        return facts_done or entities_done
+        prefs_done = await self._backfill_preference_embeddings(batch_limit)
+        return facts_done or entities_done or prefs_done
 
     async def _backfill_fact_embeddings(self, batch_limit: int) -> bool:
         """Backfill embeddings for facts that don't have them."""
@@ -1283,4 +1215,23 @@ class ExtractionPipeline(Agent):
             return True
         except Exception as e:
             logger.warning("Failed to backfill entity embeddings: %s", e)
+            return False
+
+    async def _backfill_preference_embeddings(self, batch_limit: int) -> bool:
+        """Backfill embeddings for preferences that don't have them."""
+        assert self._embedding_model_client is not None
+        prefs = self.db.preferences.get_without_embeddings(limit=batch_limit)
+        if not prefs:
+            return False
+
+        pref_texts = [p.content for p in prefs]
+        try:
+            vecs = await self._embedding_model_client.embed(pref_texts)
+            for pref, vec in zip(prefs, vecs, strict=True):
+                assert pref.id is not None
+                self.db.preferences.update_embedding(pref.id, serialize_embedding(vec))
+            logger.info("Backfilled embeddings for %d preferences", len(prefs))
+            return True
+        except Exception as e:
+            logger.warning("Failed to backfill preference embeddings: %s", e)
             return False

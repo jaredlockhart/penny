@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
+from penny.database.models import Thought
+from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
@@ -78,6 +80,10 @@ class ChatAgent(Agent):
 
     name: str = "chat"
 
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._boot_time = datetime.now(UTC).replace(tzinfo=None)
+
     def set_channel(self, channel: MessageChannel) -> None:
         """Set the channel for sending proactive messages."""
         self._channel: MessageChannel | None = channel
@@ -100,11 +106,16 @@ class ChatAgent(Agent):
             return False
         return self._cooldown_elapsed(user)
 
+    _THOUGHT_VARIANTS: list[str] = [
+        Prompt.PROACTIVE_PROMPT,
+        Prompt.PROACTIVE_NEWS,
+        Prompt.PROACTIVE_FOLLOWUP,
+    ]
+
     def _has_recent_thoughts(self, user: str) -> bool:
-        """Check if user has thoughts since midnight today."""
-        midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-        thoughts = self.db.thoughts.get_recent(user)
-        return any(t.created_at >= midnight for t in thoughts)
+        """Check if user has un-notified thoughts within freshness window."""
+        hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
+        return self.db.thoughts.get_next_unnotified(user, freshness_hours=hours) is not None
 
     def _cooldown_elapsed(self, user: str) -> bool:
         """Check if enough time since last autonomous outgoing message.
@@ -116,33 +127,82 @@ class ChatAgent(Agent):
         if latest is None:
             return True
         elapsed = (datetime.now(UTC).replace(tzinfo=None) - latest).total_seconds()
-        count = self.db.messages.count_autonomous_since_last_incoming(user)
+        count = self.db.messages.count_autonomous_since_last_incoming(user, self._boot_time)
         cooldown = min(
             self.config.runtime.PROACTIVE_COOLDOWN_MIN * (2 ** max(count - 1, 0)),
             self.config.runtime.PROACTIVE_COOLDOWN_MAX,
         )
         return elapsed >= cooldown
 
-    def _get_latest_thought_content(self, user: str) -> str | None:
-        """Get the most recent thought content for entity context anchoring."""
-        thoughts = self.db.thoughts.get_recent(user, limit=1)
-        return thoughts[0].content if thoughts else None
+    async def _get_next_thought(self, user: str) -> Thought | None:
+        """Pick the best un-notified thought by preference affinity.
 
-    def _pick_proactive_mode(self, user: str) -> tuple[str, str | None]:
-        """Choose between thought-sharing and check-in prompt.
+        Scores all today's un-notified thoughts against user preferences
+        and randomly selects from the top pool.
+        """
+        hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
+        thoughts = self.db.thoughts.get_all_unnotified(user, freshness_hours=hours)
+        if not thoughts:
+            return None
+        if len(thoughts) == 1:
+            return thoughts[0]
+        return await self._pick_preferred_thought(user, thoughts)
 
-        Returns (prompt, entity_anchor). ~1/6 chance of check-in.
+    async def _pick_preferred_thought(self, user: str, thoughts: list[Thought]) -> Thought:
+        """Score thoughts by preference affinity and pick from the top pool."""
+        likes, dislikes = self._load_preference_vectors(user)
+        if (not likes and not dislikes) or not self._embedding_model_client:
+            return random.choice(thoughts)
+
+        scored = await self._score_thoughts(thoughts, likes, dislikes)
+        if not scored:
+            return random.choice(thoughts)
+
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        pool = scored[: self.PREFERRED_POOL_SIZE]
+        return random.choice(pool)[0]
+
+    async def _score_thoughts(
+        self,
+        thoughts: list[Thought],
+        likes: list[list[float]],
+        dislikes: list[list[float]],
+    ) -> list[tuple[Thought, float]]:
+        """Embed each thought and compute preference sentiment score."""
+        scored: list[tuple[Thought, float]] = []
+        for thought in thoughts:
+            vec = await embed_text(self._embedding_model_client, thought.content)
+            if vec is None:
+                continue
+            score = self._compute_sentiment_score(vec, likes, dislikes)
+            scored.append((thought, score))
+        return scored
+
+    def _pick_thought_variant(self) -> str:
+        """Randomly select a thought-sharing prompt variant."""
+        return random.choice(self._THOUGHT_VARIANTS)
+
+    async def _pick_proactive_mode(self, user: str) -> tuple[str, Thought | None]:
+        """Choose between thought-sharing variants and check-in.
+
+        Returns (prompt, thought). ~1/6 chance of check-in.
+        All thought-sharing variants anchor entity search to the thought content.
         """
         if random.random() < 1 / 6:
             logger.info("Proactive check-in for %s", user)
             return Prompt.PROACTIVE_CHECKIN, None
-        return Prompt.PROACTIVE_PROMPT, self._get_latest_thought_content(user)
+        thought = await self._get_next_thought(user)
+        variant = self._pick_thought_variant()
+        logger.info("Proactive thought-sharing (%s) for %s", variant[:40], user)
+        return variant, thought
 
     async def _send_proactive(self, user: str) -> bool:
         """Generate a proactive message — thought-sharing or check-in."""
         assert self._channel is not None
         try:
-            prompt, anchor = self._pick_proactive_mode(user)
+            prompt, thought = await self._pick_proactive_mode(user)
+            self._proactive_thought = thought
+            anchor = thought.content if thought else None
             response = await self.handle(
                 content=prompt,
                 sender=user,
@@ -160,11 +220,15 @@ class ChatAgent(Agent):
                 attachments=response.attachments or None,
                 quote_message=None,
             )
+            if thought and thought.id is not None:
+                self.db.thoughts.mark_notified(thought.id)
             logger.info("Proactive message sent to %s", user)
             return True
         except Exception:
             logger.exception("Failed to send proactive message to %s", user)
             return False
+        finally:
+            self._proactive_thought = None
 
     # ── Message handling ───────────────────────────────────────────────
 
@@ -220,8 +284,27 @@ class ChatAgent(Agent):
             await self._build_entity_context(user, content),
             self._build_history_context(user),
             self._build_thought_context(user),
+            self._build_dislike_context(user),
         ]
         return "\n\n".join(s for s in sections if s)
+
+    def _build_thought_context(self, sender: str) -> str | None:
+        """Build thought context — single thought for proactive, notified thoughts for chat.
+
+        Only thoughts Penny has actually shared with the user appear in chat context.
+        Thinking agent uses the base version (all thoughts) to avoid repetition.
+        """
+        thought = getattr(self, "_proactive_thought", None)
+        if thought is not None:
+            return f"## Your Latest Thought\n{thought.content}"
+        hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
+        thoughts = self.db.thoughts.get_recent_notified(
+            sender, freshness_hours=hours, limit=self.THOUGHT_CONTEXT_LIMIT
+        )
+        if not thoughts:
+            return None
+        lines = [t.content for t in thoughts]
+        return "## Recent Background Thinking\n" + "\n\n".join(lines)
 
     def get_history(self, user: str) -> list[tuple[str, str]] | None:
         """Recent conversation messages for chat continuity."""

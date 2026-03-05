@@ -12,8 +12,6 @@ class Prompt:
         "When the user says 'penny' or 'hey penny', they are addressing you directly. "
         "Keep it brief and conversational — talk like you're texting a friend, "
         "not writing an essay. Short sentences, casual tone, no filler. "
-        "When sharing information, use markdown formatting: "
-        "**bold** for key terms and titles, bullet points for lists of items. "
         "Finish every message with an emoji."
     )
 
@@ -40,9 +38,9 @@ class Prompt:
         "IMPORTANT: Focus on ONE topic per response. Pick the most relevant "
         "thing to the user's message and go deep on that. Do not try to cover "
         "every interest — that's what background research is for.\n\n"
-        "Always include a URL from search results when you search. "
-        "Format your response with **bold** for key names and terms, "
-        "and use bullet points when listing multiple items or findings."
+        "After searching, talk about what you found like you're telling a friend "
+        "about something cool you just read — don't list it out like a brochure "
+        "or encyclopedia article. Drop a link if they want to read more."
     )
 
     # Email prompts
@@ -158,53 +156,6 @@ Examples:
         "Return the names exactly as they appear in the known list."
     )
 
-    # Message entity extraction prompts (two-pass, adapted for user messages)
-    MESSAGE_ENTITY_IDENTIFICATION_PROMPT = (
-        "Identify named entities in the following user message.\n"
-        "Return two lists: known entities that appear in the text, "
-        "and new entities not in the known list.\n\n"
-        "ENTITY NAME RULES:\n"
-        "- Use short canonical names (1-5 words). "
-        "No parenthetical annotations or descriptions.\n"
-        "- Good: 'KEF LS50 Meta', 'Leonard Susskind', 'ROCm', 'SYK model'\n"
-        "- Bad: 'KEF LS50 Meta (bookshelf speaker)', "
-        "'Leonard Susskind (physicist at Stanford)', "
-        "'ROCm (AMD GPU software stack)'\n\n"
-        "WHAT TO INCLUDE:\n"
-        "- Products, people, organizations, scientific concepts, "
-        "software, hardware\n\n"
-        "WHAT TO SKIP:\n"
-        "- Vague concepts ('music', 'technology', 'quantum gravity')\n"
-        "- Paper titles or article titles\n"
-        "- Dates, years, months, launch windows, or deadlines\n"
-        "- Geographic locations: cities, countries, states, continents, "
-        "landmarks ('Paris', 'California', 'Europe')\n"
-        "- The user themselves\n\n"
-        "TAGLINE:\n"
-        "For each new entity, provide a short tagline (3-8 words) describing "
-        "what the entity is. The tagline is a summary you extrapolate, "
-        "not a verbatim quote from the text.\n"
-        "- 'KEF LS50 Meta' → 'bookshelf speaker by kef'\n"
-        "- 'Leonard Susskind' → 'theoretical physicist at stanford'\n"
-        "- 'Genesis' → 'british progressive rock band'\n"
-        "- 'ROCm' → 'amd gpu software platform'"
-    )
-
-    MESSAGE_FACT_EXTRACTION_PROMPT = (
-        "Extract specific, verifiable facts about the given entity "
-        "from the following user message.\n\n"
-        "RULES:\n"
-        "- Only include facts DIRECTLY about the named entity, "
-        "not about related or associated entities\n"
-        "- Only extract verifiable factual claims, not opinions or preferences\n"
-        "- Do NOT store negative facts "
-        "('X does not exist', 'no evidence of Y', 'not currently available')\n"
-        "- Do NOT paraphrase facts already listed — "
-        "if an existing fact says the same thing in different words, skip it\n"
-        "- Keep each fact concise (one sentence)\n"
-        "- If no genuinely new facts are found, return an empty list"
-    )
-
     # Inner monologue prompts
     THINKING_SYSTEM_PROMPT = (
         "You are thinking to yourself. This is your inner monologue — "
@@ -260,6 +211,10 @@ Examples:
 
     # Proactive message prompts (synthetic user messages for proactive outreach)
     PROACTIVE_PROMPT = "Hey penny, what have you been thinking about?"
+    PROACTIVE_NEWS = "Hey penny, what's in the news?"
+    PROACTIVE_FOLLOWUP = (
+        "Hey penny, can you find anything new about what we were talking about earlier?"
+    )
     PROACTIVE_CHECKIN = "Ask the user what they've been up to lately."
 
     PREFERENCE_EXTRACTION_PROMPT = (

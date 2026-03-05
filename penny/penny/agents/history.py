@@ -134,10 +134,10 @@ class HistoryAgent(Agent):
     # ── Preference extraction ─────────────────────────────────────────────
 
     async def _extract_today_preferences(self, user: str) -> bool:
-        """Extract preferences from today's messages (dedup via embedding)."""
+        """Extract preferences from today's messages."""
         day_start = self._midnight_today()
         day_end = datetime.now(UTC).replace(tzinfo=None)
-        return await self._extract_preferences(user, day_start, day_end, dedup=True)
+        return await self._extract_preferences(user, day_start, day_end)
 
     async def _extract_day_preferences(
         self, user: str, day_start: datetime, day_end: datetime
@@ -145,11 +145,9 @@ class HistoryAgent(Agent):
         """Extract preferences for a completed day (skip if already done)."""
         if self.db.preferences.exists_for_period(user, day_start):
             return
-        await self._extract_preferences(user, day_start, day_end, dedup=False)
+        await self._extract_preferences(user, day_start, day_end)
 
-    async def _extract_preferences(
-        self, user: str, start: datetime, end: datetime, dedup: bool
-    ) -> bool:
+    async def _extract_preferences(self, user: str, start: datetime, end: datetime) -> bool:
         """Build preference prompt, call LLM, store results."""
         prompt = self._build_preference_prompt(user, start, end)
         if not prompt:
@@ -163,7 +161,7 @@ class HistoryAgent(Agent):
         if not valid_prefs:
             return False
 
-        await self._store_preferences(user, valid_prefs, start, end, dedup)
+        await self._store_preferences(user, valid_prefs, start, end)
         return True
 
     def _build_preference_prompt(self, user: str, start: datetime, end: datetime) -> str | None:
@@ -238,13 +236,12 @@ class HistoryAgent(Agent):
         prefs: list[ExtractedPreference],
         start: datetime,
         end: datetime,
-        dedup: bool,
     ) -> None:
-        """Compute embeddings and store preferences, optionally deduplicating."""
+        """Compute embeddings and store preferences, deduplicating against all existing."""
         for pref in prefs:
             embedding = await self._embed_text(pref.content)
 
-            if dedup and embedding and self._is_duplicate_preference(user, embedding):
+            if self._is_duplicate_preference(user, pref.content.strip(), embedding):
                 logger.debug("Skipping duplicate preference: %s", pref.content[:50])
                 continue
 
@@ -258,14 +255,17 @@ class HistoryAgent(Agent):
             )
             logger.info("Preference stored for %s: %s (%s)", user, pref.content[:50], pref.valence)
 
-    def _is_duplicate_preference(self, user: str, embedding: bytes) -> bool:
-        """Check if a preference with similar embedding already exists."""
-        existing = self.db.preferences.get_with_embeddings(user)
+    def _is_duplicate_preference(self, user: str, content: str, embedding: bytes | None) -> bool:
+        """Check if a preference already exists by text match or embedding similarity."""
+        existing = self.db.preferences.get_for_user(user)
         if not existing:
             return False
-        candidate_vec = deserialize_embedding(embedding)
+        candidate_key = content.lower()
+        candidate_vec = deserialize_embedding(embedding) if embedding else None
         for pref in existing:
-            if pref.embedding:
+            if pref.content.strip().lower() == candidate_key:
+                return True
+            if candidate_vec and pref.embedding:
                 existing_vec = deserialize_embedding(pref.embedding)
                 if cosine_similarity(candidate_vec, existing_vec) >= PREFERENCE_DEDUP_THRESHOLD:
                     return True

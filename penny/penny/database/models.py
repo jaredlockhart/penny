@@ -158,6 +158,7 @@ class Thought(SQLModel, table=True):
     user: str = Field(index=True)
     content: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    notified_at: datetime | None = None  # When this thought was shared with the user
 
 
 class Preference(SQLModel, table=True):

@@ -524,17 +524,27 @@ class MessageStore:
                 .limit(1)
             ).first()
 
-    def count_autonomous_since_last_incoming(self, user: str) -> int:
-        """Count autonomous outgoing messages since the user's last incoming message."""
+    def count_autonomous_since_last_incoming(self, user: str, after: datetime | None = None) -> int:
+        """Count autonomous outgoing messages since the user's last incoming message.
+
+        Args:
+            user: The user identifier.
+            after: Optional floor timestamp — messages before this are excluded.
+                   Used to reset backoff count on service restart.
+        """
         latest_incoming = self.get_latest_incoming_time(user)
+        # Use the later of last incoming and the floor timestamp
+        cutoff = latest_incoming
+        if after is not None and (cutoff is None or after > cutoff):
+            cutoff = after
         with self._session() as session:
             query = select(func.count(MessageLog.id)).where(
                 MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
                 MessageLog.parent_id == None,  # noqa: E711
                 MessageLog.recipient == user,
             )
-            if latest_incoming is not None:
-                query = query.where(MessageLog.timestamp > latest_incoming)
+            if cutoff is not None:
+                query = query.where(MessageLog.timestamp > cutoff)
             return session.exec(query).one()
 
     def get_latest_message_time_in_range(

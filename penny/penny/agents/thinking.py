@@ -12,14 +12,10 @@ import random
 
 from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
-from penny.constants import PennyConstants
-from penny.ollama.embeddings import cosine_similarity, deserialize_embedding
+from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
-
-# How many top-scored topics to randomly pick from
-PREFERRED_TOPIC_POOL_SIZE = 5
 
 # Probability of a free-thinking cycle (no seed, no context, just vibes)
 FREE_THINKING_PROBABILITY = 1 / 3
@@ -124,23 +120,8 @@ class ThinkingAgent(Agent):
             return random.choice(topics)
 
         scored.sort(key=lambda pair: pair[1], reverse=True)
-        pool = scored[:PREFERRED_TOPIC_POOL_SIZE]
+        pool = scored[: self.PREFERRED_POOL_SIZE]
         return random.choice(pool)[0]
-
-    def _load_preference_vectors(self, user: str) -> tuple[list[list[float]], list[list[float]]]:
-        """Load like and dislike embedding vectors from the preference store."""
-        prefs = self.db.preferences.get_with_embeddings(user)
-        likes: list[list[float]] = []
-        dislikes: list[list[float]] = []
-        for p in prefs:
-            if not p.embedding:
-                continue
-            vec = deserialize_embedding(p.embedding)
-            if p.valence == PennyConstants.PreferenceValence.POSITIVE:
-                likes.append(vec)
-            elif p.valence == PennyConstants.PreferenceValence.NEGATIVE:
-                dislikes.append(vec)
-        return likes, dislikes
 
     async def _score_topics(
         self,
@@ -151,41 +132,15 @@ class ThinkingAgent(Agent):
         """Embed each topic and compute preference sentiment score."""
         scored: list[tuple[str, float]] = []
         for topic in topics:
-            vec = await self._embed_topic(topic)
+            vec = await embed_text(self._embedding_model_client, topic)
             if vec is None:
                 continue
             score = self._compute_sentiment_score(vec, likes, dislikes)
             scored.append((topic, score))
         return scored
 
-    @staticmethod
-    def _compute_sentiment_score(
-        topic_vec: list[float],
-        likes: list[list[float]],
-        dislikes: list[list[float]],
-    ) -> float:
-        """Score = avg similarity to likes - avg similarity to dislikes."""
-        like_score = 0.0
-        if likes:
-            like_score = sum(cosine_similarity(topic_vec, lv) for lv in likes) / len(likes)
-        dislike_score = 0.0
-        if dislikes:
-            dislike_score = sum(cosine_similarity(topic_vec, dv) for dv in dislikes) / len(dislikes)
-        return like_score - dislike_score
-
-    async def _embed_topic(self, text: str) -> list[float] | None:
-        """Embed a single topic string."""
-        if not self._embedding_model_client:
-            return None
-        try:
-            vecs = await self._embedding_model_client.embed(text)
-            return vecs[0]
-        except Exception as e:
-            logger.warning("Failed to embed topic: %s", e)
-            return None
-
     async def get_context(self, user: str) -> str:
-        """Slim context — profile, entities, and thoughts only.
+        """Slim context — profile, entities, thoughts, and dislikes.
 
         Free-thinking cycles get no context so Penny explores freely.
         """
@@ -195,6 +150,7 @@ class ThinkingAgent(Agent):
             self._build_profile_context(user, None),
             await self._build_entity_context(user, None),
             self._build_thought_context(user),
+            self._build_dislike_context(user),
         ]
         return "\n\n".join(s for s in sections if s)
 
@@ -231,6 +187,7 @@ class ThinkingAgent(Agent):
             self._build_profile_context(self._current_user, anchor),
             await self._build_entity_context(self._current_user, anchor),
             self._build_thought_context(self._current_user),
+            self._build_dislike_context(self._current_user),
         ]
         context_text = "\n\n".join(s for s in sections if s)
         fresh = self._build_messages(

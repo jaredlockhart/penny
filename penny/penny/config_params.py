@@ -245,24 +245,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="MESSAGE_EXTRACTION_BATCH_LIMIT",
-    description="Max messages/reactions processed per user per extraction cycle",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_MIN_MESSAGE_LENGTH",
-    description="Minimum character length for messages to be processed for extraction",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
     key="EXTRACTION_PREFILTER_MIN_COUNT",
     description="Minimum known-entity count before pre-filtering is applied",
     type=int,
@@ -345,6 +327,15 @@ ConfigParam(
     group=GROUP_INNER_MONOLOGUE,
 )
 
+ConfigParam(
+    key="THOUGHT_FRESHNESS_HOURS",
+    description="Rolling window in hours for thought eligibility (sharing and context)",
+    type=int,
+    default=24,
+    validator=_validate_positive_int,
+    group=GROUP_INNER_MONOLOGUE,
+)
+
 
 # ── History ──────────────────────────────────────────────────────────────────
 
@@ -400,7 +391,7 @@ ConfigParam(
     key="PROACTIVE_COOLDOWN_MAX",
     description="Max cooldown in seconds (ceiling for exponential backoff)",
     type=float,
-    default=14400.0,
+    default=5400.0,
     validator=_validate_positive_float,
     group=GROUP_PROACTIVE,
 )
