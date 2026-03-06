@@ -37,56 +37,27 @@ class ProactiveCandidate(BaseModel):
 
 
 class ChatAgent(Agent):
-    """Conversation-mode agent — handles user messages with tools.
+    """Conversation-mode agent — handles user messages and proactive outreach.
 
-    System message::
+    Context matrix — each entry point gets tailored context:
 
-        [system]
-        <current datetime>
-        <Prompt.PENNY_IDENTITY>
-        <user profile — name from db.users.get_info, skipped if none>
+        Mode     | Entities | History | Thought    | Turns | Tools | Steps
+        -------- | -------- | ------- | ---------- | ----- | ----- | -----
+        User Msg | msg      | 7d      | 1 notified | yes   | all   | 5
+        Vision   | msg      | 7d      | 1 notified | yes   | none  | 1
+        Checkin  | -        | 7d      | 1 notified | yes   | none  | 1
+        News     | -        | 7d      | -          | -     | all   | 5
+        Thought  | thought  | 7d      | the thought| yes   | all   | 5
 
-        ## Relevant Knowledge
-        - <top K entities by embedding similarity to user message,
-          with up to ENTITY_CONTEXT_MAX_FACTS per entity, from db.entities + db.facts>
+    All modes include profile (user name). Entity anchor column
+    shows what drives the embedding similarity search.
 
-        ## Recent Discussion Topics
-        - <daily topic summaries from db.history, up to HISTORY_CONTEXT_LIMIT>
+    Conv turns only include messages since the last history rollup's
+    period_end, so rolled-up content isn't duplicated as raw turns.
 
-        ## Recent Background Thinking
-        <today's thought summaries from db.thoughts, up to THOUGHT_CONTEXT_LIMIT>
-
-        <Prompt.CONVERSATION_PROMPT with {tools} listing>
-
-    Conversation history::
-
-        [user]      <message>
-        [assistant]  <response>
-        ...
-        <today's messages from db.messages, up to MESSAGE_CONTEXT_LIMIT turns>
-
-    Current message::
-
-        [user]  <the incoming message being handled>
-
-    Agentic loop::
-
-        [assistant]  <tool call or text response>
-        [tool]       <tool result>
-        ...
-        <repeats until text response or MESSAGE_MAX_STEPS reached.
-        Final step removes tools to force text output.>
-
-    Tools:
-        search     — web search (Perplexity + Serper images)
-        fetch_news — news search (TheNewsAPI.com)
-
-    Exit condition:
-        Text response (no tool calls) → returned to user.
-
-    Vision path:
-        Images captioned via vision model, single no-tool call
-        with VISION_RESPONSE_PROMPT. No tools, no agentic loop.
+    Agentic loop: model responds with tool calls or text. Tool results
+    are appended and the loop continues. Final step removes tools to
+    force text output. Text response = done.
     """
 
     name: str = "chat"
