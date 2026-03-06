@@ -100,6 +100,13 @@ class PennyResponse:
     PROFILE_UPDATED = "Ok, I updated your {changes}! \u2705"
     PROFILE_UNCHANGED = "Your profile is unchanged \U0001f937"
 
+    # ── Onboarding ───────────────────────────────────────────────────────────
+
+    ONBOARDING_INTERESTS_PROMPT = (
+        "Now tell me some things you're interested in so I can start "
+        "looking for interesting stuff for you!"
+    )
+
     # ── Schedule ─────────────────────────────────────────────────────────────
 
     SCHEDULE_NO_TASKS = "You don't have any scheduled tasks yet \U0001f4c5"

@@ -413,17 +413,27 @@ class Agent:
         return lines
 
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
-        """Build conversation history as user/assistant turns."""
+        """Build conversation history as strict user/assistant alternation.
+
+        Consecutive same-role messages are merged with newlines to maintain
+        valid turn structure for the model.
+        """
         conversation: list[tuple[str, str]] = []
         try:
             limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
             midnight = self._midnight_today()
             messages = self.db.messages.get_messages_since(sender, since=midnight, limit=limit)
             for msg in messages:
-                if msg.direction == PennyConstants.MessageDirection.INCOMING:
-                    conversation.append((MessageRole.USER, msg.content))
+                role = (
+                    MessageRole.USER
+                    if msg.direction == PennyConstants.MessageDirection.INCOMING
+                    else MessageRole.ASSISTANT
+                )
+                if conversation and conversation[-1][0] == role:
+                    prev_role, prev_content = conversation[-1]
+                    conversation[-1] = (prev_role, prev_content + "\n" + msg.content)
                 else:
-                    conversation.append((MessageRole.ASSISTANT, msg.content))
+                    conversation.append((role, msg.content))
             if conversation:
                 logger.debug("Built conversation (%d turns)", len(conversation))
         except Exception:
@@ -644,7 +654,9 @@ class Agent:
             if not self.allow_repeat_tools and call_key in called_tools:
                 logger.info("Skipping repeat: %s(%s)", tool_name, arguments)
                 repeat_msg = "You already made this exact tool call. Try a different query or tool."
-                messages.append(ChatMessage(role=MessageRole.TOOL, content=repeat_msg).to_dict())
+                messages.append(
+                    {"role": MessageRole.TOOL, "content": repeat_msg, "tool_name": tool_name}
+                )
                 continue
 
             called_tools.add(call_key)
@@ -655,7 +667,9 @@ class Agent:
             source_urls.extend(urls)
             if image:
                 attachments.append(image)
-            messages.append(ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict())
+            messages.append(
+                {"role": MessageRole.TOOL, "content": result_str, "tool_name": tool_name}
+            )
 
         return _StepResult(
             messages=messages,

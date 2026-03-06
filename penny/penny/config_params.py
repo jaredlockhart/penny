@@ -307,6 +307,26 @@ ConfigParam(
     group=GROUP_EXTRACTION,
 )
 
+# ── Preferences ──────────────────────────────────────────────────────────────
+
+ConfigParam(
+    key="PREFERENCE_DEDUP_EMBEDDING_THRESHOLD",
+    description="Embedding similarity threshold for preference deduplication",
+    type=float,
+    default=0.85,
+    validator=_validate_unit_float,
+    group=GROUP_HISTORY,
+)
+
+ConfigParam(
+    key="PREFERENCE_DEDUP_TCR_THRESHOLD",
+    description="Token containment ratio threshold for preference deduplication",
+    type=float,
+    default=0.6,
+    validator=_validate_unit_float,
+    group=GROUP_HISTORY,
+)
+
 # ── Inner Monologue ──────────────────────────────────────────────────────────
 
 ConfigParam(
@@ -393,6 +413,15 @@ ConfigParam(
     type=float,
     default=5400.0,
     validator=_validate_positive_float,
+    group=GROUP_PROACTIVE,
+)
+
+ConfigParam(
+    key="PROACTIVE_CANDIDATES",
+    description="Number of candidate messages to generate per proactive cycle",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
     group=GROUP_PROACTIVE,
 )
 

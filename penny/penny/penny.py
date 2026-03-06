@@ -17,6 +17,7 @@ from penny.agents import (
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
+from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
@@ -103,6 +104,20 @@ class Penny:
             )
         ]
 
+    def _create_thinking_search_tool(self, config: Config) -> Tool | None:
+        """Build a search tool for the thinking agent (PENNY_ENRICHMENT trigger)."""
+        if not config.perplexity_api_key:
+            return None
+        return SearchTool(
+            perplexity_api_key=config.perplexity_api_key,
+            db=self.db,
+            skip_images=True,
+            serper_api_key=config.serper_api_key,
+            image_max_results=int(config.runtime.IMAGE_MAX_RESULTS),
+            image_download_timeout=config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
+            default_trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
+        )
+
     def _create_chat_agent(self, db: Database) -> ChatAgent:
         """Factory for creating ChatAgent with a given database.
 
@@ -172,12 +187,12 @@ class Penny:
     def _init_background_agents(self, config: Config) -> None:
         """Create extraction, monologue, history, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
-        search_tool = self._shared_search_tool
         self.extraction_pipeline = ExtractionPipeline(
             embedding_model_client=self.embedding_model_client, **kwargs
         )
+        thinking_search_tool = self._create_thinking_search_tool(config)
         self.thinking_agent = ThinkingAgent(
-            search_tool=search_tool,
+            search_tool=thinking_search_tool,
             news_tool=self._news_tool,
             embedding_model_client=self.embedding_model_client,
             **kwargs,

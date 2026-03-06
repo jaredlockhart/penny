@@ -25,22 +25,24 @@ class Prompt:
         "Explain what you're looking for, what you already know, "
         "and what you'll do with the result.\n\n"
         "Use your judgment:\n"
-        "- For casual chat or questions about things in your context, respond directly\n"
-        "- For anything about current events or recent developments, search first\n"
+        "- For casual chat (greetings, how are you, etc.), respond directly\n"
+        "- For ANY factual question — current events, history, how things work, "
+        "specific details about people/places/things — ALWAYS search first\n"
         "- If a topic deserves deeper research, use learn\n\n"
         "IMPORTANT: Never fabricate URLs, headlines, or facts. Every claim "
         "must come from a tool result or your injected context — not from "
         "your training data. If you don't have a real URL, don't include one. "
-        "If you're unsure about something current, search for it first.\n\n"
+        "When in doubt, search — don't guess.\n\n"
         "IMPORTANT: Never recap or summarize what you already said in earlier "
         "messages. If the user asks you to change topics or try something "
         "different, just do it — don't apologize or explain what went wrong.\n\n"
         "IMPORTANT: Focus on ONE topic per response. Pick the most relevant "
         "thing to the user's message and go deep on that. Do not try to cover "
         "every interest — that's what background research is for.\n\n"
-        "After searching, talk about what you found like you're telling a friend "
-        "about something cool you just read — don't list it out like a brochure "
-        "or encyclopedia article. Drop a link if they want to read more."
+        "When you get search results back, SHARE what you found — that's the "
+        "whole point of searching. Talk about it like you're telling a friend "
+        "about something cool you just read, not listing it out like a brochure. "
+        "Drop a link if they want to read more."
     )
 
     # Email prompts
@@ -186,6 +188,19 @@ Examples:
         "If nothing noteworthy, say so briefly."
     )
 
+    THINKING_REPORT_PROMPT = (
+        "Write a detailed research report based on the following thinking session.\n\n"
+        "Include ALL of the following:\n"
+        "- **Key findings**: What was discovered, with specific details and numbers\n"
+        "- **Entities**: People, products, concepts, and organizations mentioned\n"
+        "- **Links**: Any URLs found during research (include the full URL)\n"
+        "- **Why it matters**: Why this is interesting or relevant\n\n"
+        "Write in plain prose with clear structure. "
+        "Be thorough — this report is the primary record of this research. "
+        "Do NOT summarize down to a few sentences. Keep all substantive details.\n\n"
+        "If nothing noteworthy was found, say so briefly."
+    )
+
     SUMMARIZE_TO_BULLETS = (
         "Summarize the following text as a short bullet list. "
         "Each bullet should be 3-8 words describing a distinct topic. "
@@ -212,24 +227,33 @@ Examples:
     # Proactive message prompts (synthetic user messages for proactive outreach)
     PROACTIVE_PROMPT = "Hey penny, what have you been thinking about?"
     PROACTIVE_NEWS = "Hey penny, what's in the news?"
-    PROACTIVE_FOLLOWUP = (
-        "Hey penny, can you find anything new about what we were talking about earlier?"
-    )
     PROACTIVE_CHECKIN = "Ask the user what they've been up to lately."
 
-    PREFERENCE_EXTRACTION_PROMPT = (
-        "Analyze the following conversation for user preferences — "
+    PREFERENCE_IDENTIFICATION_PROMPT = (
+        "Identify preference topics in the following conversation — "
         "things the user likes, dislikes, wants, or is frustrated by.\n\n"
         "RULES:\n"
-        "- Extract specific preferences, not vague sentiments\n"
-        "- Each preference should be 3-10 words describing a topic\n"
+        "- Return only topic names (3-10 words each)\n"
+        "- Do NOT include sentiment or valence — just the topic\n"
         "- Good: 'dark roast coffee', 'mechanical keyboards', 'early morning runs'\n"
         "- Bad: 'things', 'stuff they mentioned', 'the topic'\n"
-        "- Mark each as 'positive' (likes, wants, enjoys) or 'negative' (dislikes, avoids)\n"
-        "- Only extract preferences the USER expressed, not Penny's opinions\n"
+        "- Only extract topics the USER expressed interest in, not Penny's opinions\n"
         "- Skip factual statements that don't express preference\n"
         "- If no clear preferences are expressed, return an empty list\n\n"
+        "DEDUPLICATION (CRITICAL):\n"
+        "- If 'Already known preferences' are listed below, do NOT re-extract any of them\n"
+        "- Do NOT extract rephrasings, synonyms, or more specific versions of known preferences\n"
+        "- Example: if 'bass recording techniques' is known, do NOT extract "
+        "'Yes Roundabout bass tone' or 'bass tone capture'\n"
+        "- Only extract genuinely NEW topics not already covered\n\n"
         "REACTION CONTEXT (if present):\n"
         "Lines marked with 'User reacted [emoji] to:' show emoji reactions. "
         "These indicate preference toward the topic of the reacted-to message."
+    )
+
+    PREFERENCE_VALENCE_PROMPT = (
+        "Classify each preference topic as 'positive' (user likes, wants, enjoys) "
+        "or 'negative' (user dislikes, avoids, frustrated by) "
+        "based on the conversation context.\n\n"
+        "Return each topic with its valence. Use the exact topic text provided."
     )

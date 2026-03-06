@@ -573,7 +573,7 @@ async def test_extraction_backfills_all_embeddings(
 
 
 @pytest.mark.asyncio
-async def test_extraction_penny_enrichment_known_only(
+async def test_extraction_penny_enrichment_skipped(
     signal_server,
     mock_ollama,
     _mock_search,
@@ -582,43 +582,18 @@ async def test_extraction_penny_enrichment_known_only(
     running_penny,
 ):
     """
-    penny_enrichment searches only produce facts for known entities:
+    penny_enrichment searches are skipped by extraction entirely:
     1. Pre-seed a known entity
     2. Create a SearchLog with trigger=penny_enrichment
-    3. Mock LLM to return the known entity + facts
-    4. Verify: known entity gets new facts, NO new entities created
+    3. Verify: search log marked extracted, no entities/facts created, no LLM calls
     """
     config = make_config()
-
-    request_count = [0]
-
-    def handler(request: dict, count: int) -> dict:
-        request_count[0] += 1
-        if request_count[0] == 1:
-            # Known-only identification: return the known entity
-            return mock_ollama._make_text_response(
-                request,
-                json.dumps({"known": ["kef ls50 meta"]}),
-            )
-        else:
-            # Fact extraction for the known entity
-            return mock_ollama._make_text_response(
-                request,
-                json.dumps({"facts": ["Won What Hi-Fi 2024 award"]}),
-            )
-
-    mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         # Pre-seed known entity with a fact
         entity = penny.db.entities.get_or_create(TEST_SENDER, "kef ls50 meta")
         assert entity is not None and entity.id is not None
         penny.db.facts.add(entity.id, "Costs $1,599 per pair")
-
-        # Seed a recent incoming message so find_sender_for_timestamp works
-        penny.db.messages.log_message(
-            direction="incoming", sender=TEST_SENDER, content="tell me more about speakers"
-        )
 
         # Create a SearchLog with penny_enrichment trigger
         penny.db.searches.log(
@@ -628,34 +603,16 @@ async def test_extraction_penny_enrichment_known_only(
         )
 
         work_done = await penny.extraction_pipeline.execute()
-        assert work_done, "Should have extracted facts for the known entity"
+        assert not work_done, "Enrichment searches should be skipped, not processed"
 
-        # Verify known entity got new facts
+        # Verify NO new facts were added to the entity
         facts = penny.db.facts.get_for_entity(entity.id)
-        fact_contents = [f.content for f in facts]
-        assert "Won What Hi-Fi 2024 award" in fact_contents
+        assert len(facts) == 1, "Should still have only the original seeded fact"
 
-        # Verify NO new entities were created
-        entities = penny.db.entities.get_for_user(TEST_SENDER)
-        assert len(entities) == 1, (
-            f"Expected only 1 entity, got {len(entities)}: {[e.name for e in entities]}"
-        )
-
-        # Verify SearchLog is marked as extracted
+        # Verify SearchLog is marked as extracted (skipped)
         with penny.db.get_session() as session:
             search_logs = list(session.exec(select(SearchLog)).all())
             assert all(sl.extracted for sl in search_logs)
-
-        # Verify NO fact discovery notification was sent (learn agent handles its own)
-        fact_notifications = [
-            msg
-            for msg in signal_server.outgoing_messages
-            if "I just discovered" in msg.get("message", "")
-            or "I just learned" in msg.get("message", "")
-        ]
-        assert len(fact_notifications) == 0, (
-            "penny_enrichment should not trigger fact discovery notifications"
-        )
 
 
 def test_structural_entity_name_validation():

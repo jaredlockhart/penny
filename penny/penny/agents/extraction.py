@@ -253,6 +253,11 @@ class ExtractionPipeline(Agent):
         for search_log in search_logs:
             assert search_log.id is not None
 
+            # Skip enrichment searches (thinking agent) — no extraction needed
+            if search_log.trigger == PennyConstants.SearchTrigger.PENNY_ENRICHMENT:
+                self.db.searches.mark_extracted(search_log.id)
+                continue
+
             user = self._resolve_user(search_log)
             if not user:
                 self.db.searches.mark_extracted(search_log.id)

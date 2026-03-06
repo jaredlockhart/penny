@@ -155,14 +155,14 @@ class ThinkingAgent(Agent):
         return "\n\n".join(s for s in sections if s)
 
     async def after_run(self, user: str) -> bool:
-        """Summarize the inner monologue and store as a thought."""
+        """Produce a detailed research report and store as a thought."""
         if not self._inner_monologue:
             return False
         combined = "\n\n---\n\n".join(self._inner_monologue)
-        summary = await self._summarize_text(combined, Prompt.SUMMARIZE_TO_PARAGRAPH)
-        if summary:
-            self.db.thoughts.add(user, summary)
-            logger.info("[inner_monologue] %s", summary[:200])
+        report = await self._summarize_text(combined, Prompt.THINKING_REPORT_PROMPT)
+        if report:
+            self.db.thoughts.add(user, report)
+            logger.info("[inner_monologue] %s", report[:200])
         return True
 
     # ── Loop hooks ─────────────────────────────────────────────────────────

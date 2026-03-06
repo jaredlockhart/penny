@@ -12,9 +12,12 @@ import random
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel, Field
+
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
 from penny.database.models import Thought
+from penny.ollama.embeddings import cosine_similarity
 from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -23,6 +26,14 @@ if TYPE_CHECKING:
     from penny.channels import MessageChannel
 
 logger = logging.getLogger(__name__)
+
+
+class ProactiveCandidate(BaseModel):
+    """A candidate proactive message awaiting scoring."""
+
+    answer: str
+    thought: Thought | None = None
+    attachments: list[str] = Field(default_factory=list)
 
 
 class ChatAgent(Agent):
@@ -106,11 +117,8 @@ class ChatAgent(Agent):
             return False
         return self._cooldown_elapsed(user)
 
-    _THOUGHT_VARIANTS: list[str] = [
-        Prompt.PROACTIVE_PROMPT,
-        Prompt.PROACTIVE_NEWS,
-        Prompt.PROACTIVE_FOLLOWUP,
-    ]
+    # Check-in requires user activity within this window (seconds)
+    CHECKIN_ACTIVE_WINDOW = 1800  # 30 minutes
 
     def _has_recent_thoughts(self, user: str) -> bool:
         """Check if user has un-notified thoughts within freshness window."""
@@ -134,41 +142,20 @@ class ChatAgent(Agent):
         )
         return elapsed >= cooldown
 
-    async def _get_next_thought(self, user: str) -> Thought | None:
-        """Pick the best un-notified thought by preference affinity.
-
-        Scores all today's un-notified thoughts against user preferences
-        and randomly selects from the top pool.
-        """
+    async def _get_top_thoughts(self, user: str, n: int) -> list[Thought]:
+        """Rank un-notified thoughts by preference affinity and return top N."""
         hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
         thoughts = self.db.thoughts.get_all_unnotified(user, freshness_hours=hours)
-        if not thoughts:
-            return None
-        if len(thoughts) == 1:
-            return thoughts[0]
-        return await self._pick_preferred_thought(user, thoughts)
+        if len(thoughts) <= n:
+            return thoughts
+        return await self._rank_thoughts(user, thoughts, n)
 
-    async def _pick_preferred_thought(self, user: str, thoughts: list[Thought]) -> Thought:
-        """Score thoughts by preference affinity and pick from the top pool."""
+    async def _rank_thoughts(self, user: str, thoughts: list[Thought], n: int) -> list[Thought]:
+        """Score thoughts by preference affinity and return the top N."""
         likes, dislikes = self._load_preference_vectors(user)
         if (not likes and not dislikes) or not self._embedding_model_client:
-            return random.choice(thoughts)
+            return random.sample(thoughts, n)
 
-        scored = await self._score_thoughts(thoughts, likes, dislikes)
-        if not scored:
-            return random.choice(thoughts)
-
-        scored.sort(key=lambda pair: pair[1], reverse=True)
-        pool = scored[: self.PREFERRED_POOL_SIZE]
-        return random.choice(pool)[0]
-
-    async def _score_thoughts(
-        self,
-        thoughts: list[Thought],
-        likes: list[list[float]],
-        dislikes: list[list[float]],
-    ) -> list[tuple[Thought, float]]:
-        """Embed each thought and compute preference sentiment score."""
         scored: list[tuple[Thought, float]] = []
         for thought in thoughts:
             vec = await embed_text(self._embedding_model_client, thought.content)
@@ -176,59 +163,180 @@ class ChatAgent(Agent):
                 continue
             score = self._compute_sentiment_score(vec, likes, dislikes)
             scored.append((thought, score))
-        return scored
 
-    def _pick_thought_variant(self) -> str:
-        """Randomly select a thought-sharing prompt variant."""
-        return random.choice(self._THOUGHT_VARIANTS)
+        if not scored:
+            return random.sample(thoughts, n)
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return [t for t, _ in scored[:n]]
 
-    async def _pick_proactive_mode(self, user: str) -> tuple[str, Thought | None]:
-        """Choose between thought-sharing variants and check-in.
+    # ── Check-in gating ───────────────────────────────────────────────
 
-        Returns (prompt, thought). ~1/6 chance of check-in.
-        All thought-sharing variants anchor entity search to the thought content.
-        """
-        if random.random() < 1 / 6:
-            logger.info("Proactive check-in for %s", user)
-            return Prompt.PROACTIVE_CHECKIN, None
-        thought = await self._get_next_thought(user)
-        variant = self._pick_thought_variant()
-        logger.info("Proactive thought-sharing (%s) for %s", variant[:40], user)
-        return variant, thought
+    def _should_checkin(self, user: str) -> bool:
+        """Check-in if 24h cooldown elapsed AND user was active in last 30m."""
+        return self._checkin_cooldown_elapsed() and self._user_recently_active(user)
+
+    def _checkin_cooldown_elapsed(self) -> bool:
+        """At most one check-in per 24 hours (rolling window)."""
+        last = self.db.messages.get_last_checkin_time(Prompt.PROACTIVE_CHECKIN, hours=24)
+        if last is None:
+            return True
+        elapsed = (datetime.now(UTC).replace(tzinfo=None) - last).total_seconds()
+        return elapsed >= 86400
+
+    def _user_recently_active(self, user: str) -> bool:
+        """User sent a message within the active window."""
+        last = self.db.messages.get_latest_incoming_time(user)
+        if last is None:
+            return False
+        elapsed = (datetime.now(UTC).replace(tzinfo=None) - last).total_seconds()
+        return elapsed <= self.CHECKIN_ACTIVE_WINDOW
+
+    # ── Proactive pipeline ────────────────────────────────────────────
+
+    # 1-in-3 chance of sending news instead of thought candidates
+    NEWS_CHANCE = 1 / 3
 
     async def _send_proactive(self, user: str) -> bool:
-        """Generate a proactive message — thought-sharing or check-in."""
+        """Check-in if eligible, then coin-flip news, otherwise thought candidates."""
         assert self._channel is not None
         try:
-            prompt, thought = await self._pick_proactive_mode(user)
-            self._proactive_thought = thought
-            anchor = thought.content if thought else None
-            response = await self.handle(
-                content=prompt,
-                sender=user,
-                entity_anchor=anchor,
-            )
-            answer = response.answer.strip() if response.answer else None
-            if not answer:
-                logger.warning("Proactive message produced empty response for %s", user)
-                return False
-
-            await self._channel.send_response(
-                user,
-                answer,
-                parent_id=None,
-                attachments=response.attachments or None,
-                quote_message=None,
-            )
-            if thought and thought.id is not None:
-                self.db.thoughts.mark_notified(thought.id)
-            logger.info("Proactive message sent to %s", user)
-            return True
+            if self._should_checkin(user):
+                return await self._send_checkin(user)
+            if random.random() < self.NEWS_CHANCE:
+                return await self._send_news(user)
+            return await self._send_best_candidate(user)
         except Exception:
             logger.exception("Failed to send proactive message to %s", user)
             return False
         finally:
             self._proactive_thought = None
+
+    async def _send_checkin(self, user: str) -> bool:
+        """Send a check-in message directly (no candidate scoring)."""
+        logger.info("Proactive check-in for %s", user)
+        self._proactive_thought = None
+        response = await self.handle(content=Prompt.PROACTIVE_CHECKIN, sender=user)
+        answer = response.answer.strip() if response.answer else None
+        if not answer:
+            return False
+        return await self._send_candidate(
+            user, ProactiveCandidate(answer=answer, attachments=response.attachments or [])
+        )
+
+    async def _send_news(self, user: str) -> bool:
+        """Send a single news message directly (no candidate scoring)."""
+        logger.info("Proactive news for %s", user)
+        candidate = await self._generate_one_candidate(user, Prompt.PROACTIVE_NEWS, thought=None)
+        if not candidate:
+            return False
+        return await self._send_candidate(user, candidate)
+
+    async def _send_best_candidate(self, user: str) -> bool:
+        """Generate thought candidates, score, send the best."""
+        n = int(self.config.runtime.PROACTIVE_CANDIDATES)
+        candidates = await self._generate_thought_candidates(user, n)
+        if not candidates:
+            logger.warning("No viable proactive candidates for %s", user)
+            return False
+        winner = await self._pick_best_candidate(user, candidates)
+        return await self._send_candidate(user, winner)
+
+    async def _generate_thought_candidates(self, user: str, n: int) -> list[ProactiveCandidate]:
+        """Generate N thought candidates ranked by preference affinity."""
+        candidates: list[ProactiveCandidate] = []
+        thoughts = await self._get_top_thoughts(user, n)
+        for i, thought in enumerate(thoughts):
+            candidate = await self._generate_one_candidate(
+                user, Prompt.PROACTIVE_PROMPT, thought=thought
+            )
+            if candidate:
+                logger.info(
+                    "Candidate thought %d/%d: %s", i + 1, len(thoughts), candidate.answer[:60]
+                )
+                candidates.append(candidate)
+        return candidates
+
+    async def _generate_one_candidate(
+        self, user: str, prompt: str, thought: Thought | None
+    ) -> ProactiveCandidate | None:
+        """Generate a single proactive candidate via the agentic loop."""
+        self._proactive_thought = thought
+        anchor = thought.content if thought else None
+        response = await self.handle(content=prompt, sender=user, entity_anchor=anchor)
+        answer = response.answer.strip() if response.answer else None
+        if not answer:
+            return None
+        return ProactiveCandidate(
+            answer=answer, thought=thought, attachments=response.attachments or []
+        )
+
+    async def _pick_best_candidate(
+        self, user: str, candidates: list[ProactiveCandidate]
+    ) -> ProactiveCandidate:
+        """Score candidates on novelty + sentiment and return the best."""
+        if len(candidates) == 1 or not self._embedding_model_client:
+            return candidates[0]
+
+        recent_vecs = await self._embed_recent_messages(user)
+        likes, dislikes = self._load_preference_vectors(user)
+        best: ProactiveCandidate | None = None
+        best_score = float("-inf")
+
+        for candidate in candidates:
+            vec = await embed_text(self._embedding_model_client, candidate.answer)
+            if vec is None:
+                continue
+            novelty = self._novelty_score(vec, recent_vecs)
+            sentiment = self._compute_sentiment_score(vec, likes, dislikes)
+            score = 0.5 * novelty + 0.5 * sentiment
+            logger.info(
+                "Candidate score: %.3f (novelty=%.3f, sentiment=%.3f) %s",
+                score,
+                novelty,
+                sentiment,
+                candidate.answer[:60],
+            )
+            if score > best_score:
+                best_score = score
+                best = candidate
+
+        return best if best is not None else candidates[0]
+
+    @staticmethod
+    def _novelty_score(vec: list[float], recent_vecs: list[list[float]]) -> float:
+        """1 - max similarity to any recent message. Higher = more novel."""
+        if not recent_vecs:
+            return 1.0
+        max_sim = max(cosine_similarity(vec, rv) for rv in recent_vecs)
+        return 1.0 - max_sim
+
+    async def _embed_recent_messages(self, user: str) -> list[list[float]]:
+        """Embed recent outgoing messages for novelty comparison."""
+        if not self._embedding_model_client:
+            return []
+        hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
+        contents = self.db.messages.get_recent_outgoing_content(user, hours=hours)
+        vecs: list[list[float]] = []
+        for content in contents:
+            vec = await embed_text(self._embedding_model_client, content)
+            if vec is not None:
+                vecs.append(vec)
+        return vecs
+
+    async def _send_candidate(self, user: str, candidate: ProactiveCandidate) -> bool:
+        """Send the winning candidate and mark its thought as notified."""
+        assert self._channel is not None
+        await self._channel.send_response(
+            user,
+            candidate.answer,
+            parent_id=None,
+            attachments=candidate.attachments or None,
+            quote_message=None,
+        )
+        if candidate.thought and candidate.thought.id is not None:
+            self.db.thoughts.mark_notified(candidate.thought.id)
+        logger.info("Proactive message sent to %s", user)
+        return True
 
     # ── Message handling ───────────────────────────────────────────────
 
