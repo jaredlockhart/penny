@@ -385,14 +385,18 @@ class ChatAgent(Agent):
     # ── Hooks ─────────────────────────────────────────────────────────────
 
     async def get_context(self, user: str) -> str:
-        """Full context with entity similarity anchored to message content."""
+        """Full context with entity similarity anchored to message content.
+
+        Sections injected (no dislikes — those are for thinking only):
+          profile, entities (by message similarity), history (with dates),
+          thought (1 most recently notified OR single proactive thought).
+        """
         content = self._pending_content
         sections: list[str | None] = [
             self._build_profile_context(user, content),
             await self._build_entity_context(user, content),
             self._build_history_context(user),
             self._build_thought_context(user),
-            self._build_dislike_context(user),
         ]
         return "\n\n".join(s for s in sections if s)
 
@@ -406,13 +410,10 @@ class ChatAgent(Agent):
         if thought is not None:
             return f"## Your Latest Thought\n{thought.content}"
         hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
-        thoughts = self.db.thoughts.get_recent_notified(
-            sender, freshness_hours=hours, limit=self.THOUGHT_CONTEXT_LIMIT
-        )
+        thoughts = self.db.thoughts.get_recent_notified(sender, freshness_hours=hours, limit=1)
         if not thoughts:
             return None
-        lines = [t.content for t in thoughts]
-        return "## Recent Background Thinking\n" + "\n\n".join(lines)
+        return f"## Recent Background Thinking\n{thoughts[0].content}"
 
     def get_history(self, user: str) -> list[tuple[str, str]] | None:
         """Recent conversation messages for chat continuity."""

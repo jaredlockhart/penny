@@ -381,7 +381,7 @@ ConfigParam(
     key="HISTORY_CONTEXT_LIMIT",
     description="Max daily history entries to show in context",
     type=int,
-    default=14,
+    default=7,
     validator=_validate_positive_int,
     group=GROUP_HISTORY,
 )

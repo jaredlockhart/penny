@@ -287,7 +287,15 @@ class Agent:
             return None
 
     def _build_history_context(self, sender: str) -> str | None:
-        """Build daily conversation history summary context."""
+        """Build daily conversation history with dates and topic sub-bullets.
+
+        Format:
+            Mar 1:
+            - topic1
+            - topic2
+            Today:
+            - topic3
+        """
         try:
             limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
             entries = self.db.history.get_recent(
@@ -296,20 +304,33 @@ class Agent:
             if not entries:
                 return None
 
-            topics: list[str] = []
+            today = self._midnight_today()
+            lines: list[str] = []
             for entry in entries:
-                for line in entry.topics.strip().splitlines():
-                    line = line.strip().lstrip("- ").strip()
-                    if line:
-                        topics.append(line)
-            if not topics:
+                is_today = entry.period_start == today
+                date_label = "Today" if is_today else entry.period_start.strftime("%b %-d")
+                topics = self._extract_topic_lines(entry.topics)
+                if topics:
+                    lines.append(f"{date_label}:")
+                    lines.extend(f"- {t}" for t in topics)
+            if not lines:
                 return None
 
-            logger.debug("Built history context (%d topics)", len(topics))
-            return "You have previously discussed:\n" + "\n".join(f"- {t}" for t in topics)
+            logger.debug("Built history context (%d entries)", len(entries))
+            return "## Conversation History\n" + "\n".join(lines)
         except Exception:
             logger.warning("History context retrieval failed, proceeding without")
             return None
+
+    @staticmethod
+    def _extract_topic_lines(topics: str) -> list[str]:
+        """Parse topic bullet text into clean topic strings."""
+        result: list[str] = []
+        for line in topics.strip().splitlines():
+            topic = line.strip().lstrip("- ").strip()
+            if topic:
+                result.append(topic)
+        return result
 
     def _build_thought_context(self, sender: str) -> str | None:
         """Build recent thinking summary context within freshness window."""
@@ -415,14 +436,16 @@ class Agent:
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
         """Build conversation history as strict user/assistant alternation.
 
+        Only includes messages since the last history rollup (or midnight
+        if no rollup exists), so rolled-up content isn't duplicated.
         Consecutive same-role messages are merged with newlines to maintain
         valid turn structure for the model.
         """
         conversation: list[tuple[str, str]] = []
         try:
             limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
-            midnight = self._midnight_today()
-            messages = self.db.messages.get_messages_since(sender, since=midnight, limit=limit)
+            since = self._conversation_start(sender)
+            messages = self.db.messages.get_messages_since(sender, since=since, limit=limit)
             for msg in messages:
                 role = (
                     MessageRole.USER
@@ -435,10 +458,21 @@ class Agent:
                 else:
                     conversation.append((role, msg.content))
             if conversation:
-                logger.debug("Built conversation (%d turns)", len(conversation))
+                logger.debug("Built conversation (%d turns since %s)", len(conversation), since)
         except Exception:
             logger.warning("Conversation building failed, proceeding without")
         return conversation
+
+    def _conversation_start(self, sender: str) -> datetime:
+        """Determine where raw message history should begin.
+
+        Returns the latest rollup's period_end (so we don't duplicate
+        summarized content), or midnight today if no rollup exists.
+        """
+        latest = self.db.history.get_latest(sender, PennyConstants.HistoryDuration.DAILY)
+        if latest is not None:
+            return latest.period_end
+        return self._midnight_today()
 
     @staticmethod
     def _midnight_today() -> datetime:

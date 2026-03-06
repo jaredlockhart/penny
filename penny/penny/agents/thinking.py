@@ -64,7 +64,7 @@ class ThinkingAgent(Agent):
         - history entries (daily conversation topic bullets)
     """
 
-    THOUGHT_CONTEXT_LIMIT = 50
+    THOUGHT_CONTEXT_LIMIT = 10
 
     name = "inner_monologue"
 
