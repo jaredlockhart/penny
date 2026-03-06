@@ -212,10 +212,17 @@ class ChatAgent(Agent):
             self._proactive_thought = None
 
     async def _send_checkin(self, user: str) -> bool:
-        """Send a check-in message directly (no candidate scoring)."""
+        """Send a check-in message — slim context, no tools, single step."""
         logger.info("Proactive check-in for %s", user)
         self._proactive_thought = None
-        response = await self.handle(content=Prompt.PROACTIVE_CHECKIN, sender=user)
+        context = self._build_checkin_context(user)
+        self._install_tools([])
+        response = await self.run(
+            prompt=Prompt.PROACTIVE_CHECKIN,
+            history=self._build_conversation(user),
+            context=context,
+            max_steps=1,
+        )
         answer = response.answer.strip() if response.answer else None
         if not answer:
             return False
@@ -223,13 +230,38 @@ class ChatAgent(Agent):
             user, ProactiveCandidate(answer=answer, attachments=response.attachments or [])
         )
 
+    def _build_checkin_context(self, user: str) -> str:
+        """Checkin context: profile + history rollups + last thought. No entities."""
+        sections: list[str | None] = [
+            self._build_profile_context(user, None),
+            self._build_history_context(user),
+            self._build_thought_context(user),
+        ]
+        return "\n\n".join(s for s in sections if s)
+
     async def _send_news(self, user: str) -> bool:
-        """Send a single news message directly (no candidate scoring)."""
+        """Send a news message — profile + history only, tools enabled."""
         logger.info("Proactive news for %s", user)
-        candidate = await self._generate_one_candidate(user, Prompt.PROACTIVE_NEWS, thought=None)
-        if not candidate:
+        context = self._build_news_context(user)
+        self._install_tools(self.get_tools(user))
+        response = await self.run(
+            prompt=Prompt.PROACTIVE_NEWS,
+            context=context,
+        )
+        answer = response.answer.strip() if response.answer else None
+        if not answer:
             return False
-        return await self._send_candidate(user, candidate)
+        return await self._send_candidate(
+            user, ProactiveCandidate(answer=answer, attachments=response.attachments or [])
+        )
+
+    def _build_news_context(self, user: str) -> str:
+        """News context: profile + history rollups. No entities, thoughts, or conv turns."""
+        sections: list[str | None] = [
+            self._build_profile_context(user, None),
+            self._build_history_context(user),
+        ]
+        return "\n\n".join(s for s in sections if s)
 
     async def _send_best_candidate(self, user: str) -> bool:
         """Generate thought candidates, score, send the best."""
