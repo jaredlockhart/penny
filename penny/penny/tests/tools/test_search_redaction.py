@@ -1,7 +1,12 @@
-"""Tests for search query redaction of personal information."""
+"""Tests for search query redaction and quota circuit breaker."""
 
+from unittest.mock import MagicMock
+
+import perplexity as perplexity_sdk
 import pytest
 
+from penny.constants import PennyConstants
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 
@@ -67,7 +72,122 @@ def _make_search_tool(response) -> SearchTool:
     tool.serper_api_key = None
     tool.image_max_results = 3
     tool.image_download_timeout = 5.0
+    tool.default_trigger = PennyConstants.SearchTrigger.USER_MESSAGE
+    tool._quota_exceeded = False  # reset shared class-level flag
     return tool
+
+
+class MockRaisingPerplexity:
+    """Minimal Perplexity mock that raises a given exception on create()."""
+
+    def __init__(self, exc: Exception):
+        self._exc = exc
+
+        class _Responses:
+            def __init__(self, exc):
+                self._exc = exc
+                self.call_count = 0
+
+            def create(self, preset, input):
+                self.call_count += 1
+                raise self._exc
+
+        self.responses = _Responses(exc)
+
+
+def _make_auth_error() -> perplexity_sdk.AuthenticationError:
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.headers = {}
+    return perplexity_sdk.AuthenticationError(
+        response=mock_response,
+        body={
+            "error": {
+                "message": "insufficient_quota",
+                "type": "insufficient_quota",
+                "code": 401,
+            }
+        },
+        message="You exceeded your current quota",
+    )
+
+
+def _make_quota_tool() -> SearchTool:
+    """Create a SearchTool whose Perplexity client raises AuthenticationError."""
+    tool = object.__new__(SearchTool)
+    tool.perplexity = MockRaisingPerplexity(_make_auth_error())
+    tool.db = None
+    tool.redact_terms = []
+    tool.skip_images = True
+    tool.serper_api_key = None
+    tool.image_max_results = 3
+    tool.image_download_timeout = 5.0
+    tool.default_trigger = PennyConstants.SearchTrigger.USER_MESSAGE
+    tool._quota_exceeded = False  # reset shared class-level flag
+    return tool
+
+
+class TestSearchTextQuotaError:
+    """Tests for graceful degradation and circuit breaker on Perplexity quota errors."""
+
+    @pytest.mark.asyncio
+    async def test_authentication_error_returns_quota_message(self):
+        """AuthenticationError (quota exceeded) returns graceful message, no raise."""
+        tool = _make_quota_tool()
+        text, urls = await tool._search_text("test query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_authentication_error_sets_circuit_breaker(self):
+        """After AuthenticationError, the shared circuit breaker flag is set."""
+        tool = _make_quota_tool()
+        assert tool._quota_exceeded is False
+        await tool._search_text("test query")
+        assert tool._quota_exceeded is True
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_skips_api_on_subsequent_calls(self):
+        """After first quota error, subsequent calls skip the API entirely."""
+        tool = _make_quota_tool()
+        await tool._search_text("first query")
+        text, urls = await tool._search_text("second query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+        assert tool.perplexity.responses.call_count == 1  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_execute_quota_error_returns_search_result(self):
+        """execute() with skip_images=True returns SearchResult with quota message."""
+        tool = _make_quota_tool()
+        result = await tool.execute(query="weather today", skip_images=True)
+        assert result.text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert result.urls == []
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_shared_across_instances(self):
+        """When one SearchTool instance hits quota, a second instance is also blocked."""
+        tool_a = _make_quota_tool()  # chat agent's tool
+        # tool_b simulates the thinking agent's separate SearchTool instance
+        tool_b = object.__new__(SearchTool)
+        tool_b.perplexity = MockRaisingPerplexity(_make_auth_error())
+        tool_b.db = None
+        tool_b.redact_terms = []
+        tool_b.skip_images = True
+        tool_b.serper_api_key = None
+        tool_b.image_max_results = 3
+        tool_b.image_download_timeout = 5.0
+        tool_b.default_trigger = PennyConstants.SearchTrigger.PENNY_ENRICHMENT
+
+        # tool_a hits the quota
+        await tool_a._search_text("first query")
+        assert tool_a._quota_exceeded is True
+
+        # tool_b should be blocked by the shared flag — no API call made
+        text, urls = await tool_b._search_text("second query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+        assert tool_b.perplexity.responses.call_count == 0  # type: ignore[union-attr]
 
 
 class TestSearchTextNullOutput:
