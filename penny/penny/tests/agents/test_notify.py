@@ -293,5 +293,62 @@ async def test_notify_thought_context_shows_specific_thought(
         penny.notify_agent._pending_thought = None
 
 
+# ── Candidate disqualification ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_disqualified_candidates_excluded(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Error fallbacks and model refusals are excluded from candidates."""
+    config = make_config(notify_candidates=1)
+
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(
+            request, "Sorry, I couldn't complete that request within the allowed steps."
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_notify(penny)
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is False
+        assert len(signal_server.outgoing_messages) == 0
+
+
+def test_is_disqualified_error_strings():
+    """Known error strings are disqualified."""
+    from penny.responses import PennyResponse
+
+    assert NotifyAgent._is_disqualified(PennyResponse.AGENT_MAX_STEPS)
+    assert NotifyAgent._is_disqualified(PennyResponse.AGENT_MODEL_ERROR)
+    assert NotifyAgent._is_disqualified(PennyResponse.FALLBACK_RESPONSE)
+
+
+def test_is_disqualified_model_refusals():
+    """Model refusal phrases are disqualified."""
+    assert NotifyAgent._is_disqualified("I'm sorry, I can't help with that.")
+    assert NotifyAgent._is_disqualified("I cannot do that right now.")
+    assert NotifyAgent._is_disqualified("As an AI, I don't have personal thoughts.")
+    assert NotifyAgent._is_disqualified("I apologize, but I'm unable to respond.")
+
+
+def test_is_disqualified_allows_normal_messages():
+    """Normal conversational messages are not disqualified."""
+    assert not NotifyAgent._is_disqualified("Hey! Been thinking about quantum computing.")
+    assert not NotifyAgent._is_disqualified("Check out this cool new game!")
+
+
 # Need to import NotifyAgent for static method tests
 from penny.agents.notify import NotifyAgent  # noqa: E402
