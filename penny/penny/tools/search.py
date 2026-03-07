@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
+import perplexity as perplexity_sdk
 from perplexity import Perplexity
 from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputItem
 
@@ -58,6 +59,7 @@ class SearchTool(Tool):
         self.image_max_results = image_max_results
         self.image_download_timeout = image_download_timeout
         self.default_trigger = default_trigger
+        self._quota_exceeded: bool = False
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -129,8 +131,15 @@ class SearchTool(Tool):
         trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
+        if self._quota_exceeded:
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         start = time.time()
-        response = await self._call_perplexity(query)
+        try:
+            response = await self._call_perplexity(query)
+        except perplexity_sdk.AuthenticationError as e:
+            self._quota_exceeded = True
+            logger.warning("Perplexity quota exceeded — disabling search for this session: %s", e)
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         duration_ms = int((time.time() - start) * 1000)
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)

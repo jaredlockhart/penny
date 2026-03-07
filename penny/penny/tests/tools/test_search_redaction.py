@@ -1,7 +1,12 @@
 """Tests for search query redaction of personal information."""
 
+from unittest.mock import MagicMock
+
+import perplexity as perplexity_sdk
 import pytest
 
+from penny.constants import PennyConstants
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 
@@ -67,7 +72,97 @@ def _make_search_tool(response) -> SearchTool:
     tool.serper_api_key = None
     tool.image_max_results = 3
     tool.image_download_timeout = 5.0
+    tool._quota_exceeded = False
     return tool
+
+
+class MockRaisingPerplexity:
+    """Minimal Perplexity mock that raises a given exception on create()."""
+
+    def __init__(self, exc: Exception):
+        self._exc = exc
+        self.create_call_count = 0
+
+        class _Responses:
+            def __init__(self, exc):
+                self._exc = exc
+                self.call_count = 0
+
+            def create(self, preset, input):
+                self.call_count += 1
+                raise self._exc
+
+        self.responses = _Responses(exc)
+
+
+class TestSearchTextQuotaError:
+    """Tests for graceful degradation and circuit breaker on Perplexity quota errors."""
+
+    @staticmethod
+    def _make_auth_error() -> perplexity_sdk.AuthenticationError:
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.headers = {}
+        return perplexity_sdk.AuthenticationError(
+            response=mock_response,
+            body={
+                "error": {
+                    "message": "insufficient_quota",
+                    "type": "insufficient_quota",
+                    "code": 401,
+                }
+            },
+            message="You exceeded your current quota",
+        )
+
+    @staticmethod
+    def _make_tool_with_raising_perplexity(exc: Exception) -> SearchTool:
+        tool = object.__new__(SearchTool)
+        tool.perplexity = MockRaisingPerplexity(exc)
+        tool.db = None
+        tool.redact_terms = []
+        tool.skip_images = True
+        tool.serper_api_key = None
+        tool.image_max_results = 3
+        tool.image_download_timeout = 5.0
+        tool.default_trigger = PennyConstants.SearchTrigger.USER_MESSAGE
+        tool._quota_exceeded = False
+        return tool
+
+    @pytest.mark.asyncio
+    async def test_authentication_error_returns_quota_message(self):
+        """AuthenticationError (quota exceeded) returns graceful message, no raise."""
+        tool = self._make_tool_with_raising_perplexity(self._make_auth_error())
+        text, urls = await tool._search_text("test query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_authentication_error_sets_circuit_breaker(self):
+        """After AuthenticationError, _quota_exceeded flag is set to True."""
+        tool = self._make_tool_with_raising_perplexity(self._make_auth_error())
+        assert tool._quota_exceeded is False
+        await tool._search_text("test query")
+        assert tool._quota_exceeded is True
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_skips_api_on_subsequent_calls(self):
+        """After first quota error, subsequent calls skip the API entirely."""
+        tool = self._make_tool_with_raising_perplexity(self._make_auth_error())
+        await tool._search_text("first query")
+        # Second call — circuit is tripped; Perplexity should NOT be called again
+        text, urls = await tool._search_text("second query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+        assert tool.perplexity.responses.call_count == 1  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_execute_quota_error_returns_search_result(self):
+        """execute() with skip_images=True returns SearchResult with quota message."""
+        tool = self._make_tool_with_raising_perplexity(self._make_auth_error())
+        result = await tool.execute(query="weather today", skip_images=True)
+        assert result.text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert result.urls == []
 
 
 class TestSearchTextNullOutput:
