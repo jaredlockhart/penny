@@ -1,5 +1,7 @@
 """Tests for tool call validation with missing required parameters."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +9,7 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
@@ -106,3 +109,28 @@ class TestMissingToolParams:
         assert "parameter" in error_content.lower()
 
         await agent.close()
+
+    def test_fetch_news_tool_topic_is_required(self):
+        """FetchNewsTool schema marks 'topic' as required."""
+        mock_news = MagicMock()
+        tool = FetchNewsTool(news_tool=mock_news)
+        assert "topic" in tool.parameters.get("required", [])
+
+    def test_fetch_news_tool_description_mentions_always_required(self):
+        """FetchNewsTool description explicitly states topic must always be provided."""
+        mock_news = MagicMock()
+        tool = FetchNewsTool(news_tool=mock_news)
+        assert "always" in tool.description.lower()
+        props = tool.parameters["properties"]
+        assert isinstance(props, dict)
+        topic_desc = props["topic"]["description"]
+        assert isinstance(topic_desc, str)
+        assert "always" in topic_desc.lower()
+
+    @pytest.mark.asyncio
+    async def test_fetch_news_tool_missing_topic_raises_keyerror(self):
+        """FetchNewsTool.execute raises KeyError when 'topic' parameter is missing."""
+        mock_news = MagicMock()
+        tool = FetchNewsTool(news_tool=mock_news)
+        with pytest.raises(KeyError, match="topic"):
+            await tool.execute()
