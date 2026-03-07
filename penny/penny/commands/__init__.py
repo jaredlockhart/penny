@@ -6,9 +6,7 @@ from typing import TYPE_CHECKING
 from penny.commands.base import Command, CommandRegistry
 from penny.commands.config import ConfigCommand
 from penny.commands.debug import DebugCommand
-from penny.commands.forget import ForgetCommand
 from penny.commands.index import IndexCommand
-from penny.commands.memory import MemoryCommand
 from penny.commands.models import CommandContext, CommandError, CommandResult
 from penny.commands.mute import MuteCommand
 from penny.commands.profile import ProfileCommand
@@ -61,8 +59,6 @@ def create_command_registry(
     registry.register(ConfigCommand())
     registry.register(ProfileCommand())
     registry.register(ScheduleCommand())
-    registry.register(MemoryCommand())
-    registry.register(ForgetCommand())
     registry.register(MuteCommand())
     registry.register(UnmuteCommand())
     registry.register(UnscheduleCommand())

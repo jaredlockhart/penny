@@ -60,9 +60,7 @@ scripts/
   workflows/
     check.yml                   — CI: runs make check on push/PR to main
   CODEOWNERS                    — Trusted maintainers (used by penny-team filtering)
-docs/                           — Design documents
-  knowledge-system-plan.md      — Knowledge System v2 design
-  knowledge-system-flows.md     — Knowledge System v2 sequence diagrams
+docs/                           — Design documents (historical)
 data/                           — Runtime data (gitignored)
   penny/                        — Penny runtime data
     penny.db                    — Production database
@@ -175,4 +173,4 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - **Datetime columns for ordering, IDs for joining**: Always use datetime columns (`created_at`, `timestamp`, `learned_at`, etc.) for recency ordering in queries. Never use auto-increment IDs (`id`) to infer chronological order — IDs are for joins and lookups only
 - **Short methods (10-20 lines)**: Every method should be roughly 10-20 lines (hard max ~25). Break long methods into named steps via extraction — don't add new abstractions, just decompose
 - **Summary method at top**: Every class should have a summary method (after `__init__`) that composes calls to other methods, reading like a table of contents. This gives a bird's-eye view of the class's behavior from the top of its definition
-- **Database stores pattern**: Database access is organized into domain-specific store classes (`db.entities`, `db.facts`, `db.messages`, etc.). The `Database` class is a thin facade that creates and exposes stores. Access data via `self.db.entities.get(id)`, not `self.db.get_entity(id)`
+- **Database stores pattern**: Database access is organized into domain-specific store classes (`db.messages`, `db.preferences`, `db.thoughts`, etc.). The `Database` class is a thin facade that creates and exposes stores. Access data via `self.db.messages.log_message(...)`, not `self.db.log_message(...)`

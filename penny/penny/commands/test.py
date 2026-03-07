@@ -54,11 +54,12 @@ class TestCommand(Command):
         if prompt.startswith("/"):
             return CommandResult(text=PennyResponse.TEST_NESTED_ERROR)
 
-        # Create test database instance
+        # Create test database instance (ensure tables exist even without snapshot)
         from penny.database import Database
 
         test_db_path = Path(context.db.db_path).parent / PennyConstants.TEST_DB_PATH.name
         test_db = Database(str(test_db_path))
+        test_db.create_tables()
 
         # Create chat agent with test database
         test_agent: ChatAgent = self._message_agent_factory(test_db)

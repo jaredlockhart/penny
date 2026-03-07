@@ -250,6 +250,9 @@ class MessageChannel(ABC):
         if image_prompt:
             attachments = await self._resolve_image(image_prompt, attachments)
 
+        if not attachments and self._should_auto_image():
+            attachments = await self._resolve_image(content, attachments)
+
         # Apply channel-specific formatting
         # We log the prepared content so quote matching works correctly
         prepared = self.prepare_outgoing(content)
@@ -266,6 +269,11 @@ class MessageChannel(ABC):
             self._db.messages.set_external_id(message_id, str(external_id))
         logger.info("Sent response to %s (%d chars)", recipient, len(content))
         return message_id if external_id is not None else None
+
+    def _should_auto_image(self) -> bool:
+        """Whether to auto-search for images on messages without attachments."""
+        serper_key = self._config.serper_api_key if self._config else None
+        return bool(serper_key)
 
     async def _resolve_image(
         self, image_prompt: str, attachments: list[str] | None

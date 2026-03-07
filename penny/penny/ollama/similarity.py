@@ -8,14 +8,12 @@ are passed as parameters.
 from __future__ import annotations
 
 import logging
-import re
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from penny.ollama.embeddings import (
     cosine_similarity,
     deserialize_embedding,
-    find_similar,
     token_containment_ratio,
     tokenize_entity_name,
 )
@@ -24,21 +22,6 @@ if TYPE_CHECKING:
     from penny.ollama.client import OllamaClient
 
 logger = logging.getLogger(__name__)
-
-# ── Text normalization ────────────────────────────────────────────────────────
-
-_WHITESPACE_RE = re.compile(r"\s+")
-
-
-def normalize_fact(fact: str) -> str:
-    """Normalize a fact string for dedup comparison.
-
-    Strips leading '- ', lowercases, and collapses whitespace so that
-    near-duplicate facts with minor formatting differences are caught.
-    """
-    text = fact.strip().lstrip("-").strip()
-    return _WHITESPACE_RE.sub(" ", text).lower()
-
 
 # ── Safe embedding helper ─────────────────────────────────────────────────────
 
@@ -56,21 +39,6 @@ async def embed_text(
     except Exception:
         logger.warning("Failed to embed text: %.60s", text)
         return None
-
-
-# ── Relevance checking ────────────────────────────────────────────────────────
-
-
-def check_relevance(
-    candidate_vec: list[float],
-    reference_vec: list[float],
-) -> float:
-    """Compute cosine similarity between two pre-computed vectors.
-
-    Returns the raw cosine similarity score. Callers decide whether
-    the score meets their threshold.
-    """
-    return cosine_similarity(candidate_vec, reference_vec)
 
 
 # ── Embedding dedup ───────────────────────────────────────────────────────────
@@ -170,50 +138,3 @@ def _is_match(strategy: DedupStrategy, tcr_pass: bool, embed_pass: bool) -> bool
         return embed_pass  # tcr_pass already enforced by caller skip
     # TCR_OR_EMBEDDING
     return tcr_pass or embed_pass
-
-
-# ── Batch fact dedup ──────────────────────────────────────────────────────────
-
-
-async def dedup_facts_by_embedding(
-    client: OllamaClient | None,
-    candidates: list[str],
-    existing_with_embeddings: list[tuple[int, bytes]],
-    threshold: float,
-) -> tuple[list[str], list[int]]:
-    """Deduplicate candidate facts against existing via embedding similarity.
-
-    Args:
-        client: Embedding model client (None → skip, return all candidates).
-        candidates: New fact text strings to check.
-        existing_with_embeddings: List of (id_or_index, serialized_embedding).
-        threshold: Cosine similarity threshold for duplicate detection.
-
-    Returns:
-        Tuple of (surviving_candidates, matched_existing_ids).
-    """
-    if not client or not candidates or not existing_with_embeddings:
-        return candidates, []
-
-    existing_candidates = [
-        (idx, deserialize_embedding(emb)) for idx, emb in existing_with_embeddings
-    ]
-
-    try:
-        vecs = await client.embed(candidates)
-    except Exception as e:
-        logger.warning("Embedding dedup failed, keeping all candidates: %s", e)
-        return candidates, []
-
-    survivors: list[str] = []
-    matched_ids: list[int] = []
-
-    for fact_text, query_vec in zip(candidates, vecs, strict=True):
-        matches = find_similar(query_vec, existing_candidates, top_k=1, threshold=threshold)
-        if matches:
-            matched_ids.append(matches[0][0])
-            logger.debug("Skipping duplicate fact (embedding match): %s", fact_text[:50])
-        else:
-            survivors.append(fact_text)
-
-    return survivors, matched_ids

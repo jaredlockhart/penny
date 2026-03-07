@@ -63,6 +63,18 @@ class PreferenceStore:
                 ).all()
             )
 
+    def get_positive(self, user: str) -> list[Preference]:
+        """Get positive preferences for a user."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Preference).where(
+                        Preference.user == user,
+                        Preference.valence == "positive",
+                    )
+                ).all()
+            )
+
     def get_with_embeddings(self, user: str) -> list[Preference]:
         """Get preferences with embeddings for similarity search."""
         with self._session() as session:
@@ -74,6 +86,30 @@ class PreferenceStore:
                     )
                 ).all()
             )
+
+    def get_without_embeddings(self, limit: int) -> list[Preference]:
+        """Get preferences that don't have embeddings yet, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Preference)
+                    .where(Preference.embedding == None)  # noqa: E711
+                    .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
+                    .limit(limit)
+                ).all()
+            )
+
+    def update_embedding(self, pref_id: int, embedding: bytes) -> None:
+        """Update the embedding for a preference."""
+        try:
+            with self._session() as session:
+                pref = session.get(Preference, pref_id)
+                if pref:
+                    pref.embedding = embedding
+                    session.add(pref)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update preference embedding: %s", e)
 
     def exists_for_period(self, user: str, period_start: datetime) -> bool:
         """Check if preferences have already been extracted for a period."""

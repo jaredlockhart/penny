@@ -10,23 +10,24 @@ from typing import Any
 from penny.agents import (
     Agent,
     ChatAgent,
-    ExtractionPipeline,
     HistoryAgent,
     ThinkingAgent,
 )
 from penny.channels import MessageChannel, create_channel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
+from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
-from penny.ollama.embeddings import build_entity_embed_text, serialize_embedding
+from penny.ollama.embeddings import serialize_embedding
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.scheduler import (
     AlwaysRunSchedule,
     BackgroundScheduler,
     PeriodicSchedule,
+    Schedule,
 )
 from penny.scheduler.schedule_runner import ScheduleExecutor
 from penny.startup import get_restart_message
@@ -103,6 +104,20 @@ class Penny:
             )
         ]
 
+    def _create_thinking_search_tool(self, config: Config) -> Tool | None:
+        """Build a search tool for the thinking agent (PENNY_ENRICHMENT trigger)."""
+        if not config.perplexity_api_key:
+            return None
+        return SearchTool(
+            perplexity_api_key=config.perplexity_api_key,
+            db=self.db,
+            skip_images=True,
+            serper_api_key=config.serper_api_key,
+            image_max_results=int(config.runtime.IMAGE_MAX_RESULTS),
+            image_download_timeout=config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
+            default_trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
+        )
+
     def _create_chat_agent(self, db: Database) -> ChatAgent:
         """Factory for creating ChatAgent with a given database.
 
@@ -170,19 +185,18 @@ class Penny:
         }
 
     def _init_background_agents(self, config: Config) -> None:
-        """Create extraction, monologue, history, and schedule agents."""
+        """Create monologue, history, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
-        search_tool = self._shared_search_tool
-        self.extraction_pipeline = ExtractionPipeline(
-            embedding_model_client=self.embedding_model_client, **kwargs
-        )
+        thinking_search_tool = self._create_thinking_search_tool(config)
         self.thinking_agent = ThinkingAgent(
-            search_tool=search_tool,
+            search_tool=thinking_search_tool,
             news_tool=self._news_tool,
             embedding_model_client=self.embedding_model_client,
             **kwargs,
         )
-        self.history_agent = HistoryAgent(**kwargs)
+        self.history_agent = HistoryAgent(
+            embedding_model_client=self.embedding_model_client, **kwargs
+        )
         self.schedule_executor = ScheduleExecutor(**kwargs)
 
     def _init_github_client(self, config: Config) -> Any:
@@ -243,15 +257,11 @@ class Penny:
 
     def _init_scheduler(self, config: Config) -> None:
         """Create background scheduler with prioritized schedules."""
-        schedules = [
+        schedules: list[Schedule] = [
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
                 agent=self.history_agent,
                 interval=config.runtime.HISTORY_INTERVAL,
-            ),
-            PeriodicSchedule(
-                agent=self.extraction_pipeline,
-                interval=config.runtime.MAINTENANCE_INTERVAL_SECONDS,
             ),
             PeriodicSchedule(
                 agent=self.chat_agent,
@@ -325,62 +335,28 @@ class Penny:
         if not self.embedding_model_client:
             return
         batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
-        total_facts = await self._backfill_fact_embeddings(batch_limit)
-        total_entities = await self._backfill_entity_embeddings(batch_limit)
-        if total_facts or total_entities:
-            logger.info(
-                "Startup embedding backfill complete: %d facts, %d entities",
-                total_facts,
-                total_entities,
-            )
+        total_prefs = await self._backfill_preference_embeddings(batch_limit)
+        if total_prefs:
+            logger.info("Startup embedding backfill complete: %d preferences", total_prefs)
 
-    async def _backfill_fact_embeddings(self, batch_limit: int) -> int:
-        """Backfill facts with missing embeddings. Returns count embedded."""
+    async def _backfill_preference_embeddings(self, batch_limit: int) -> int:
+        """Backfill preferences with missing embeddings. Returns count embedded."""
         assert self.embedding_model_client is not None
         total = 0
         while True:
-            facts = self.db.facts.get_without_embeddings(limit=batch_limit)
-            if not facts:
+            prefs = self.db.preferences.get_without_embeddings(limit=batch_limit)
+            if not prefs:
                 break
             try:
-                fact_texts = [f.content for f in facts]
-                vecs = await self.embedding_model_client.embed(fact_texts)
-                for fact, vec, text in zip(facts, vecs, fact_texts, strict=True):
-                    assert fact.id is not None
-                    self.db.facts.update_embedding(fact.id, serialize_embedding(vec))
-                    logger.info("Embedded fact %d: %s", fact.id, text[:120])
-                total += len(facts)
-            except Exception as e:
-                logger.warning("Startup embedding backfill failed for facts: %s", e)
-                break
-        return total
-
-    async def _backfill_entity_embeddings(self, batch_limit: int) -> int:
-        """Backfill entities with missing embeddings. Returns count embedded."""
-        assert self.embedding_model_client is not None
-        total = 0
-        while True:
-            entities = self.db.entities.get_without_embeddings(limit=batch_limit)
-            if not entities:
-                break
-            try:
-                texts = []
-                for entity in entities:
-                    assert entity.id is not None
-                    entity_facts = self.db.facts.get_for_entity(entity.id)
-                    texts.append(
-                        build_entity_embed_text(
-                            entity.name, [f.content for f in entity_facts], entity.tagline
-                        )
-                    )
+                texts = [p.content for p in prefs]
                 vecs = await self.embedding_model_client.embed(texts)
-                for entity, vec, text in zip(entities, vecs, texts, strict=True):
-                    assert entity.id is not None
-                    self.db.entities.update_embedding(entity.id, serialize_embedding(vec))
-                    logger.info("Embedded entity %d: %s", entity.id, text[:120])
-                total += len(entities)
+                for pref, vec in zip(prefs, vecs, strict=True):
+                    assert pref.id is not None
+                    self.db.preferences.update_embedding(pref.id, serialize_embedding(vec))
+                    logger.info("Embedded preference %d: %s", pref.id, pref.content[:120])
+                total += len(prefs)
             except Exception as e:
-                logger.warning("Startup embedding backfill failed for entities: %s", e)
+                logger.warning("Startup embedding backfill failed for preferences: %s", e)
                 break
         return total
 
@@ -487,7 +463,6 @@ async def main() -> None:
     logger.info("  ollama_model: %s", config.ollama_model)
     logger.info("  ollama_api_url: %s", config.ollama_api_url)
     logger.info("  idle_threshold: %.0fs", config.runtime.IDLE_SECONDS)
-    logger.info("  maintenance_interval: %.0fs", config.runtime.MAINTENANCE_INTERVAL_SECONDS)
 
     agent = Penny(config)
     await agent.run()

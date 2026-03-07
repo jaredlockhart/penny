@@ -146,7 +146,7 @@ async def test_command_does_not_cancel_background_task(
     signal_server, make_config, mock_ollama, running_penny
 ):
     """Commands don't use Ollama, so they should not interrupt background tasks."""
-    config = make_config(IDLE_SECONDS=0.0, MAINTENANCE_INTERVAL_SECONDS=0.01)
+    config = make_config(IDLE_SECONDS=0.0)
 
     async with running_penny(config) as penny:
         # Spy on the scheduler's notify_foreground_start
@@ -199,8 +199,8 @@ async def test_scheduler_skips_agents_with_no_work():
 
 
 @pytest.mark.asyncio
-async def test_scheduler_mark_complete_always_called():
-    """mark_complete is called after every execution, even when agent has no work."""
+async def test_scheduler_mark_complete_only_on_work():
+    """mark_complete is only called when agent does work, not on no-ops."""
     agent_no_work = _SimpleAgent("no_work", return_value=False)
     agent_has_work = _SimpleAgent("has_work", return_value=True)
 
@@ -217,8 +217,8 @@ async def test_scheduler_mark_complete_always_called():
     try:
         await asyncio.sleep(0.1)
 
-        assert schedule_no_work.mark_complete_count > 0, (
-            "mark_complete should be called even when agent returns False"
+        assert schedule_no_work.mark_complete_count == 0, (
+            "mark_complete should NOT be called when agent returns False"
         )
         assert schedule_has_work.mark_complete_count > 0, (
             "mark_complete should be called when agent returns True"
@@ -231,8 +231,8 @@ async def test_scheduler_mark_complete_always_called():
 
 
 @pytest.mark.asyncio
-async def test_periodic_schedule_interval_respected_without_work():
-    """PeriodicSchedule interval gates execution even when the agent has no work."""
+async def test_no_work_agent_stays_eligible_without_interval_wait():
+    """An agent that returns False stays eligible on the next tick (no interval penalty)."""
     agent = _SimpleAgent("idle_agent", return_value=False)
     schedule = PeriodicSchedule(agent=agent, interval=0.5)  # type: ignore[arg-type]
 
@@ -244,17 +244,11 @@ async def test_periodic_schedule_interval_respected_without_work():
 
     scheduler_task = asyncio.create_task(scheduler.run())
     try:
-        # Let it run for 0.3s — should only get 1 execution (the first immediate run)
-        await asyncio.sleep(0.3)
-        count_at_300ms = agent.execute_count
-        assert count_at_300ms == 1, (
-            f"Expected 1 execution in first 0.3s (before interval), got {count_at_300ms}"
-        )
-
-        # After 0.5s total the interval elapses — should get a second execution
-        await asyncio.sleep(0.3)
-        assert agent.execute_count == 2, (
-            f"Expected 2 executions after interval elapsed, got {agent.execute_count}"
+        # Let it run for 0.1s — agent returns False every tick, so it should
+        # be re-checked each tick without waiting for the 0.5s interval
+        await asyncio.sleep(0.1)
+        assert agent.execute_count > 1, (
+            f"No-work agent should be rechecked each tick, got {agent.execute_count} in 0.1s"
         )
     finally:
         scheduler.stop()

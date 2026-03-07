@@ -189,7 +189,13 @@ class ProfileCommand(Command):
                 date_of_birth=dob_formatted,
             )
 
-            return CommandResult(text=PennyResponse.PROFILE_CREATED.format(name=parsed.name))
+            response = PennyResponse.PROFILE_CREATED.format(name=parsed.name)
+
+            # Prompt for interests if no preferences exist yet (onboarding)
+            if not context.db.preferences.get_for_user(context.user):
+                response += "\n\n" + PennyResponse.ONBOARDING_INTERESTS_PROMPT
+
+            return CommandResult(text=response)
 
         # PROFILE UPDATE (existing profile)
 

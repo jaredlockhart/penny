@@ -34,19 +34,6 @@ class PennyResponse:
     VISION_IMAGE_CONTEXT = "User said '{user_text}' and included an image of: {caption}"
     VISION_IMAGE_ONLY_CONTEXT = "User sent an image of: {caption}"
 
-    # ── Memory ───────────────────────────────────────────────────────────────
-
-    MEMORY_EMPTY = "You don't have any stored memories yet."
-    MEMORY_LIST_HEADER = "**Your Memory**"
-    MEMORY_ENTITY_NOT_FOUND = "#{number} doesn't match any memory. Use /memory to see the list."
-    MEMORY_NO_FACTS = "I know about {name}, but I don't have any specific facts stored yet."
-
-    # ── Forget ───────────────────────────────────────────────────────────────
-
-    FORGET_USAGE = "Use `/forget <number>` to delete a memory. Run `/memory` to see the list."
-    FORGET_NOT_FOUND = "#{number} doesn't match any memory. Use /memory to see the list."
-    FORGET_DELETED = "Deleted '{name}' and {count} fact(s)."
-
     # ── Config ───────────────────────────────────────────────────────────────
 
     CONFIG_HEADER = "**Runtime Configuration**"
@@ -99,6 +86,13 @@ class PennyResponse:
     PROFILE_UPDATE_LOCATION = "location to **{location}** ({timezone})"
     PROFILE_UPDATED = "Ok, I updated your {changes}! \u2705"
     PROFILE_UNCHANGED = "Your profile is unchanged \U0001f937"
+
+    # ── Onboarding ───────────────────────────────────────────────────────────
+
+    ONBOARDING_INTERESTS_PROMPT = (
+        "Now tell me some things you're interested in so I can start "
+        "looking for interesting stuff for you!"
+    )
 
     # ── Schedule ─────────────────────────────────────────────────────────────
 

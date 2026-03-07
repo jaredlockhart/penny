@@ -15,8 +15,6 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {}
 # Group names (display order)
 GROUP_GLOBAL = "Global"
 GROUP_SCHEDULE = "Schedule"
-GROUP_KNOWLEDGE = "Knowledge"
-GROUP_EXTRACTION = "Extraction"
 GROUP_INNER_MONOLOGUE = "Inner Monologue"
 GROUP_HISTORY = "History"
 GROUP_PROACTIVE = "Proactive"
@@ -25,8 +23,6 @@ GROUP_PROACTIVE = "Proactive"
 CONFIG_GROUPS: list[str] = [
     GROUP_GLOBAL,
     GROUP_SCHEDULE,
-    GROUP_KNOWLEDGE,
-    GROUP_EXTRACTION,
     GROUP_INNER_MONOLOGUE,
     GROUP_HISTORY,
     GROUP_PROACTIVE,
@@ -169,160 +165,32 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="MAINTENANCE_INTERVAL_SECONDS",
-    description="Interval for the knowledge pipeline cycle in seconds",
-    type=float,
-    default=10.0,
-    validator=_validate_positive_float,
-    group=GROUP_SCHEDULE,
-)
-
-# ── Knowledge ─────────────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="ENTITY_CONTEXT_MAX_FACTS",
-    description="Max facts per entity in message context",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
-    key="ENTITY_CONTEXT_THRESHOLD",
-    description="Cosine similarity threshold for entity context injection",
-    type=float,
-    default=0.3,
-    validator=_validate_unit_float,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
-    key="ENTITY_CONTEXT_TOP_K",
-    description="Number of top similar entities to inject into message context",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
-    key="KNOWLEDGE_SUFFICIENT_MIN_FACTS",
-    description="Min facts for entity context to be considered sufficient",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
-    key="KNOWLEDGE_SUFFICIENT_MIN_SCORE",
-    description="Min similarity score for entity context to be considered sufficient",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
     key="MESSAGE_CONTEXT_LIMIT",
     description="Max recent conversation messages injected into message context",
     type=int,
     default=20,
     validator=_validate_positive_int,
-    group=GROUP_KNOWLEDGE,
+    group=GROUP_GLOBAL,
 )
 
-# ── Extraction ────────────────────────────────────────────────────────────────
+# ── Preferences ──────────────────────────────────────────────────────────────
 
 ConfigParam(
-    key="ENTITY_EXTRACTION_BATCH_LIMIT",
-    description="Max search logs processed per extraction cycle",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="MESSAGE_EXTRACTION_BATCH_LIMIT",
-    description="Max messages/reactions processed per user per extraction cycle",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_MIN_MESSAGE_LENGTH",
-    description="Minimum character length for messages to be processed for extraction",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_PREFILTER_MIN_COUNT",
-    description="Minimum known-entity count before pre-filtering is applied",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_PREFILTER_SIMILARITY_THRESHOLD",
-    description="Cosine similarity threshold for entity pre-filtering",
-    type=float,
-    default=0.4,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_ENTITY_SEMANTIC_THRESHOLD",
-    description="Cosine similarity threshold for semantic entity name validation",
-    type=float,
-    default=0.50,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD",
-    description="Embedding similarity threshold for entity deduplication",
+    key="PREFERENCE_DEDUP_EMBEDDING_THRESHOLD",
+    description="Embedding similarity threshold for preference deduplication",
     type=float,
     default=0.85,
     validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
+    group=GROUP_HISTORY,
 )
 
 ConfigParam(
-    key="EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD",
-    description="Token containment ratio threshold for entity deduplication",
+    key="PREFERENCE_DEDUP_TCR_THRESHOLD",
+    description="Token containment ratio threshold for preference deduplication",
     type=float,
     default=0.6,
     validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_MAX_NEW_ENTITIES",
-    description="Max new entity candidates per extraction (ranked by relevance)",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD",
-    description="Embedding similarity threshold for fact deduplication",
-    type=float,
-    default=0.85,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
+    group=GROUP_HISTORY,
 )
 
 # ── Inner Monologue ──────────────────────────────────────────────────────────
@@ -341,6 +209,15 @@ ConfigParam(
     description="Max thinking loop steps per inner monologue cycle",
     type=int,
     default=10,
+    validator=_validate_positive_int,
+    group=GROUP_INNER_MONOLOGUE,
+)
+
+ConfigParam(
+    key="THOUGHT_FRESHNESS_HOURS",
+    description="Rolling window in hours for thought eligibility (sharing and context)",
+    type=int,
+    default=24,
     validator=_validate_positive_int,
     group=GROUP_INNER_MONOLOGUE,
 )
@@ -370,7 +247,7 @@ ConfigParam(
     key="HISTORY_CONTEXT_LIMIT",
     description="Max daily history entries to show in context",
     type=int,
-    default=14,
+    default=7,
     validator=_validate_positive_int,
     group=GROUP_HISTORY,
 )
@@ -388,15 +265,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="PROACTIVE_IDLE_THRESHOLD",
-    description="Seconds since last user message before proactive send",
-    type=float,
-    default=3600.0,
-    validator=_validate_positive_float,
-    group=GROUP_PROACTIVE,
-)
-
-ConfigParam(
     key="PROACTIVE_COOLDOWN_MIN",
     description="Initial cooldown in seconds between autonomous messages",
     type=float,
@@ -409,8 +277,17 @@ ConfigParam(
     key="PROACTIVE_COOLDOWN_MAX",
     description="Max cooldown in seconds (ceiling for exponential backoff)",
     type=float,
-    default=14400.0,
+    default=5400.0,
     validator=_validate_positive_float,
+    group=GROUP_PROACTIVE,
+)
+
+ConfigParam(
+    key="PROACTIVE_CANDIDATES",
+    description="Number of candidate messages to generate per proactive cycle",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
     group=GROUP_PROACTIVE,
 )
 

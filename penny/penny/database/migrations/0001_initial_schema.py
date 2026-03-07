@@ -19,9 +19,7 @@ def up(conn: sqlite3.Connection) -> None:
     _create_command_logs(conn)
     _create_runtime_config(conn)
     _create_schedule(conn)
-    _create_entity(conn)
     _create_mutestate(conn)
-    _create_fact(conn)
     _create_thought(conn)
     _create_preference(conn)
     _create_conversationhistory(conn)
@@ -148,26 +146,6 @@ def _create_schedule(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS ix_schedule_user_id ON schedule (user_id)")
 
 
-def _create_entity(conn: sqlite3.Connection) -> None:
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS entity (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user TEXT NOT NULL,
-            name TEXT NOT NULL,
-            created_at TIMESTAMP NOT NULL,
-            updated_at TIMESTAMP NOT NULL,
-            embedding BLOB,
-            tagline TEXT,
-            last_enriched_at TIMESTAMP,
-            last_notified_at TIMESTAMP,
-            heat REAL NOT NULL DEFAULT 0.0,
-            heat_decayed_at TIMESTAMP,
-            heat_cooldown_until TIMESTAMP
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS ix_entity_user ON entity (user)")
-
-
 def _create_mutestate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS mutestate (
@@ -175,27 +153,6 @@ def _create_mutestate(conn: sqlite3.Connection) -> None:
             muted_at TIMESTAMP NOT NULL
         )
     """)
-
-
-def _create_fact(conn: sqlite3.Connection) -> None:
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS fact (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entity_id INTEGER NOT NULL REFERENCES entity(id),
-            content TEXT NOT NULL,
-            source_url TEXT,
-            source_search_log_id INTEGER REFERENCES searchlog(id),
-            source_message_id INTEGER REFERENCES messagelog(id),
-            learned_at TIMESTAMP NOT NULL,
-            notified_at TIMESTAMP,
-            embedding BLOB
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS ix_fact_entity_id ON fact (entity_id)")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS ix_fact_source_search_log_id ON fact (source_search_log_id)"
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS ix_fact_source_message_id ON fact (source_message_id)")
 
 
 def _create_thought(conn: sqlite3.Connection) -> None:

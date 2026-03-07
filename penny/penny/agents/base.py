@@ -5,16 +5,14 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
 from penny.constants import PennyConstants
 from penny.database import Database
-from penny.database.models import Entity
 from penny.ollama import OllamaClient
-from penny.ollama.embeddings import deserialize_embedding, find_similar
-from penny.ollama.similarity import embed_text
+from penny.ollama.embeddings import cosine_similarity, deserialize_embedding
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import SearchTool, Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -55,6 +53,7 @@ class Agent:
     _instances: list[Agent] = []
 
     THOUGHT_CONTEXT_LIMIT = 10
+    PREFERRED_POOL_SIZE = 5
     name: str = "Agent"
 
     def get_users(self) -> list[str]:
@@ -108,7 +107,7 @@ class Agent:
         """Run a scheduled cycle — iterate users and delegate to execute_for_user.
 
         Override execute_for_user for per-user work, or override execute
-        entirely for non-user-based work (e.g. ExtractionPipeline).
+        entirely for non-user-based work.
         """
         users = self.get_users()
         if not users:
@@ -258,9 +257,9 @@ class Agent:
         """
         sections: list[str | None] = [
             self._build_profile_context(user, content),
-            await self._build_entity_context(user, content),
             self._build_history_context(user),
             self._build_thought_context(user),
+            self._build_dislike_context(user),
         ]
         context_text = "\n\n".join(s for s in sections if s)
         conversation = self._build_conversation(user)
@@ -285,7 +284,15 @@ class Agent:
             return None
 
     def _build_history_context(self, sender: str) -> str | None:
-        """Build daily conversation history summary context."""
+        """Build daily conversation history with dates and topic sub-bullets.
+
+        Format:
+            Mar 1:
+            - topic1
+            - topic2
+            Today:
+            - topic3
+        """
         try:
             limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
             entries = self.db.history.get_recent(
@@ -294,27 +301,41 @@ class Agent:
             if not entries:
                 return None
 
-            topics: list[str] = []
+            today = self._midnight_today()
+            lines: list[str] = []
             for entry in entries:
-                for line in entry.topics.strip().splitlines():
-                    line = line.strip().lstrip("- ").strip()
-                    if line:
-                        topics.append(line)
-            if not topics:
+                is_today = entry.period_start == today
+                date_label = "Today" if is_today else entry.period_start.strftime("%b %-d")
+                topics = self._extract_topic_lines(entry.topics)
+                if topics:
+                    lines.append(f"{date_label}:")
+                    lines.extend(f"- {t}" for t in topics)
+            if not lines:
                 return None
 
-            logger.debug("Built history context (%d topics)", len(topics))
-            return "You have previously discussed:\n" + "\n".join(f"- {t}" for t in topics)
+            logger.debug("Built history context (%d entries)", len(entries))
+            return "## Conversation History\n" + "\n".join(lines)
         except Exception:
             logger.warning("History context retrieval failed, proceeding without")
             return None
 
+    @staticmethod
+    def _extract_topic_lines(topics: str) -> list[str]:
+        """Parse topic bullet text into clean topic strings."""
+        result: list[str] = []
+        for line in topics.strip().splitlines():
+            topic = line.strip().lstrip("- ").strip()
+            if topic:
+                result.append(topic)
+        return result
+
     def _build_thought_context(self, sender: str) -> str | None:
-        """Build recent thinking summary context."""
+        """Build recent thinking summary context within freshness window."""
         try:
-            midnight = self._midnight_today()
+            hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
+            cutoff = self._freshness_cutoff(hours)
             all_thoughts = self.db.thoughts.get_recent(sender, limit=self.THOUGHT_CONTEXT_LIMIT)
-            thoughts = [t for t in all_thoughts if t.created_at >= midnight]
+            thoughts = [t for t in all_thoughts if t.created_at >= cutoff]
             if not thoughts:
                 return None
             lines = [t.content for t in thoughts]
@@ -324,86 +345,68 @@ class Agent:
             logger.warning("Thought context retrieval failed, proceeding without")
             return None
 
-    async def _build_entity_context(self, sender: str, content: str | None) -> str | None:
-        """Build semantically relevant entity context."""
-        if content is None:
-            return None
+    def _build_dislike_context(self, user: str) -> str | None:
+        """Build textual list of topics the user dislikes."""
         try:
-            query_vec = await embed_text(self._embedding_model_client, content)
-            if query_vec is None:
+            prefs = self.db.preferences.get_for_user(user)
+            negative = [
+                p.content for p in prefs if p.valence == PennyConstants.PreferenceValence.NEGATIVE
+            ]
+            if not negative:
                 return None
-
-            entities = self.db.entities.get_with_embeddings(sender)
-            if not entities:
-                return None
-
-            candidates = self._build_entity_candidates(entities)
-            top_k = int(self.config.runtime.ENTITY_CONTEXT_TOP_K)
-            threshold = float(self.config.runtime.ENTITY_CONTEXT_THRESHOLD)
-            matches = find_similar(query_vec, candidates, top_k=top_k, threshold=threshold)
-            if not matches:
-                return None
-
-            max_facts = int(self.config.runtime.ENTITY_CONTEXT_MAX_FACTS)
-            entity_map = {e.id: e for e in entities}
-            lines = self._format_entity_matches(matches, entity_map, max_facts)
-            if not lines:
-                return None
-
-            logger.debug("Built entity context (%d entities)", len(lines))
-            return "## Relevant Knowledge\n" + "\n".join(lines)
+            seen: set[str] = set()
+            unique: list[str] = []
+            for text in negative:
+                key = text.strip().lower()
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(text.strip())
+            lines = "\n".join(f"- {t}" for t in unique)
+            return f"## Topics to Avoid\n{lines}"
         except Exception:
-            logger.warning("Entity context retrieval failed, proceeding without")
+            logger.warning("Dislike context retrieval failed, proceeding without")
             return None
-
-    @staticmethod
-    def _build_entity_candidates(entities: list[Entity]) -> list[tuple[int, list[float]]]:
-        """Build (id, embedding_vector) tuples for similarity search."""
-        candidates: list[tuple[int, list[float]]] = []
-        for entity in entities:
-            if entity.embedding and entity.id is not None:
-                vec = deserialize_embedding(entity.embedding)
-                candidates.append((entity.id, vec))
-        return candidates
-
-    def _format_entity_matches(
-        self,
-        matches: list[tuple[int, float]],
-        entity_map: dict[int | None, Entity],
-        max_facts: int,
-    ) -> list[str]:
-        """Format matched entities with their facts for context injection."""
-        lines: list[str] = []
-        for entity_id, _score in matches:
-            entity = entity_map.get(entity_id)
-            if not entity:
-                continue
-            facts = self.db.facts.get_for_entity(entity_id)
-            fact_texts = [f.content for f in facts[:max_facts]]
-            tagline = f" ({entity.tagline})" if entity.tagline else ""
-            if fact_texts:
-                lines.append(f"- **{entity.name}**{tagline}: {'; '.join(fact_texts)}")
-            else:
-                lines.append(f"- **{entity.name}**{tagline}")
-        return lines
 
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
-        """Build conversation history as user/assistant turns."""
+        """Build conversation history as strict user/assistant alternation.
+
+        Only includes messages since the last history rollup (or midnight
+        if no rollup exists), so rolled-up content isn't duplicated.
+        Consecutive same-role messages are merged with newlines to maintain
+        valid turn structure for the model.
+        """
         conversation: list[tuple[str, str]] = []
         try:
             limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
-            midnight = self._midnight_today()
-            messages = self.db.messages.get_messages_since(sender, since=midnight, limit=limit)
+            since = self._conversation_start(sender)
+            messages = self.db.messages.get_messages_since(sender, since=since, limit=limit)
             for msg in messages:
-                if msg.direction == PennyConstants.MessageDirection.INCOMING:
-                    conversation.append((MessageRole.USER, msg.content))
+                role = (
+                    MessageRole.USER
+                    if msg.direction == PennyConstants.MessageDirection.INCOMING
+                    else MessageRole.ASSISTANT
+                )
+                if conversation and conversation[-1][0] == role:
+                    prev_role, prev_content = conversation[-1]
+                    conversation[-1] = (prev_role, prev_content + "\n" + msg.content)
                 else:
-                    conversation.append((MessageRole.ASSISTANT, msg.content))
+                    conversation.append((role, msg.content))
             if conversation:
-                logger.debug("Built conversation (%d turns)", len(conversation))
+                logger.debug("Built conversation (%d turns since %s)", len(conversation), since)
         except Exception:
             logger.warning("Conversation building failed, proceeding without")
         return conversation
+
+    def _conversation_start(self, sender: str) -> datetime:
+        """Determine where raw message history should begin.
+
+        Returns the latest rollup's period_end (so we don't duplicate
+        summarized content), or midnight today if no rollup exists.
+        """
+        latest = self.db.history.get_latest(sender, PennyConstants.HistoryDuration.DAILY)
+        if latest is not None:
+            return latest.period_end
+        return self._midnight_today()
 
     @staticmethod
     def _midnight_today() -> datetime:
@@ -412,6 +415,43 @@ class Agent:
         Naive because SQLite strips timezone info — all stored datetimes are naive UTC.
         """
         return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+
+    @staticmethod
+    def _freshness_cutoff(hours: int) -> datetime:
+        """Rolling cutoff: now minus N hours, as naive UTC."""
+        return datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
+
+    # ── Preference scoring ─────────────────────────────────────────────────
+
+    def _load_preference_vectors(self, user: str) -> tuple[list[list[float]], list[list[float]]]:
+        """Load like and dislike embedding vectors from the preference store."""
+        prefs = self.db.preferences.get_with_embeddings(user)
+        likes: list[list[float]] = []
+        dislikes: list[list[float]] = []
+        for p in prefs:
+            if not p.embedding:
+                continue
+            vec = deserialize_embedding(p.embedding)
+            if p.valence == PennyConstants.PreferenceValence.POSITIVE:
+                likes.append(vec)
+            elif p.valence == PennyConstants.PreferenceValence.NEGATIVE:
+                dislikes.append(vec)
+        return likes, dislikes
+
+    @staticmethod
+    def _compute_sentiment_score(
+        vec: list[float],
+        likes: list[list[float]],
+        dislikes: list[list[float]],
+    ) -> float:
+        """Score = avg similarity to likes - avg similarity to dislikes."""
+        like_score = 0.0
+        if likes:
+            like_score = sum(cosine_similarity(vec, lv) for lv in likes) / len(likes)
+        dislike_score = 0.0
+        if dislikes:
+            dislike_score = sum(cosine_similarity(vec, dv) for dv in dislikes) / len(dislikes)
+        return like_score - dislike_score
 
     # ── Model calls ───────────────────────────────────────────────────────
 
@@ -582,7 +622,9 @@ class Agent:
             if not self.allow_repeat_tools and call_key in called_tools:
                 logger.info("Skipping repeat: %s(%s)", tool_name, arguments)
                 repeat_msg = "You already made this exact tool call. Try a different query or tool."
-                messages.append(ChatMessage(role=MessageRole.TOOL, content=repeat_msg).to_dict())
+                messages.append(
+                    {"role": MessageRole.TOOL, "content": repeat_msg, "tool_name": tool_name}
+                )
                 continue
 
             called_tools.add(call_key)
@@ -593,7 +635,9 @@ class Agent:
             source_urls.extend(urls)
             if image:
                 attachments.append(image)
-            messages.append(ChatMessage(role=MessageRole.TOOL, content=result_str).to_dict())
+            messages.append(
+                {"role": MessageRole.TOOL, "content": result_str, "tool_name": tool_name}
+            )
 
         return _StepResult(
             messages=messages,

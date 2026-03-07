@@ -2,7 +2,7 @@
 
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session, func, select
@@ -199,11 +199,13 @@ class MessageStore:
 
         assert parent_msg.id is not None
         thread = self._walk_thread(parent_msg.id)
-        history = [
+        history: list[tuple[str, str]] = [
             (
-                MessageRole.USER
-                if m.direction == PennyConstants.MessageDirection.INCOMING
-                else MessageRole.ASSISTANT,
+                str(
+                    MessageRole.USER
+                    if m.direction == PennyConstants.MessageDirection.INCOMING
+                    else MessageRole.ASSISTANT
+                ),
                 m.content,
             )
             for m in thread
@@ -524,18 +526,92 @@ class MessageStore:
                 .limit(1)
             ).first()
 
-    def count_autonomous_since_last_incoming(self, user: str) -> int:
-        """Count autonomous outgoing messages since the user's last incoming message."""
+    def count_autonomous_since_last_incoming(self, user: str, after: datetime | None = None) -> int:
+        """Count autonomous outgoing messages since the user's last incoming message.
+
+        Args:
+            user: The user identifier.
+            after: Optional floor timestamp — messages before this are excluded.
+                   Used to reset backoff count on service restart.
+        """
         latest_incoming = self.get_latest_incoming_time(user)
+        # Use the later of last incoming and the floor timestamp
+        cutoff = latest_incoming
+        if after is not None and (cutoff is None or after > cutoff):
+            cutoff = after
         with self._session() as session:
             query = select(func.count(MessageLog.id)).where(
                 MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
                 MessageLog.parent_id == None,  # noqa: E711
                 MessageLog.recipient == user,
             )
-            if latest_incoming is not None:
-                query = query.where(MessageLog.timestamp > latest_incoming)
+            if cutoff is not None:
+                query = query.where(MessageLog.timestamp > cutoff)
             return session.exec(query).one()
+
+    def get_last_checkin_time(self, prompt_text: str, hours: int = 48) -> datetime | None:
+        """Get timestamp of the most recent prompt log containing the check-in prompt."""
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
+        with self._session() as session:
+            return session.exec(
+                select(PromptLog.timestamp)
+                .where(
+                    PromptLog.messages.contains(prompt_text),  # type: ignore[unresolved-attribute]
+                    PromptLog.timestamp >= cutoff,
+                )
+                .order_by(PromptLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+
+    def get_recent_outgoing_content(
+        self, recipient: str, hours: int = 24, limit: int = 20
+    ) -> list[str]:
+        """Get content of recent outgoing messages for novelty scoring."""
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
+        with self._session() as session:
+            messages = session.exec(
+                select(MessageLog.content)
+                .where(
+                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                    MessageLog.recipient == recipient,
+                    MessageLog.timestamp >= cutoff,
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(limit)
+            ).all()
+            return [m for m in messages if m]
+
+    def get_latest_message_time_in_range(
+        self, sender: str, start: datetime, end: datetime
+    ) -> datetime | None:
+        """Get timestamp of the most recent message (incoming or outgoing) in a range."""
+        with self._session() as session:
+            incoming_ts = session.exec(
+                select(MessageLog.timestamp)
+                .where(
+                    MessageLog.sender == sender,
+                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                    MessageLog.is_reaction == False,  # noqa: E712
+                    MessageLog.timestamp >= start,
+                    MessageLog.timestamp < end,
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+            outgoing_ts = session.exec(
+                select(MessageLog.timestamp)
+                .where(
+                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                    MessageLog.recipient == sender,
+                    MessageLog.timestamp >= start,
+                    MessageLog.timestamp < end,
+                )
+                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .limit(1)
+            ).first()
+            if incoming_ts and outgoing_ts:
+                return max(incoming_ts, outgoing_ts)
+            return incoming_ts or outgoing_ts
 
     def get_first_message_time(self, sender: str) -> datetime | None:
         """Get timestamp of the earliest incoming message from a user."""

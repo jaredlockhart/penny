@@ -48,6 +48,7 @@ class SearchTool(Tool):
         *,
         image_max_results: int,
         image_download_timeout: float,
+        default_trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
     ):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
@@ -56,6 +57,7 @@ class SearchTool(Tool):
         self.serper_api_key = serper_api_key
         self.image_max_results = image_max_results
         self.image_download_timeout = image_download_timeout
+        self.default_trigger = default_trigger
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -82,7 +84,7 @@ class SearchTool(Tool):
         """
         query: str = kwargs["query"]
         skip_images: bool = kwargs.get("skip_images", self.skip_images)
-        trigger: str = kwargs.get("trigger", PennyConstants.SearchTrigger.USER_MESSAGE)
+        trigger: str = kwargs.get("trigger", self.default_trigger)
         redacted_query = self._redact_query(query)
 
         if skip_images:

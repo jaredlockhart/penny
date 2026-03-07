@@ -16,29 +16,36 @@ from pydantic import Field as PydanticField
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
-from penny.ollama.embeddings import cosine_similarity, deserialize_embedding, serialize_embedding
+from penny.ollama.embeddings import deserialize_embedding, serialize_embedding
+from penny.ollama.similarity import DedupStrategy, is_embedding_duplicate
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
 
 
-class ExtractedPreference(BaseModel):
-    """A single extracted preference."""
+class IdentifiedPreferenceTopics(BaseModel):
+    """Schema for pass 1: new preference topics found in conversation."""
 
-    content: str = PydanticField(description="The preference topic (3-10 words)")
-    valence: str = PydanticField(description="'positive' or 'negative'")
-
-
-class ExtractedPreferences(BaseModel):
-    """Schema for preference extraction output."""
-
-    preferences: list[ExtractedPreference] = PydanticField(
+    topics: list[str] = PydanticField(
         default_factory=list,
-        description="User preferences detected in the conversation",
+        description="New preference topics (3-10 words each)",
     )
 
 
-PREFERENCE_DEDUP_THRESHOLD = 0.85
+class ClassifiedPreference(BaseModel):
+    """A preference topic with its valence classification."""
+
+    content: str = PydanticField(description="The preference topic")
+    valence: str = PydanticField(description="'positive' or 'negative'")
+
+
+class ClassifiedPreferences(BaseModel):
+    """Schema for pass 2: valence classification of preference topics."""
+
+    preferences: list[ClassifiedPreference] = PydanticField(
+        default_factory=list,
+        description="Preference topics with valence classifications",
+    )
 
 
 class HistoryAgent(Agent):
@@ -71,6 +78,9 @@ class HistoryAgent(Agent):
         day_start = self._midnight_today()
         day_end = datetime.now(UTC).replace(tzinfo=None)
 
+        if self._already_rolled_up(user, day_start, day_end):
+            return False
+
         messages = self.db.messages.get_messages_in_range(user, day_start, day_end)
         if not messages:
             return False
@@ -92,6 +102,16 @@ class HistoryAgent(Agent):
         )
         logger.info("Today's history updated for %s", user)
         return True
+
+    def _already_rolled_up(self, user: str, day_start: datetime, day_end: datetime) -> bool:
+        """Check if the history entry is already up-to-date with the latest message."""
+        existing = self.db.history.get_latest(user, PennyConstants.HistoryDuration.DAILY)
+        if not existing or existing.period_start != day_start:
+            return False
+        latest_msg = self.db.messages.get_latest_message_time_in_range(user, day_start, day_end)
+        if not latest_msg:
+            return True
+        return existing.created_at >= latest_msg
 
     async def _summarize_day(self, user: str, day_start: datetime, day_end: datetime) -> None:
         """Get messages for a day and call model to summarize topics."""
@@ -121,10 +141,10 @@ class HistoryAgent(Agent):
     # ── Preference extraction ─────────────────────────────────────────────
 
     async def _extract_today_preferences(self, user: str) -> bool:
-        """Extract preferences from today's messages (dedup via embedding)."""
+        """Extract preferences from today's messages."""
         day_start = self._midnight_today()
         day_end = datetime.now(UTC).replace(tzinfo=None)
-        return await self._extract_preferences(user, day_start, day_end, dedup=True)
+        return await self._extract_preferences(user, day_start, day_end)
 
     async def _extract_day_preferences(
         self, user: str, day_start: datetime, day_end: datetime
@@ -132,42 +152,182 @@ class HistoryAgent(Agent):
         """Extract preferences for a completed day (skip if already done)."""
         if self.db.preferences.exists_for_period(user, day_start):
             return
-        await self._extract_preferences(user, day_start, day_end, dedup=False)
+        await self._extract_preferences(user, day_start, day_end)
 
-    async def _extract_preferences(
-        self, user: str, start: datetime, end: datetime, dedup: bool
-    ) -> bool:
-        """Build preference prompt, call LLM, store results."""
-        prompt = self._build_preference_prompt(user, start, end)
-        if not prompt:
+    async def _extract_preferences(self, user: str, start: datetime, end: datetime) -> bool:
+        """Two-pass preference extraction: identify topics, dedup, classify valence."""
+        existing = self.db.preferences.get_for_user(user)
+        conversation = self._build_conversation_content(user, start, end)
+        if not conversation:
             return False
 
-        raw_prefs = await self._call_preference_extraction(prompt)
-        if not raw_prefs:
+        topics = await self._identify_preference_topics(conversation, existing)
+        if not topics:
             return False
 
-        valid_prefs = self._validate_preferences(raw_prefs)
-        if not valid_prefs:
+        existing_items = [(p.content, p.embedding) for p in existing]
+        survivors = await self._dedup_preference_topics(topics, existing_items)
+        if not survivors:
             return False
 
-        await self._store_preferences(user, valid_prefs, start, end, dedup)
+        survivor_topics = [topic for topic, _emb in survivors]
+        classified = await self._classify_preference_valence(survivor_topics, conversation)
+        if not classified:
+            return False
+
+        embedding_lookup = {topic.lower(): emb for topic, emb in survivors}
+        self._store_classified_preferences(user, classified, start, end, embedding_lookup)
         return True
 
-    def _build_preference_prompt(self, user: str, start: datetime, end: datetime) -> str | None:
-        """Build the preference extraction prompt from messages and reactions."""
+    # ── Pass 1: topic identification ─────────────────────────────────────
+
+    def _build_conversation_content(self, user: str, start: datetime, end: datetime) -> str | None:
+        """Build user-only conversation text for preference extraction.
+
+        Only includes incoming (user) messages and reactions — Penny's
+        responses are excluded so the model doesn't extract Penny's
+        topics as user preferences.
+        """
         messages = self.db.messages.get_messages_in_range(user, start, end)
         reactions = self.db.messages.get_reactions_in_range(user, start, end)
-        if not messages and not reactions:
+        user_messages = [
+            m for m in messages if m.direction == PennyConstants.MessageDirection.INCOMING
+        ]
+        if not user_messages and not reactions:
             return None
 
         parts: list[str] = []
-        if messages:
-            parts.append(self._format_messages(messages))
+        if user_messages:
+            parts.append(self._format_messages(user_messages))
         if reactions:
             reaction_text = self._format_reactions(reactions)
             if reaction_text:
                 parts.append(reaction_text)
         return "\n\n".join(parts) if parts else None
+
+    async def _identify_preference_topics(self, conversation: str, existing: list) -> list[str]:
+        """Pass 1: ask model to identify new preference topics (no valence)."""
+        known_context = self._build_known_preferences_context(existing)
+        prompt = f"{Prompt.PREFERENCE_IDENTIFICATION_PROMPT}\n\n{conversation}"
+        if known_context:
+            prompt += f"\n\n{known_context}"
+
+        try:
+            response = await self._model_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=IdentifiedPreferenceTopics.model_json_schema(),
+            )
+            if not response.content or not response.content.strip():
+                return []
+            result = IdentifiedPreferenceTopics.model_validate_json(response.content)
+            return [t.strip() for t in result.topics if t.strip()]
+        except Exception as e:
+            logger.error("Preference topic identification failed: %s", e)
+            return []
+
+    @staticmethod
+    def _build_known_preferences_context(existing: list) -> str:
+        """Format existing preferences so the model can skip already-known topics."""
+        if not existing:
+            return ""
+        lines: list[str] = []
+        for pref in existing:
+            lines.append(f"- {pref.valence}: {pref.content}")
+        return (
+            "Already known preferences (do NOT re-extract these or rephrasings of these):\n"
+            + "\n".join(lines)
+        )
+
+    # ── Dedup ────────────────────────────────────────────────────────────
+
+    async def _dedup_preference_topics(
+        self, topics: list[str], existing_items: list[tuple[str, bytes | None]]
+    ) -> list[tuple[str, bytes | None]]:
+        """Embed topics and dedup against existing. Returns (topic, embedding) survivors."""
+        survivors: list[tuple[str, bytes | None]] = []
+        for topic in topics:
+            embedding = await self._embed_text(topic)
+            candidate_vec = deserialize_embedding(embedding) if embedding else None
+
+            match_idx = is_embedding_duplicate(
+                topic,
+                candidate_vec,
+                existing_items,
+                DedupStrategy.TCR_OR_EMBEDDING,
+                embedding_threshold=self.config.runtime.PREFERENCE_DEDUP_EMBEDDING_THRESHOLD,
+                tcr_threshold=self.config.runtime.PREFERENCE_DEDUP_TCR_THRESHOLD,
+            )
+            if match_idx is not None:
+                logger.debug(
+                    "Skipping duplicate preference topic: '%s' matches '%s'",
+                    topic[:50],
+                    existing_items[match_idx][0][:50],
+                )
+                continue
+
+            survivors.append((topic, embedding))
+            existing_items.append((topic, embedding))
+        return survivors
+
+    # ── Pass 2: valence classification ───────────────────────────────────
+
+    async def _classify_preference_valence(
+        self, topics: list[str], conversation: str
+    ) -> list[ClassifiedPreference]:
+        """Pass 2: classify each topic as positive or negative."""
+        topics_text = "\n".join(f"- {t}" for t in topics)
+        prompt = (
+            f"{Prompt.PREFERENCE_VALENCE_PROMPT}\n\n"
+            f"Topics to classify:\n{topics_text}\n\n"
+            f"Conversation:\n{conversation}"
+        )
+
+        try:
+            response = await self._model_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=ClassifiedPreferences.model_json_schema(),
+            )
+            if not response.content or not response.content.strip():
+                return []
+            result = ClassifiedPreferences.model_validate_json(response.content)
+            valid_valences = {
+                PennyConstants.PreferenceValence.POSITIVE,
+                PennyConstants.PreferenceValence.NEGATIVE,
+            }
+            return [
+                p for p in result.preferences if p.valence in valid_valences and p.content.strip()
+            ]
+        except Exception as e:
+            logger.error("Preference valence classification failed: %s", e)
+            return []
+
+    # ── Storage ──────────────────────────────────────────────────────────
+
+    def _store_classified_preferences(
+        self,
+        user: str,
+        classified: list[ClassifiedPreference],
+        start: datetime,
+        end: datetime,
+        embedding_lookup: dict[str, bytes | None],
+    ) -> None:
+        """Store classified preferences with pre-computed embeddings."""
+        for pref in classified:
+            content = pref.content.strip()
+            embedding = embedding_lookup.get(content.lower())
+            self.db.preferences.add(
+                user=user,
+                content=content,
+                valence=pref.valence,
+                source_period_start=start,
+                source_period_end=end,
+                embedding=embedding,
+            )
+            logger.info("Preference stored for %s: %s (%s)", user, content[:50], pref.valence)
+
+    # ── Reaction helpers ─────────────────────────────────────────────────
 
     def _format_reactions(self, reactions: list) -> str:
         """Format reactions with parent message context for the prompt."""
@@ -190,73 +350,6 @@ class HistoryAgent(Agent):
         if emoji in PennyConstants.NEGATIVE_REACTION_EMOJIS:
             return PennyConstants.PreferenceValence.NEGATIVE
         return None
-
-    async def _call_preference_extraction(self, prompt: str) -> list[ExtractedPreference]:
-        """Call LLM with structured output to extract preferences."""
-        full_prompt = f"{Prompt.PREFERENCE_EXTRACTION_PROMPT}\n\n{prompt}"
-        try:
-            response = await self._model_client.generate(
-                prompt=full_prompt,
-                tools=None,
-                format=ExtractedPreferences.model_json_schema(),
-            )
-            if not response.content or not response.content.strip():
-                return []
-            result = ExtractedPreferences.model_validate_json(response.content)
-            return result.preferences
-        except Exception as e:
-            logger.error("Preference extraction failed: %s", e)
-            return []
-
-    @staticmethod
-    def _validate_preferences(
-        prefs: list[ExtractedPreference],
-    ) -> list[ExtractedPreference]:
-        """Filter out preferences with invalid valence or empty content."""
-        valid_valences = {
-            PennyConstants.PreferenceValence.POSITIVE,
-            PennyConstants.PreferenceValence.NEGATIVE,
-        }
-        return [p for p in prefs if p.valence in valid_valences and p.content.strip()]
-
-    async def _store_preferences(
-        self,
-        user: str,
-        prefs: list[ExtractedPreference],
-        start: datetime,
-        end: datetime,
-        dedup: bool,
-    ) -> None:
-        """Compute embeddings and store preferences, optionally deduplicating."""
-        for pref in prefs:
-            embedding = await self._embed_text(pref.content)
-
-            if dedup and embedding and self._is_duplicate_preference(user, embedding):
-                logger.debug("Skipping duplicate preference: %s", pref.content[:50])
-                continue
-
-            self.db.preferences.add(
-                user=user,
-                content=pref.content.strip(),
-                valence=pref.valence,
-                source_period_start=start,
-                source_period_end=end,
-                embedding=embedding,
-            )
-            logger.info("Preference stored for %s: %s (%s)", user, pref.content[:50], pref.valence)
-
-    def _is_duplicate_preference(self, user: str, embedding: bytes) -> bool:
-        """Check if a preference with similar embedding already exists."""
-        existing = self.db.preferences.get_with_embeddings(user)
-        if not existing:
-            return False
-        candidate_vec = deserialize_embedding(embedding)
-        for pref in existing:
-            if pref.embedding:
-                existing_vec = deserialize_embedding(pref.embedding)
-                if cosine_similarity(candidate_vec, existing_vec) >= PREFERENCE_DEDUP_THRESHOLD:
-                    return True
-        return False
 
     # ── Shared helpers ────────────────────────────────────────────────────
 
