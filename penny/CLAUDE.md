@@ -63,8 +63,8 @@ penny/
     base.py           — Agent base class: agentic loop, tool execution, Ollama integration
     models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord, GeneratedQuery
     chat.py           — ChatAgent: conversation-mode agent (handles user messages with tools)
+    notify.py         — NotifyAgent: proactive outreach (thoughts, news, check-ins)
     thinking.py       — ThinkingAgent: continuous inner monologue loop
-    penny_agent.py    — PennyAgent: penny agent composition
     history.py        — HistoryAgent: daily conversation topic summarization
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
@@ -172,9 +172,16 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 
 **ChatAgent** (`agents/chat.py`)
 - Handles incoming user messages with tools (search, news)
-- Prepares thread context from quoted messages
-- Returns response with parent_id for thread linking
+- Context: profile + history + notified thoughts + conversation turns
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the foreground model
+
+**NotifyAgent** (`agents/notify.py`)
+- Proactive outreach — sends thoughts, news, and check-ins when users are idle
+- Runs on a PeriodicSchedule, separate from ChatAgent
+- Three modes: thought candidates (ranked by preference affinity), news updates, periodic check-ins
+- Each mode builds its own tailored context (no shared state with ChatAgent)
+- Candidate scoring: novelty (avoid repeating recent messages) + sentiment (preference alignment)
+- Exponential backoff cooldown between autonomous messages
 
 **ThinkingAgent** (`agents/thinking.py`)
 - Continuous inner monologue loop — Penny's autonomous conscious mind
@@ -202,7 +209,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule executor → history → thinking)
+- Runs tasks in priority order (schedule executor → history → notify → thinking)
 - **Skips agents with no work**: when an agent returns False, continues to the next eligible schedule in the same tick. Only breaks when an agent does real work.
 - Tracks global idle threshold (default: 60s)
 - Notifies schedules when messages arrive (resets timers)
@@ -317,7 +324,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Specialized agents**: Each task type (chat, thinking, history) has its own agent subclass
-- **Priority scheduling**: Schedule executor → history → thinking (agents with no work are skipped each tick)
+- **Priority scheduling**: Schedule executor → history → notify → thinking (agents with no work are skipped each tick)
 - **Always-run schedules**: User-created schedules run regardless of idle state; thinking/history wait for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free Ollama immediately; cancelled work is idempotent and retried next cycle

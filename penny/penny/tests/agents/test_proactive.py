@@ -1,4 +1,4 @@
-"""Integration tests for ChatAgent proactive messaging."""
+"""Integration tests for NotifyAgent proactive messaging."""
 
 from datetime import UTC, datetime
 
@@ -28,8 +28,8 @@ async def test_proactive_blocked_when_no_channel(
 
     async with running_penny(config) as penny:
         _seed_proactive(penny)
-        penny.chat_agent._channel = None
-        assert not penny.chat_agent._should_send_proactive(TEST_SENDER)
+        penny.notify_agent._channel = None
+        assert not penny.notify_agent._should_send_proactive(TEST_SENDER)
 
 
 @pytest.mark.asyncio
@@ -42,7 +42,7 @@ async def test_proactive_blocked_when_muted(
     async with running_penny(config) as penny:
         _seed_proactive(penny)
         penny.db.users.set_muted(TEST_SENDER)
-        assert not penny.chat_agent._should_send_proactive(TEST_SENDER)
+        assert not penny.notify_agent._should_send_proactive(TEST_SENDER)
 
 
 @pytest.mark.asyncio
@@ -56,7 +56,7 @@ async def test_proactive_blocked_when_no_thoughts(
         penny.db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello"
         )
-        assert not penny.chat_agent._should_send_proactive(TEST_SENDER)
+        assert not penny.notify_agent._should_send_proactive(TEST_SENDER)
 
 
 @pytest.mark.asyncio
@@ -68,7 +68,7 @@ async def test_proactive_eligible_with_thoughts_and_channel(
 
     async with running_penny(config) as penny:
         _seed_proactive(penny)
-        assert penny.chat_agent._should_send_proactive(TEST_SENDER)
+        assert penny.notify_agent._should_send_proactive(TEST_SENDER)
 
 
 # ── Cooldown ─────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ async def test_cooldown_elapsed_when_no_prior_autonomous(
     config = make_config()
 
     async with running_penny(config) as penny:
-        assert penny.chat_agent._cooldown_elapsed(TEST_SENDER)
+        assert penny.notify_agent._cooldown_elapsed(TEST_SENDER)
 
 
 # ── Proactive send modes ────────────────────────────────────────────────
@@ -102,7 +102,7 @@ async def test_send_proactive_thought_candidate(
     config = make_config(proactive_candidates=1)
 
     # Force thought candidate path (not checkin, not news)
-    monkeypatch.setattr("penny.agents.chat.random.random", lambda: 0.99)
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
 
     def handler(request, count):
         return mock_ollama._make_text_response(
@@ -113,9 +113,9 @@ async def test_send_proactive_thought_candidate(
 
     async with running_penny(config) as penny:
         _seed_proactive(penny)
-        monkeypatch.setattr(penny.chat_agent, "_should_checkin", lambda user: False)
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
 
-        result = await penny.chat_agent.execute_for_user(TEST_SENDER)
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
         assert result is True
 
         # Verify message was sent via the mock Signal server
@@ -142,7 +142,7 @@ async def test_send_proactive_news(
     config = make_config()
 
     # Force news path (not checkin)
-    monkeypatch.setattr("penny.agents.chat.random.random", lambda: 0.0)
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.0)
 
     def handler(request, count):
         return mock_ollama._make_text_response(
@@ -153,9 +153,9 @@ async def test_send_proactive_news(
 
     async with running_penny(config) as penny:
         _seed_proactive(penny)
-        monkeypatch.setattr(penny.chat_agent, "_should_checkin", lambda user: False)
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
 
-        result = await penny.chat_agent.execute_for_user(TEST_SENDER)
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
         assert result is True
 
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
@@ -183,9 +183,9 @@ async def test_send_proactive_checkin(
 
     async with running_penny(config) as penny:
         _seed_proactive(penny)
-        monkeypatch.setattr(penny.chat_agent, "_should_checkin", lambda user: True)
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: True)
 
-        result = await penny.chat_agent.execute_for_user(TEST_SENDER)
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
         assert result is True
 
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
@@ -203,7 +203,7 @@ def test_extract_image_prompt_from_news_tool():
     records = [
         ToolCallRecord(tool="fetch_news", arguments={"topic": "AI breakthroughs"}),
     ]
-    result = ChatAgent._extract_image_prompt(records)
+    result = NotifyAgent._extract_image_prompt(records)
     assert result == "AI breakthroughs"
 
 
@@ -214,13 +214,13 @@ def test_extract_image_prompt_from_search_tool():
     records = [
         ToolCallRecord(tool="search", arguments={"query": "latest space news"}),
     ]
-    result = ChatAgent._extract_image_prompt(records)
+    result = NotifyAgent._extract_image_prompt(records)
     assert result == "latest space news"
 
 
 def test_extract_image_prompt_returns_none_when_empty():
     """_extract_image_prompt returns None when no relevant tool calls."""
-    result = ChatAgent._extract_image_prompt([])
+    result = NotifyAgent._extract_image_prompt([])
     assert result is None
 
 
@@ -229,7 +229,7 @@ def test_extract_image_prompt_returns_none_when_empty():
 
 def test_novelty_score_full_when_no_recent():
     """Novelty is 1.0 when there are no recent messages to compare against."""
-    score = ChatAgent._novelty_score([1.0, 0.0, 0.0], [])
+    score = NotifyAgent._novelty_score([1.0, 0.0, 0.0], [])
     assert score == 1.0
 
 
@@ -237,7 +237,7 @@ def test_novelty_score_low_when_identical():
     """Novelty is low when candidate matches a recent message exactly."""
     vec = [1.0, 0.0, 0.0]
     recent = [[1.0, 0.0, 0.0]]
-    score = ChatAgent._novelty_score(vec, recent)
+    score = NotifyAgent._novelty_score(vec, recent)
     assert score < 0.01  # Nearly zero
 
 
@@ -269,15 +269,15 @@ async def test_chat_thought_context_shows_notified_only(
 async def test_proactive_thought_context_shows_specific_thought(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """ChatAgent proactive mode shows the specific thought being shared."""
+    """NotifyAgent proactive mode shows the specific thought being shared."""
     config = make_config()
 
     async with running_penny(config) as penny:
         penny.db.thoughts.add(TEST_SENDER, "thinking about black holes")
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=1)
 
-        penny.chat_agent._proactive_thought = thoughts[0]
-        context = penny.chat_agent._build_thought_context(TEST_SENDER)
+        penny.notify_agent._proactive_thought = thoughts[0]
+        context = penny.notify_agent._build_proactive_thought_context()
         assert "black holes" in context
         assert "Your Latest Thought" in context
 
@@ -286,12 +286,12 @@ async def test_proactive_thought_context_shows_specific_thought(
         penny.db.history.add(
             TEST_SENDER, now, now, PennyConstants.HistoryDuration.DAILY, "space games"
         )
-        candidate_ctx = penny.chat_agent._build_thought_candidate_context(TEST_SENDER)
+        candidate_ctx = penny.notify_agent._build_thought_candidate_context(TEST_SENDER)
         assert "black holes" in candidate_ctx
         assert "Conversation History" not in candidate_ctx
 
-        penny.chat_agent._proactive_thought = None
+        penny.notify_agent._proactive_thought = None
 
 
-# Need to import ChatAgent for static method tests
-from penny.agents.chat import ChatAgent  # noqa: E402
+# Need to import NotifyAgent for static method tests
+from penny.agents.notify import NotifyAgent  # noqa: E402

@@ -8,6 +8,7 @@ from penny.agents.models import (
     ControllerResponse,
     MessageRole,
 )
+from penny.agents.notify import NotifyAgent
 from penny.agents.thinking import ThinkingAgent
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "ControllerResponse",
     "HistoryAgent",
     "MessageRole",
+    "NotifyAgent",
     "ThinkingAgent",
 ]
