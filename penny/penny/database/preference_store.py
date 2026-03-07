@@ -144,6 +144,31 @@ class PreferenceStore:
         except Exception as e:
             logger.error("Failed to update preference embedding: %s", e)
 
+    def delete(self, pref_id: int) -> bool:
+        """Delete a preference by ID. Returns True if deleted."""
+        try:
+            with self._session() as session:
+                pref = session.get(Preference, pref_id)
+                if pref:
+                    session.delete(pref)
+                    session.commit()
+                    return True
+                return False
+        except Exception as e:
+            logger.error("Failed to delete preference %d: %s", pref_id, e)
+            return False
+
+    def get_for_user_by_valence(self, user: str, valence: str) -> list[Preference]:
+        """Get preferences for a user filtered by valence, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Preference)
+                    .where(Preference.user == user, Preference.valence == valence)
+                    .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+
     def exists_for_period(self, user: str, period_start: datetime) -> bool:
         """Check if preferences have already been extracted for a period."""
         with self._session() as session:

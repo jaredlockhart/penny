@@ -179,6 +179,18 @@ class PennyResponse:
     UNMUTE_ENABLED = "Notifications unmuted."
     UNMUTE_ALREADY = "Notifications aren't muted."
 
+    # ── Preferences ───────────────────────────────────────────────────────
+
+    PREF_NO_LIKES = "You don't have any likes yet."
+    PREF_NO_DISLIKES = "You don't have any dislikes yet."
+    PREF_LIKES_HEADER = "**Your Likes**"
+    PREF_DISLIKES_HEADER = "**Your Dislikes**"
+    PREF_INVALID_NUMBER = "Invalid preference number: {number}"
+    PREF_NO_PREF_WITH_NUMBER = "No preference with number {number}"
+    PREF_DELETED = "Removed '{content}' from your {valence}s."
+    PREF_STILL_REMAINING = "**Remaining:**"
+    PREF_DELETED_NO_REMAINING = "No more {valence}s."
+
     # ── Search ───────────────────────────────────────────────────────────────
 
     NO_RESULTS_TEXT = "No results found"
