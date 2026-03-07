@@ -1,7 +1,12 @@
 """Tests for search query redaction of personal information."""
 
+import time
+from unittest.mock import MagicMock
+
+import perplexity
 import pytest
 
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 
@@ -67,7 +72,130 @@ def _make_search_tool(response) -> SearchTool:
     tool.serper_api_key = None
     tool.image_max_results = 3
     tool.image_download_timeout = 5.0
+    tool._quota_exceeded_at = None
     return tool
+
+
+def _make_auth_error(error_type: str) -> perplexity.AuthenticationError:
+    """Build a perplexity.AuthenticationError with the given error type in body."""
+    resp = MagicMock()
+    resp.status_code = 401
+    resp.headers = {}
+    resp.text = "Unauthorized"
+    body = {"error": {"type": error_type, "message": "test error", "code": 401}}
+    return perplexity.AuthenticationError("test", response=resp, body=body)
+
+
+class MockPerplexityRaisesError:
+    """Minimal Perplexity mock whose responses.create() raises a given error."""
+
+    def __init__(self, error: Exception):
+        class _Responses:
+            def __init__(self, err: Exception):
+                self._err = err
+
+            def create(self, preset: str, input: str) -> None:
+                raise self._err
+
+        self.responses = _Responses(error)
+
+
+def _make_search_tool_with_error(error: Exception) -> SearchTool:
+    """Create a SearchTool whose Perplexity client raises the given error."""
+    from penny.constants import PennyConstants
+
+    tool = object.__new__(SearchTool)
+    tool.perplexity = MockPerplexityRaisesError(error)
+    tool.db = None
+    tool.redact_terms = []
+    tool.skip_images = True
+    tool.serper_api_key = None
+    tool.image_max_results = 3
+    tool.image_download_timeout = 5.0
+    tool.default_trigger = PennyConstants.SearchTrigger.USER_MESSAGE
+    tool._quota_exceeded_at = None
+    return tool
+
+
+class TestPerplexityAuthError:
+    """Tests for AuthenticationError handling and the time-based circuit-breaker."""
+
+    @pytest.mark.asyncio
+    async def test_quota_exceeded_returns_friendly_message(self):
+        """insufficient_quota auth error returns the quota-exceeded response constant."""
+        tool = _make_search_tool_with_error(_make_auth_error("insufficient_quota"))
+        text, urls = await tool._search_text("test query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_bad_key_returns_auth_failed_message(self):
+        """Generic auth error (bad API key) returns the auth-failed response constant."""
+        tool = _make_search_tool_with_error(_make_auth_error("invalid_api_key"))
+        text, urls = await tool._search_text("test query")
+        assert text == PennyResponse.SEARCH_AUTH_FAILED
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_execute_returns_search_result_on_quota_error(self):
+        """execute() returns SearchResult with friendly text instead of raising on quota error."""
+        tool = _make_search_tool_with_error(_make_auth_error("insufficient_quota"))
+        result = await tool.execute(query="test query", skip_images=True)
+        assert result.text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert result.urls == []
+
+    @pytest.mark.asyncio
+    async def test_quota_exceeded_trips_circuit_breaker(self):
+        """After insufficient_quota, _quota_exceeded_at is set and subsequent calls skip API."""
+        tool = _make_search_tool_with_error(_make_auth_error("insufficient_quota"))
+
+        text, urls = await tool._search_text("first query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert tool._quota_exceeded_at is not None
+
+        # Replace mock with one that would raise if called — proves API is not hit
+        api_calls: list[str] = []
+
+        class TrackingResponses:
+            def create(self, preset: str, input: str) -> None:
+                api_calls.append(input)
+                raise RuntimeError("API should not be called after quota exceeded")
+
+        class TrackingPerplexity:
+            responses = TrackingResponses()
+
+        tool.perplexity = TrackingPerplexity()
+
+        text2, urls2 = await tool._search_text("second query")
+        assert text2 == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls2 == []
+        assert api_calls == []
+
+    @pytest.mark.asyncio
+    async def test_bad_key_does_not_trip_circuit_breaker(self):
+        """A non-quota auth error does not activate the circuit-breaker."""
+        tool = _make_search_tool_with_error(_make_auth_error("invalid_api_key"))
+        await tool._search_text("test query")
+        assert tool._quota_exceeded_at is None
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_resets_after_retry_window(self):
+        """After _QUOTA_RETRY_SECONDS, the circuit auto-resets and allows retrying Perplexity."""
+        tool = _make_search_tool_with_error(_make_auth_error("insufficient_quota"))
+
+        # Trip the circuit-breaker
+        await tool._search_text("first query")
+        assert tool._quota_exceeded_at is not None
+
+        # Simulate the retry window having elapsed
+        tool._quota_exceeded_at = time.time() - SearchTool._QUOTA_RETRY_SECONDS - 1
+
+        # The circuit should reset and try Perplexity — it will fail again, re-tripping
+        text, urls = await tool._search_text("retry query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        # Circuit is re-tripped (timestamp updated)
+        assert tool._quota_exceeded_at is not None
+        assert time.time() - tool._quota_exceeded_at < 5  # recently set
 
 
 class TestSearchTextNullOutput:

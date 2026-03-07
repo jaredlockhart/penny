@@ -6,9 +6,9 @@ import re
 import time
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
-from perplexity import Perplexity
+from perplexity import AuthenticationError, Perplexity
 from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputItem
 
 from penny.constants import PennyConstants
@@ -58,6 +58,12 @@ class SearchTool(Tool):
         self.image_max_results = image_max_results
         self.image_download_timeout = image_download_timeout
         self.default_trigger = default_trigger
+        # Timestamp (time.time()) when quota was first exceeded; None = not exceeded.
+        # Resets automatically after _QUOTA_RETRY_SECONDS so search self-recovers when
+        # quota is replenished without requiring a process restart.
+        self._quota_exceeded_at: float | None = None
+
+    _QUOTA_RETRY_SECONDS: float = 3600.0  # retry Perplexity after 1 hour
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -129,14 +135,46 @@ class SearchTool(Tool):
         trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
+        if self._is_quota_exceeded():
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         start = time.time()
-        response = await self._call_perplexity(query)
+        try:
+            response = await self._call_perplexity(query)
+        except AuthenticationError as e:
+            logger.error("Perplexity authentication error: %s", e)
+            return self._handle_auth_error(e), []
         duration_ms = int((time.time() - start) * 1000)
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)
         urls = self._extract_urls(response)
         self._log_search(query, result, duration_ms, trigger)
         return result, urls
+
+    def _is_quota_exceeded(self) -> bool:
+        """Return True if quota is exceeded and the retry window has not elapsed."""
+        if self._quota_exceeded_at is None:
+            return False
+        if time.time() - self._quota_exceeded_at < self._QUOTA_RETRY_SECONDS:
+            return True
+        # Retry window elapsed — reset circuit so we try Perplexity again.
+        logger.info("Perplexity quota retry window elapsed — resetting circuit breaker")
+        self._quota_exceeded_at = None
+        return False
+
+    def _handle_auth_error(self, e: AuthenticationError) -> str:
+        """Return user-friendly message and trip circuit-breaker on quota errors."""
+        body = cast(Any, e.body)
+        if isinstance(body, dict):
+            error_info = body.get("error")
+            if isinstance(error_info, dict) and error_info.get("type") == "insufficient_quota":
+                if self._quota_exceeded_at is None:
+                    logger.error(
+                        "Perplexity quota exceeded — search disabled for %.0f seconds",
+                        self._QUOTA_RETRY_SECONDS,
+                    )
+                    self._quota_exceeded_at = time.time()
+                return PennyResponse.SEARCH_QUOTA_EXCEEDED
+        return PennyResponse.SEARCH_AUTH_FAILED
 
     async def _call_perplexity(self, query: str):
         """Call Perplexity API with dated query prefix."""
