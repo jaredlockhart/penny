@@ -1,7 +1,9 @@
-"""Tests for search query redaction of personal information."""
+"""Tests for search query redaction and quota circuit breaker."""
 
+import perplexity as perplexity_sdk
 import pytest
 
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 
@@ -142,3 +144,112 @@ class TestRedactQuery:
     def test_preserves_query_when_no_match(self):
         tool = self._make_tool(["Alex"])
         assert tool._redact_query("Toronto weather forecast") == "Toronto weather forecast"
+
+
+def _make_quota_error() -> perplexity_sdk.AuthenticationError:
+    """Build a perplexity AuthenticationError that mimics a quota-exceeded 401."""
+    from unittest.mock import MagicMock
+
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.request = MagicMock()
+    return perplexity_sdk.AuthenticationError(
+        message="insufficient_quota",
+        response=mock_response,
+        body={"error": {"type": "insufficient_quota", "code": 401}},
+    )
+
+
+class MockRaisingPerplexity:
+    """Perplexity mock that raises AuthenticationError on create()."""
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+        class _Responses:
+            def create(self, preset, input):
+                raise _make_quota_error()
+
+        self.responses = _Responses()
+
+
+def _make_quota_tool() -> SearchTool:
+    """Create a SearchTool wired to a mock Perplexity that raises quota errors."""
+    tool = object.__new__(SearchTool)
+    tool.perplexity = MockRaisingPerplexity("fake-key")
+    tool.db = None
+    tool.redact_terms = []
+    tool.skip_images = True
+    tool.serper_api_key = None
+    tool.image_max_results = 3
+    tool.image_download_timeout = 5.0
+    return tool
+
+
+class TestSearchQuotaCircuitBreaker:
+    """Tests for the Perplexity quota circuit breaker in SearchTool."""
+
+    @pytest.mark.asyncio
+    async def test_quota_error_trips_breaker(self):
+        """AuthenticationError on first call should set _quota_exceeded_flag."""
+        tool = _make_quota_tool()
+        assert not SearchTool._quota_exceeded_flag
+        text, urls = await tool._search_text("test query")
+        assert SearchTool._quota_exceeded_flag
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_breaker_short_circuits_subsequent_calls(self):
+        """Once breaker is tripped, _search_text returns immediately without calling API."""
+        tool = _make_quota_tool()
+        # Trip the breaker
+        await tool._search_text("first query")
+        assert SearchTool._quota_exceeded_flag
+
+        # Replace with a mock that would raise if called
+        call_count = [0]
+
+        class _CountingResponses:
+            def create(self, preset, input):
+                call_count[0] += 1
+                raise AssertionError("API should not be called after breaker is tripped")
+
+        tool.perplexity.responses = _CountingResponses()  # type: ignore[assignment]
+        text, urls = await tool._search_text("second query")
+        assert call_count[0] == 0
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_breaker_is_shared_across_instances(self):
+        """Circuit breaker flag is class-level — tripping it on one instance affects others."""
+        tool_a = _make_quota_tool()
+        tool_b = _make_quota_tool()
+
+        # Trip breaker via tool_a
+        await tool_a._search_text("query")
+        assert SearchTool._quota_exceeded_flag
+
+        # tool_b should see the tripped breaker without calling the API
+        call_count = [0]
+
+        class _CountingResponses:
+            def create(self, preset, input):
+                call_count[0] += 1
+                raise AssertionError("should not be called")
+
+        tool_b.perplexity.responses = _CountingResponses()  # type: ignore[assignment]
+        text, urls = await tool_b._search_text("another query")
+        assert call_count[0] == 0
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+
+    @pytest.mark.asyncio
+    async def test_new_instance_does_not_reset_breaker(self):
+        """Creating a new SearchTool instance must not reset the shared circuit breaker."""
+        # Trip the breaker
+        SearchTool._quota_exceeded_flag = True
+
+        # Simulate creating a new instance (as /test command would do)
+        new_tool = _make_quota_tool()
+        assert new_tool._quota_exceeded  # breaker still tripped

@@ -191,6 +191,16 @@ def running_penny(signal_server) -> Callable[[Config], AbstractAsyncContextManag
     return _running_penny
 
 
+@pytest.fixture(autouse=True)
+def reset_search_circuit_breaker():
+    """Reset the SearchTool quota circuit breaker between tests for isolation."""
+    from penny.tools.search import SearchTool
+
+    SearchTool._quota_exceeded_flag = False
+    yield
+    SearchTool._quota_exceeded_flag = False
+
+
 @pytest.fixture
 def setup_ollama_flow(mock_ollama):  # noqa: F811
     """

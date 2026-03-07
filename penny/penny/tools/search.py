@@ -6,8 +6,9 @@ import re
 import time
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any
+from typing import Any, ClassVar
 
+import perplexity as perplexity_sdk
 from perplexity import Perplexity
 from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputItem
 
@@ -24,6 +25,7 @@ class SearchTool(Tool):
     """Combined search tool: Perplexity for text, Serper for images, run in parallel."""
 
     name = "search"
+    _quota_exceeded_flag: ClassVar[bool] = False  # shared circuit breaker across all instances
     description = (
         "Search the web for current information on a specific topic. "
         "Returns search results text and attaches a relevant image."
@@ -52,12 +54,23 @@ class SearchTool(Tool):
     ):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
+        # NOTE: do NOT set self._quota_exceeded here — that resets the shared ClassVar
+        # every time a new SearchTool is created (e.g. /test command).
         self.redact_terms: list[str] = []
         self.skip_images = skip_images
         self.serper_api_key = serper_api_key
         self.image_max_results = image_max_results
         self.image_download_timeout = image_download_timeout
         self.default_trigger = default_trigger
+
+    @property
+    def _quota_exceeded(self) -> bool:
+        """Class-level circuit breaker — shared across all SearchTool instances."""
+        return SearchTool._quota_exceeded_flag
+
+    @_quota_exceeded.setter
+    def _quota_exceeded(self, value: bool) -> None:
+        SearchTool._quota_exceeded_flag = value
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -129,8 +142,15 @@ class SearchTool(Tool):
         trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
+        if self._quota_exceeded:
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         start = time.time()
-        response = await self._call_perplexity(query)
+        try:
+            response = await self._call_perplexity(query)
+        except perplexity_sdk.AuthenticationError as e:
+            self._quota_exceeded = True
+            logger.warning("Perplexity quota exceeded — disabling search for this session: %s", e)
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         duration_ms = int((time.time() - start) * 1000)
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)
