@@ -280,6 +280,132 @@ class TestSearchTextNullOutput:
         assert urls == []
 
 
+class TestQuotaPersistence:
+    """Tests for quota-exceeded state persisting to/from the database across restarts."""
+
+    @pytest.fixture
+    def db_with_engine(self, tmp_path):
+        """Minimal DB-like object with a real SQLite engine for persistence tests."""
+        from sqlmodel import SQLModel, create_engine
+
+        from penny.database.models import RuntimeConfig  # noqa: F401 — registers table
+
+        engine = create_engine(f"sqlite:///{tmp_path}/test.db")
+        SQLModel.metadata.create_all(engine)
+
+        class _MockSearches:
+            def log(self, **kwargs):
+                pass
+
+        class _MockDb:
+            searches = _MockSearches()
+
+        obj = _MockDb()
+        obj.engine = engine  # type: ignore[attr-defined]
+        return obj
+
+    def _make_tool_with_db(self, db, error: Exception | None = None) -> SearchTool:
+        """Create a SearchTool with a real DB and optional Perplexity error."""
+        from penny.constants import PennyConstants
+
+        tool = object.__new__(SearchTool)
+        if error:
+            tool.perplexity = MockPerplexityRaisesError(error)
+        else:
+            tool.perplexity = MockPerplexityForNullTests(MockResponseNullOutput("Results"))
+        tool.db = db
+        tool.redact_terms = []
+        tool.skip_images = True
+        tool.serper_api_key = None
+        tool.image_max_results = 3
+        tool.image_download_timeout = 5.0
+        tool.default_trigger = PennyConstants.SearchTrigger.USER_MESSAGE
+        tool._quota_exceeded_at = None
+        tool._quota_ever_exceeded = False
+        tool._load_quota_state()
+        return tool
+
+    @pytest.mark.asyncio
+    async def test_quota_exceeded_saved_to_db(self, db_with_engine):
+        """Tripping the circuit saves the timestamp to RuntimeConfig in DB."""
+        from sqlmodel import Session, select
+
+        from penny.database.models import RuntimeConfig
+
+        tool = self._make_tool_with_db(db_with_engine, _make_auth_error("insufficient_quota"))
+        await tool._search_text("first query")
+
+        assert tool._quota_exceeded_at is not None
+        with Session(db_with_engine.engine) as session:
+            row = session.exec(
+                select(RuntimeConfig).where(RuntimeConfig.key == SearchTool._DB_QUOTA_KEY)
+            ).first()
+        assert row is not None
+        assert float(row.value) == pytest.approx(tool._quota_exceeded_at, abs=1.0)
+
+    @pytest.mark.asyncio
+    async def test_quota_state_restored_on_new_instance(self, db_with_engine):
+        """A new SearchTool using the same DB restores quota state from DB."""
+        tool1 = self._make_tool_with_db(db_with_engine, _make_auth_error("insufficient_quota"))
+        await tool1._search_text("first query")
+        saved_ts = tool1._quota_exceeded_at
+
+        # Simulate restart: new instance, same DB
+        tool2 = self._make_tool_with_db(db_with_engine, _make_auth_error("insufficient_quota"))
+        assert tool2._quota_exceeded_at == pytest.approx(saved_ts, abs=1.0)
+        assert tool2._quota_ever_exceeded is True
+
+        # New instance should skip API — circuit is still active
+        text, urls = await tool2._search_text("second query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+
+    @pytest.mark.asyncio
+    async def test_db_cleared_when_circuit_resets(self, db_with_engine):
+        """When retry window elapses, the DB row is removed."""
+        from sqlmodel import Session, select
+
+        from penny.database.models import RuntimeConfig
+
+        tool = self._make_tool_with_db(db_with_engine, _make_auth_error("insufficient_quota"))
+        await tool._search_text("first query")
+
+        # Simulate window expiry
+        tool._quota_exceeded_at = time.time() - SearchTool._QUOTA_RETRY_SECONDS - 1
+
+        # _is_quota_exceeded resets circuit and clears DB
+        tool._is_quota_exceeded()
+
+        with Session(db_with_engine.engine) as session:
+            row = session.exec(
+                select(RuntimeConfig).where(RuntimeConfig.key == SearchTool._DB_QUOTA_KEY)
+            ).first()
+        assert row is None
+
+    @pytest.mark.asyncio
+    async def test_db_cleared_after_successful_call(self, db_with_engine):
+        """After a successful Perplexity call, the DB row is removed."""
+        from sqlmodel import Session, select
+
+        from penny.database.models import RuntimeConfig
+
+        # Trip circuit with error tool
+        tool = self._make_tool_with_db(db_with_engine, _make_auth_error("insufficient_quota"))
+        await tool._search_text("first query")
+
+        # Let window elapse, swap in a successful mock
+        tool._quota_exceeded_at = time.time() - SearchTool._QUOTA_RETRY_SECONDS - 1
+        tool.perplexity = MockPerplexityForNullTests(MockResponseNullOutput("Results"))
+
+        text, _ = await tool._search_text("successful query")
+        assert text == "Results"
+
+        with Session(db_with_engine.engine) as session:
+            row = session.exec(
+                select(RuntimeConfig).where(RuntimeConfig.key == SearchTool._DB_QUOTA_KEY)
+            ).first()
+        assert row is None
+
+
 class TestRedactQuery:
     """Unit tests for SearchTool._redact_query()."""
 
