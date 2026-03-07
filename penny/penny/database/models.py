@@ -108,25 +108,6 @@ class Schedule(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class Entity(SQLModel, table=True):
-    """A named entity (product, person, place, concept)."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    user: str = Field(index=True)  # Signal number or Discord user ID
-    name: str  # Lowercased canonical name (e.g., "kef ls50 meta")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    embedding: bytes | None = None  # Serialized float32 embedding vector
-    tagline: str | None = None  # Short disambiguating summary (e.g., "british prog rock band")
-    last_enriched_at: datetime | None = None  # When this entity was last enriched
-    last_notified_at: datetime | None = None  # When this entity was last included in a notification
-    heat: float = Field(default=0.0)  # Persistent interest score (thermodynamic heat model)
-    heat_decayed_at: datetime | None = None  # When heat decay was last applied
-    heat_cooldown_until: datetime | None = (
-        None  # Cooldown deadline (entity ineligible until this time)
-    )
-
-
 class MuteState(SQLModel, table=True):
     """Per-user mute state for proactive notifications.
 
@@ -135,20 +116,6 @@ class MuteState(SQLModel, table=True):
 
     user: str = Field(primary_key=True)
     muted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class Fact(SQLModel, table=True):
-    """An individual fact about an entity with provenance tracking."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    entity_id: int = Field(foreign_key="entity.id", index=True)
-    content: str  # The fact text (e.g., "Costs $1,599 per pair")
-    source_url: str | None = None  # URL where the fact was found
-    source_search_log_id: int | None = Field(default=None, foreign_key="searchlog.id", index=True)
-    source_message_id: int | None = Field(default=None, foreign_key="messagelog.id", index=True)
-    learned_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    notified_at: datetime | None = None  # When this fact was communicated to user
-    embedding: bytes | None = None  # Serialized float32 embedding vector
 
 
 class Thought(SQLModel, table=True):

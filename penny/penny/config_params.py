@@ -15,8 +15,6 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {}
 # Group names (display order)
 GROUP_GLOBAL = "Global"
 GROUP_SCHEDULE = "Schedule"
-GROUP_KNOWLEDGE = "Knowledge"
-GROUP_EXTRACTION = "Extraction"
 GROUP_INNER_MONOLOGUE = "Inner Monologue"
 GROUP_HISTORY = "History"
 GROUP_PROACTIVE = "Proactive"
@@ -25,8 +23,6 @@ GROUP_PROACTIVE = "Proactive"
 CONFIG_GROUPS: list[str] = [
     GROUP_GLOBAL,
     GROUP_SCHEDULE,
-    GROUP_KNOWLEDGE,
-    GROUP_EXTRACTION,
     GROUP_INNER_MONOLOGUE,
     GROUP_HISTORY,
     GROUP_PROACTIVE,
@@ -169,142 +165,12 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="MAINTENANCE_INTERVAL_SECONDS",
-    description="Interval for the knowledge pipeline cycle in seconds",
-    type=float,
-    default=10.0,
-    validator=_validate_positive_float,
-    group=GROUP_SCHEDULE,
-)
-
-# ── Knowledge ─────────────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="ENTITY_CONTEXT_MAX_FACTS",
-    description="Max facts per entity in message context",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
-    key="ENTITY_CONTEXT_THRESHOLD",
-    description="Cosine similarity threshold for entity context injection",
-    type=float,
-    default=0.3,
-    validator=_validate_unit_float,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
-    key="ENTITY_CONTEXT_TOP_K",
-    description="Number of top similar entities to inject into message context",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
-    key="KNOWLEDGE_SUFFICIENT_MIN_FACTS",
-    description="Min facts for entity context to be considered sufficient",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
-    key="KNOWLEDGE_SUFFICIENT_MIN_SCORE",
-    description="Min similarity score for entity context to be considered sufficient",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-    group=GROUP_KNOWLEDGE,
-)
-
-ConfigParam(
     key="MESSAGE_CONTEXT_LIMIT",
     description="Max recent conversation messages injected into message context",
     type=int,
     default=20,
     validator=_validate_positive_int,
-    group=GROUP_KNOWLEDGE,
-)
-
-# ── Extraction ────────────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="ENTITY_EXTRACTION_BATCH_LIMIT",
-    description="Max search logs processed per extraction cycle",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_PREFILTER_MIN_COUNT",
-    description="Minimum known-entity count before pre-filtering is applied",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_PREFILTER_SIMILARITY_THRESHOLD",
-    description="Cosine similarity threshold for entity pre-filtering",
-    type=float,
-    default=0.4,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_ENTITY_SEMANTIC_THRESHOLD",
-    description="Cosine similarity threshold for semantic entity name validation",
-    type=float,
-    default=0.50,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_ENTITY_DEDUP_EMBEDDING_THRESHOLD",
-    description="Embedding similarity threshold for entity deduplication",
-    type=float,
-    default=0.85,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_ENTITY_DEDUP_TCR_THRESHOLD",
-    description="Token containment ratio threshold for entity deduplication",
-    type=float,
-    default=0.6,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_MAX_NEW_ENTITIES",
-    description="Max new entity candidates per extraction (ranked by relevance)",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_EXTRACTION,
-)
-
-ConfigParam(
-    key="EXTRACTION_FACT_DEDUP_SIMILARITY_THRESHOLD",
-    description="Embedding similarity threshold for fact deduplication",
-    type=float,
-    default=0.85,
-    validator=_validate_unit_float,
-    group=GROUP_EXTRACTION,
+    group=GROUP_GLOBAL,
 )
 
 # ── Preferences ──────────────────────────────────────────────────────────────

@@ -199,11 +199,13 @@ class MessageStore:
 
         assert parent_msg.id is not None
         thread = self._walk_thread(parent_msg.id)
-        history = [
+        history: list[tuple[str, str]] = [
             (
-                MessageRole.USER
-                if m.direction == PennyConstants.MessageDirection.INCOMING
-                else MessageRole.ASSISTANT,
+                str(
+                    MessageRole.USER
+                    if m.direction == PennyConstants.MessageDirection.INCOMING
+                    else MessageRole.ASSISTANT
+                ),
                 m.content,
             )
             for m in thread

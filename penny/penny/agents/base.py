@@ -11,10 +11,8 @@ from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, To
 from penny.config import Config
 from penny.constants import PennyConstants
 from penny.database import Database
-from penny.database.models import Entity
 from penny.ollama import OllamaClient
-from penny.ollama.embeddings import cosine_similarity, deserialize_embedding, find_similar
-from penny.ollama.similarity import embed_text
+from penny.ollama.embeddings import cosine_similarity, deserialize_embedding
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import SearchTool, Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -109,7 +107,7 @@ class Agent:
         """Run a scheduled cycle — iterate users and delegate to execute_for_user.
 
         Override execute_for_user for per-user work, or override execute
-        entirely for non-user-based work (e.g. ExtractionPipeline).
+        entirely for non-user-based work.
         """
         users = self.get_users()
         if not users:
@@ -259,7 +257,6 @@ class Agent:
         """
         sections: list[str | None] = [
             self._build_profile_context(user, content),
-            await self._build_entity_context(user, content),
             self._build_history_context(user),
             self._build_thought_context(user),
             self._build_dislike_context(user),
@@ -369,69 +366,6 @@ class Agent:
         except Exception:
             logger.warning("Dislike context retrieval failed, proceeding without")
             return None
-
-    async def _build_entity_context(self, sender: str, content: str | None) -> str | None:
-        """Build semantically relevant entity context."""
-        if content is None:
-            return None
-        try:
-            query_vec = await embed_text(self._embedding_model_client, content)
-            if query_vec is None:
-                return None
-
-            entities = self.db.entities.get_with_embeddings(sender)
-            if not entities:
-                return None
-
-            candidates = self._build_entity_candidates(entities)
-            top_k = int(self.config.runtime.ENTITY_CONTEXT_TOP_K)
-            threshold = float(self.config.runtime.ENTITY_CONTEXT_THRESHOLD)
-            matches = find_similar(query_vec, candidates, top_k=top_k, threshold=threshold)
-            if not matches:
-                return None
-
-            max_facts = int(self.config.runtime.ENTITY_CONTEXT_MAX_FACTS)
-            entity_map = {e.id: e for e in entities}
-            lines = self._format_entity_matches(matches, entity_map, max_facts)
-            if not lines:
-                return None
-
-            logger.debug("Built entity context (%d entities)", len(lines))
-            return "## Relevant Knowledge\n" + "\n".join(lines)
-        except Exception:
-            logger.warning("Entity context retrieval failed, proceeding without")
-            return None
-
-    @staticmethod
-    def _build_entity_candidates(entities: list[Entity]) -> list[tuple[int, list[float]]]:
-        """Build (id, embedding_vector) tuples for similarity search."""
-        candidates: list[tuple[int, list[float]]] = []
-        for entity in entities:
-            if entity.embedding and entity.id is not None:
-                vec = deserialize_embedding(entity.embedding)
-                candidates.append((entity.id, vec))
-        return candidates
-
-    def _format_entity_matches(
-        self,
-        matches: list[tuple[int, float]],
-        entity_map: dict[int | None, Entity],
-        max_facts: int,
-    ) -> list[str]:
-        """Format matched entities with their facts for context injection."""
-        lines: list[str] = []
-        for entity_id, _score in matches:
-            entity = entity_map.get(entity_id)
-            if not entity:
-                continue
-            facts = self.db.facts.get_for_entity(entity_id)
-            fact_texts = [f.content for f in facts[:max_facts]]
-            tagline = f" ({entity.tagline})" if entity.tagline else ""
-            if fact_texts:
-                lines.append(f"- **{entity.name}**{tagline}: {'; '.join(fact_texts)}")
-            else:
-                lines.append(f"- **{entity.name}**{tagline}")
-        return lines
 
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
         """Build conversation history as strict user/assistant alternation.

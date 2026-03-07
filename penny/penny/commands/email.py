@@ -10,6 +10,7 @@ from penny.commands.models import CommandContext, CommandResult
 from penny.jmap.client import JmapClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
+from penny.tools import Tool
 from penny.tools.read_emails import ReadEmailsTool
 from penny.tools.search_emails import SearchEmailsTool
 
@@ -48,7 +49,7 @@ class EmailCommand(Command):
         )
         agent: Agent | None = None
         try:
-            tools = [
+            tools: list[Tool] = [
                 SearchEmailsTool(jmap_client),
                 ReadEmailsTool(jmap_client, context.model_client, prompt),
             ]

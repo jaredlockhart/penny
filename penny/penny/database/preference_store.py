@@ -63,6 +63,18 @@ class PreferenceStore:
                 ).all()
             )
 
+    def get_positive(self, user: str) -> list[Preference]:
+        """Get positive preferences for a user."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Preference).where(
+                        Preference.user == user,
+                        Preference.valence == "positive",
+                    )
+                ).all()
+            )
+
     def get_with_embeddings(self, user: str) -> list[Preference]:
         """Get preferences with embeddings for similarity search."""
         with self._session() as session:

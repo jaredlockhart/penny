@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
-from penny.agents.models import ControllerResponse
+from penny.agents.models import ControllerResponse, ToolCallRecord
 from penny.database.models import Thought
 from penny.ollama.embeddings import cosine_similarity
 from penny.ollama.similarity import embed_text
@@ -34,6 +34,7 @@ class ProactiveCandidate(BaseModel):
     answer: str
     thought: Thought | None = None
     attachments: list[str] = Field(default_factory=list)
+    image_prompt: str | None = None
 
 
 class ChatAgent(Agent):
@@ -47,7 +48,7 @@ class ChatAgent(Agent):
         Vision   | msg      | 7d      | 1 notified | yes   | none  | 1
         Checkin  | -        | 7d      | 1 notified | yes   | none  | 1
         News     | -        | 7d      | -          | -     | all   | 5
-        Thought  | thought  | 7d      | the thought| yes   | all   | 5
+        Thought  | thought  | 7d      | the thought| -     | all   | 5
 
     All modes include profile (user name). Entity anchor column
     shows what drives the embedding similarity search.
@@ -222,8 +223,14 @@ class ChatAgent(Agent):
         answer = response.answer.strip() if response.answer else None
         if not answer:
             return False
+        image_prompt = self._extract_image_prompt(response.tool_calls)
         return await self._send_candidate(
-            user, ProactiveCandidate(answer=answer, attachments=response.attachments or [])
+            user,
+            ProactiveCandidate(
+                answer=answer,
+                attachments=response.attachments or [],
+                image_prompt=image_prompt,
+            ),
         )
 
     def _build_news_context(self, user: str) -> str:
@@ -233,6 +240,16 @@ class ChatAgent(Agent):
             self._build_history_context(user),
         ]
         return "\n\n".join(s for s in sections if s)
+
+    @staticmethod
+    def _extract_image_prompt(tool_calls: list[ToolCallRecord]) -> str | None:
+        """Extract an image search query from tool calls (news topic or search query)."""
+        for tc in tool_calls:
+            if tc.tool == "fetch_news" and tc.arguments.get("topic"):
+                return tc.arguments["topic"]
+            if tc.tool == "search" and tc.arguments.get("query"):
+                return tc.arguments["query"]
+        return None
 
     async def _send_best_candidate(self, user: str) -> bool:
         """Generate thought candidates, score, send the best."""
@@ -262,16 +279,36 @@ class ChatAgent(Agent):
     async def _generate_one_candidate(
         self, user: str, prompt: str, thought: Thought | None
     ) -> ProactiveCandidate | None:
-        """Generate a single proactive candidate via the agentic loop."""
+        """Generate a single proactive candidate via the agentic loop.
+
+        Uses thought-specific context (profile + history rollups + thought)
+        without conversation turns, so the model focuses on the thought
+        rather than continuing the conversation.
+        """
         self._proactive_thought = thought
-        anchor = thought.content if thought else None
-        response = await self.handle(content=prompt, sender=user, entity_anchor=anchor)
+        context = self._build_thought_candidate_context(user)
+        self._install_tools(self.get_tools(user))
+        response = await self.run(prompt=prompt, context=context)
+        self._proactive_thought = None
         answer = response.answer.strip() if response.answer else None
         if not answer:
             return None
+        image_prompt = self._extract_image_prompt(response.tool_calls)
         return ProactiveCandidate(
-            answer=answer, thought=thought, attachments=response.attachments or []
+            answer=answer,
+            thought=thought,
+            attachments=response.attachments or [],
+            image_prompt=image_prompt,
         )
+
+    def _build_thought_candidate_context(self, user: str) -> str:
+        """Thought candidate context: profile + history rollups + thought. No conv turns."""
+        sections: list[str | None] = [
+            self._build_profile_context(user, None),
+            self._build_history_context(user),
+            self._build_thought_context(user),
+        ]
+        return "\n\n".join(s for s in sections if s)
 
     async def _pick_best_candidate(
         self, user: str, candidates: list[ProactiveCandidate]
@@ -335,6 +372,7 @@ class ChatAgent(Agent):
             parent_id=None,
             attachments=candidate.attachments or None,
             quote_message=None,
+            image_prompt=candidate.image_prompt,
         )
         if candidate.thought and candidate.thought.id is not None:
             self.db.thoughts.mark_notified(candidate.thought.id)
@@ -388,16 +426,15 @@ class ChatAgent(Agent):
     # ── Hooks ─────────────────────────────────────────────────────────────
 
     async def get_context(self, user: str) -> str:
-        """Full context with entity similarity anchored to message content.
+        """Full context — profile, history, thought.
 
-        Sections injected (no dislikes — those are for thinking only):
-          profile, entities (by message similarity), history (with dates),
-          thought (1 most recently notified OR single proactive thought).
+        Entity context disabled while evaluating usefulness.
         """
         content = self._pending_content
         sections: list[str | None] = [
             self._build_profile_context(user, content),
-            await self._build_entity_context(user, content),
+            # TODO: entity context disabled while evaluating usefulness
+            # await self._build_entity_context(user, content),
             self._build_history_context(user),
             self._build_thought_context(user),
         ]

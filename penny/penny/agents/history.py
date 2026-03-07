@@ -182,15 +182,23 @@ class HistoryAgent(Agent):
     # ── Pass 1: topic identification ─────────────────────────────────────
 
     def _build_conversation_content(self, user: str, start: datetime, end: datetime) -> str | None:
-        """Build conversation text from messages and reactions."""
+        """Build user-only conversation text for preference extraction.
+
+        Only includes incoming (user) messages and reactions — Penny's
+        responses are excluded so the model doesn't extract Penny's
+        topics as user preferences.
+        """
         messages = self.db.messages.get_messages_in_range(user, start, end)
         reactions = self.db.messages.get_reactions_in_range(user, start, end)
-        if not messages and not reactions:
+        user_messages = [
+            m for m in messages if m.direction == PennyConstants.MessageDirection.INCOMING
+        ]
+        if not user_messages and not reactions:
             return None
 
         parts: list[str] = []
-        if messages:
-            parts.append(self._format_messages(messages))
+        if user_messages:
+            parts.append(self._format_messages(user_messages))
         if reactions:
             reaction_text = self._format_reactions(reactions)
             if reaction_text:

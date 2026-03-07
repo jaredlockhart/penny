@@ -24,25 +24,26 @@ class Prompt:
         "Every tool call has a `reasoning` field — use it to think out loud. "
         "Explain what you're looking for, what you already know, "
         "and what you'll do with the result.\n\n"
-        "Use your judgment:\n"
-        "- For casual chat (greetings, how are you, etc.), respond directly\n"
-        "- For ANY factual question — current events, history, how things work, "
-        "specific details about people/places/things — ALWAYS search first\n"
-        "- If a topic deserves deeper research, use learn\n\n"
-        "IMPORTANT: Never fabricate URLs, headlines, or facts. Every claim "
+        "ALWAYS search before replying — even casual topics. "
+        "If the user mentions a show, game, hobby, activity, or anything "
+        "you could look up, search first. The only exception is "
+        "pure greetings with zero topic content ('hey', 'hi').\n\n"
+        "But keep it conversational. You're texting a friend, not writing a report. "
+        "Respond to what they said first, THEN weave in one interesting thing "
+        "you found — like 'oh nice, did you see that [thing from search]?' "
+        "Don't dump search results. Don't list findings. Just chat, "
+        "and let the search inform what you say.\n\n"
+        "Never fabricate URLs, headlines, or facts. Every claim "
         "must come from a tool result or your injected context — not from "
         "your training data. If you don't have a real URL, don't include one. "
         "When in doubt, search — don't guess.\n\n"
-        "IMPORTANT: Never recap or summarize what you already said in earlier "
+        "Never recap or summarize what you already said in earlier "
         "messages. If the user asks you to change topics or try something "
         "different, just do it — don't apologize or explain what went wrong.\n\n"
-        "IMPORTANT: Focus on ONE topic per response. Pick the most relevant "
+        "Focus on ONE topic per response. Pick the most relevant "
         "thing to the user's message and go deep on that. Do not try to cover "
         "every interest — that's what background research is for.\n\n"
-        "When you get search results back, SHARE what you found — that's the "
-        "whole point of searching. Talk about it like you're telling a friend "
-        "about something cool you just read, not listing it out like a brochure. "
-        "Drop a link if they want to read more."
+        "Drop a link if they'd want to read more, but only if it's actually useful."
     )
 
     # Email prompts
@@ -99,63 +100,6 @@ Examples:
 
     VISION_RESPONSE_PROMPT = (
         "The user sent an image. Respond naturally to the image description provided."
-    )
-
-    # Entity extraction prompts (two-pass)
-    ENTITY_IDENTIFICATION_PROMPT = (
-        "Identify named entities in the following search results.\n"
-        "Return two lists: known entities that appear in the text, "
-        "and new entities not in the known list.\n\n"
-        "ENTITY NAME RULES:\n"
-        "- Use short canonical names (1-5 words). "
-        "No parenthetical annotations or descriptions.\n"
-        "- Good: 'KEF LS50 Meta', 'Leonard Susskind', 'ROCm', 'SYK model'\n"
-        "- Bad: 'KEF LS50 Meta (bookshelf speaker)', "
-        "'Leonard Susskind (physicist at Stanford)', "
-        "'ROCm (AMD GPU software stack)'\n\n"
-        "WHAT TO INCLUDE:\n"
-        "- Products, people, organizations, scientific concepts, "
-        "software, hardware\n\n"
-        "WHAT TO SKIP:\n"
-        "- Vague concepts ('music', 'technology', 'quantum gravity')\n"
-        "- Paper titles or article titles\n"
-        "- Dates, years, months, launch windows, or deadlines\n"
-        "- Geographic locations: cities, countries, states, continents, "
-        "landmarks ('Paris', 'California', 'Europe')\n"
-        "- Institutions that only appear as context for a person "
-        "(if the text is about Susskind's work at Stanford, "
-        "extract 'Leonard Susskind' not 'Stanford')\n"
-        "- The user or the search query itself\n\n"
-        "TAGLINE:\n"
-        "For each new entity, provide a short tagline (3-8 words) describing "
-        "what the entity is. The tagline is a summary you extrapolate, "
-        "not a verbatim quote from the text.\n"
-        "- 'KEF LS50 Meta' → 'bookshelf speaker by kef'\n"
-        "- 'Leonard Susskind' → 'theoretical physicist at stanford'\n"
-        "- 'Genesis' → 'british progressive rock band'\n"
-        "- 'ROCm' → 'amd gpu software platform'"
-    )
-
-    ENTITY_FACT_EXTRACTION_PROMPT = (
-        "Extract specific, verifiable facts about the given entity "
-        "from the following search results.\n\n"
-        "RULES:\n"
-        "- Only include facts DIRECTLY about the named entity, "
-        "not about related or associated entities\n"
-        "- Do NOT store negative facts "
-        "('X does not exist', 'no evidence of Y', 'not currently available')\n"
-        "- Do NOT paraphrase facts already listed — "
-        "if an existing fact says the same thing in different words, skip it\n"
-        "- Keep each fact concise (one sentence)\n"
-        "- If no genuinely new facts are found, return an empty list"
-    )
-
-    # Known-only entity identification prompt (for penny_enrichment searches)
-    KNOWN_ENTITY_IDENTIFICATION_PROMPT = (
-        "Identify which of the known entities appear in the following search results.\n"
-        "ONLY return entities from the known list below. "
-        "Do NOT identify new entities — only match against the known list.\n\n"
-        "Return the names exactly as they appear in the known list."
     )
 
     # Inner monologue prompts
@@ -252,8 +196,12 @@ Examples:
     )
 
     PREFERENCE_VALENCE_PROMPT = (
-        "Classify each preference topic as 'positive' (user likes, wants, enjoys) "
-        "or 'negative' (user dislikes, avoids, frustrated by) "
+        "Classify each preference topic as 'positive' (user likes, wants, enjoys, "
+        "is looking for, wishes they had) or 'negative' (user dislikes, avoids, "
+        "does not want, complains about the thing itself) "
         "based on the conversation context.\n\n"
+        "IMPORTANT: If the user is frustrated about NOT FINDING something they want, "
+        "that's positive — they want it. Negative means they dislike the thing itself, "
+        "not that they're struggling to find it.\n\n"
         "Return each topic with its valence. Use the exact topic text provided."
     )

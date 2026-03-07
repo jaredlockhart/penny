@@ -9,7 +9,7 @@ from penny.tests.conftest import TEST_SENDER
 
 
 def _seed_thinking(penny):
-    """Seed a message (so user exists) and history entry (so seed topic exists)."""
+    """Seed a message (so user exists), history, and preference (so seed topic exists)."""
     penny.db.messages.log_message(
         PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
     )
@@ -19,6 +19,13 @@ def _seed_thinking(penny):
         period_end=datetime(2026, 3, 4),
         duration=PennyConstants.HistoryDuration.DAILY,
         topics="- Quantum gravity experiments\n- Cyberpunk anime releases",
+    )
+    penny.db.preferences.add(
+        user=TEST_SENDER,
+        content="Quantum gravity experiments",
+        valence="positive",
+        source_period_start=datetime(2026, 3, 3),
+        source_period_end=datetime(2026, 3, 4),
     )
 
 
@@ -157,9 +164,17 @@ async def test_thinking_stores_summary_not_raw_monologue(
 
 @pytest.mark.asyncio
 async def test_thinking_seed_topic_drives_prompt(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
 ):
     """Thinking is seeded with a random topic, not a generic 'go'."""
+    # Force non-free-thinking path so seed topic is used
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=1,

@@ -28,34 +28,21 @@ flowchart TD
 
         SE[ScheduleExecutor] -->|"cron tasks"| FG_Ollama2["Ollama<br>foreground model"]
 
-        subgraph Pipeline["ExtractionPipeline (priority order)"]
-            direction TB
-            P1["Phase 1<br>User Messages"] --> P2["Phase 2<br>Search Logs"]
-            P2 --> P3["Phase 3<br>Embedding Backfill"]
-        end
-
-        Pipeline -->|"extract entities<br>& facts"| BG_Ollama["Ollama<br>background model"]
-        BG_Ollama -.-> DB
-
-        Think[ThinkingAgent] -->|"inner monologue<br>+ tools"| BG_Ollama
+        Think[ThinkingAgent] -->|"inner monologue<br>+ tools"| BG_Ollama["Ollama<br>background model"]
         Think -.->|"stored thoughts"| DB
 
         History[HistoryAgent] -->|"summarize<br>conversations"| BG_Ollama
         History -.->|"topic summaries"| DB
     end
 
-    DB -.->|"unprocessed<br>messages & searches"| P1
-
     User -.->|"resets idle<br>cancels background"| Scheduler
-
-    Embed["Ollama<br>embedding model"] -.-> Pipeline
 ```
 
 - **Channels**: Signal (WebSocket + REST) or Discord (discord.py bot)
 - **Ollama**: Local LLM inference (default model: gpt-oss:20b)
 - **Vision**: Optional vision model (e.g., qwen3-vl) for processing image attachments from Signal
 - **Image Generation**: Optional image model (e.g., x/z-image-turbo) for generating images via `/draw` command
-- **Embedding Model**: Optional dedicated embedding model (e.g., embeddinggemma) for semantic validation, dedup, and entity context injection
+- **Embedding Model**: Optional dedicated embedding model (e.g., embeddinggemma) for preference deduplication
 - **Perplexity**: Web search — Penny always searches before answering, never uses model knowledge alone
 - **Serper**: Image search (Google Images) — runs in parallel with Perplexity, attaches a relevant image to every response
 - **SQLite**: Logs all prompts, searches, and messages; stores thread history via parent-child links
@@ -68,7 +55,7 @@ penny/
   config.py           — Config dataclass loaded from .env, channel auto-detection
   config_params.py    — ConfigParam definitions for runtime-configurable settings
   constants.py        — System prompt, research prompts, trigger enums
-  prompts.py          — LLM prompt templates (extraction, thinking, history)
+  prompts.py          — LLM prompt templates (thinking, history)
   responses.py        — All user-facing response strings (PennyResponse class)
   startup.py          — Startup announcement message generation (git commit info)
   datetime_utils.py   — Timezone derivation from location (geopy + timezonefinder)
@@ -78,7 +65,6 @@ penny/
     chat.py           — ChatAgent: conversation-mode agent (handles user messages with tools)
     thinking.py       — ThinkingAgent: continuous inner monologue loop
     penny_agent.py    — PennyAgent: penny agent composition
-    extraction.py     — ExtractionPipeline: unified entity/fact extraction from search results and messages
     history.py        — HistoryAgent: daily conversation topic summarization
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
@@ -93,8 +79,6 @@ penny/
     debug.py          — /debug: show agent status, git commit, system info
     index.py          — /commands: list available commands
     profile.py        — /profile: user info collection (name, location, DOB, timezone)
-    memory.py         — /memory: view/manage knowledge base entities and facts
-    forget.py         — /forget: remove entities or facts from knowledge base
     schedule.py       — /schedule: create and list recurring background tasks
     unschedule.py     — /unschedule: delete a scheduled task
     mute.py           — /mute: silence Penny's proactive messages
@@ -126,8 +110,6 @@ penny/
       models.py       — DiscordMessage, DiscordUser Pydantic models
   database/
     database.py       — Database facade: thin wrapper creating domain stores
-    entity_store.py   — EntityStore: get, get_or_create, get_for_user, embeddings
-    fact_store.py     — FactStore: add, get_for_entity, embeddings
     message_store.py  — MessageStore: log_message, log_prompt, log_command, threads
     search_store.py   — SearchStore: log, get, mark_extracted
     thought_store.py  — ThoughtStore: inner monologue persistence
@@ -139,7 +121,7 @@ penny/
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client
     models.py         — ChatResponse, ChatResponseMessage
-    embeddings.py     — Embedding utilities (serialize, deserialize, find_similar, build_entity_embed_text, token_containment_ratio)
+    embeddings.py     — Embedding utilities (serialize, deserialize, find_similar, token_containment_ratio)
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
     test_embeddings.py, test_similarity.py, test_periodic_schedule.py, test_scheduler.py
@@ -148,13 +130,13 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + Serper image search monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_extraction.py, test_thinking.py, test_agentic_loop.py
+      test_message.py, test_thinking.py, test_agentic_loop.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py,
       test_signal_formatting.py, test_startup_announcement.py
     commands/         — Per-command tests
       test_commands.py, test_config.py, test_debug.py, test_draw.py, test_email.py,
-      test_feature.py, test_memory.py, test_mute.py, test_forget.py,
+      test_feature.py, test_mute.py,
       test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
@@ -183,7 +165,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 
 - `model_client`: Text model for all agents and commands
 - `vision_model_client`: Optional vision model for image understanding
-- `embedding_model_client`: Optional embedding model for semantic validation, dedup, and entity context injection
+- `embedding_model_client`: Optional embedding model for preference deduplication
 - `image_model_client`: Optional image generation model for `/draw` command
 
 ### Specialized Agents
@@ -194,25 +176,10 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Returns response with parent_id for thread linking
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the foreground model
 
-**ExtractionPipeline** (`agents/extraction.py`)
-- Unified knowledge pipeline that runs as a single scheduled background task
-- Processes in strict priority order (three phases per execution):
-  1. **User messages** (highest priority): freshest signals, processed first
-  2. **Search logs** (drain backlog): entity/fact extraction from search results
-  3. **Embedding backfill**: backfills missing embeddings for facts and entities
-- **Search log extraction**: Two-pass entity/fact extraction (identify entities → extract facts per entity) from search results. Checks `trigger` field to determine mode — full extraction (user-triggered, creates entities with validation) vs known-only (penny-triggered, facts only)
-- **Post-fact semantic pruning**: After fact extraction, LLM checks if extracted facts are semantically relevant to the entity; removes irrelevant facts
-- **Entity validation**: New entity candidates pass structural filter (word count, LLM artifacts, URLs, numbers, dates, locations) then semantic filter (embedding similarity to query, threshold ~0.50)
-- **Insertion-time dedup**: Before creating a new entity, checks all existing entities using dual-threshold detection — token containment ratio (TCR >= 0.60) as fast lexical pre-filter, then embedding cosine similarity (>= 0.85) for confirmation. Both must pass. Routes to existing entity instead of creating a duplicate
-- **Message extraction**: Extracts entities/facts from user messages
-- Pre-filters messages before LLM calls: skips short messages (< 20 chars) and slash commands
-- Fact dedup: normalized string match (fast) then embedding similarity (paraphrase detection, threshold=0.85)
-- Facts track provenance via `source_search_log_id` or `source_message_id`
-
 **ThinkingAgent** (`agents/thinking.py`)
 - Continuous inner monologue loop — Penny's autonomous conscious mind
-- Runs on a PeriodicSchedule (after ExtractionPipeline in priority order)
-- Each cycle picks a random seed topic from conversation history to focus on
+- Runs on a PeriodicSchedule
+- Each cycle picks a random seed topic from positive user preferences to focus on
 - Thinks out loud to itself using tools (search, news), accumulates reasoning
 - At the end of each cycle, summarizes the monologue and stores it as a thought via ThoughtStore
 - Stored thought summaries bleed into chat context, giving Penny continuity of inner reasoning
@@ -235,7 +202,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule executor → extraction → thinking → history)
+- Runs tasks in priority order (schedule executor → history → thinking)
 - **Skips agents with no work**: when an agent returns False, continues to the next eligible schedule in the same tick. Only breaks when an agent does real work.
 - Tracks global idle threshold (default: 60s)
 - Notifies schedules when messages arrive (resets timers)
@@ -252,7 +219,7 @@ The `scheduler/` module manages background tasks:
 
 **PeriodicSchedule**
 - Runs periodically while system is idle at a configurable interval
-- Used for the knowledge pipeline, thinking agent, and history agent (default: 10s, near-continuous while idle)
+- Used for the thinking agent and history agent (default: 10s, near-continuous while idle)
 - Tracks last run time and fires again after interval elapses
 - Resets when a message arrives
 
@@ -296,8 +263,6 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/debug** (`debug.py`): Shows agent status, git commit, system info, background task state
 - **/config** (`config.py`): View and modify runtime settings (e.g., `/config idle_seconds 600`). Reads/writes RuntimeConfig table in SQLite; changes take effect immediately
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
-- **/memory** (`memory.py`): Browse and manage Penny's knowledge base. `/memory` lists all entities (with fact count); `/memory <number>` shows entity details and facts
-- **/forget** (`forget.py`): Remove entities or facts from knowledge base
 - **/schedule** (`schedule.py`): Create and list recurring cron-based background tasks (uses LLM to parse natural language timing)
 - **/unschedule** (`unschedule.py`): Delete a scheduled task. `/unschedule` shows numbered list; `/unschedule <N>` deletes
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
@@ -313,49 +278,13 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `ConfigParam` definitions in `config_params.py` declare runtime-configurable settings with types and validation
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Categories: extraction thresholds, entity dedup settings, scheduling intervals, and more
+- Categories: scheduling intervals, preference dedup, inner monologue settings, and more
 
-## Knowledge System
+## Data Model
 
-Penny learns about things the user cares about by extracting entities and facts from conversations and searches. The system is built on two core principles:
-
-1. **Entity creation is user-gated** — only user-triggered messages and searches create new entities
-2. **Fact extraction is universal** — any search result can produce facts about known entities
-
-### Data Model
-
-- **Entity** (`database/models.py`): Named things Penny knows about (products, people, places). Has optional embedding for similarity search
-- **Fact**: Individual facts with full provenance — tracks `source_search_log_id` or `source_message_id`, plus `learned_at` timestamp
 - **Thought** (`database/models.py`): Inner monologue entries from the ThinkingAgent. Has `summary` (condensed reasoning), `content` (full monologue), `seed_topic`, and `sender` (user context)
 - **ConversationHistory** (`database/models.py`): Daily conversation topic summaries. Has `sender`, `date`, `topics` (comma-separated), `summary`
-
-### Search Trigger Tracking
-
-Every SearchLog has a `trigger` field determining extraction behavior:
-
-| Trigger | New entities? | New facts? |
-|---|---|---|
-| `user_message` | Yes | Yes |
-
-### Two-Mode Extraction
-
-The ExtractionPipeline checks each SearchLog's trigger to determine mode:
-- **Full mode** (user-triggered): Identifies new AND known entities, validates candidates before creation
-- **Known-only mode** (penny-triggered): Only matches against known entities, never creates new ones
-
-### Entity Validation
-
-New entity candidates pass through three filters before creation:
-1. **Structural filter** (deterministic): Rejects names > 8 words, LLM output artifacts, URLs, markdown, bare numbers, dates, locations
-2. **Semantic filter** (embedding-based): Rejects candidates with low cosine similarity to the triggering query (threshold ~0.50)
-3. **Post-fact pruning** (LLM-based): After fact extraction, checks if facts are semantically relevant to the entity
-
-### Entity Dedup (Insertion-Time)
-
-Before creating a new entity, checks all existing entities using dual-threshold detection:
-- **Token containment ratio (TCR >= 0.60)**: Fast lexical pre-filter
-- **Embedding cosine similarity (>= 0.85)**: Confirmation via paraphrase detection
-- Both must pass; routes to existing entity instead of creating a duplicate
+- **Preference** (`database/models.py`): User sentiment signals (positive/negative). Has `content`, `valence`, `embedding`, and provenance timestamps
 
 ## Message Flow
 
@@ -387,9 +316,9 @@ Before creating a new entity, checks all existing entities using dual-threshold 
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
-- **Specialized agents**: Each task type (chat, extraction, thinking, history) has its own agent subclass
-- **Priority scheduling**: Schedule executor → extraction → thinking → history (agents with no work are skipped each tick)
-- **Always-run schedules**: User-created schedules run regardless of idle state; knowledge pipeline waits for idle
+- **Specialized agents**: Each task type (chat, thinking, history) has its own agent subclass
+- **Priority scheduling**: Schedule executor → history → thinking (agents with no work are skipped each tick)
+- **Always-run schedules**: User-created schedules run regardless of idle state; thinking/history wait for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free Ollama immediately; cancelled work is idempotent and retried next cycle
 - **Commands don't interrupt background**: Slash commands run cooperatively without cancelling the active background task
@@ -409,8 +338,8 @@ Before creating a new entity, checks all existing entities using dual-threshold 
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0037):
-- Each migration is a numbered Python file (e.g., `0001_add_reaction_fields.py`) with a `def up(conn)` function
+File-based migration system in `database/migrations/` (currently 0001–0004):
+- Each migration is a numbered Python file (e.g., `0001_initial_schema.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
 - Runs on startup before `create_tables()` in `penny.py`
@@ -420,27 +349,10 @@ File-based migration system in `database/migrations/` (currently 0001–0037):
 - Run standalone: `python -m penny.database.migrate [--test] [--validate] [db_path]`
 
 Notable migrations:
-- 0007: `Schedule` table for user-created recurring tasks
-- 0008: Drop `parent_summary` (removed SummarizeAgent)
-- 0010–0011: `ResearchTask` and `ResearchIteration` tables (deprecated, dropped by 0018)
-- 0012: `Entity` and `entity_extraction_cursor` tables for entity knowledge base
-- 0013: `entity_search_log` join table (replaces cursor; tracks entity-to-search provenance)
-- 0014–0016: Facts restructure, embedding columns, engagement table (knowledge system phases 1–3)
-- 0017: `source_message_id` on `fact` table (message-sourced fact provenance)
-- 0018: Drop `research_tasks` and `research_iterations` tables (deprecated research system)
-- 0019: `LearnPrompt` table + `trigger`/`learn_prompt_id` columns on `SearchLog` (knowledge system v2)
-- 0020: `notified_at` on `fact` table (notification decoupling)
-- 0021: Drop `fact_last_verified` column (fact verification deprecated)
-- 0022: Drop `preference` table (organic engagement replaces explicit preferences)
-- 0023: `announced_at` on `LearnPrompt` table (learn completion notifications)
-- 0028: `Event` and `EventEntity` tables (knowledge system v4 — time-aware events)
-- 0029: `FollowPrompt` table (ongoing monitoring subscriptions for event system)
-- 0032: `heat` and `heat_cooldown` columns on `entity` table (thermodynamic interest scoring)
-- 0033: `heat_decayed_at` and `heat_cooldown_until` columns on `entity` table, drops deprecated `heat_cooldown` (time-based decay)
-- 0034: `Thought` table for ThinkingAgent inner monologue persistence
-- 0035: `recipient` column on `MessageLog` table
-- 0036: `ConversationHistory` table for daily topic summaries
-- 0037: Drop `learnprompt`, `followprompt`, `event`, `evententity` tables; remove `learn_prompt_id` from `searchlog`
+- 0001: Initial schema (all core tables)
+- 0002: `thought.notified_at` column
+- 0003: Preference deduplication
+- 0004: Drop `entity` and `fact` tables (knowledge system removed)
 
 ## Extending
 

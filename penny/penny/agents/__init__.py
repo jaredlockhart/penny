@@ -2,7 +2,6 @@
 
 from penny.agents.base import Agent
 from penny.agents.chat import ChatAgent
-from penny.agents.extraction import ExtractionPipeline
 from penny.agents.history import HistoryAgent
 from penny.agents.models import (
     ChatMessage,
@@ -16,7 +15,6 @@ __all__ = [
     "ChatAgent",
     "ChatMessage",
     "ControllerResponse",
-    "ExtractionPipeline",
     "HistoryAgent",
     "MessageRole",
     "ThinkingAgent",
