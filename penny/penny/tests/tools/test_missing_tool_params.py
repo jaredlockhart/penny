@@ -1,5 +1,7 @@
 """Tests for tool call validation with missing required parameters."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +9,7 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
@@ -106,3 +109,28 @@ class TestMissingToolParams:
         assert "parameter" in error_content.lower()
 
         await agent.close()
+
+
+class TestFetchNewsOptionalTopic:
+    """Test that fetch_news topic parameter is optional with a sensible default."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_news_uses_default_topic_when_omitted(self):
+        """FetchNewsTool.execute() uses 'top stories' when topic is not provided."""
+        news_tool = MagicMock()
+        news_tool.search = AsyncMock(return_value=[])
+        tool = FetchNewsTool(news_tool)
+
+        result = await tool.execute()
+
+        news_tool.search.assert_called_once_with(query_terms=["top stories"])
+        assert "top stories" in result
+
+    @pytest.mark.asyncio
+    async def test_fetch_news_topic_not_in_required(self):
+        """FetchNewsTool schema does not list 'topic' as required."""
+        news_tool = MagicMock()
+        tool = FetchNewsTool(news_tool)
+
+        required = tool.parameters.get("required", [])
+        assert "topic" not in required
