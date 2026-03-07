@@ -20,6 +20,7 @@ from penny.tests.mocks.search_patches import (
 )
 from penny.tests.mocks.search_patches import mock_search as _mock_search  # noqa: F401
 from penny.tests.mocks.signal_server import MockSignalServer
+from penny.tools.search import SearchTool
 
 # Configure pytest-asyncio
 pytest_plugins = ("pytest_asyncio",)
@@ -73,6 +74,20 @@ async def wait_until(
             return
         await asyncio.sleep(interval)
     raise TimeoutError(f"Condition not met within {timeout}s")
+
+
+@pytest.fixture(autouse=True)
+def reset_search_circuit_breaker():
+    """Reset the SearchTool quota circuit breaker before each test.
+
+    The circuit breaker is a class-level flag shared across all SearchTool
+    instances. Tests that create real SearchTool instances with invalid API
+    keys (e.g., test_agentic_loop.py) may trip it, which would cause
+    subsequent search calls in other tests to be silently skipped.
+    """
+    SearchTool._quota_exceeded_flag = False
+    yield
+    SearchTool._quota_exceeded_flag = False
 
 
 @pytest.fixture
