@@ -117,6 +117,9 @@ class OllamaClient:
                 if e.status_code == 404:
                     logger.error("Ollama chat failed (model not found, no retry): %s", e)
                     raise
+                if e.status_code == 500:
+                    logger.error("Ollama chat failed (server/GPU error, no retry): %s", e)
+                    raise
                 logger.warning(
                     "Ollama chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, e
                 )

@@ -1,5 +1,6 @@
 """Tests for agentic loop changes: reasoning, last step, and after_step hook."""
 
+import ollama
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +8,7 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
@@ -176,6 +178,60 @@ class TestRepeatCallGuard:
         assert response.answer == "done"
         # Only first call should have executed
         assert len(response.tool_calls) == 1
+
+        await agent.close()
+
+
+class TestOllamaServerError:
+    """Test that HTTP 500 (e.g. Metal GPU crash) fails fast without retrying."""
+
+    @pytest.mark.asyncio
+    async def test_500_error_fails_fast_without_retrying(self, test_db, mock_ollama):
+        """Agent returns AGENT_MODEL_ERROR when Ollama raises a 500 ResponseError.
+
+        With max_retries=3, a transient error would produce 3 requests. A 500
+        (GPU crash) must produce only 1 — the client should not retry.
+        """
+        db = Database(test_db)
+        db.create_tables()
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            ollama_api_url="http://localhost:11434",
+            ollama_model="test-model",
+            perplexity_api_key=None,
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=3,
+            retry_delay=0.0,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[],
+            db=db,
+            config=config,
+            max_steps=3,
+        )
+
+        def handler(request, count):
+            raise ollama.ResponseError("command buffer 1 failed with status 1", status_code=500)
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("hello")
+        assert response.answer == PennyResponse.AGENT_MODEL_ERROR
+
+        # Only one request should be made — 500 is not retried
+        assert len(mock_ollama.requests) == 1
 
         await agent.close()
 
