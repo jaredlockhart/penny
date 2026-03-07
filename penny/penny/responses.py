@@ -183,3 +183,6 @@ class PennyResponse:
 
     NO_RESULTS_TEXT = "No results found"
     SEARCH_ERROR = "Failed to search: {error}"
+    SEARCH_QUOTA_EXCEEDED = (
+        "Search unavailable — Perplexity quota exceeded. Will retry in 24 hours."
+    )

@@ -6,8 +6,10 @@ import re
 import time
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any
+from pathlib import Path
+from typing import Any, ClassVar
 
+import perplexity as perplexity_sdk
 from perplexity import Perplexity
 from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputItem
 
@@ -19,11 +21,16 @@ from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
 
+QUOTA_STATE_FILENAME = "perplexity_quota_exceeded_at"
+
 
 class SearchTool(Tool):
     """Combined search tool: Perplexity for text, Serper for images, run in parallel."""
 
     name = "search"
+    _quota_exceeded_flag: ClassVar[bool] = False  # shared circuit breaker across all instances
+    _quota_exceeded_at: ClassVar[datetime | None] = None  # when the breaker was tripped
+    QUOTA_COOLDOWN_HOURS: ClassVar[int] = 24  # cooldown before retry
     description = (
         "Search the web for current information on a specific topic. "
         "Returns search results text and attaches a relevant image."
@@ -49,15 +56,80 @@ class SearchTool(Tool):
         image_max_results: int,
         image_download_timeout: float,
         default_trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
+        quota_state_file: Path | None = None,
     ):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
+        # NOTE: do NOT set self._quota_exceeded here — that resets the shared ClassVar
+        # every time a new SearchTool is created (e.g. /test command).
         self.redact_terms: list[str] = []
         self.skip_images = skip_images
         self.serper_api_key = serper_api_key
         self.image_max_results = image_max_results
         self.image_download_timeout = image_download_timeout
         self.default_trigger = default_trigger
+        self.quota_state_file = quota_state_file
+        self._restore_quota_state()
+
+    def _restore_quota_state(self) -> None:
+        """Restore circuit breaker from persistent file if within cooldown (survives restarts)."""
+        if not self.quota_state_file or not self.quota_state_file.exists():
+            return
+        try:
+            text = self.quota_state_file.read_text().strip()
+            exceeded_at = datetime.fromisoformat(text)
+            age_hours = (datetime.now(UTC) - exceeded_at).total_seconds() / 3600
+            if age_hours < self.QUOTA_COOLDOWN_HOURS:
+                SearchTool._quota_exceeded_flag = True
+                SearchTool._quota_exceeded_at = exceeded_at
+                logger.warning("Quota circuit breaker restored from file (%.1fh ago)", age_hours)
+            else:
+                self.quota_state_file.unlink(missing_ok=True)
+                logger.info("Perplexity quota cooldown expired — search re-enabled")
+        except Exception as e:
+            logger.warning("Could not read quota state file %s: %s", self.quota_state_file, e)
+
+    @property
+    def _quota_exceeded(self) -> bool:
+        """Class-level circuit breaker — shared across all SearchTool instances.
+
+        Returns False once the cooldown period has elapsed, resetting the breaker.
+        """
+        if not SearchTool._quota_exceeded_flag:
+            return False
+        if SearchTool._quota_exceeded_at is None:
+            return True  # flag set directly (e.g. tests) — treat as exceeded indefinitely
+        age_hours = (datetime.now(UTC) - SearchTool._quota_exceeded_at).total_seconds() / 3600
+        if age_hours >= self.QUOTA_COOLDOWN_HOURS:
+            self._reset_quota_breaker()
+            return False
+        return True
+
+    @_quota_exceeded.setter
+    def _quota_exceeded(self, value: bool) -> None:
+        if value:
+            SearchTool._quota_exceeded_flag = True
+            SearchTool._quota_exceeded_at = datetime.now(UTC)
+            self._persist_quota_state()
+        else:
+            self._reset_quota_breaker()
+
+    def _reset_quota_breaker(self) -> None:
+        """Reset the circuit breaker after cooldown expires."""
+        SearchTool._quota_exceeded_flag = False
+        SearchTool._quota_exceeded_at = None
+        if self.quota_state_file:
+            self.quota_state_file.unlink(missing_ok=True)
+        logger.info("Perplexity quota circuit breaker reset — search re-enabled")
+
+    def _persist_quota_state(self) -> None:
+        """Persist quota-exceeded timestamp to file for cross-restart durability."""
+        if not self.quota_state_file or SearchTool._quota_exceeded_at is None:
+            return
+        try:
+            self.quota_state_file.write_text(SearchTool._quota_exceeded_at.isoformat())
+        except Exception as e:
+            logger.warning("Could not write quota state file %s: %s", self.quota_state_file, e)
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -123,14 +195,33 @@ class SearchTool(Tool):
         # Collapse extra whitespace left by redaction
         return re.sub(r"\s{2,}", " ", redacted).strip()
 
+    @staticmethod
+    def _is_quota_exceeded_error(e: perplexity_sdk.AuthenticationError) -> bool:
+        """Return True only for insufficient_quota 401s (not invalid-key 401s)."""
+        body = e.body
+        if isinstance(body, dict):
+            error = body.get("error")  # type: ignore[call-overload]
+            if isinstance(error, dict):
+                return error.get("type") == "insufficient_quota"  # type: ignore[call-overload]
+        return "insufficient_quota" in str(e).lower()
+
     async def _search_text(
         self,
         query: str,
         trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
+        if self._quota_exceeded:
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         start = time.time()
-        response = await self._call_perplexity(query)
+        try:
+            response = await self._call_perplexity(query)
+        except perplexity_sdk.AuthenticationError as e:
+            if not self._is_quota_exceeded_error(e):
+                raise
+            self._quota_exceeded = True
+            logger.warning("Perplexity quota exceeded — circuit breaker tripped: %s", e)
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         duration_ms = int((time.time() - start) * 1000)
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)
