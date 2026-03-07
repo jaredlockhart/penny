@@ -174,7 +174,7 @@ class Penny:
         self.notify_agent = NotifyAgent(
             search_tool=self._shared_search_tool,
             news_tool=self._news_tool,
-            system_prompt=Prompt.CONVERSATION_PROMPT,
+            system_prompt=Prompt.NOTIFY_SYSTEM_PROMPT,
             model_client=self.model_client,
             tools=[],
             db=self.db,
