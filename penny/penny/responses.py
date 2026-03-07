@@ -183,3 +183,7 @@ class PennyResponse:
 
     NO_RESULTS_TEXT = "No results found"
     SEARCH_ERROR = "Failed to search: {error}"
+    SEARCH_QUOTA_EXCEEDED = (
+        "Search is temporarily unavailable — Perplexity API quota exceeded. "
+        "Please check your billing at https://www.perplexity.ai/settings/api."
+    )

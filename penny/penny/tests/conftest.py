@@ -20,6 +20,7 @@ from penny.tests.mocks.search_patches import (
 )
 from penny.tests.mocks.search_patches import mock_search as _mock_search  # noqa: F401
 from penny.tests.mocks.signal_server import MockSignalServer
+from penny.tools.search import SearchTool
 
 # Configure pytest-asyncio
 pytest_plugins = ("pytest_asyncio",)
@@ -49,6 +50,19 @@ DEFAULT_TEST_CONFIG = {
 DEFAULT_TEST_RUNTIME_OVERRIDES: dict[str, int | float] = {
     "IDLE_SECONDS": 99999.0,
 }
+
+
+@pytest.fixture(autouse=True)
+def reset_search_circuit_breaker():
+    """Reset the SearchTool quota circuit breaker before each test.
+
+    Tests that create real SearchTool instances with invalid API keys can trip
+    the shared ClassVar circuit breaker as a side effect.  This fixture ensures
+    each test starts with the breaker in the off position.
+    """
+    SearchTool._quota_exceeded_flag = False
+    yield
+    SearchTool._quota_exceeded_flag = False
 
 
 async def wait_until(
