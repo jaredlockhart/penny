@@ -302,10 +302,9 @@ class ChatAgent(Agent):
         )
 
     def _build_thought_candidate_context(self, user: str) -> str:
-        """Thought candidate context: profile + history rollups + thought. No conv turns."""
+        """Thought candidate context: profile + thought only. No history or conv turns."""
         sections: list[str | None] = [
             self._build_profile_context(user, None),
-            self._build_history_context(user),
             self._build_thought_context(user),
         ]
         return "\n\n".join(s for s in sections if s)
@@ -366,6 +365,7 @@ class ChatAgent(Agent):
     async def _send_candidate(self, user: str, candidate: ProactiveCandidate) -> bool:
         """Send the winning candidate and mark its thought as notified."""
         assert self._channel is not None
+        thought_id = candidate.thought.id if candidate.thought else None
         await self._channel.send_response(
             user,
             candidate.answer,
@@ -373,6 +373,7 @@ class ChatAgent(Agent):
             attachments=candidate.attachments or None,
             quote_message=None,
             image_prompt=candidate.image_prompt,
+            thought_id=thought_id,
         )
         if candidate.thought and candidate.thought.id is not None:
             self.db.thoughts.mark_notified(candidate.thought.id)

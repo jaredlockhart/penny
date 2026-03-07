@@ -1,5 +1,7 @@
 """Integration tests for ChatAgent proactive messaging."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 from penny.constants import PennyConstants
@@ -278,6 +280,16 @@ async def test_proactive_thought_context_shows_specific_thought(
         context = penny.chat_agent._build_thought_context(TEST_SENDER)
         assert "black holes" in context
         assert "Your Latest Thought" in context
+
+        # Candidate context includes thought but excludes conversation history
+        now = datetime.now(UTC)
+        penny.db.history.add(
+            TEST_SENDER, now, now, PennyConstants.HistoryDuration.DAILY, "space games"
+        )
+        candidate_ctx = penny.chat_agent._build_thought_candidate_context(TEST_SENDER)
+        assert "black holes" in candidate_ctx
+        assert "Conversation History" not in candidate_ctx
+
         penny.chat_agent._proactive_thought = None
 
 
