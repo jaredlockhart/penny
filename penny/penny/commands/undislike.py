@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from penny.commands.preference_base import PreferenceListCommand
+from penny.commands.preference_base import PreferenceRemoveCommand
 from penny.constants import PennyConstants
 
 
-class UndislikeCommand(PreferenceListCommand):
+class UndislikeCommand(PreferenceRemoveCommand):
     """List negative preferences or remove one by number."""
 
     name = "undislike"

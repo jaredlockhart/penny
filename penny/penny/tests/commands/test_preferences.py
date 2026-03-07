@@ -98,15 +98,45 @@ async def test_undislike_deletes_last_shows_no_remaining(
 
 
 @pytest.mark.asyncio
+async def test_like_adds_preference(signal_server, test_config, mock_ollama, running_penny):
+    """Test /like <text> adds a positive preference."""
+    async with running_penny(test_config) as penny:
+        await signal_server.push_message(sender=TEST_SENDER, content="/like dark roast coffee")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "Added 'dark roast coffee' to your likes" in response["message"]
+
+        prefs = penny.db.preferences.get_for_user_by_valence(
+            TEST_SENDER, PennyConstants.PreferenceValence.POSITIVE
+        )
+        assert len(prefs) == 1
+        assert prefs[0].content == "dark roast coffee"
+
+
+@pytest.mark.asyncio
+async def test_dislike_adds_preference(signal_server, test_config, mock_ollama, running_penny):
+    """Test /dislike <text> adds a negative preference."""
+    async with running_penny(test_config) as penny:
+        await signal_server.push_message(sender=TEST_SENDER, content="/dislike cold weather")
+        response = await signal_server.wait_for_message(timeout=5.0)
+        assert "Added 'cold weather' to your dislikes" in response["message"]
+
+        prefs = penny.db.preferences.get_for_user_by_valence(
+            TEST_SENDER, PennyConstants.PreferenceValence.NEGATIVE
+        )
+        assert len(prefs) == 1
+        assert prefs[0].content == "cold weather"
+
+
+@pytest.mark.asyncio
 async def test_preference_invalid_number(signal_server, test_config, mock_ollama, running_penny):
-    """Test preference command with invalid number shows error."""
+    """Test remove command with invalid number shows error."""
     async with running_penny(test_config) as penny:
         _add_preference(penny, "hiking", PennyConstants.PreferenceValence.POSITIVE)
 
-        await signal_server.push_message(sender=TEST_SENDER, content="/like 99")
+        await signal_server.push_message(sender=TEST_SENDER, content="/unlike 99")
         response = await signal_server.wait_for_message(timeout=5.0)
         assert "No preference with number 99" in response["message"]
 
-        await signal_server.push_message(sender=TEST_SENDER, content="/like abc")
+        await signal_server.push_message(sender=TEST_SENDER, content="/unlike abc")
         response = await signal_server.wait_for_message(timeout=5.0)
         assert "Invalid preference number: abc" in response["message"]

@@ -187,6 +187,7 @@ class PennyResponse:
     PREF_DISLIKES_HEADER = "**Your Dislikes**"
     PREF_INVALID_NUMBER = "Invalid preference number: {number}"
     PREF_NO_PREF_WITH_NUMBER = "No preference with number {number}"
+    PREF_ADDED = "Added '{content}' to your {valence}s."
     PREF_DELETED = "Removed '{content}' from your {valence}s."
     PREF_STILL_REMAINING = "**Remaining:**"
     PREF_DELETED_NO_REMAINING = "No more {valence}s."

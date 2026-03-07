@@ -1,23 +1,23 @@
-"""/dislike command — list negative preferences or remove one by number."""
+"""/dislike command — list negative preferences or add a new one."""
 
 from __future__ import annotations
 
-from penny.commands.preference_base import PreferenceListCommand
+from penny.commands.preference_base import PreferenceAddCommand
 from penny.constants import PennyConstants
 
 
-class DislikeCommand(PreferenceListCommand):
-    """List negative preferences or remove one by number."""
+class DislikeCommand(PreferenceAddCommand):
+    """List negative preferences or add a new one."""
 
     name = "dislike"
-    description = "Show your dislikes"
+    description = "Show or add dislikes"
     help_text = (
-        "Show or remove your disliked preferences.\n\n"
+        "Show your disliked preferences or add a new one.\n\n"
         "**Usage**:\n"
         "• `/dislike` — Show numbered list of dislikes\n"
-        "• `/dislike <number>` — Remove the dislike at that position\n\n"
+        "• `/dislike <text>` — Add a new dislike\n\n"
         "**Examples**:\n"
         "• `/dislike`\n"
-        "• `/dislike 2`"
+        "• `/dislike cold weather`"
     )
     valence = PennyConstants.PreferenceValence.NEGATIVE

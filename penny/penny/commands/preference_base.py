@@ -1,6 +1,8 @@
-"""Base class for preference list/delete commands."""
+"""Base classes for preference add and remove commands."""
 
 from __future__ import annotations
+
+from datetime import UTC, datetime
 
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
@@ -9,13 +11,64 @@ from penny.database.models import Preference
 from penny.responses import PennyResponse
 
 
-class PreferenceListCommand(Command):
-    """Base for /like, /unlike, /dislike, /undislike — list or delete preferences by valence."""
+class PreferenceBaseCommand(Command):
+    """Shared helpers for preference commands."""
 
     valence: str  # Set by subclasses
 
+    def _empty_message(self) -> str:
+        if self.valence == PennyConstants.PreferenceValence.POSITIVE:
+            return PennyResponse.PREF_NO_LIKES
+        return PennyResponse.PREF_NO_DISLIKES
+
+    def _header(self) -> str:
+        if self.valence == PennyConstants.PreferenceValence.POSITIVE:
+            return PennyResponse.PREF_LIKES_HEADER
+        return PennyResponse.PREF_DISLIKES_HEADER
+
+    def _valence_label(self) -> str:
+        if self.valence == PennyConstants.PreferenceValence.POSITIVE:
+            return "like"
+        return "dislike"
+
+    def _list_preferences(self, prefs: list[Preference]) -> CommandResult:
+        lines = [self._header(), ""]
+        for idx, pref in enumerate(prefs, start=1):
+            lines.append(f"{idx}. {pref.content}")
+        return CommandResult(text="\n".join(lines))
+
+
+class PreferenceAddCommand(PreferenceBaseCommand):
+    """Base for /like, /dislike — list preferences or add a new one."""
+
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
-        """Route to list or delete based on args."""
+        args = args.strip()
+        prefs = context.db.preferences.get_for_user_by_valence(context.user, self.valence)
+
+        if not args:
+            if not prefs:
+                return CommandResult(text=self._empty_message())
+            return self._list_preferences(prefs)
+
+        return self._add_preference(args, context)
+
+    def _add_preference(self, content: str, context: CommandContext) -> CommandResult:
+        now = datetime.now(UTC)
+        context.db.preferences.add(
+            user=context.user,
+            content=content,
+            valence=self.valence,
+            source_period_start=now,
+            source_period_end=now,
+        )
+        label = self._valence_label()
+        return CommandResult(text=PennyResponse.PREF_ADDED.format(content=content, valence=label))
+
+
+class PreferenceRemoveCommand(PreferenceBaseCommand):
+    """Base for /unlike, /undislike — list preferences or remove one by number."""
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
         args = args.strip()
         prefs = context.db.preferences.get_for_user_by_valence(context.user, self.valence)
 
@@ -30,35 +83,9 @@ class PreferenceListCommand(Command):
 
         return self._delete_preference(int(args), prefs, context)
 
-    def _empty_message(self) -> str:
-        """Return the appropriate empty-list message for this valence."""
-        if self.valence == PennyConstants.PreferenceValence.POSITIVE:
-            return PennyResponse.PREF_NO_LIKES
-        return PennyResponse.PREF_NO_DISLIKES
-
-    def _header(self) -> str:
-        """Return the appropriate list header for this valence."""
-        if self.valence == PennyConstants.PreferenceValence.POSITIVE:
-            return PennyResponse.PREF_LIKES_HEADER
-        return PennyResponse.PREF_DISLIKES_HEADER
-
-    def _valence_label(self) -> str:
-        """Return 'like' or 'dislike' for display."""
-        if self.valence == PennyConstants.PreferenceValence.POSITIVE:
-            return "like"
-        return "dislike"
-
-    def _list_preferences(self, prefs: list[Preference]) -> CommandResult:
-        """Show numbered list of preferences."""
-        lines = [self._header(), ""]
-        for idx, pref in enumerate(prefs, start=1):
-            lines.append(f"{idx}. {pref.content}")
-        return CommandResult(text="\n".join(lines))
-
     def _delete_preference(
         self, position: int, prefs: list[Preference], context: CommandContext
     ) -> CommandResult:
-        """Delete preference at the given position."""
         if position < 1 or position > len(prefs):
             return CommandResult(
                 text=PennyResponse.PREF_NO_PREF_WITH_NUMBER.format(number=position)
