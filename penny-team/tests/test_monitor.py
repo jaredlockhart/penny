@@ -12,11 +12,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from penny_team.monitor import ErrorBlock, MonitorAgent, extract_errors, format_errors_for_prompt
+from penny_team.monitor import (
+    ErrorBlock,
+    MonitorAgent,
+    extract_error_signature,
+    extract_errors,
+    filter_known_errors,
+    format_errors_for_prompt,
+)
 
 from tests.conftest import (
+    MockGitHubAPI,
     TRUSTED_USERS,
     extract_prompt,
+    make_issue_detail,
     result_event,
 )
 
@@ -325,3 +334,135 @@ class TestMonitorRun:
         result = agent.run()
 
         assert result.success is False
+
+    def test_known_errors_filtered_before_claude(self, tmp_path, capture_popen):
+        """Errors matching open bug issues are filtered out before Claude is called."""
+        agent, _ = make_monitor_agent(
+            tmp_path,
+            log_content=(
+                "2024-01-15 14:23:45 - penny.tools.search - ERROR - Search failed\n"
+                "Traceback (most recent call last):\n"
+                "  File \"penny/tools/search.py\", line 42\n"
+                "AuthenticationError: insufficient quota\n"
+            ),
+        )
+
+        # Set up a mock GitHub API with an existing matching bug issue
+        mock_api = MockGitHubAPI()
+        mock_api.set_issues_detailed(
+            "bug",
+            [
+                make_issue_detail(
+                    number=100,
+                    title="bug: Perplexity search fails with AuthenticationError",
+                    body="Module: penny.tools.search\nAuthenticationError: insufficient quota",
+                    labels=["bug"],
+                )
+            ],
+        )
+        agent.github_api = mock_api
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+        result = agent.run()
+
+        assert result.success is True
+        assert result.output == "All errors already have open issues"
+        assert len(calls) == 0  # Claude CLI not called
+
+    def test_novel_errors_passed_to_claude(self, tmp_path, capture_popen):
+        """Errors NOT matching any open issue are passed to Claude."""
+        agent, _ = make_monitor_agent(
+            tmp_path,
+            log_content="2024-01-15 14:23:45 - penny.database - ERROR - DB locked\n",
+        )
+
+        mock_api = MockGitHubAPI()
+        mock_api.set_issues_detailed("bug", [])  # No open issues
+        agent.github_api = mock_api
+
+        calls = capture_popen(stdout_lines=[result_event("Filed issue #101")], returncode=0)
+        result = agent.run()
+
+        assert result.success is True
+        assert len(calls) == 1
+        prompt = extract_prompt(calls)
+        assert "DB locked" in prompt
+
+
+# =============================================================================
+# extract_error_signature / filter_known_errors — unit tests
+# =============================================================================
+
+
+class TestErrorDedup:
+    def test_signature_with_traceback(self):
+        error = ErrorBlock(
+            timestamp="2024-01-15 14:23:45",
+            module="penny.tools.search",
+            level="ERROR",
+            message="Search failed",
+            traceback="Traceback:\n  File ...\nAuthenticationError: bad key",
+        )
+        sig = extract_error_signature(error)
+        assert sig == "penny.tools.search:authenticationerror"
+
+    def test_signature_without_traceback(self):
+        error = ErrorBlock(
+            timestamp="2024-01-15 14:23:45",
+            module="penny.agent",
+            level="ERROR",
+            message="Connection refused to Ollama",
+            traceback="",
+        )
+        sig = extract_error_signature(error)
+        assert sig == "penny.agent:connection refused to ollama"
+
+    def test_filter_removes_matching_error(self):
+        error = ErrorBlock(
+            timestamp="2024-01-15 14:23:45",
+            module="penny.tools.search",
+            level="ERROR",
+            message="Search failed",
+            traceback="AuthenticationError: quota exceeded",
+        )
+        open_issues = [
+            make_issue_detail(
+                number=1,
+                title="bug: search auth error",
+                body="penny.tools.search AuthenticationError",
+                labels=["bug"],
+            )
+        ]
+        result = filter_known_errors([error], open_issues)
+        assert result == []
+
+    def test_filter_keeps_novel_error(self):
+        error = ErrorBlock(
+            timestamp="2024-01-15 14:23:45",
+            module="penny.database",
+            level="ERROR",
+            message="DB locked",
+            traceback="sqlite3.OperationalError: database is locked",
+        )
+        open_issues = [
+            make_issue_detail(
+                number=1,
+                title="bug: search auth error",
+                body="penny.tools.search AuthenticationError",
+                labels=["bug"],
+            )
+        ]
+        result = filter_known_errors([error], open_issues)
+        assert len(result) == 1
+        assert result[0].message == "DB locked"
+
+    def test_filter_with_no_open_issues_keeps_all(self):
+        error = ErrorBlock(
+            timestamp="2024-01-15 14:23:45",
+            module="penny.agent",
+            level="ERROR",
+            message="Something broke",
+            traceback="",
+        )
+        result = filter_known_errors([error], [])
+        assert len(result) == 1

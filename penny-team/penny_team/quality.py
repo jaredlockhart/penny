@@ -347,6 +347,43 @@ class QualityAgent(Agent):
 
         return title, body
 
+    # --- Deduplication ---
+
+    def _fetch_open_quality_issues(self) -> list[str]:
+        """Fetch titles of open bug+quality issues for dedup. Returns [] on failure."""
+        if self.github_api is None:
+            return []
+        try:
+            issues = self.github_api.list_issues_detailed("quality", limit=20)
+            return [issue.title.lower() for issue in issues]
+        except (OSError, RuntimeError) as e:
+            logger.warning(f"[{self.name}] Failed to fetch open quality issues: {e}")
+            return []
+
+    @staticmethod
+    def _is_duplicate_issue(title: str, existing_titles: list[str]) -> bool:
+        """Check if a proposed issue title matches an existing open issue.
+
+        Compares the category keyword from the title (the part after 'bug: ')
+        against existing titles. Matches if the category appears in any
+        existing title.
+        """
+        if not existing_titles:
+            return False
+        # Extract category from "bug: <category description>"
+        title_lower = title.lower()
+        category = title_lower.removeprefix("bug: ").strip()
+        if not category:
+            return False
+        # Check if any existing title contains the same category keywords
+        category_words = set(category.split()) - {"the", "a", "an", "in", "of", "for", "and", "or"}
+        if len(category_words) < 2:
+            return False
+        return any(
+            sum(1 for w in category_words if w in existing) >= len(category_words) // 2 + 1
+            for existing in existing_titles
+        )
+
     # --- run() override ---
 
     def run(self) -> AgentRun:
@@ -387,7 +424,10 @@ class QualityAgent(Agent):
 
         logger.info(f"[{self.name}] Evaluating {len(pairs)} message pair(s)")
 
-        # Step 2: Evaluate each pair individually and file issues
+        # Step 2: Fetch open quality issues for dedup
+        open_quality_issues = self._fetch_open_quality_issues()
+
+        # Step 3: Evaluate each pair individually and file issues
         found = 0
         filed = 0
         total = len(pairs)
@@ -421,6 +461,11 @@ class QualityAgent(Agent):
                     f"[{self.name}] Privacy validation failed for message {pair.outgoing_id} "
                     f"— original content detected in issue body, skipping"
                 )
+                continue
+
+            # Dedup: check if a similar quality issue already exists
+            if self._is_duplicate_issue(title, open_quality_issues):
+                logger.info(f"[{self.name}] Skipping duplicate quality issue: {title}")
                 continue
 
             # File the issue
