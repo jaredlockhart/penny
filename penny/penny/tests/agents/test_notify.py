@@ -196,31 +196,33 @@ async def test_send_notify_checkin(
 # ── Image prompt extraction ──────────────────────────────────────────────
 
 
-def test_extract_image_prompt_from_news_tool():
-    """_extract_image_prompt extracts topic from fetch_news tool calls."""
-    from penny.agents.models import ToolCallRecord
-
-    records = [
-        ToolCallRecord(tool="fetch_news", arguments={"topic": "AI breakthroughs"}),
-    ]
-    result = NotifyAgent._extract_image_prompt(records)
-    assert result == "AI breakthroughs"
-
-
-def test_extract_image_prompt_from_search_tool():
-    """_extract_image_prompt extracts query from search tool calls."""
+def test_extract_search_query_from_search_tool():
+    """_extract_search_query extracts query from search tool calls."""
     from penny.agents.models import ToolCallRecord
 
     records = [
         ToolCallRecord(tool="search", arguments={"query": "latest space news"}),
     ]
-    result = NotifyAgent._extract_image_prompt(records)
+    result = NotifyAgent._extract_search_query(records)
     assert result == "latest space news"
 
 
-def test_extract_image_prompt_returns_none_when_empty():
-    """_extract_image_prompt returns None when no relevant tool calls."""
-    result = NotifyAgent._extract_image_prompt([])
+def test_extract_search_query_returns_none_when_empty():
+    """_extract_search_query returns None when no relevant tool calls."""
+    result = NotifyAgent._extract_search_query([])
+    assert result is None
+
+
+def test_extract_first_headline():
+    """_extract_first_headline extracts the first bold text from markdown."""
+    text = "Hey! Here's the news:\n- **Big Story Title** - something happened\n- **Another One**"
+    result = NotifyAgent._extract_first_headline(text)
+    assert result == "Big Story Title"
+
+
+def test_extract_first_headline_returns_none_when_no_bold():
+    """_extract_first_headline returns None when no bold text present."""
+    result = NotifyAgent._extract_first_headline("No bold text here")
     assert result is None
 
 

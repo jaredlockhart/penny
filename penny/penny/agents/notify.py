@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -195,7 +196,7 @@ class NotifyAgent(Agent):
         answer = response.answer.strip() if response.answer else None
         if not answer:
             return False
-        image_prompt = self._extract_image_prompt(response.tool_calls)
+        image_prompt = self._extract_first_headline(answer)
         return await self._send_candidate(
             user,
             NotifyCandidate(
@@ -214,14 +215,21 @@ class NotifyAgent(Agent):
         return "\n\n".join(s for s in sections if s)
 
     @staticmethod
-    def _extract_image_prompt(tool_calls: list[ToolCallRecord]) -> str | None:
-        """Extract an image search query from tool calls (news topic or search query)."""
+    def _extract_search_query(tool_calls: list[ToolCallRecord]) -> str | None:
+        """Extract the search query from tool calls for use as image prompt."""
         for tc in tool_calls:
-            if tc.tool == "fetch_news" and tc.arguments.get("topic"):
-                return tc.arguments["topic"]
             if tc.tool == "search" and tc.arguments.get("query"):
                 return tc.arguments["query"]
         return None
+
+    # Matches **bold text** in markdown (first occurrence)
+    _BOLD_PATTERN = re.compile(r"\*\*(.+?)\*\*")
+
+    @classmethod
+    def _extract_first_headline(cls, text: str) -> str | None:
+        """Extract the first bold headline from response text for image search."""
+        match = cls._BOLD_PATTERN.search(text)
+        return match.group(1) if match else None
 
     # ── Thought candidates ────────────────────────────────────────────
 
@@ -314,7 +322,7 @@ class NotifyAgent(Agent):
         if self._is_disqualified(answer):
             logger.info("Disqualified candidate: %s", answer[:60])
             return None
-        image_prompt = self._extract_image_prompt(response.tool_calls)
+        image_prompt = self._extract_search_query(response.tool_calls)
         return NotifyCandidate(
             answer=answer,
             thought=thought,
