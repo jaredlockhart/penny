@@ -56,7 +56,7 @@ class ChatAgent(Agent):
 
         Builds context, processes images, runs agentic loop.
         entity_anchor overrides what drives entity similarity search
-        (e.g. thought content for proactive messages).
+        (e.g. thought content for notifications).
         """
         self._current_user = sender
         self._pending_content = entity_anchor or content

@@ -1,4 +1,4 @@
-"""Integration tests for NotifyAgent proactive messaging."""
+"""Integration tests for NotifyAgent."""
 
 from datetime import UTC, datetime
 
@@ -8,8 +8,8 @@ from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
-def _seed_proactive(penny):
-    """Seed data needed for proactive messaging: message, history, thought."""
+def _seed_notify(penny):
+    """Seed data needed for notifications: message, history, thought."""
     penny.db.messages.log_message(
         PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
     )
@@ -20,55 +20,55 @@ def _seed_proactive(penny):
 
 
 @pytest.mark.asyncio
-async def test_proactive_blocked_when_no_channel(
+async def test_notify_blocked_when_no_channel(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """Proactive messaging is blocked when no channel is set."""
+    """Notification is blocked when no channel is set."""
     config = make_config()
 
     async with running_penny(config) as penny:
-        _seed_proactive(penny)
+        _seed_notify(penny)
         penny.notify_agent._channel = None
-        assert not penny.notify_agent._should_send_proactive(TEST_SENDER)
+        assert not penny.notify_agent._should_notify(TEST_SENDER)
 
 
 @pytest.mark.asyncio
-async def test_proactive_blocked_when_muted(
+async def test_notify_blocked_when_muted(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """Proactive messaging is blocked when user is muted."""
+    """Notification is blocked when user is muted."""
     config = make_config()
 
     async with running_penny(config) as penny:
-        _seed_proactive(penny)
+        _seed_notify(penny)
         penny.db.users.set_muted(TEST_SENDER)
-        assert not penny.notify_agent._should_send_proactive(TEST_SENDER)
+        assert not penny.notify_agent._should_notify(TEST_SENDER)
 
 
 @pytest.mark.asyncio
-async def test_proactive_blocked_when_no_thoughts(
+async def test_notify_blocked_when_no_thoughts(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """Proactive messaging is blocked when user has no un-notified thoughts."""
+    """Notification is blocked when user has no un-notified thoughts."""
     config = make_config()
 
     async with running_penny(config) as penny:
         penny.db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello"
         )
-        assert not penny.notify_agent._should_send_proactive(TEST_SENDER)
+        assert not penny.notify_agent._should_notify(TEST_SENDER)
 
 
 @pytest.mark.asyncio
-async def test_proactive_eligible_with_thoughts_and_channel(
+async def test_notify_eligible_with_thoughts_and_channel(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """Proactive messaging is eligible when all conditions are met."""
+    """Notification is eligible when all conditions are met."""
     config = make_config()
 
     async with running_penny(config) as penny:
-        _seed_proactive(penny)
-        assert penny.notify_agent._should_send_proactive(TEST_SENDER)
+        _seed_notify(penny)
+        assert penny.notify_agent._should_notify(TEST_SENDER)
 
 
 # ── Cooldown ─────────────────────────────────────────────────────────────
@@ -85,11 +85,11 @@ async def test_cooldown_elapsed_when_no_prior_autonomous(
         assert penny.notify_agent._cooldown_elapsed(TEST_SENDER)
 
 
-# ── Proactive send modes ────────────────────────────────────────────────
+# ── Notification send modes ──────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_send_proactive_thought_candidate(
+async def test_send_notify_thought_candidate(
     signal_server,
     mock_ollama,
     make_config,
@@ -98,8 +98,8 @@ async def test_send_proactive_thought_candidate(
     running_penny,
     monkeypatch,
 ):
-    """Proactive thought candidate generates and sends a message."""
-    config = make_config(proactive_candidates=1)
+    """Thought candidate generates and sends a message."""
+    config = make_config(notify_candidates=1)
 
     # Force thought candidate path (not checkin, not news)
     monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
@@ -112,7 +112,7 @@ async def test_send_proactive_thought_candidate(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        _seed_proactive(penny)
+        _seed_notify(penny)
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
 
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
@@ -129,7 +129,7 @@ async def test_send_proactive_thought_candidate(
 
 
 @pytest.mark.asyncio
-async def test_send_proactive_news(
+async def test_send_notify_news(
     signal_server,
     mock_ollama,
     make_config,
@@ -138,7 +138,7 @@ async def test_send_proactive_news(
     running_penny,
     monkeypatch,
 ):
-    """Proactive news mode generates and sends a news message."""
+    """News mode generates and sends a news message."""
     config = make_config()
 
     # Force news path (not checkin)
@@ -152,7 +152,7 @@ async def test_send_proactive_news(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        _seed_proactive(penny)
+        _seed_notify(penny)
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
 
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
@@ -164,7 +164,7 @@ async def test_send_proactive_news(
 
 
 @pytest.mark.asyncio
-async def test_send_proactive_checkin(
+async def test_send_notify_checkin(
     signal_server,
     mock_ollama,
     make_config,
@@ -173,7 +173,7 @@ async def test_send_proactive_checkin(
     running_penny,
     monkeypatch,
 ):
-    """Proactive check-in sends a message when conditions are met."""
+    """Check-in sends a message when conditions are met."""
     config = make_config()
 
     def handler(request, count):
@@ -182,7 +182,7 @@ async def test_send_proactive_checkin(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        _seed_proactive(penny)
+        _seed_notify(penny)
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: True)
 
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
@@ -266,18 +266,18 @@ async def test_chat_thought_context_shows_notified_only(
 
 
 @pytest.mark.asyncio
-async def test_proactive_thought_context_shows_specific_thought(
+async def test_notify_thought_context_shows_specific_thought(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """NotifyAgent proactive mode shows the specific thought being shared."""
+    """NotifyAgent shows the specific thought being shared."""
     config = make_config()
 
     async with running_penny(config) as penny:
         penny.db.thoughts.add(TEST_SENDER, "thinking about black holes")
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=1)
 
-        penny.notify_agent._proactive_thought = thoughts[0]
-        context = penny.notify_agent._build_proactive_thought_context()
+        penny.notify_agent._pending_thought = thoughts[0]
+        context = penny.notify_agent._build_pending_thought_context()
         assert "black holes" in context
         assert "Your Latest Thought" in context
 
@@ -290,7 +290,7 @@ async def test_proactive_thought_context_shows_specific_thought(
         assert "black holes" in candidate_ctx
         assert "Conversation History" not in candidate_ctx
 
-        penny.notify_agent._proactive_thought = None
+        penny.notify_agent._pending_thought = None
 
 
 # Need to import NotifyAgent for static method tests

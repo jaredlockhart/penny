@@ -55,7 +55,7 @@ class MessageLog(SQLModel, table=True):
     )  # True if this message has been processed by extraction pipeline
     thought_id: int | None = Field(
         default=None, foreign_key="thought.id", index=True
-    )  # FK to thought that triggered this proactive message
+    )  # FK to thought that triggered this notification
 
 
 class UserInfo(SQLModel, table=True):
@@ -112,7 +112,7 @@ class Schedule(SQLModel, table=True):
 
 
 class MuteState(SQLModel, table=True):
-    """Per-user mute state for proactive notifications.
+    """Per-user mute state for notifications.
 
     Row exists = muted. Delete row = unmuted.
     """

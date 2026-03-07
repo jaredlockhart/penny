@@ -17,7 +17,7 @@ GROUP_GLOBAL = "Global"
 GROUP_SCHEDULE = "Schedule"
 GROUP_INNER_MONOLOGUE = "Inner Monologue"
 GROUP_HISTORY = "History"
-GROUP_PROACTIVE = "Proactive"
+GROUP_NOTIFY = "Notify"
 
 # Ordered list for display
 CONFIG_GROUPS: list[str] = [
@@ -25,7 +25,7 @@ CONFIG_GROUPS: list[str] = [
     GROUP_SCHEDULE,
     GROUP_INNER_MONOLOGUE,
     GROUP_HISTORY,
-    GROUP_PROACTIVE,
+    GROUP_NOTIFY,
 ]
 
 
@@ -253,42 +253,42 @@ ConfigParam(
 )
 
 
-# ── Proactive ────────────────────────────────────────────────────────────────
+# ── Notify ───────────────────────────────────────────────────────────────────
 
 ConfigParam(
-    key="PROACTIVE_CHECK_INTERVAL",
-    description="Interval in seconds between proactive check cycles",
+    key="NOTIFY_CHECK_INTERVAL",
+    description="Interval in seconds between notification check cycles",
     type=float,
     default=300.0,
     validator=_validate_positive_float,
-    group=GROUP_PROACTIVE,
+    group=GROUP_NOTIFY,
 )
 
 ConfigParam(
-    key="PROACTIVE_COOLDOWN_MIN",
+    key="NOTIFY_COOLDOWN_MIN",
     description="Initial cooldown in seconds between autonomous messages",
     type=float,
     default=600.0,
     validator=_validate_positive_float,
-    group=GROUP_PROACTIVE,
+    group=GROUP_NOTIFY,
 )
 
 ConfigParam(
-    key="PROACTIVE_COOLDOWN_MAX",
+    key="NOTIFY_COOLDOWN_MAX",
     description="Max cooldown in seconds (ceiling for exponential backoff)",
     type=float,
     default=5400.0,
     validator=_validate_positive_float,
-    group=GROUP_PROACTIVE,
+    group=GROUP_NOTIFY,
 )
 
 ConfigParam(
-    key="PROACTIVE_CANDIDATES",
-    description="Number of candidate messages to generate per proactive cycle",
+    key="NOTIFY_CANDIDATES",
+    description="Number of candidate messages to generate per notification cycle",
     type=int,
     default=5,
     validator=_validate_positive_int,
-    group=GROUP_PROACTIVE,
+    group=GROUP_NOTIFY,
 )
 
 

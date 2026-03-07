@@ -1,4 +1,4 @@
-"""The /unmute command — re-enable proactive notifications."""
+"""The /unmute command — re-enable notifications."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from penny.responses import PennyResponse
 
 
 class UnmuteCommand(Command):
-    """Unmute proactive notifications."""
+    """Unmute notifications."""
 
     name = "unmute"
-    description = "Unmute proactive notifications"
+    description = "Unmute notifications"
     help_text = (
-        "Re-enable proactive notifications after muting them with /mute.\n\n"
+        "Re-enable notifications after muting them with /mute.\n\n"
         "**Usage**:\n"
         "• `/unmute` — Unmute notifications"
     )

@@ -63,7 +63,7 @@ penny/
     base.py           — Agent base class: agentic loop, tool execution, Ollama integration
     models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord, GeneratedQuery
     chat.py           — ChatAgent: conversation-mode agent (handles user messages with tools)
-    notify.py         — NotifyAgent: proactive outreach (thoughts, news, check-ins)
+    notify.py         — NotifyAgent: notification outreach (thoughts, news, check-ins)
     thinking.py       — ThinkingAgent: continuous inner monologue loop
     history.py        — HistoryAgent: daily conversation topic summarization
   scheduler/
@@ -81,8 +81,8 @@ penny/
     profile.py        — /profile: user info collection (name, location, DOB, timezone)
     schedule.py       — /schedule: create and list recurring background tasks
     unschedule.py     — /unschedule: delete a scheduled task
-    mute.py           — /mute: silence Penny's proactive messages
-    unmute.py         — /unmute: resume Penny's proactive messages
+    mute.py           — /mute: silence Penny's notifications
+    unmute.py         — /unmute: resume Penny's notifications
     test.py           — /test: isolated test mode for development
     draw.py           — /draw: generate images via Ollama image model (optional)
     bug.py            — /bug: file GitHub issues (optional, requires GitHub App)
@@ -176,7 +176,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the foreground model
 
 **NotifyAgent** (`agents/notify.py`)
-- Proactive outreach — sends thoughts, news, and check-ins when users are idle
+- Notification outreach — sends thoughts, news, and check-ins when users are idle
 - Runs on a PeriodicSchedule, separate from ChatAgent
 - Three modes: thought candidates (ranked by preference affinity), news updates, periodic check-ins
 - Each mode builds its own tailored context (no shared state with ChatAgent)

@@ -258,7 +258,7 @@ class Penny:
         )
 
     def _init_channel(self, config: Config, channel: MessageChannel | None) -> None:
-        """Create channel and connect agents that send proactive messages."""
+        """Create channel and connect agents that send notifications."""
         self.channel = channel or create_channel(
             config=config,
             message_agent=self.chat_agent,
@@ -278,7 +278,7 @@ class Penny:
             ),
             PeriodicSchedule(
                 agent=self.notify_agent,
-                interval=config.runtime.PROACTIVE_CHECK_INTERVAL,
+                interval=config.runtime.NOTIFY_CHECK_INTERVAL,
             ),
             PeriodicSchedule(
                 agent=self.thinking_agent,

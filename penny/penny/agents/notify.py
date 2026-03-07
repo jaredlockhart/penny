@@ -1,6 +1,6 @@
-"""NotifyAgent — Penny's proactive outreach.
+"""NotifyAgent — Penny's notification outreach.
 
-Sends proactive messages to users when idle: thought candidates,
+Sends notifications to users when idle: thought candidates,
 news updates, and periodic check-ins. Runs on a schedule via the
 BackgroundScheduler.
 """
@@ -27,8 +27,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ProactiveCandidate(BaseModel):
-    """A candidate proactive message awaiting scoring."""
+class NotifyCandidate(BaseModel):
+    """A candidate notification message awaiting scoring."""
 
     answer: str
     thought: Thought | None = None
@@ -37,7 +37,7 @@ class ProactiveCandidate(BaseModel):
 
 
 class NotifyAgent(Agent):
-    """Proactive outreach agent — sends thoughts, news, and check-ins.
+    """Notification outreach agent — sends thoughts, news, and check-ins.
 
     Context matrix — each mode gets tailored context:
 
@@ -56,22 +56,22 @@ class NotifyAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._boot_time = datetime.now(UTC).replace(tzinfo=None)
         self._channel: MessageChannel | None = None
-        self._proactive_thought: Thought | None = None
+        self._pending_thought: Thought | None = None
 
     def set_channel(self, channel: MessageChannel) -> None:
-        """Set the channel for sending proactive messages."""
+        """Set the channel for sending notifications."""
         self._channel = channel
 
     # ── Scheduled entry point ─────────────────────────────────────────
 
     async def execute_for_user(self, user: str) -> bool:
-        """Scheduled cycle: send a proactive message if the user has been idle."""
-        if not self._should_send_proactive(user):
+        """Scheduled cycle: send a notification if the user has been idle."""
+        if not self._should_notify(user):
             return False
-        return await self._send_proactive(user)
+        return await self._send_notification(user)
 
-    def _should_send_proactive(self, user: str) -> bool:
-        """Python-space eligibility checks for proactive messaging."""
+    def _should_notify(self, user: str) -> bool:
+        """Python-space eligibility checks for notifications."""
         if not self._channel:
             return False
         if self.db.users.is_muted(user):
@@ -99,8 +99,8 @@ class NotifyAgent(Agent):
         elapsed = (datetime.now(UTC).replace(tzinfo=None) - latest).total_seconds()
         count = self.db.messages.count_autonomous_since_last_incoming(user, self._boot_time)
         cooldown = min(
-            self.config.runtime.PROACTIVE_COOLDOWN_MIN * (2 ** max(count - 1, 0)),
-            self.config.runtime.PROACTIVE_COOLDOWN_MAX,
+            self.config.runtime.NOTIFY_COOLDOWN_MIN * (2 ** max(count - 1, 0)),
+            self.config.runtime.NOTIFY_COOLDOWN_MAX,
         )
         return elapsed >= cooldown
 
@@ -115,7 +115,7 @@ class NotifyAgent(Agent):
 
     def _checkin_cooldown_elapsed(self) -> bool:
         """At most one check-in per 24 hours (rolling window)."""
-        last = self.db.messages.get_last_checkin_time(Prompt.PROACTIVE_CHECKIN, hours=24)
+        last = self.db.messages.get_last_checkin_time(Prompt.NOTIFY_CHECKIN, hours=24)
         if last is None:
             return True
         elapsed = (datetime.now(UTC).replace(tzinfo=None) - last).total_seconds()
@@ -129,12 +129,12 @@ class NotifyAgent(Agent):
         elapsed = (datetime.now(UTC).replace(tzinfo=None) - last).total_seconds()
         return elapsed <= self.CHECKIN_ACTIVE_WINDOW
 
-    # ── Proactive pipeline ────────────────────────────────────────────
+    # ── Notification pipeline ─────────────────────────────────────────
 
     # 1-in-3 chance of sending news instead of thought candidates
     NEWS_CHANCE = 1 / 3
 
-    async def _send_proactive(self, user: str) -> bool:
+    async def _send_notification(self, user: str) -> bool:
         """Check-in if eligible, then coin-flip news, otherwise thought candidates."""
         assert self._channel is not None
         try:
@@ -144,19 +144,19 @@ class NotifyAgent(Agent):
                 return await self._send_news(user)
             return await self._send_best_candidate(user)
         except Exception:
-            logger.exception("Failed to send proactive message to %s", user)
+            logger.exception("Failed to send notification to %s", user)
             return False
         finally:
-            self._proactive_thought = None
+            self._pending_thought = None
 
     async def _send_checkin(self, user: str) -> bool:
         """Send a check-in message — slim context, no tools, single step."""
-        logger.info("Proactive check-in for %s", user)
-        self._proactive_thought = None
+        logger.info("Notify check-in for %s", user)
+        self._pending_thought = None
         context = self._build_checkin_context(user)
         self._install_tools([])
         response = await self.run(
-            prompt=Prompt.PROACTIVE_CHECKIN,
+            prompt=Prompt.NOTIFY_CHECKIN,
             history=self._build_conversation(user),
             context=context,
             max_steps=1,
@@ -165,7 +165,7 @@ class NotifyAgent(Agent):
         if not answer:
             return False
         return await self._send_candidate(
-            user, ProactiveCandidate(answer=answer, attachments=response.attachments or [])
+            user, NotifyCandidate(answer=answer, attachments=response.attachments or [])
         )
 
     def _build_checkin_context(self, user: str) -> str:
@@ -179,11 +179,11 @@ class NotifyAgent(Agent):
 
     async def _send_news(self, user: str) -> bool:
         """Send a news message — profile + history only, tools enabled."""
-        logger.info("Proactive news for %s", user)
+        logger.info("Notify news for %s", user)
         context = self._build_news_context(user)
         self._install_tools(self.get_tools(user))
         response = await self.run(
-            prompt=Prompt.PROACTIVE_NEWS,
+            prompt=Prompt.NOTIFY_NEWS,
             context=context,
         )
         answer = response.answer.strip() if response.answer else None
@@ -192,7 +192,7 @@ class NotifyAgent(Agent):
         image_prompt = self._extract_image_prompt(response.tool_calls)
         return await self._send_candidate(
             user,
-            ProactiveCandidate(
+            NotifyCandidate(
                 answer=answer,
                 attachments=response.attachments or [],
                 image_prompt=image_prompt,
@@ -221,21 +221,21 @@ class NotifyAgent(Agent):
 
     async def _send_best_candidate(self, user: str) -> bool:
         """Generate thought candidates, score, send the best."""
-        n = int(self.config.runtime.PROACTIVE_CANDIDATES)
+        n = int(self.config.runtime.NOTIFY_CANDIDATES)
         candidates = await self._generate_thought_candidates(user, n)
         if not candidates:
-            logger.warning("No viable proactive candidates for %s", user)
+            logger.warning("No viable notification candidates for %s", user)
             return False
         winner = await self._pick_best_candidate(user, candidates)
         return await self._send_candidate(user, winner)
 
-    async def _generate_thought_candidates(self, user: str, n: int) -> list[ProactiveCandidate]:
+    async def _generate_thought_candidates(self, user: str, n: int) -> list[NotifyCandidate]:
         """Generate N thought candidates ranked by preference affinity."""
-        candidates: list[ProactiveCandidate] = []
+        candidates: list[NotifyCandidate] = []
         thoughts = await self._get_top_thoughts(user, n)
         for i, thought in enumerate(thoughts):
             candidate = await self._generate_one_candidate(
-                user, Prompt.PROACTIVE_PROMPT, thought=thought
+                user, Prompt.NOTIFY_PROMPT, thought=thought
             )
             if candidate:
                 logger.info(
@@ -273,23 +273,23 @@ class NotifyAgent(Agent):
 
     async def _generate_one_candidate(
         self, user: str, prompt: str, thought: Thought | None
-    ) -> ProactiveCandidate | None:
-        """Generate a single proactive candidate via the agentic loop.
+    ) -> NotifyCandidate | None:
+        """Generate a single notification candidate via the agentic loop.
 
         Uses thought-specific context (profile + thought) without
         conversation turns, so the model focuses on the thought
         rather than continuing the conversation.
         """
-        self._proactive_thought = thought
+        self._pending_thought = thought
         context = self._build_thought_candidate_context(user)
         self._install_tools(self.get_tools(user))
         response = await self.run(prompt=prompt, context=context)
-        self._proactive_thought = None
+        self._pending_thought = None
         answer = response.answer.strip() if response.answer else None
         if not answer:
             return None
         image_prompt = self._extract_image_prompt(response.tool_calls)
-        return ProactiveCandidate(
+        return NotifyCandidate(
             answer=answer,
             thought=thought,
             attachments=response.attachments or [],
@@ -300,14 +300,14 @@ class NotifyAgent(Agent):
         """Thought candidate context: profile + thought only. No history or conv turns."""
         sections: list[str | None] = [
             self._build_profile_context(user, None),
-            self._build_proactive_thought_context(),
+            self._build_pending_thought_context(),
         ]
         return "\n\n".join(s for s in sections if s)
 
-    def _build_proactive_thought_context(self) -> str | None:
+    def _build_pending_thought_context(self) -> str | None:
         """Build context for the specific thought being shared."""
-        if self._proactive_thought is not None:
-            return f"## Your Latest Thought\n{self._proactive_thought.content}"
+        if self._pending_thought is not None:
+            return f"## Your Latest Thought\n{self._pending_thought.content}"
         return None
 
     def _build_notified_thought_context(self, user: str) -> str | None:
@@ -321,15 +321,15 @@ class NotifyAgent(Agent):
     # ── Candidate scoring ─────────────────────────────────────────────
 
     async def _pick_best_candidate(
-        self, user: str, candidates: list[ProactiveCandidate]
-    ) -> ProactiveCandidate:
+        self, user: str, candidates: list[NotifyCandidate]
+    ) -> NotifyCandidate:
         """Score candidates on novelty + sentiment and return the best."""
         if len(candidates) == 1 or not self._embedding_model_client:
             return candidates[0]
 
         recent_vecs = await self._embed_recent_messages(user)
         likes, dislikes = self._load_preference_vectors(user)
-        best: ProactiveCandidate | None = None
+        best: NotifyCandidate | None = None
         best_score = float("-inf")
 
         for candidate in candidates:
@@ -375,7 +375,7 @@ class NotifyAgent(Agent):
 
     # ── Send ──────────────────────────────────────────────────────────
 
-    async def _send_candidate(self, user: str, candidate: ProactiveCandidate) -> bool:
+    async def _send_candidate(self, user: str, candidate: NotifyCandidate) -> bool:
         """Send the winning candidate and mark its thought as notified."""
         assert self._channel is not None
         thought_id = candidate.thought.id if candidate.thought else None
@@ -390,5 +390,5 @@ class NotifyAgent(Agent):
         )
         if candidate.thought and candidate.thought.id is not None:
             self.db.thoughts.mark_notified(candidate.thought.id)
-        logger.info("Proactive message sent to %s", user)
+        logger.info("Notification sent to %s", user)
         return True

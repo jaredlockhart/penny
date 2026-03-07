@@ -86,7 +86,7 @@ class UserStore:
     # --- Mute state ---
 
     def is_muted(self, user: str) -> bool:
-        """Check if a user has muted proactive notifications."""
+        """Check if a user has muted notifications."""
         with self._session() as session:
             return session.get(MuteState, user) is not None
 

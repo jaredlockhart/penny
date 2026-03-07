@@ -168,10 +168,10 @@ Examples:
         "follow your curiosity, go wherever it takes you."
     )
 
-    # Proactive message prompts (synthetic user messages for proactive outreach)
-    PROACTIVE_PROMPT = "Hey penny, what have you been thinking about?"
-    PROACTIVE_NEWS = "Hey penny, what's in the news?"
-    PROACTIVE_CHECKIN = "Ask the user what they've been up to lately."
+    # Notify prompts (synthetic user messages for outreach)
+    NOTIFY_PROMPT = "Hey penny, what have you been thinking about?"
+    NOTIFY_NEWS = "Hey penny, what's in the news?"
+    NOTIFY_CHECKIN = "Ask the user what they've been up to lately."
 
     PREFERENCE_IDENTIFICATION_PROMPT = (
         "Identify preference topics in the following conversation — "
