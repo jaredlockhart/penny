@@ -62,6 +62,11 @@ class SearchTool(Tool):
         # Resets automatically after _QUOTA_RETRY_SECONDS so search self-recovers when
         # quota is replenished without requiring a process restart.
         self._quota_exceeded_at: float | None = None
+        # True once quota has been exceeded at least once; cleared only after a
+        # successful Perplexity call.  Lets _handle_auth_error log at ERROR the first
+        # time and WARNING on subsequent retries so the monitor doesn't file a new bug
+        # each time the circuit resets and finds quota still exhausted.
+        self._quota_ever_exceeded: bool = False
 
     _QUOTA_RETRY_SECONDS: float = 3600.0  # retry Perplexity after 1 hour
 
@@ -141,8 +146,8 @@ class SearchTool(Tool):
         try:
             response = await self._call_perplexity(query)
         except AuthenticationError as e:
-            logger.error("Perplexity authentication error: %s", e)
             return self._handle_auth_error(e), []
+        self._quota_ever_exceeded = False  # successful call — clear retry tracking
         duration_ms = int((time.time() - start) * 1000)
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)
@@ -167,13 +172,23 @@ class SearchTool(Tool):
         if isinstance(body, dict):
             error_info = body.get("error")
             if isinstance(error_info, dict) and error_info.get("type") == "insufficient_quota":
-                if self._quota_exceeded_at is None:
+                if self._quota_ever_exceeded:
+                    # Circuit reset and quota is still exhausted — expected retry behavior.
+                    # Log at WARNING so the monitor doesn't file a new bug report.
+                    logger.warning(
+                        "Perplexity quota still exceeded after retry window — "
+                        "disabling for another %.0f seconds",
+                        self._QUOTA_RETRY_SECONDS,
+                    )
+                else:
                     logger.error(
                         "Perplexity quota exceeded — search disabled for %.0f seconds",
                         self._QUOTA_RETRY_SECONDS,
                     )
-                    self._quota_exceeded_at = time.time()
+                self._quota_exceeded_at = time.time()
+                self._quota_ever_exceeded = True
                 return PennyResponse.SEARCH_QUOTA_EXCEEDED
+        logger.error("Perplexity authentication error: %s", e)
         return PennyResponse.SEARCH_AUTH_FAILED
 
     async def _call_perplexity(self, query: str):

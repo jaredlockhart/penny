@@ -1,5 +1,6 @@
 """Tests for search query redaction of personal information."""
 
+import logging
 import time
 from unittest.mock import MagicMock
 
@@ -73,6 +74,7 @@ def _make_search_tool(response) -> SearchTool:
     tool.image_max_results = 3
     tool.image_download_timeout = 5.0
     tool._quota_exceeded_at = None
+    tool._quota_ever_exceeded = False
     return tool
 
 
@@ -114,6 +116,7 @@ def _make_search_tool_with_error(error: Exception) -> SearchTool:
     tool.image_download_timeout = 5.0
     tool.default_trigger = PennyConstants.SearchTrigger.USER_MESSAGE
     tool._quota_exceeded_at = None
+    tool._quota_ever_exceeded = False
     return tool
 
 
@@ -196,6 +199,57 @@ class TestPerplexityAuthError:
         # Circuit is re-tripped (timestamp updated)
         assert tool._quota_exceeded_at is not None
         assert time.time() - tool._quota_exceeded_at < 5  # recently set
+
+    @pytest.mark.asyncio
+    async def test_quota_exceeded_sets_ever_exceeded_flag(self):
+        """First quota hit sets _quota_ever_exceeded so retries log at WARNING."""
+        tool = _make_search_tool_with_error(_make_auth_error("insufficient_quota"))
+        assert tool._quota_ever_exceeded is False
+        await tool._search_text("first query")
+        assert tool._quota_ever_exceeded is True
+
+    @pytest.mark.asyncio
+    async def test_retry_after_reset_logs_warning_not_error(self, caplog):
+        """After circuit reset with quota still exceeded, logs WARNING not ERROR."""
+        tool = _make_search_tool_with_error(_make_auth_error("insufficient_quota"))
+
+        # Trip the circuit the first time (ERROR logged)
+        await tool._search_text("first query")
+        assert tool._quota_ever_exceeded is True
+
+        # Simulate retry window elapsed
+        tool._quota_exceeded_at = time.time() - SearchTool._QUOTA_RETRY_SECONDS - 1
+
+        with caplog.at_level(logging.WARNING, logger="penny.tools.search"):
+            caplog.clear()
+            text, urls = await tool._search_text("retry query")
+
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        # Only WARNING logged, no ERROR
+        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert error_records == []
+        assert len(warning_records) == 1
+        assert "still exceeded" in warning_records[0].message
+
+    @pytest.mark.asyncio
+    async def test_ever_exceeded_resets_after_successful_search(self):
+        """_quota_ever_exceeded resets to False after a successful Perplexity call."""
+        # Start with a tool that will fail, trip the circuit, then succeed
+        error = _make_auth_error("insufficient_quota")
+        tool = _make_search_tool_with_error(error)
+
+        # Trip the circuit
+        await tool._search_text("first query")
+        assert tool._quota_ever_exceeded is True
+
+        # Swap in a successful mock and let the circuit reset
+        tool.perplexity = MockPerplexityForNullTests(MockResponseNullOutput("Results"))
+        tool._quota_exceeded_at = time.time() - SearchTool._QUOTA_RETRY_SECONDS - 1
+
+        text, urls = await tool._search_text("successful query")
+        assert text == "Results"
+        assert tool._quota_ever_exceeded is False
 
 
 class TestSearchTextNullOutput:
