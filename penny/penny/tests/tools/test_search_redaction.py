@@ -1,5 +1,7 @@
 """Tests for search query redaction and quota circuit breaker."""
 
+import asyncio
+
 import perplexity as perplexity_sdk
 import pytest
 
@@ -398,3 +400,27 @@ class TestSearchQuotaViaExecute:
         assert isinstance(result, SearchResult)
         assert result.text == PennyResponse.SEARCH_QUOTA_EXCEEDED
         assert result.image_base64 is None
+
+    @pytest.mark.asyncio
+    async def test_concurrent_quota_errors_both_handled_gracefully(self):
+        """Concurrent execute() calls when quota first trips are both handled gracefully.
+
+        asyncio concurrency means multiple requests can pass the _quota_exceeded check
+        before any of them trips the breaker — all are in-flight simultaneously.
+        Both must return SearchResult without raising, never propagating
+        AuthenticationError to _execute_with_timeout.
+        """
+        tool = _make_quota_tool()
+        tool.skip_images = True
+
+        results = await asyncio.gather(
+            tool.execute(query="concurrent query 1"),
+            tool.execute(query="concurrent query 2"),
+        )
+
+        for result in results:
+            assert isinstance(result, SearchResult), f"Expected SearchResult, got {type(result)}"
+            assert result.text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+            assert result.image_base64 is None
+
+        assert SearchTool._quota_exceeded_flag
