@@ -363,6 +363,182 @@ async def test_thinking_browses_news_when_no_seed_topics(
 
 
 @pytest.mark.asyncio
+async def test_thinking_free_mode_has_no_context(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Free-thinking mode gets empty context — no profile, thoughts, or dislikes."""
+    # Force free-thinking path
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=1,
+    )
+
+    requests_seen: list[dict] = []
+
+    def handler(request, count):
+        requests_seen.append(request)
+        return mock_ollama._make_text_response(request, "just vibing")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+
+        # Add a dislike to verify it's NOT in free-thinking context
+        penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="Country music",
+            valence="negative",
+            source_period_start=datetime(2026, 3, 3),
+            source_period_end=datetime(2026, 3, 4),
+        )
+
+        await penny.thinking_agent.execute()
+
+        assert len(requests_seen) >= 1
+        system_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "system"]
+        all_system_text = " ".join(m.get("content", "") for m in system_msgs)
+
+        # Free-thinking should NOT have profile, thoughts, or dislike context
+        assert "Test User" not in all_system_text
+        assert "Recent Background Thinking" not in all_system_text
+        assert "Topics to Avoid" not in all_system_text
+
+        # But the prompt should be the free-thinking prompt
+        user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
+        assert any(
+            "free" in m.get("content", "").lower()
+            or "explore" in m.get("content", "").lower()
+            or "think" in m.get("content", "").lower()
+            for m in user_msgs
+        )
+
+
+@pytest.mark.asyncio
+async def test_thinking_seeded_mode_has_dislike_context(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Seeded thinking includes dislike context so Penny avoids unwanted topics."""
+    # Force non-free-thinking path
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=1,
+    )
+
+    requests_seen: list[dict] = []
+
+    def handler(request, count):
+        requests_seen.append(request)
+        return mock_ollama._make_text_response(request, "ok")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+
+        penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="Country music",
+            valence="negative",
+            source_period_start=datetime(2026, 3, 3),
+            source_period_end=datetime(2026, 3, 4),
+        )
+
+        await penny.thinking_agent.execute()
+
+        assert len(requests_seen) >= 1
+        system_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "system"]
+        all_system_text = " ".join(m.get("content", "") for m in system_msgs)
+
+        assert "Topics to Avoid" in all_system_text
+        assert "Country music" in all_system_text
+
+
+@pytest.mark.asyncio
+async def test_thinking_rebuild_system_prompt_updates_context(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """System prompt is rebuilt each step with accumulated monologue as anchor."""
+    # Force non-free-thinking path
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=2,
+    )
+
+    requests_seen: list[dict] = []
+
+    def handler(request, count):
+        requests_seen.append(request)
+        if count <= 2:
+            return mock_ollama._make_text_response(request, f"Thinking step {count}...")
+        return mock_ollama._make_text_response(request, "Summary of thoughts.")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+
+        await penny.thinking_agent.execute()
+
+        # Step 2 should have a rebuilt system prompt (different from step 1)
+        assert len(requests_seen) >= 2
+        system1 = [m for m in requests_seen[0]["messages"] if m.get("role") == "system"]
+        system2 = [m for m in requests_seen[1]["messages"] if m.get("role") == "system"]
+
+        # Both steps should have system messages with identity
+        sys1_text = " ".join(m.get("content", "") for m in system1)
+        sys2_text = " ".join(m.get("content", "") for m in system2)
+        assert "Penny" in sys1_text
+        assert "Penny" in sys2_text
+
+
+@pytest.mark.asyncio
+async def test_thinking_empty_monologue_skips_storage(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """ThinkingAgent doesn't store a thought when monologue is empty."""
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=1,
+    )
+
+    def handler(request, count):
+        # Return empty content
+        return mock_ollama._make_text_response(request, "")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+
+        await penny.thinking_agent.execute()
+
+        thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        assert len(thoughts) == 0
+
+
+@pytest.mark.asyncio
 async def test_scheduler_runs_history_before_thinking(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
