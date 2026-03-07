@@ -190,9 +190,9 @@ Examples:
     NOTIFY_PROMPT = "Hey penny, what have you been thinking about?"
     NOTIFY_NEWS = (
         "Hey penny, what's in the news? "
-        "List each article as a bullet with the title in bold, "
-        "the source in parentheses, and a link on the next line. "
-        "Don't summarize them into prose — just list them out."
+        "Start with a casual greeting, then list each article as a bullet with "
+        "the title in bold, a 1-sentence description of what it's about, "
+        "the source in parentheses, and a link on the next line."
     )
     NOTIFY_CHECKIN = "Ask the user what they've been up to lately."
 
