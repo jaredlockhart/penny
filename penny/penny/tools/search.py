@@ -58,6 +58,7 @@ class SearchTool(Tool):
         self.image_max_results = image_max_results
         self.image_download_timeout = image_download_timeout
         self.default_trigger = default_trigger
+        self._quota_exceeded: bool = False
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -129,12 +130,17 @@ class SearchTool(Tool):
         trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
+        if self._quota_exceeded:
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         start = time.time()
         try:
             response = await self._call_perplexity(query)
         except AuthenticationError as e:
             logger.error("Perplexity authentication error: %s", e)
-            return self._auth_error_message(e), []
+            message = self._auth_error_message(e)
+            if message == PennyResponse.SEARCH_QUOTA_EXCEEDED:
+                self._quota_exceeded = True
+            return message, []
         duration_ms = int((time.time() - start) * 1000)
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)

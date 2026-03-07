@@ -71,6 +71,7 @@ def _make_search_tool(response) -> SearchTool:
     tool.serper_api_key = None
     tool.image_max_results = 3
     tool.image_download_timeout = 5.0
+    tool._quota_exceeded = False
     return tool
 
 
@@ -111,6 +112,7 @@ def _make_search_tool_with_error(error: Exception) -> SearchTool:
     tool.image_max_results = 3
     tool.image_download_timeout = 5.0
     tool.default_trigger = PennyConstants.SearchTrigger.USER_MESSAGE
+    tool._quota_exceeded = False
     return tool
 
 
@@ -140,6 +142,43 @@ class TestPerplexityAuthError:
         result = await tool.execute(query="test query", skip_images=True)
         assert result.text == PennyResponse.SEARCH_QUOTA_EXCEEDED
         assert result.urls == []
+
+    @pytest.mark.asyncio
+    async def test_quota_exceeded_short_circuits_subsequent_calls(self):
+        """After insufficient_quota error, subsequent calls skip the API without hitting it."""
+        tool = _make_search_tool_with_error(_make_auth_error("insufficient_quota"))
+
+        # First call: hits API, gets quota error, sets circuit-breaker flag
+        text, urls = await tool._search_text("first query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+        assert tool._quota_exceeded is True
+
+        # Replace mock with one that would raise if called — proves API is not hit
+        api_calls: list[str] = []
+
+        class TrackingResponses:
+            def create(self, preset: str, input: str) -> None:
+                api_calls.append(input)
+                raise RuntimeError("API should not be called after quota exceeded")
+
+        class TrackingPerplexity:
+            responses = TrackingResponses()
+
+        tool.perplexity = TrackingPerplexity()
+
+        # Second call: short-circuits, never touches Perplexity
+        text2, urls2 = await tool._search_text("second query")
+        assert text2 == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls2 == []
+        assert api_calls == []
+
+    @pytest.mark.asyncio
+    async def test_bad_key_does_not_set_quota_exceeded_flag(self):
+        """A non-quota auth error does not activate the circuit-breaker."""
+        tool = _make_search_tool_with_error(_make_auth_error("invalid_api_key"))
+        await tool._search_text("test query")
+        assert tool._quota_exceeded is False
 
 
 class TestSearchTextNullOutput:
