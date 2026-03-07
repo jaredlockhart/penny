@@ -123,7 +123,8 @@ Monitor agent automatically detects errors in penny's production logs and files 
 - `penny_team/monitor.py`: `MonitorAgent` subclass that reads `data/penny/logs/penny.log` instead of GitHub issues
 - Tracks byte offset in `data/penny-team/state/monitor.state.json` to only process new log content
 - Python code extracts ERROR/CRITICAL lines and tracebacks from new content
-- Claude CLI analyzes errors, deduplicates against existing bug issues, and creates new issues
+- **Python-space dedup**: Before calling Claude, fetches open bug issues via `GitHubAPI` and filters out errors whose module + exception type already appear in an existing issue's title/body — prevents duplicate filing
+- Claude CLI analyzes remaining novel errors and creates new issues
 - First run reads last 100KB of log to avoid processing entire history
 - Log rotation detected by file size < saved offset (resets to 0)
 - Filed issues get the `bug` label, which the Worker agent picks up via its bug fix workflow

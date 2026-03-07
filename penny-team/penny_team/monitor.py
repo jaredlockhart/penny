@@ -1,9 +1,9 @@
 """Monitor agent: reads penny production logs, detects errors, files bug issues.
 
 Reads new content from penny's log file since the last run, extracts
-ERROR/CRITICAL lines with their tracebacks, and uses Claude CLI to
-analyze errors, deduplicate against existing bug issues, and create
-new bug issues for the Worker agent to fix.
+ERROR/CRITICAL lines with their tracebacks, deduplicates against open
+bug issues in Python, and uses Claude CLI to analyze remaining errors
+and create new bug issues for the Worker agent to fix.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from github_api.api import GitHubAPI
+from github_api.api import GitHubAPI, IssueDetail
 
 from penny_team.base import Agent, AgentRun
 from penny_team.constants import TeamConstants
@@ -88,6 +88,63 @@ def extract_errors(log_text: str) -> list[ErrorBlock]:
         i += 1
 
     return errors
+
+
+# Pattern to match the last exception line in a traceback (e.g., "ValueError: bad input")
+_EXCEPTION_RE = re.compile(r"^(\w+(?:\.\w+)*(?:Error|Exception|Warning|Fault))\b", re.MULTILINE)
+
+
+def extract_error_signature(error: ErrorBlock) -> str:
+    """Extract a normalized signature for dedup: 'module:ExceptionType'.
+
+    Uses the module from the log line and the exception type from the
+    traceback. Falls back to the first few words of the message if
+    no exception type is found in the traceback.
+    """
+    exception_type = ""
+    if error.traceback:
+        matches = _EXCEPTION_RE.findall(error.traceback)
+        if matches:
+            exception_type = matches[-1]  # Last match is the actual exception
+
+    if not exception_type:
+        # Fall back to first few significant words of the message
+        words = error.message.split()[:4]
+        exception_type = " ".join(words)
+
+    return f"{error.module}:{exception_type}".lower()
+
+
+def filter_known_errors(
+    errors: list[ErrorBlock],
+    open_issues: list[IssueDetail],
+) -> list[ErrorBlock]:
+    """Remove errors that already have a matching open bug issue.
+
+    Matches by checking if the error's module AND exception type both
+    appear in an existing issue's title or body. This is intentionally
+    conservative — both must match to suppress the error.
+    """
+    if not open_issues:
+        return errors
+
+    # Build searchable text for each open issue (title + body, lowercased)
+    issue_texts = [f"{issue.title}\n{issue.body}".lower() for issue in open_issues]
+
+    novel: list[ErrorBlock] = []
+    for error in errors:
+        sig = extract_error_signature(error)
+        module_part, exception_part = sig.split(":", 1)
+
+        # Check if both module and exception appear in any open issue
+        is_known = any(module_part in text and exception_part in text for text in issue_texts)
+
+        if is_known:
+            logger.info(f"[monitor] Skipping known error: {error.module} / {exception_part}")
+        else:
+            novel.append(error)
+
+    return novel
 
 
 def format_errors_for_prompt(errors: list[ErrorBlock]) -> str:
@@ -220,8 +277,18 @@ class MonitorAgent(Agent):
         new_offset = self.log_path.stat().st_size
         return content, new_offset
 
+    def _fetch_open_bug_issues(self) -> list[IssueDetail]:
+        """Fetch open bug issues for dedup. Returns empty list on failure."""
+        if self.github_api is None:
+            return []
+        try:
+            return self.github_api.list_issues_detailed(TeamConstants.Label.BUG, limit=30)
+        except (OSError, RuntimeError) as e:
+            logger.warning(f"[{self.name}] Failed to fetch open bug issues: {e}")
+            return []  # Fail-open: skip dedup rather than blocking
+
     def run(self) -> AgentRun:
-        """Read new log content, extract errors, and run Claude to file bug issues."""
+        """Read new log content, extract errors, dedup, and run Claude to file bug issues."""
         logger.info(f"[{self.name}] Starting cycle #{self.run_count + 1}")
         start = datetime.now()
 
@@ -257,6 +324,24 @@ class MonitorAgent(Agent):
             )
 
         logger.info(f"[{self.name}] Found {len(errors)} error(s) in logs")
+
+        # Python-space dedup: filter out errors that already have open bug issues
+        open_issues = self._fetch_open_bug_issues()
+        errors = filter_known_errors(errors, open_issues)
+
+        if not errors:
+            self._save_offset(new_offset)
+            duration = (datetime.now() - start).total_seconds()
+            self.last_run = datetime.now()
+            self.run_count += 1
+            logger.info(f"[{self.name}] All errors matched existing bug issues")
+            return AgentRun(
+                agent_name=self.name,
+                success=True,
+                output="All errors already have open issues",
+                duration=duration,
+                timestamp=start,
+            )
 
         prompt = self.prompt_path.read_text()
         error_section = format_errors_for_prompt(errors)
