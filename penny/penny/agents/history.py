@@ -393,14 +393,6 @@ class HistoryAgent(Agent):
         return first_msg_time.replace(hour=0, minute=0, second=0, microsecond=0)
 
     @staticmethod
-    def _midnight_today() -> datetime:
-        """Return midnight UTC for today as a naive datetime.
-
-        Naive because SQLite strips timezone info — all stored datetimes are naive UTC.
-        """
-        return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-
-    @staticmethod
     def _format_messages(messages: list) -> str:
         """Format messages for the summarization prompt."""
         lines: list[str] = []

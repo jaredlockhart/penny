@@ -138,3 +138,61 @@ def _is_match(strategy: DedupStrategy, tcr_pass: bool, embed_pass: bool) -> bool
         return embed_pass  # tcr_pass already enforced by caller skip
     # TCR_OR_EMBEDDING
     return tcr_pass or embed_pass
+
+
+# ── Sentiment scoring ────────────────────────────────────────────────────────
+
+
+def compute_sentiment_score(
+    vec: list[float],
+    likes: list[list[float]],
+    dislikes: list[list[float]],
+) -> float:
+    """Score = avg similarity to likes - avg similarity to dislikes.
+
+    Higher scores indicate stronger alignment with liked topics.
+    Returns 0.0 when both lists are empty.
+    """
+    like_score = 0.0
+    if likes:
+        like_score = sum(cosine_similarity(vec, lv) for lv in likes) / len(likes)
+    dislike_score = 0.0
+    if dislikes:
+        dislike_score = sum(cosine_similarity(vec, dv) for dv in dislikes) / len(dislikes)
+    return like_score - dislike_score
+
+
+def load_preference_vectors(
+    preferences: list,
+    positive_valence: str,
+    negative_valence: str,
+) -> tuple[list[list[float]], list[list[float]]]:
+    """Load like and dislike embedding vectors from preference records.
+
+    Args:
+        preferences: Preference records with .embedding and .valence attributes.
+        positive_valence: Valence string for likes (e.g. "positive").
+        negative_valence: Valence string for dislikes (e.g. "negative").
+
+    Returns:
+        (likes, dislikes) as lists of float vectors.
+    """
+    likes: list[list[float]] = []
+    dislikes: list[list[float]] = []
+    for p in preferences:
+        if not p.embedding:
+            continue
+        vec = deserialize_embedding(p.embedding)
+        if p.valence == positive_valence:
+            likes.append(vec)
+        elif p.valence == negative_valence:
+            dislikes.append(vec)
+    return likes, dislikes
+
+
+def novelty_score(vec: list[float], recent_vecs: list[list[float]]) -> float:
+    """1 - max similarity to any recent message. Higher = more novel."""
+    if not recent_vecs:
+        return 1.0
+    max_sim = max(cosine_similarity(vec, rv) for rv in recent_vecs)
+    return 1.0 - max_sim

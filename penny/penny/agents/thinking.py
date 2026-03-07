@@ -122,6 +122,21 @@ class ThinkingAgent(Agent):
             logger.info("[inner_monologue] %s", report[:200])
         return True
 
+    # ── Model calls ────────────────────────────────────────────────────────
+
+    async def _summarize_text(self, content: str, prompt: str) -> str:
+        """Summarize content using the background model. Returns empty string on failure."""
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": content},
+        ]
+        try:
+            response = await self._model_client.chat(messages=messages)
+            return response.content.strip()
+        except Exception as e:
+            logger.error("Summarization failed: %s", e)
+            return ""
+
     # ── Loop hooks ─────────────────────────────────────────────────────────
 
     def on_response(self, response) -> None:

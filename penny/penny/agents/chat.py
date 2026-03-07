@@ -7,15 +7,11 @@ Context is injected automatically via the Agent base class.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +115,17 @@ class ChatAgent(Agent):
     def get_history(self, user: str) -> list[tuple[str, str]] | None:
         """Recent conversation messages for chat continuity."""
         return self._build_conversation(user)
+
+    # ── Vision ────────────────────────────────────────────────────────────
+
+    async def caption_image(self, image_b64: str) -> str:
+        """Caption an image using the vision model."""
+        messages = [
+            {"role": "user", "content": Prompt.VISION_AUTO_DESCRIBE_PROMPT, "images": [image_b64]},
+        ]
+        assert self._vision_model_client is not None
+        response = await self._vision_model_client.chat(messages=messages)
+        return response.content.strip()
 
     # ── Image processing ──────────────────────────────────────────────────
 

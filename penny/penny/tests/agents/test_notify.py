@@ -229,15 +229,19 @@ def test_extract_image_prompt_returns_none_when_empty():
 
 def test_novelty_score_full_when_no_recent():
     """Novelty is 1.0 when there are no recent messages to compare against."""
-    score = NotifyAgent._novelty_score([1.0, 0.0, 0.0], [])
+    from penny.ollama.similarity import novelty_score
+
+    score = novelty_score([1.0, 0.0, 0.0], [])
     assert score == 1.0
 
 
 def test_novelty_score_low_when_identical():
     """Novelty is low when candidate matches a recent message exactly."""
+    from penny.ollama.similarity import novelty_score
+
     vec = [1.0, 0.0, 0.0]
     recent = [[1.0, 0.0, 0.0]]
-    score = NotifyAgent._novelty_score(vec, recent)
+    score = novelty_score(vec, recent)
     assert score < 0.01  # Nearly zero
 
 

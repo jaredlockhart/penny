@@ -170,7 +170,12 @@ Examples:
 
     # Notify prompts (synthetic user messages for outreach)
     NOTIFY_PROMPT = "Hey penny, what have you been thinking about?"
-    NOTIFY_NEWS = "Hey penny, what's in the news?"
+    NOTIFY_NEWS = (
+        "Hey penny, what's in the news? "
+        "List each article as a bullet with the title in bold, "
+        "the source in parentheses, and a link on the next line. "
+        "Don't summarize them into prose — just list them out."
+    )
     NOTIFY_CHECKIN = "Ask the user what they've been up to lately."
 
     PREFERENCE_IDENTIFICATION_PROMPT = (

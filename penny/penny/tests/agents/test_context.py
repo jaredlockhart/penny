@@ -337,18 +337,18 @@ async def test_profile_context_none_for_unknown_user(
 
 def test_compute_sentiment_score_likes_minus_dislikes():
     """Sentiment score = avg similarity to likes - avg similarity to dislikes."""
-    from penny.agents.base import Agent
+    from penny.ollama.similarity import compute_sentiment_score
 
     vec = [1.0, 0.0, 0.0]
     likes = [[1.0, 0.0, 0.0]]  # identical = similarity 1.0
     dislikes = [[0.0, 1.0, 0.0]]  # orthogonal = similarity 0.0
-    score = Agent._compute_sentiment_score(vec, likes, dislikes)
+    score = compute_sentiment_score(vec, likes, dislikes)
     assert score > 0.9  # close to 1.0
 
 
 def test_compute_sentiment_score_no_preferences():
     """Sentiment score is 0 when no preferences exist."""
-    from penny.agents.base import Agent
+    from penny.ollama.similarity import compute_sentiment_score
 
-    score = Agent._compute_sentiment_score([1.0, 0.0, 0.0], [], [])
+    score = compute_sentiment_score([1.0, 0.0, 0.0], [], [])
     assert score == 0.0

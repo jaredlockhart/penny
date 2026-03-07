@@ -16,9 +16,14 @@ from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
 from penny.agents.models import ToolCallRecord
+from penny.constants import PennyConstants
 from penny.database.models import Thought
-from penny.ollama.embeddings import cosine_similarity
-from penny.ollama.similarity import embed_text
+from penny.ollama.similarity import (
+    compute_sentiment_score,
+    embed_text,
+    load_preference_vectors,
+    novelty_score,
+)
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
@@ -255,7 +260,11 @@ class NotifyAgent(Agent):
 
     async def _rank_thoughts(self, user: str, thoughts: list[Thought], n: int) -> list[Thought]:
         """Score thoughts by preference affinity and return the top N."""
-        likes, dislikes = self._load_preference_vectors(user)
+        likes, dislikes = load_preference_vectors(
+            self.db.preferences.get_with_embeddings(user),
+            PennyConstants.PreferenceValence.POSITIVE,
+            PennyConstants.PreferenceValence.NEGATIVE,
+        )
         if (not likes and not dislikes) or not self._embedding_model_client:
             return random.sample(thoughts, n)
 
@@ -264,7 +273,7 @@ class NotifyAgent(Agent):
             vec = await embed_text(self._embedding_model_client, thought.content)
             if vec is None:
                 continue
-            score = self._compute_sentiment_score(vec, likes, dislikes)
+            score = compute_sentiment_score(vec, likes, dislikes)
             scored.append((thought, score))
 
         if not scored:
@@ -359,7 +368,11 @@ class NotifyAgent(Agent):
             return candidates[0]
 
         recent_vecs = await self._embed_recent_messages(user)
-        likes, dislikes = self._load_preference_vectors(user)
+        likes, dislikes = load_preference_vectors(
+            self.db.preferences.get_with_embeddings(user),
+            PennyConstants.PreferenceValence.POSITIVE,
+            PennyConstants.PreferenceValence.NEGATIVE,
+        )
         best: NotifyCandidate | None = None
         best_score = float("-inf")
 
@@ -367,8 +380,8 @@ class NotifyAgent(Agent):
             vec = await embed_text(self._embedding_model_client, candidate.answer)
             if vec is None:
                 continue
-            novelty = self._novelty_score(vec, recent_vecs)
-            sentiment = self._compute_sentiment_score(vec, likes, dislikes)
+            novelty = novelty_score(vec, recent_vecs)
+            sentiment = compute_sentiment_score(vec, likes, dislikes)
             score = 0.5 * novelty + 0.5 * sentiment
             logger.info(
                 "Candidate score: %.3f (novelty=%.3f, sentiment=%.3f) %s",
@@ -382,14 +395,6 @@ class NotifyAgent(Agent):
                 best = candidate
 
         return best if best is not None else candidates[0]
-
-    @staticmethod
-    def _novelty_score(vec: list[float], recent_vecs: list[list[float]]) -> float:
-        """1 - max similarity to any recent message. Higher = more novel."""
-        if not recent_vecs:
-            return 1.0
-        max_sim = max(cosine_similarity(vec, rv) for rv in recent_vecs)
-        return 1.0 - max_sim
 
     async def _embed_recent_messages(self, user: str) -> list[list[float]]:
         """Embed recent outgoing messages for novelty comparison."""
