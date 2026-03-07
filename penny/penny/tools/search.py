@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
+import perplexity as perplexity_sdk
 from perplexity import Perplexity
 from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputItem
 
@@ -130,7 +131,11 @@ class SearchTool(Tool):
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
         start = time.time()
-        response = await self._call_perplexity(query)
+        try:
+            response = await self._call_perplexity(query)
+        except perplexity_sdk.AuthenticationError as e:
+            logger.warning("Perplexity quota exceeded or auth error: %s", e)
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         duration_ms = int((time.time() - start) * 1000)
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)

@@ -1,7 +1,11 @@
 """Tests for search query redaction of personal information."""
 
+from unittest.mock import MagicMock
+
+import perplexity as perplexity_sdk
 import pytest
 
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 
@@ -68,6 +72,89 @@ def _make_search_tool(response) -> SearchTool:
     tool.image_max_results = 3
     tool.image_download_timeout = 5.0
     return tool
+
+
+class MockRaisingPerplexity:
+    """Minimal Perplexity mock that raises a given exception on create()."""
+
+    def __init__(self, exc: Exception):
+        self._exc = exc
+
+        class _Responses:
+            def __init__(self, exc):
+                self._exc = exc
+
+            def create(self, preset, input):
+                raise self._exc
+
+        self.responses = _Responses(exc)
+
+
+class TestSearchTextQuotaError:
+    """Tests that _search_text degrades gracefully on Perplexity quota/auth errors."""
+
+    @staticmethod
+    def _make_tool_with_raising_perplexity(exc: Exception) -> SearchTool:
+        from penny.constants import PennyConstants
+
+        tool = object.__new__(SearchTool)
+        tool.perplexity = MockRaisingPerplexity(exc)
+        tool.db = None
+        tool.redact_terms = []
+        tool.skip_images = True
+        tool.serper_api_key = None
+        tool.image_max_results = 3
+        tool.image_download_timeout = 5.0
+        tool.default_trigger = PennyConstants.SearchTrigger.USER_MESSAGE
+        return tool
+
+    @pytest.mark.asyncio
+    async def test_authentication_error_returns_quota_message(self):
+        """AuthenticationError (quota exceeded) returns graceful message, no raise."""
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.headers = {}
+        exc = perplexity_sdk.AuthenticationError(
+            response=mock_response,
+            body={
+                "error": {
+                    "message": "insufficient_quota",
+                    "type": "insufficient_quota",
+                    "code": 401,
+                }
+            },
+            message="You exceeded your current quota",
+        )
+        tool = self._make_tool_with_raising_perplexity(exc)
+
+        text, urls = await tool._search_text("test query")
+
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_execute_with_skip_images_quota_error_returns_search_result(self):
+        """execute() with skip_images=True returns SearchResult with quota message."""
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.headers = {}
+        exc = perplexity_sdk.AuthenticationError(
+            response=mock_response,
+            body={
+                "error": {
+                    "message": "insufficient_quota",
+                    "type": "insufficient_quota",
+                    "code": 401,
+                }
+            },
+            message="You exceeded your current quota",
+        )
+        tool = self._make_tool_with_raising_perplexity(exc)
+
+        result = await tool.execute(query="weather today", skip_images=True)
+
+        assert result.text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert result.urls == []
 
 
 class TestSearchTextNullOutput:
