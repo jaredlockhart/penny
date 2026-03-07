@@ -12,14 +12,24 @@ from penny_team.orchestrator import get_agents, load_github_app, save_agent_log
 class TestGetAgents:
     def test_returns_four_agents(self, project_root, monkeypatch):
         monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
+        monkeypatch.delenv("OLLAMA_BACKGROUND_MODEL", raising=False)
         agents = get_agents()
         assert len(agents) == 4
 
     def test_agent_names(self, project_root, monkeypatch):
         monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
+        monkeypatch.delenv("OLLAMA_BACKGROUND_MODEL", raising=False)
         agents = get_agents()
         names = {a.name for a in agents}
         assert names == {"product-manager", "architect", "worker", "monitor"}
+
+    def test_quality_agent_registered_when_model_configured(self, project_root, monkeypatch):
+        monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
+        monkeypatch.setenv("OLLAMA_BACKGROUND_MODEL", "test-model")
+        agents = get_agents()
+        names = {a.name for a in agents}
+        assert "quality" in names
+        assert len(agents) == 5
 
     def test_agent_labels(self, project_root, monkeypatch):
         monkeypatch.setattr("penny_team.orchestrator.PROJECT_ROOT", project_root)
