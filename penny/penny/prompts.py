@@ -142,6 +142,9 @@ Examples:
         "Write in plain prose with clear structure. "
         "Be thorough — this report is the primary record of this research. "
         "Do NOT summarize down to a few sentences. Keep all substantive details.\n\n"
+        "IMPORTANT: Only report information that was explicitly found via tool calls "
+        "in the thinking session above. Do not add facts, dates, names, or claims "
+        "from your training data. If a detail was not found by a tool, omit it.\n\n"
         "If nothing noteworthy was found, say so briefly."
     )
 

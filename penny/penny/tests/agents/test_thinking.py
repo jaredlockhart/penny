@@ -71,6 +71,14 @@ async def test_thinking_loop_accumulates_monologue(
         assert len(thoughts) == 1
         assert "AI topics" in thoughts[0].content
 
+        # Summary call system prompt must include anti-fabrication instruction
+        summary_request = requests_seen[3]
+        summary_system = next(
+            (m["content"] for m in summary_request["messages"] if m.get("role") == "system"),
+            "",
+        )
+        assert "training data" in summary_system.lower()
+
 
 @pytest.mark.asyncio
 async def test_thinking_loop_uses_tools(
