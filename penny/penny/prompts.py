@@ -43,7 +43,13 @@ class Prompt:
         "Focus on ONE topic per response. Pick the most relevant "
         "thing to the user's message and go deep on that. Do not try to cover "
         "every interest — that's what background research is for.\n\n"
-        "Drop a link if they'd want to read more, but only if it's actually useful."
+        "Drop a link if they'd want to read more, but only if it's actually useful.\n\n"
+        "IMPORTANT: When recommending or listing specific titles, games, apps, "
+        "or products available on a particular platform, always search first. "
+        "Only name items that appear explicitly in your search results — never "
+        "list titles from your training data alone. Platform availability changes "
+        "and your training data may be wrong or outdated. If search results don't "
+        "return relevant titles, say so honestly rather than inventing names."
     )
 
     # Email prompts

@@ -114,6 +114,11 @@ async def test_basic_message_flow(
         )
         assert "reasoning" in system_text.lower(), "Prompt should mention reasoning field"
 
+        # Guardrail: title recommendations must come from search results, not training data
+        assert "search results" in system_text.lower(), (
+            "Prompt should include title recommendation guardrail requiring search results"
+        )
+
         # Verify typing indicators were sent
         assert len(signal_server.typing_events) >= 1, "Should have sent typing indicator"
 
