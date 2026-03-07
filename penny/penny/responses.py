@@ -183,3 +183,7 @@ class PennyResponse:
 
     NO_RESULTS_TEXT = "No results found"
     SEARCH_ERROR = "Failed to search: {error}"
+    SEARCH_QUOTA_EXCEEDED = (
+        "Search is temporarily unavailable (quota exceeded). I'll try again later."
+    )
+    SEARCH_AUTH_FAILED = "Search is unavailable (authentication error). Please check the API key."
