@@ -6,9 +6,9 @@ import re
 import time
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
-from perplexity import Perplexity
+from perplexity import AuthenticationError, Perplexity
 from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputItem
 
 from penny.constants import PennyConstants
@@ -130,13 +130,30 @@ class SearchTool(Tool):
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
         start = time.time()
-        response = await self._call_perplexity(query)
+        try:
+            response = await self._call_perplexity(query)
+        except AuthenticationError as e:
+            logger.error("Perplexity authentication error: %s", e)
+            return self._auth_error_message(e), []
         duration_ms = int((time.time() - start) * 1000)
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)
         urls = self._extract_urls(response)
         self._log_search(query, result, duration_ms, trigger)
         return result, urls
+
+    @staticmethod
+    def _auth_error_message(e: AuthenticationError) -> str:
+        """Return user-friendly message distinguishing quota vs bad-key auth errors."""
+        body = cast(Any, e.body)
+        if not isinstance(body, dict):
+            return PennyResponse.SEARCH_AUTH_FAILED
+        error_info = body.get("error")
+        if not isinstance(error_info, dict):
+            return PennyResponse.SEARCH_AUTH_FAILED
+        if error_info.get("type") == "insufficient_quota":
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED
+        return PennyResponse.SEARCH_AUTH_FAILED
 
     async def _call_perplexity(self, query: str):
         """Call Perplexity API with dated query prefix."""
