@@ -199,7 +199,7 @@ ConfigParam(
     key="INNER_MONOLOGUE_INTERVAL",
     description="Interval in seconds between inner monologue cycles",
     type=float,
-    default=600.0,
+    default=1200.0,
     validator=_validate_positive_float,
     group=GROUP_INNER_MONOLOGUE,
 )
