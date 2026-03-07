@@ -1,6 +1,7 @@
 """Integration tests for ThinkingAgent: continuous inner monologue loop."""
 
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -307,7 +308,9 @@ async def test_thinking_context_has_no_raw_conversation(
         # Seed a thought
         penny.db.thoughts.add(TEST_SENDER, "test thought")
 
-        await penny.thinking_agent.execute()
+        # Force a non-free-thinking cycle so thought context is included
+        with patch("penny.agents.thinking.random.random", return_value=0.9):
+            await penny.thinking_agent.execute()
 
         assert len(requests_seen) >= 1
         first_msgs = requests_seen[0]["messages"]
