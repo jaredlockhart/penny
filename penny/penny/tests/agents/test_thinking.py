@@ -204,6 +204,66 @@ async def test_thinking_seed_topic_drives_prompt(
 
 
 @pytest.mark.asyncio
+async def test_thinking_marks_preference_and_rotates(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Seeded thinking marks the preference's last_thought_at, rotating future seeds."""
+    # Force non-free-thinking path and deterministic choice (first item)
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=1,
+    )
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(request, "ok")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Add two preferences
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello"
+        )
+        pref_a = penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="astrophysics",
+            valence="positive",
+            source_period_start=datetime(2026, 3, 3),
+            source_period_end=datetime(2026, 3, 4),
+        )
+        pref_b = penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="cyberpunk anime",
+            valence="positive",
+            source_period_start=datetime(2026, 3, 3),
+            source_period_end=datetime(2026, 3, 4),
+        )
+        assert pref_a is not None and pref_b is not None
+
+        # First cycle: picks first from pool (both have NULL last_thought_at)
+        await penny.thinking_agent.execute()
+
+        # The used preference should now have last_thought_at set
+        updated = penny.db.preferences.get_least_recent_positive(TEST_SENDER, pool_size=5)
+        thought_about = [p for p in updated if p.last_thought_at is not None]
+        not_thought = [p for p in updated if p.last_thought_at is None]
+        assert len(thought_about) == 1
+        assert len(not_thought) == 1
+
+        # Second cycle: the un-thought-about one should be first in the pool
+        pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER, pool_size=5)
+        assert pool[0].last_thought_at is None  # Never thought about comes first
+
+
+@pytest.mark.asyncio
 async def test_thinking_context_has_no_raw_conversation(
     signal_server,
     mock_ollama,

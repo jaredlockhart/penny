@@ -75,6 +75,39 @@ class PreferenceStore:
                 ).all()
             )
 
+    def get_least_recent_positive(self, user: str, pool_size: int = 5) -> list[Preference]:
+        """Get the N least-recently-thought-about positive preferences.
+
+        NULLs (never thought about) come first, then oldest last_thought_at.
+        """
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Preference)
+                    .where(
+                        Preference.user == user,
+                        Preference.valence == "positive",
+                    )
+                    .order_by(
+                        Preference.last_thought_at.is_(None).desc(),  # type: ignore[union-attr]
+                        Preference.last_thought_at.asc(),  # type: ignore[union-attr]
+                    )
+                    .limit(pool_size)
+                ).all()
+            )
+
+    def mark_thought_about(self, pref_id: int) -> None:
+        """Update last_thought_at to now for a preference."""
+        try:
+            with self._session() as session:
+                pref = session.get(Preference, pref_id)
+                if pref:
+                    pref.last_thought_at = datetime.now(UTC)
+                    session.add(pref)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to mark preference %d as thought about: %s", pref_id, e)
+
     def get_with_embeddings(self, user: str) -> list[Preference]:
         """Get preferences with embeddings for similarity search."""
         with self._session() as session:

@@ -139,6 +139,7 @@ class Preference(SQLModel, table=True):
     source_period_start: datetime  # Start of source conversation period
     source_period_end: datetime  # End of source conversation period
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    last_thought_at: datetime | None = None  # When this preference was last used as a thinking seed
 
 
 class ConversationHistory(SQLModel, table=True):

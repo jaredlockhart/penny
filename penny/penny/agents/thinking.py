@@ -66,6 +66,7 @@ class ThinkingAgent(Agent):
         self._inner_monologue: list[str] = []
         self._free_thinking: bool = False
         self._seed_topic: str | None = None
+        self._seed_pref_id: int | None = None
 
     # ── Execution hooks ──────────────────────────────────────────────────
 
@@ -74,21 +75,23 @@ class ThinkingAgent(Agent):
         self._inner_monologue = []
         self._free_thinking = False
         self._seed_topic = None
+        self._seed_pref_id = None
 
         if random.random() < FREE_THINKING_PROBABILITY:
             logger.info("Free thinking cycle for %s", user)
             self._free_thinking = True
             return Prompt.THINKING_FREE
 
-        preferences = self.db.preferences.get_positive(user)
-        if not preferences:
+        pool = self.db.preferences.get_least_recent_positive(user)
+        if not pool:
             logger.info("No preferences for %s, browsing news", user)
             return Prompt.THINKING_BROWSE_NEWS
 
-        seed = random.choice(preferences).content
-        self._seed_topic = seed
-        logger.info("Thinking seed: %s", seed)
-        return Prompt.THINKING_SEED.format(seed=seed)
+        pref = random.choice(pool)
+        self._seed_topic = pref.content
+        self._seed_pref_id = pref.id
+        logger.info("Thinking seed: %s", pref.content)
+        return Prompt.THINKING_SEED.format(seed=pref.content)
 
     async def get_context(self, user: str) -> str:
         """Slim context — profile, entities (seed-anchored), thoughts, and dislikes.
@@ -114,6 +117,8 @@ class ThinkingAgent(Agent):
         report = await self._summarize_text(combined, Prompt.THINKING_REPORT_PROMPT)
         if report:
             self.db.thoughts.add(user, report)
+            if self._seed_pref_id is not None:
+                self.db.preferences.mark_thought_about(self._seed_pref_id)
             logger.info("[inner_monologue] %s", report[:200])
         return True
 
