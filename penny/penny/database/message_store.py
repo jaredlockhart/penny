@@ -190,7 +190,7 @@ class MessageStore:
 
     def get_thread_context(
         self, quoted_text: str
-    ) -> tuple[int | None, list[tuple[MessageRole, str]] | None]:
+    ) -> tuple[int | None, list[tuple[str, str]] | None]:
         """Look up a quoted message and return its id and conversation context."""
         parent_msg = self.find_outgoing_by_content(quoted_text)
         if not parent_msg:
