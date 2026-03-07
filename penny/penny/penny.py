@@ -5,6 +5,7 @@ import logging
 import signal
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from penny.agents import (
@@ -34,6 +35,7 @@ from penny.startup import get_restart_message
 from penny.tools import SearchTool, Tool
 from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.news import NewsTool
+from penny.tools.search import QUOTA_STATE_FILENAME
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,10 @@ class Penny:
             else None
         )
 
+    def _quota_state_file(self) -> Path:
+        """Path to the persistent quota circuit breaker state file."""
+        return Path(self.config.db_path).parent / QUOTA_STATE_FILENAME
+
     def _create_search_tools(self, db: Database) -> list[Tool]:
         """Build search tools list for a given database."""
         if not self.config.perplexity_api_key:
@@ -101,6 +107,7 @@ class Penny:
                 serper_api_key=self.config.serper_api_key,
                 image_max_results=int(self.config.runtime.IMAGE_MAX_RESULTS),
                 image_download_timeout=self.config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
+                quota_state_file=self._quota_state_file(),
             )
         ]
 
@@ -116,6 +123,7 @@ class Penny:
             image_max_results=int(config.runtime.IMAGE_MAX_RESULTS),
             image_download_timeout=config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
             default_trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
+            quota_state_file=self._quota_state_file(),
         )
 
     def _create_chat_agent(self, db: Database) -> ChatAgent:
