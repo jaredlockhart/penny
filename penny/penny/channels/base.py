@@ -232,6 +232,7 @@ class MessageChannel(ABC):
         attachments: list[str] | None = None,
         quote_message: MessageLog | None = None,
         image_prompt: str | None = None,
+        thought_id: int | None = None,
     ) -> int | None:
         """
         Log and send an outgoing message.
@@ -243,6 +244,7 @@ class MessageChannel(ABC):
             attachments: Optional list of base64-encoded attachments
             quote_message: Optional message to quote-reply to
             image_prompt: Optional search query to find and attach an image
+            thought_id: Optional FK to the thought that triggered this message
 
         Returns:
             Database message ID if send was successful, None otherwise
@@ -262,6 +264,7 @@ class MessageChannel(ABC):
             prepared,
             parent_id=parent_id,
             recipient=recipient,
+            thought_id=thought_id,
         )
         external_id = await self.send_message(recipient, prepared, attachments, quote_message)
         # Store the external ID for future reactions and quote replies

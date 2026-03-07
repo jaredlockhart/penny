@@ -53,6 +53,9 @@ class MessageLog(SQLModel, table=True):
     processed: bool = Field(
         default=False
     )  # True if this message has been processed by extraction pipeline
+    thought_id: int | None = Field(
+        default=None, foreign_key="thought.id", index=True
+    )  # FK to thought that triggered this proactive message
 
 
 class UserInfo(SQLModel, table=True):
