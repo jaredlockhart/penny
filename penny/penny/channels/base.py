@@ -431,13 +431,16 @@ class MessageChannel(ABC):
                 content=message.content,
                 signal_timestamp=message.signal_timestamp,
             )
-            await self.send_response(
+            sent = await self.send_response(
                 message.sender,
                 answer,
                 parent_id=incoming_id,
                 attachments=response.attachments or None,
                 quote_message=incoming_log,
             )
+            if sent is None:
+                logger.error("Failed to deliver response to %s — notifying user", message.sender)
+                await self.send_status_message(message.sender, PennyResponse.DELIVERY_FAILURE)
         finally:
             typing_task.cancel()
             await self.send_typing(message.sender, False)

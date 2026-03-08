@@ -5,7 +5,7 @@ from sqlmodel import select
 
 from penny.database.models import MessageLog, SearchLog
 from penny.ollama.embeddings import serialize_embedding
-from penny.tests.conftest import TEST_SENDER
+from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 @pytest.mark.asyncio
@@ -375,4 +375,42 @@ async def test_entity_context_graceful_on_embed_failure(
 
         # Falls back to normal search behavior
         assert "search result" in response["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_delivery_failure_sends_notice(
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+):
+    """Test that a delivery failure notice is sent to the user when all send retries fail.
+
+    When signal-cli returns a 400 SocketException on every attempt, the channel
+    exhausts its retries and returns None from send_message.  _dispatch_to_agent
+    should detect this and send a brief failure notice so the user knows to retry.
+    """
+    mock_ollama.set_default_flow(
+        search_query="test query",
+        final_response="my answer to your question",
+    )
+
+    # test_config uses ollama_max_retries=1, so SignalChannel makes 2 total send
+    # attempts (attempt 0 + 1 retry) for the main response.  Queue 2 transient
+    # SocketException errors to exhaust those attempts; the 3rd request (the
+    # failure notice) gets the default 200 success.
+    socket_error = {
+        "error": (
+            "Failed to send message: Failed to get response for request"
+            " (SocketException) (UnexpectedErrorException)"
+        )
+    }
+    signal_server.queue_send_error(400, socket_error)
+    signal_server.queue_send_error(400, socket_error)
+
+    async with running_penny(test_config):
+        await signal_server.push_message(sender=TEST_SENDER, content="hello there")
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) >= 1)
+
+        notice = signal_server.outgoing_messages[0]
+        assert notice["recipients"] == [TEST_SENDER]
+        assert "trouble" in notice["message"].lower()
         assert len(mock_ollama.requests) == 2
