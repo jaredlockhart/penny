@@ -74,7 +74,7 @@ class NewsTool:
             logger.error("TheNewsAPI HTTP error %d: %s", e.response.status_code, e.response.text)
             return []
         except Exception as e:
-            logger.error("Unexpected error fetching news: %s", e)
+            logger.error("Unexpected error fetching news: %s", e, exc_info=True)
             return []
 
     async def _call_api(self, query: str, from_date: datetime | None) -> _ApiResponse:
