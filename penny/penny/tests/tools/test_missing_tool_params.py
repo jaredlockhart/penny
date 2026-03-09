@@ -7,6 +7,8 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.tools.fetch_news import FetchNewsTool
+from penny.tools.news import NewsTool
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
@@ -103,6 +105,76 @@ class TestMissingToolParams:
         assert "error" in error_content.lower()
         # Verify it mentions the missing parameter
         assert "query" in error_content.lower()
+        assert "parameter" in error_content.lower()
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_news_tool_missing_topic_raises_keyerror(self):
+        """FetchNewsTool.execute raises KeyError when 'topic' parameter is missing."""
+        news_tool = NewsTool(api_key="test-key")
+        tool = FetchNewsTool(news_tool=news_tool)
+
+        with pytest.raises(KeyError, match="topic"):
+            await tool.execute()
+
+    @pytest.mark.asyncio
+    async def test_agent_handles_fetch_news_missing_topic(self, test_db, mock_ollama):
+        """Agent should handle fetch_news calls with missing topic gracefully."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            ollama_api_url="http://localhost:11434",
+            ollama_model="test-model",
+            perplexity_api_key=None,
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        news_tool = NewsTool(api_key="test-key")
+        fetch_news_tool = FetchNewsTool(news_tool=news_tool)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[fetch_news_tool],
+            db=db,
+            config=config,
+            max_steps=3,
+        )
+
+        messages_sent = []
+
+        def handler(request: dict, count: int) -> dict:
+            messages_sent.append(request["messages"])
+            if count == 1:
+                # First call: fetch_news with missing topic
+                return mock_ollama._make_tool_call_response(request, "fetch_news", {})
+            return mock_ollama._make_text_response(request, "I need a topic to search news for.")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test prompt")
+
+        assert response.answer is not None
+        assert len(messages_sent) == 2
+        second_call_messages = messages_sent[1]
+        tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
+        assert len(tool_messages) > 0
+        error_content = tool_messages[0]["content"]
+        assert "topic" in error_content.lower()
         assert "parameter" in error_content.lower()
 
         await agent.close()
