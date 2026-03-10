@@ -121,9 +121,10 @@ class ToolExecutor:
         missing_params = [param for param in required_params if param not in arguments]
 
         if missing_params:
+            missing_list = ", ".join(f"'{p}'" for p in missing_params)
             return (
-                f"Missing required parameter(s): {', '.join(missing_params)}. "
-                f"Please call the tool again with all required parameters."
+                f"Tool '{tool.name}' called without required parameter(s): {missing_list}. "
+                f"You must provide {missing_list}. Please call the tool again."
             )
 
         return None
@@ -156,7 +157,7 @@ class ToolExecutor:
 
     def _validation_error_result(self, tool_call: ToolCall, error: str) -> ToolResult:
         """Build error result for argument validation failure."""
-        logger.error("Tool call validation failed: %s - %s", tool_call.tool, error)
+        logger.warning("Tool call validation failed: %s - %s", tool_call.tool, error)
         return ToolResult(
             tool=tool_call.tool,
             result=None,
