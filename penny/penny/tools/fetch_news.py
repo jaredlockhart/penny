@@ -25,7 +25,11 @@ class FetchNewsTool(Tool):
         "properties": {
             "topic": {
                 "type": "string",
-                "description": "The topic to search news for",
+                "description": (
+                    "Required. The news topic or keyword to search for "
+                    "(e.g. 'AI research', 'climate change', 'space exploration'). "
+                    "You must always provide this."
+                ),
             }
         },
         "required": ["topic"],

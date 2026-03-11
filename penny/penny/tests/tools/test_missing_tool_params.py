@@ -1,5 +1,7 @@
 """Tests for tool call validation with missing required parameters."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +9,7 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
@@ -106,3 +109,36 @@ class TestMissingToolParams:
         assert "parameter" in error_content.lower()
 
         await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_news_tool_missing_topic_raises_keyerror(self):
+        """FetchNewsTool.execute raises KeyError when 'topic' parameter is missing."""
+        news_tool_mock = MagicMock()
+        news_tool_mock.search = AsyncMock(return_value=[])
+        tool = FetchNewsTool(news_tool=news_tool_mock)
+
+        with pytest.raises(KeyError, match="topic"):
+            await tool.execute()
+
+    def test_fetch_news_topic_description_is_explicit(self):
+        """FetchNewsTool topic description should explicitly state the field is required."""
+        news_tool_mock = MagicMock()
+        tool = FetchNewsTool(news_tool=news_tool_mock)
+        properties: dict = tool.parameters["properties"]  # type: ignore[assignment]
+        topic_desc: str = properties["topic"]["description"]
+        required: list = tool.parameters["required"]  # type: ignore[assignment]
+        assert "required" in topic_desc.lower()
+        assert "topic" in required
+
+    def test_fetch_news_ollama_schema_preserves_required(self):
+        """to_ollama_tool() must preserve the 'required' list including 'topic'."""
+        news_tool_mock = MagicMock()
+        tool = FetchNewsTool(news_tool=news_tool_mock)
+        schema = tool.to_ollama_tool()
+        params: dict = schema["function"]["parameters"]
+        required: list = params["required"]
+        properties: dict = params["properties"]
+        assert "topic" in required
+        assert "reasoning" in properties
+        # reasoning should NOT be in required — it's optional
+        assert "reasoning" not in required
