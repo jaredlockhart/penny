@@ -225,6 +225,18 @@ class Agent:
             if await self.handle_text_step(response, messages, step, is_final_step):
                 continue
 
+            if not response.content.strip() and not is_final_step:
+                logger.warning(
+                    "Model returned empty content on step %d/%d; requesting text output",
+                    step + 1,
+                    steps,
+                )
+                messages.append(response.message.to_input_message())
+                messages.append(
+                    {"role": MessageRole.USER, "content": "Please provide your response."}
+                )
+                continue
+
             return self._build_final_response(response, source_urls, attachments, tool_call_records)
 
         logger.warning("Max steps reached without final answer")

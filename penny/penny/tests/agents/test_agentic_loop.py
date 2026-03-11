@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
@@ -218,5 +219,47 @@ class TestAfterStepHook:
         assert captured_step_records[0][0].reasoning == "step 1 reason"
         assert len(captured_step_records[1]) == 1
         assert captured_step_records[1][0].reasoning == "step 2 reason"
+
+        await agent.close()
+
+
+class TestEmptyContentRetry:
+    """Test that empty content responses on non-final steps trigger a retry."""
+
+    @pytest.mark.asyncio
+    async def test_empty_content_triggers_followup_and_retries(self, test_db, mock_ollama):
+        """When model returns empty content on a non-final step, agent retries with follow-up."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                # Thinking-only response: empty content, no tool calls
+                return mock_ollama._make_text_response(request, "")
+            # After follow-up injection, model returns actual text
+            return mock_ollama._make_text_response(request, "here's the answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "here's the answer"
+        # Three model calls: tool call, empty response, final answer
+        assert len(mock_ollama.requests) == 3
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_content_on_final_step_returns_fallback(self, test_db, mock_ollama):
+        """When model returns empty content on the final step, returns AGENT_EMPTY_RESPONSE."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=1)
+
+        def handler(request, count):
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
 
         await agent.close()
