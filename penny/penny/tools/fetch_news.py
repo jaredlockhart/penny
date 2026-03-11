@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+FETCH_NEWS_DEFAULT_TOPIC = "top news"
+
+
 class FetchNewsTool(Tool):
     """Search for recent news articles via TheNewsAPI."""
 
@@ -25,10 +28,13 @@ class FetchNewsTool(Tool):
         "properties": {
             "topic": {
                 "type": "string",
-                "description": "The topic to search news for",
+                "description": (
+                    "The news topic or keyword to search for "
+                    "(e.g. 'AI research', 'climate change', 'space exploration'). "
+                    f"Defaults to '{FETCH_NEWS_DEFAULT_TOPIC}' if omitted."
+                ),
             }
         },
-        "required": ["topic"],
     }
 
     def __init__(self, news_tool: NewsTool):
@@ -36,7 +42,7 @@ class FetchNewsTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         """Search for news and format results."""
-        topic: str = kwargs["topic"]
+        topic: str = kwargs.get("topic") or FETCH_NEWS_DEFAULT_TOPIC
         logger.info("[inner_monologue] fetch_news: %s", topic)
         articles = await self._news_tool.search(query_terms=[topic])
         if not articles:
