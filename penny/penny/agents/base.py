@@ -195,6 +195,7 @@ class Agent:
         source_urls: list[str] = []
         called_tools: set[tuple[str, ...]] = set()
         tool_call_records: list[ToolCallRecord] = []
+        empty_retries: int = 0
 
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
@@ -224,6 +225,25 @@ class Agent:
 
             if await self.handle_text_step(response, messages, step, is_final_step):
                 continue
+
+            if not response.content.strip() and empty_retries == 0:
+                empty_retries += 1
+                logger.warning(
+                    "Model returned empty content on step %d/%d; requesting text output",
+                    step + 1,
+                    steps,
+                )
+                messages.append(response.message.to_input_message())
+                messages.append(
+                    {"role": MessageRole.USER, "content": "Please provide your response."}
+                )
+                if not is_final_step:
+                    continue
+                # On the final step, retry directly — can't extend a for-range loop
+                response = await self._call_model_with_xml_retry(messages, step_tools)
+                if response is None:
+                    return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
+                self.on_response(response)
 
             return self._build_final_response(response, source_urls, attachments, tool_call_records)
 
