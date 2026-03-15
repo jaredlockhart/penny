@@ -317,7 +317,11 @@ class Agent:
         content = response.content.strip()
 
         if not content:
-            logger.error("Model returned empty content!")
+            logger.error(
+                "Model returned empty content! model=%s, preceding_tool_calls=%d",
+                self._model_client.model,
+                len(tool_call_records),
+            )
             return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
 
         thinking = response.thinking or response.message.thinking
