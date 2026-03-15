@@ -180,6 +180,48 @@ class TestRepeatCallGuard:
         await agent.close()
 
 
+class TestEmptyContentRetry:
+    """Test that empty model responses are retried before returning the fallback."""
+
+    @pytest.mark.asyncio
+    async def test_empty_response_retried_and_succeeds(self, test_db, mock_ollama):
+        """Transient empty content is retried; valid content on retry is returned."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_text_response(request, "")
+            return mock_ollama._make_text_response(request, "recovered answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test prompt")
+        assert response.answer == "recovered answer"
+        # Two Ollama calls: one empty (retried), one successful
+        assert len(mock_ollama.requests) == 2
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_all_retries_empty_returns_fallback(self, test_db, mock_ollama):
+        """AGENT_EMPTY_RESPONSE is returned when all retries yield empty content."""
+        from penny.responses import PennyResponse
+
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        def handler(request, count):
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test prompt")
+        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
+        # max_xml_retries=3: three attempts before giving up
+        assert len(mock_ollama.requests) == 3
+
+        await agent.close()
+
+
 class TestAfterStepHook:
     """Test the after_step hook fires after tool calls."""
 

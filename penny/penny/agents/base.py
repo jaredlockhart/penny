@@ -272,6 +272,14 @@ class Agent:
                 break
 
             content = response.content.strip()
+            if not content:
+                logger.warning(
+                    "Model returned empty content; retrying (attempt %d/%d)",
+                    xml_attempt + 1,
+                    max_xml_retries,
+                )
+                continue
+
             if not _has_xml_tags(content):
                 break
 
@@ -294,7 +302,11 @@ class Agent:
         content = response.content.strip()
 
         if not content:
-            logger.error("Model returned empty content!")
+            logger.error(
+                "Model returned empty content after retries! model=%s, raw_response=%s",
+                self._model_client.model,
+                response,
+            )
             return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
 
         thinking = response.thinking or response.message.thinking
