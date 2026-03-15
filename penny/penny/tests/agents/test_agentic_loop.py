@@ -180,6 +180,46 @@ class TestRepeatCallGuard:
         await agent.close()
 
 
+class TestEmptyContentFallback:
+    """Test that an empty model response falls back to AGENT_EMPTY_RESPONSE."""
+
+    @pytest.mark.asyncio
+    async def test_empty_response_returns_agent_empty_response(self, test_db, mock_ollama):
+        """When the model returns empty content, AGENT_EMPTY_RESPONSE is returned."""
+        from penny.responses import PennyResponse
+
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        def handler(request, count):
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test prompt")
+        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_response_after_tool_call(self, test_db, mock_ollama):
+        """AGENT_EMPTY_RESPONSE is returned even after preceding tool calls."""
+        from penny.responses import PennyResponse
+
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test prompt")
+        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
+
+        await agent.close()
+
+
 class TestAfterStepHook:
     """Test the after_step hook fires after tool calls."""
 
