@@ -46,7 +46,6 @@ class NewsTool:
 
     def __init__(self, api_key: str):
         self._api_key = api_key
-        self._http = httpx.AsyncClient(timeout=30.0)
 
     async def search(
         self,
@@ -74,7 +73,7 @@ class NewsTool:
             logger.error("TheNewsAPI HTTP error %d: %s", e.response.status_code, e.response.text)
             return []
         except Exception as e:
-            logger.error("Unexpected error fetching news: %s", e)
+            logger.error("Unexpected error fetching news: %s: %s", type(e).__name__, e)
             return []
 
     async def _call_api(self, query: str, from_date: datetime | None) -> _ApiResponse:
@@ -88,7 +87,8 @@ class NewsTool:
         }
         if from_date:
             params["published_after"] = from_date.strftime("%Y-%m-%dT%H:%M:%S")
-        resp = await self._http.get(THE_NEWS_API_BASE_URL, params=params)
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            resp = await http.get(THE_NEWS_API_BASE_URL, params=params)
         resp.raise_for_status()
         return _ApiResponse.model_validate(resp.json())
 
