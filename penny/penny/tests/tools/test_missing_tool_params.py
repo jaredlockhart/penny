@@ -1,5 +1,7 @@
 """Tests for tool call validation with missing required parameters."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,10 +9,19 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
 _IMAGE_TIMEOUT = RUNTIME_CONFIG_PARAMS["IMAGE_DOWNLOAD_TIMEOUT"].default
+
+
+@pytest.fixture
+def mock_news_tool():
+    """Minimal mock of NewsTool for FetchNewsTool unit tests."""
+    news_tool = AsyncMock()
+    news_tool.search = AsyncMock(return_value=[])
+    return news_tool
 
 
 class TestMissingToolParams:
@@ -106,3 +117,24 @@ class TestMissingToolParams:
         assert "parameter" in error_content.lower()
 
         await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_news_topic_optional_defaults_to_top_news(self, mock_news_tool):
+        """FetchNewsTool.execute uses 'top news' default when topic is omitted."""
+        tool = FetchNewsTool(news_tool=mock_news_tool)
+        # Calling without 'topic' should not raise — falls back to default
+        await tool.execute()
+        mock_news_tool.search.assert_called_once_with(query_terms=["top news"])
+
+    def test_fetch_news_topic_not_required_in_schema(self):
+        """FetchNewsTool schema declares topic as optional (not in required list)."""
+        tool = FetchNewsTool(news_tool=None)  # type: ignore[arg-type]
+        assert "topic" not in tool.parameters.get("required", [])
+
+    def test_fetch_news_ollama_tool_schema_propagates_optional_topic(self):
+        """to_ollama_tool() correctly omits topic from required list."""
+        tool = FetchNewsTool(news_tool=None)  # type: ignore[arg-type]
+        ollama_schema = tool.to_ollama_tool()
+        params = ollama_schema["function"]["parameters"]
+        assert "topic" not in params.get("required", [])
+        assert "topic" in params["properties"]
