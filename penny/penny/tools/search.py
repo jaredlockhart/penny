@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
+import perplexity
 from perplexity import Perplexity
 from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputItem
 
@@ -130,13 +131,30 @@ class SearchTool(Tool):
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
         start = time.time()
-        response = await self._call_perplexity(query)
+        try:
+            response = await self._call_perplexity(query)
+        except perplexity.AuthenticationError as e:
+            if self._is_quota_error(e):
+                logger.error("Perplexity quota exceeded: %s", e)
+                return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
+            raise
         duration_ms = int((time.time() - start) * 1000)
         raw_text = response.output_text if response.output_text else PennyResponse.NO_RESULTS_TEXT
         result = self._clean_text(raw_text)
         urls = self._extract_urls(response)
         self._log_search(query, result, duration_ms, trigger)
         return result, urls
+
+    @staticmethod
+    def _is_quota_error(e: perplexity.AuthenticationError) -> bool:
+        """Return True if the AuthenticationError is a quota-exceeded error."""
+        body = e.body
+        if not isinstance(body, dict):
+            return False
+        error = body.get("error")  # type: ignore[call-overload]
+        if not isinstance(error, dict):
+            return False
+        return error.get("type") == "insufficient_quota"  # type: ignore[call-overload]
 
     async def _call_perplexity(self, query: str):
         """Call Perplexity API with dated query prefix."""

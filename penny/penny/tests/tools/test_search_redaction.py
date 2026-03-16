@@ -1,7 +1,12 @@
 """Tests for search query redaction of personal information."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import perplexity
 import pytest
 
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 
@@ -142,3 +147,77 @@ class TestRedactQuery:
     def test_preserves_query_when_no_match(self):
         tool = self._make_tool(["Alex"])
         assert tool._redact_query("Toronto weather forecast") == "Toronto weather forecast"
+
+
+def _make_quota_error() -> perplexity.AuthenticationError:
+    """Build a perplexity.AuthenticationError with insufficient_quota body."""
+    mock_request = MagicMock(spec=httpx.Request)
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.request = mock_request
+    mock_response.status_code = 401
+    return perplexity.AuthenticationError(
+        "insufficient_quota",
+        response=mock_response,
+        body={
+            "error": {"type": "insufficient_quota", "message": "You exceeded your current quota"}
+        },
+    )
+
+
+class TestQuotaExceededHandling:
+    """Tests that quota-exceeded AuthenticationErrors produce a user-friendly message."""
+
+    @pytest.mark.asyncio
+    async def test_quota_error_returns_friendly_message(self):
+        """_search_text returns SEARCH_QUOTA_EXCEEDED text when quota is exceeded."""
+        tool = _make_search_tool(MockResponseNullOutput())
+        quota_error = _make_quota_error()
+        with patch.object(tool, "_call_perplexity", AsyncMock(side_effect=quota_error)):
+            text, urls = await tool._search_text("test query")
+        assert text == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_non_quota_auth_error_propagates(self):
+        """AuthenticationError without insufficient_quota body is re-raised."""
+        tool = _make_search_tool(MockResponseNullOutput())
+        mock_request = MagicMock(spec=httpx.Request)
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.request = mock_request
+        mock_response.status_code = 401
+        auth_error = perplexity.AuthenticationError(
+            "invalid_api_key",
+            response=mock_response,
+            body={"error": {"type": "invalid_api_key", "message": "Invalid API key"}},
+        )
+        with (
+            patch.object(tool, "_call_perplexity", AsyncMock(side_effect=auth_error)),
+            pytest.raises(perplexity.AuthenticationError),
+        ):
+            await tool._search_text("test query")
+
+    def test_is_quota_error_with_quota_body(self):
+        """_is_quota_error returns True for insufficient_quota body."""
+        assert SearchTool._is_quota_error(_make_quota_error()) is True
+
+    def test_is_quota_error_with_other_body(self):
+        """_is_quota_error returns False for non-quota body."""
+        mock_request = MagicMock(spec=httpx.Request)
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.request = mock_request
+        mock_response.status_code = 401
+        e = perplexity.AuthenticationError(
+            "invalid_api_key",
+            response=mock_response,
+            body={"error": {"type": "invalid_api_key"}},
+        )
+        assert SearchTool._is_quota_error(e) is False
+
+    def test_is_quota_error_with_none_body(self):
+        """_is_quota_error returns False when body is None."""
+        mock_request = MagicMock(spec=httpx.Request)
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.request = mock_request
+        mock_response.status_code = 401
+        e = perplexity.AuthenticationError("error", response=mock_response, body=None)
+        assert SearchTool._is_quota_error(e) is False
