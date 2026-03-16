@@ -1,5 +1,7 @@
 """Tests for tool call validation with missing required parameters."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +9,7 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
@@ -104,5 +107,81 @@ class TestMissingToolParams:
         # Verify it mentions the missing parameter
         assert "query" in error_content.lower()
         assert "parameter" in error_content.lower()
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_news_tool_uses_default_topic_when_omitted(self):
+        """FetchNewsTool.execute uses 'top news' as default when topic is omitted."""
+        mock_news = AsyncMock()
+        mock_news.search.return_value = []
+        tool = FetchNewsTool(news_tool=mock_news)
+
+        result = await tool.execute()
+
+        assert result == "No recent news found for 'top news'."
+        mock_news.search.assert_called_once_with(query_terms=["top news"])
+
+    @pytest.mark.asyncio
+    async def test_fetch_news_topic_not_in_required_params(self):
+        """FetchNewsTool schema does not list topic as required — model can omit it safely."""
+        mock_news = AsyncMock()
+        mock_news.search.return_value = []
+        tool = FetchNewsTool(news_tool=mock_news)
+
+        required = tool.parameters.get("required", [])
+        assert "topic" not in required
+
+    @pytest.mark.asyncio
+    async def test_agent_handles_fetch_news_without_topic(self, test_db, mock_ollama):
+        """Agent succeeds when model calls fetch_news without topic — uses default."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            ollama_api_url="http://localhost:11434",
+            ollama_model="test-model",
+            perplexity_api_key=None,
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+
+        mock_news = AsyncMock()
+        mock_news.search.return_value = []
+        fetch_news_tool = FetchNewsTool(news_tool=mock_news)
+
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[fetch_news_tool],
+            db=db,
+            config=config,
+            max_steps=3,
+        )
+
+        def handler(request: dict, count: int) -> dict:
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "fetch_news", {})
+            return mock_ollama._make_text_response(request, "No news found today.")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("what's in the news?")
+
+        # Should succeed without a validation error round-trip
+        assert response.answer == "No news found today."
+        mock_news.search.assert_called_once_with(query_terms=["top news"])
 
         await agent.close()
