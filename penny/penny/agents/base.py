@@ -24,10 +24,30 @@ logger = logging.getLogger(__name__)
 # or <tools><search>...</search></tools>
 _XML_TAG_PATTERN = re.compile(r"<[a-zA-Z]\w*[\s=>].*</[a-zA-Z]\w*>", re.DOTALL)
 
+# Matches <think>...</think> blocks emitted inline by some models (e.g. DeepSeek-R1, Qwen3)
+_THINK_TAG_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
+
 
 def _has_xml_tags(content: str) -> bool:
     """Return True if content contains XML-like tag pairs."""
     return bool(_XML_TAG_PATTERN.search(content))
+
+
+def _strip_think_tags(content: str) -> tuple[str, str | None]:
+    """Strip <think>...</think> blocks from content.
+
+    Returns (cleaned_content, extracted_thinking) where extracted_thinking
+    contains the concatenated text from all stripped blocks.
+    """
+    thinking_parts: list[str] = []
+
+    def _collect(m: re.Match) -> str:
+        thinking_parts.append(m.group(1).strip())
+        return ""
+
+    cleaned = _THINK_TAG_PATTERN.sub(_collect, content).strip()
+    extracted = "\n\n".join(thinking_parts) if thinking_parts else None
+    return cleaned, extracted
 
 
 @dataclass
@@ -298,8 +318,19 @@ class Agent:
             return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
 
         thinking = response.thinking or response.message.thinking
+
+        # Strip <think>...</think> blocks emitted inline by some models.
+        # Move extracted content to the thinking field if not already populated.
+        content, inline_thinking = _strip_think_tags(content)
+        if not thinking and inline_thinking:
+            thinking = inline_thinking
+
         if thinking:
             logger.info("Extracted thinking text (length: %d)", len(thinking))
+
+        if not content:
+            logger.error("Model returned empty content after stripping think tags!")
+            return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
 
         if source_urls and "http" not in content:
             content += "\n\n" + source_urls[0]

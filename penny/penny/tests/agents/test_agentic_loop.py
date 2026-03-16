@@ -180,6 +180,58 @@ class TestRepeatCallGuard:
         await agent.close()
 
 
+class TestThinkTagStripping:
+    """Test that <think>...</think> blocks are stripped from final responses."""
+
+    @pytest.mark.asyncio
+    async def test_think_tags_stripped_from_content(self, test_db, mock_ollama):
+        """<think>...</think> blocks in content are removed before sending to user."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        raw = "<think>Internal reasoning here.</think>\nHere is the real answer."
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, raw)
+        )
+
+        response = await agent.run("test")
+        assert "<think>" not in response.answer
+        assert "Internal reasoning here." not in response.answer
+        assert response.answer == "Here is the real answer."
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_think_tags_moved_to_thinking_field(self, test_db, mock_ollama):
+        """Content inside <think> blocks is captured in the thinking field."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        raw = "<think>Step-by-step plan.</think>\nFinal response."
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, raw)
+        )
+
+        response = await agent.run("test")
+        assert response.thinking == "Step-by-step plan."
+        assert response.answer == "Final response."
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_response_without_think_tags_unchanged(self, test_db, mock_ollama):
+        """Responses that contain no <think> tags are returned as-is."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, "Normal answer.")
+        )
+
+        response = await agent.run("test")
+        assert response.answer == "Normal answer."
+        assert response.thinking is None
+
+        await agent.close()
+
+
 class TestAfterStepHook:
     """Test the after_step hook fires after tool calls."""
 
