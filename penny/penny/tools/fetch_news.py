@@ -25,10 +25,13 @@ class FetchNewsTool(Tool):
         "properties": {
             "topic": {
                 "type": "string",
-                "description": "The topic to search news for",
+                "description": (
+                    "The news topic to search for — e.g. 'AI', 'climate change', 'sports'. "
+                    "Omit or use 'top news' to fetch general trending headlines."
+                ),
             }
         },
-        "required": ["topic"],
+        "required": [],
     }
 
     def __init__(self, news_tool: NewsTool):
@@ -36,7 +39,7 @@ class FetchNewsTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         """Search for news and format results."""
-        topic: str = kwargs["topic"]
+        topic: str = kwargs.get("topic", "top news")
         logger.info("[inner_monologue] fetch_news: %s", topic)
         articles = await self._news_tool.search(query_terms=[topic])
         if not articles:
