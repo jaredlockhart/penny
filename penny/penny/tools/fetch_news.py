@@ -18,14 +18,19 @@ class FetchNewsTool(Tool):
 
     name = "fetch_news"
     description = (
-        "Search for recent news articles on a topic. Returns headlines, summaries, and URLs."
+        "Search for recent news articles. Requires a topic string — always specify the subject "
+        "to search for (e.g. 'artificial intelligence', 'climate change'). "
+        "Returns headlines, summaries, and URLs."
     )
     parameters = {
         "type": "object",
         "properties": {
             "topic": {
                 "type": "string",
-                "description": "The topic to search news for",
+                "description": (
+                    "The subject to search news for. Required — always provide a specific topic "
+                    "(e.g. 'artificial intelligence', 'climate change', 'stock market')."
+                ),
             }
         },
         "required": ["topic"],
