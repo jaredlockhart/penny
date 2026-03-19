@@ -349,7 +349,7 @@ class Agent:
                 self.required_labels, trusted_users=self.trusted_users, api=self.github_api
             )
 
-            # Enrich in-review issues with CI and merge conflict status (no-op if none match)
+            # Enrich issues: CI/merge status for in-review, open-PR detection for bugs
             from penny_team.utils.pr_checks import enrich_issues_with_pr_status
 
             processed = self._load_processed()
