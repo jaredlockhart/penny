@@ -83,7 +83,7 @@ class TestMissingToolParams:
                 return mock_ollama._make_tool_call_response(request, "search", {})
             # Second call: return final response after receiving error
             return mock_ollama._make_text_response(
-                request, "I apologize, I need more information to search."
+                request, "I need a search query to look that up for you."
             )
 
         mock_ollama.set_response_handler(handler)
@@ -93,7 +93,7 @@ class TestMissingToolParams:
 
         # Verify that we got a response (not a crash)
         assert response.answer is not None
-        assert "apologize" in response.answer.lower()
+        assert "search query" in response.answer.lower()
 
         # The error should have been sent back to the model as a tool result
         assert len(messages_sent) == 2  # Initial call + retry after error
