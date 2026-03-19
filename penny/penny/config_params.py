@@ -283,6 +283,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="NEWS_COOLDOWN",
+    description="Cooldown in seconds between news notifications",
+    type=float,
+    default=3600.0,
+    validator=_validate_positive_float,
+    group=GROUP_NOTIFY,
+)
+
+ConfigParam(
     key="NOTIFY_CANDIDATES",
     description="Number of candidate messages to generate per notification cycle",
     type=int,
