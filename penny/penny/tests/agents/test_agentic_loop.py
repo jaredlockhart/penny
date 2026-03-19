@@ -127,6 +127,47 @@ class TestLastStepToolRemoval:
 
         await agent.close()
 
+    @pytest.mark.asyncio
+    async def test_hallucinated_tool_calls_ignored_on_final_step(self, test_db, mock_ollama):
+        """If model hallucinates tool calls on the final step, they are ignored."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=2)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            # Final step: model hallucinates a tool call despite no tools offered
+            return mock_ollama._make_tool_call_response(request, "search", {"query": "more"})
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test")
+        # Should NOT get AGENT_MAX_STEPS — hallucinated call is ignored.
+        # With no text content, we get AGENT_EMPTY_RESPONSE instead.
+        assert "couldn't complete" not in response.answer.lower()
+        assert "empty response" in response.answer.lower()
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_tool_call_with_text_uses_text(self, test_db, mock_ollama):
+        """If model returns both text and tool calls on final step, text is used."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=2)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            # Final step: model returns text AND a hallucinated tool call
+            resp = mock_ollama._make_tool_call_response(request, "search", {"query": "more"})
+            resp["message"]["content"] = "here is the answer"
+            return resp
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test")
+        assert response.answer == "here is the answer"
+
+        await agent.close()
+
 
 class TestRepeatCallGuard:
     """Test that repeat tool calls are blocked by args, not just name."""

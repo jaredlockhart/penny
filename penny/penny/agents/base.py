@@ -210,7 +210,10 @@ class Agent:
 
             self.on_response(response)
 
-            if response.has_tool_calls:
+            if response.has_tool_calls and is_final_step:
+                logger.warning("Model hallucinated tool calls on final step — ignoring")
+
+            if response.has_tool_calls and not is_final_step:
                 result = await self._process_tool_calls(response, called_tools)
                 messages.extend(result.messages)
                 tool_call_records.extend(result.records)
