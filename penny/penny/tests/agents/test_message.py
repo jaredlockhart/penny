@@ -243,6 +243,72 @@ async def test_name_not_redacted_when_user_says_it(
         assert "Test User" in logged_query, "Name should NOT be redacted when user said it"
 
 
+@pytest.mark.asyncio
+async def test_short_response_logged_as_warning(
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny, caplog
+):
+    """
+    Regression test for #775: short/apologetic responses should be logged as warnings.
+
+    When the model returns a very short response (< 10 words), a warning is logged
+    to make these cases visible for debugging. The response is still delivered to
+    the user — the warning is diagnostic, not suppressive.
+    """
+    import logging
+
+    apologetic_response = "I'm sorry, but I can't help with that."
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(request, apologetic_response)
+
+    mock_ollama.set_response_handler(handler)
+
+    with caplog.at_level(logging.WARNING, logger="penny.agents.base"):
+        async with running_penny(test_config):
+            await signal_server.push_message(
+                sender=TEST_SENDER,
+                content="what are the best vegan restaurants in downtown metropolis?",
+            )
+            response = await signal_server.wait_for_message(timeout=10.0)
+
+    # Response is still delivered to the user
+    assert response["message"] == apologetic_response
+
+    # Warning was logged for the short response
+    short_response_warnings = [r for r in caplog.records if "Short response detected" in r.message]
+    assert len(short_response_warnings) >= 1, "Should log a warning for short responses"
+
+
+@pytest.mark.asyncio
+async def test_conversation_prompt_includes_antirefusal_instruction(
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+):
+    """
+    Regression test for #775: CONVERSATION_PROMPT must include an explicit instruction
+    to never refuse a request, so the model always provides something useful.
+    """
+    mock_ollama.set_default_flow(
+        search_query="vegan restaurants downtown",
+        final_response="here are some vegan options! 🌱",
+    )
+
+    async with running_penny(test_config):
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="what are the best vegan restaurants?",
+        )
+        await signal_server.wait_for_message(timeout=10.0)
+
+    # Verify the system prompt sent to Ollama includes the anti-refusal instruction
+    first_request = mock_ollama.requests[0]
+    messages = first_request.get("messages", [])
+    system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
+    assert (
+        "never refuse" in system_text.lower()
+        or "never give a generic refusal" in system_text.lower()
+    ), "CONVERSATION_PROMPT should instruct the model never to refuse a request"
+
+
 @pytest.mark.skip(reason="Entity context injection temporarily disabled")
 @pytest.mark.asyncio
 async def test_entity_context_responds_from_knowledge(
