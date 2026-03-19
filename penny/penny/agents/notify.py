@@ -141,13 +141,21 @@ class NotifyAgent(Agent):
     # 1-in-3 chance of sending news instead of thought candidates
     NEWS_CHANCE = 1 / 3
 
+    def _news_cooldown_elapsed(self) -> bool:
+        """Check if enough time has passed since the last news notification."""
+        last = self.db.messages.get_last_checkin_time(Prompt.NOTIFY_NEWS, hours=48)
+        if last is None:
+            return True
+        elapsed = (datetime.now(UTC).replace(tzinfo=None) - last).total_seconds()
+        return elapsed >= self.config.runtime.NEWS_COOLDOWN
+
     async def _send_notification(self, user: str) -> bool:
         """Check-in if eligible, then coin-flip news, otherwise thought candidates."""
         assert self._channel is not None
         try:
             if self._should_checkin(user):
                 return await self._send_checkin(user)
-            if random.random() < self.NEWS_CHANCE:
+            if random.random() < self.NEWS_CHANCE and self._news_cooldown_elapsed():
                 return await self._send_news(user)
             return await self._send_best_candidate(user)
         except Exception:
