@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from github_api.api import GitHubAPI, IssueDetail
+from github_api.api import GitHubAPI, IssueDetail, PullRequest
 
 from penny_team.base import Agent, AgentRun
 from penny_team.constants import TeamConstants
@@ -118,26 +118,28 @@ def extract_error_signature(error: ErrorBlock) -> str:
 def filter_known_errors(
     errors: list[ErrorBlock],
     open_issues: list[IssueDetail],
+    open_prs: list[PullRequest] | None = None,
 ) -> list[ErrorBlock]:
-    """Remove errors that already have a matching open bug issue.
+    """Remove errors that already have a matching open bug issue or PR.
 
     Matches by checking if the error's module AND exception type both
-    appear in an existing issue's title or body. This is intentionally
-    conservative — both must match to suppress the error.
+    appear in an existing issue's or PR's title or body. This is
+    intentionally conservative — both must match to suppress the error.
     """
-    if not open_issues:
-        return errors
+    # Build searchable text from both issues and PRs (title + body, lowercased)
+    all_texts = [f"{issue.title}\n{issue.body}".lower() for issue in open_issues]
+    all_texts += [f"{pr.title}\n{pr.body}".lower() for pr in (open_prs or [])]
 
-    # Build searchable text for each open issue (title + body, lowercased)
-    issue_texts = [f"{issue.title}\n{issue.body}".lower() for issue in open_issues]
+    if not all_texts:
+        return errors
 
     novel: list[ErrorBlock] = []
     for error in errors:
         sig = extract_error_signature(error)
         module_part, exception_part = sig.split(":", 1)
 
-        # Check if both module and exception appear in any open issue
-        is_known = any(module_part in text and exception_part in text for text in issue_texts)
+        # Check if both module and exception appear in any open issue or PR
+        is_known = any(module_part in text and exception_part in text for text in all_texts)
 
         if is_known:
             logger.info(f"[monitor] Skipping known error: {error.module} / {exception_part}")
@@ -287,6 +289,16 @@ class MonitorAgent(Agent):
             logger.warning(f"[{self.name}] Failed to fetch open bug issues: {e}")
             return []  # Fail-open: skip dedup rather than blocking
 
+    def _fetch_open_prs(self) -> list[PullRequest]:
+        """Fetch open PRs for dedup. Returns empty list on failure."""
+        if self.github_api is None:
+            return []
+        try:
+            return self.github_api.list_open_prs(limit=30)
+        except (OSError, RuntimeError) as e:
+            logger.warning(f"[{self.name}] Failed to fetch open PRs: {e}")
+            return []  # Fail-open: skip dedup rather than blocking
+
     def run(self) -> AgentRun:
         """Read new log content, extract errors, dedup, and run Claude to file bug issues."""
         logger.info(f"[{self.name}] Starting cycle #{self.run_count + 1}")
@@ -325,9 +337,10 @@ class MonitorAgent(Agent):
 
         logger.info(f"[{self.name}] Found {len(errors)} error(s) in logs")
 
-        # Python-space dedup: filter out errors that already have open bug issues
+        # Python-space dedup: filter out errors matching open bug issues or PRs
         open_issues = self._fetch_open_bug_issues()
-        errors = filter_known_errors(errors, open_issues)
+        open_prs = self._fetch_open_prs()
+        errors = filter_known_errors(errors, open_issues, open_prs)
 
         if not errors:
             self._save_offset(new_offset)

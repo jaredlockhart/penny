@@ -62,7 +62,7 @@ query($owner: String!, $repo: String!, $limit: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequests(states: OPEN, first: $limit) {
       nodes {
-        number headRefName mergeable
+        number title body headRefName mergeable
         reviews(first: 50) {
           nodes { author { login } state submittedAt }
         }
@@ -191,6 +191,8 @@ class PullRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     number: int
+    title: str = ""
+    body: str = ""
     head_ref_name: str = Field("", alias="headRefName")
     mergeable: str = ""
     status_check_rollup: list[CheckStatus] = []
@@ -375,6 +377,8 @@ class _GqlPRCommentNodeList(BaseModel):
 
 class _GqlPRNode(BaseModel):
     number: int
+    title: str = ""
+    body: str = ""
     head_ref_name: str = Field("", alias="headRefName")
     mergeable: str = ""
     reviews: _GqlReviewNodeList = _GqlReviewNodeList()
@@ -465,6 +469,8 @@ def _to_pull_request(node: _GqlPRNode) -> PullRequest:
 
     return PullRequest(
         number=node.number,
+        title=node.title,
+        body=node.body,
         head_ref_name=node.head_ref_name,  # type: ignore[unknown-argument]
         mergeable=node.mergeable,
         status_check_rollup=checks,

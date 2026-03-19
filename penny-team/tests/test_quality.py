@@ -22,6 +22,8 @@ from penny_team.quality import QualityAgent, validate_privacy
 from tests.conftest import (
     MockGitHubAPI,
     TRUSTED_USERS,
+    make_issue_detail,
+    make_pull_request,
 )
 
 
@@ -365,6 +367,94 @@ class TestQualityRun:
         api.create_issue.assert_called_once()
         call_args = api.create_issue.call_args
         assert call_args[0][2] == ["bug", "quality"]  # labels
+
+    def test_duplicate_detected_against_bug_issue(self, tmp_path, monkeypatch):
+        """Quality agent skips filing when a matching bug issue already exists."""
+        api = MockGitHubAPI()
+        api.create_issue = MagicMock(return_value="https://github.com/test/issues/2")
+        api.set_issues_detailed(
+            "bug",
+            [
+                make_issue_detail(
+                    number=100,
+                    title="bug: Function call syntax leaked in response",
+                    body="Penny exposed function call syntax to the user.",
+                    labels=["bug"],
+                )
+            ],
+        )
+        agent, db_path = make_quality_agent(tmp_path, github_api=api)
+        _insert_message_pair(
+            db_path,
+            user_message="What time is it?",
+            response="<function=get_time>{}</function> The time is 3pm",
+        )
+
+        evaluation_response = {
+            "is_bad": True,
+            "category": "exposed_function_call",
+            "reason": "Function call syntax leaked to user",
+        }
+        bug_description = {
+            "title": "bug: Function call syntax leaked in response",
+            "body": (
+                "*[Quality Agent]*\n\n"
+                "## Quality Issue\n\nExposed function call.\n\n"
+                "## Example (Contrived)\n\nExample.\n\n"
+                "## Suggested Fix\n\nSanitize output."
+            ),
+        }
+        mock_urlopen = mock_ollama_factory([evaluation_response, bug_description])
+        monkeypatch.setattr("penny_team.quality.urllib.request.urlopen", mock_urlopen)
+
+        result = agent.run()
+
+        assert result.success is True
+        assert "Filed 0 issue(s)" in result.output
+        api.create_issue.assert_not_called()
+
+    def test_duplicate_detected_against_open_pr(self, tmp_path, monkeypatch):
+        """Quality agent skips filing when a matching open PR already exists."""
+        api = MockGitHubAPI()
+        api.create_issue = MagicMock(return_value="https://github.com/test/issues/2")
+        api.set_issues_detailed("bug", [])  # No matching issues
+        api.set_prs([
+            make_pull_request(
+                number=748,
+                branch="issue-100-fix-function-leak",
+                title="fix: sanitize function call syntax from responses",
+                body="Strips leaked function call markup before sending to user.",
+            )
+        ])
+        agent, db_path = make_quality_agent(tmp_path, github_api=api)
+        _insert_message_pair(
+            db_path,
+            user_message="What time is it?",
+            response="<function=get_time>{}</function> The time is 3pm",
+        )
+
+        evaluation_response = {
+            "is_bad": True,
+            "category": "exposed_function_call",
+            "reason": "Function call syntax leaked to user",
+        }
+        bug_description = {
+            "title": "bug: Function call syntax leaked in response",
+            "body": (
+                "*[Quality Agent]*\n\n"
+                "## Quality Issue\n\nExposed function call.\n\n"
+                "## Example (Contrived)\n\nExample.\n\n"
+                "## Suggested Fix\n\nSanitize output."
+            ),
+        }
+        mock_urlopen = mock_ollama_factory([evaluation_response, bug_description])
+        monkeypatch.setattr("penny_team.quality.urllib.request.urlopen", mock_urlopen)
+
+        result = agent.run()
+
+        assert result.success is True
+        assert "Filed 0 issue(s)" in result.output
+        api.create_issue.assert_not_called()
 
     def test_privacy_validation_blocks_leaky_description(self, tmp_path, monkeypatch):
         """If bug description contains original content, issue is NOT filed."""

@@ -221,6 +221,8 @@ def make_issue_detail(
 def make_pull_request(
     number: int,
     branch: str,
+    title: str = "",
+    body: str = "",
     checks: list[CheckStatus] | None = None,
     mergeable: str = "MERGEABLE",
     reviews: list[PRReview] | None = None,
@@ -229,6 +231,8 @@ def make_pull_request(
     """Create a PullRequest instance for testing."""
     return PullRequest(
         number=number,
+        title=title,
+        body=body,
         head_ref_name=branch,
         status_check_rollup=checks or [],
         mergeable=mergeable,

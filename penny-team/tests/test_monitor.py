@@ -26,6 +26,7 @@ from tests.conftest import (
     TRUSTED_USERS,
     extract_prompt,
     make_issue_detail,
+    make_pull_request,
     result_event,
 )
 
@@ -369,6 +370,37 @@ class TestMonitorRun:
         assert result.output == "All errors already have open issues"
         assert len(calls) == 0  # Claude CLI not called
 
+    def test_error_matching_open_pr_filtered_before_claude(self, tmp_path, capture_popen):
+        """Errors matching an open PR (not an issue) are still filtered out."""
+        agent, _ = make_monitor_agent(
+            tmp_path,
+            log_content=(
+                "2024-01-15 14:23:45 - penny.tools.search - ERROR - Search failed\n"
+                "Traceback (most recent call last):\n"
+                '  File "penny/tools/search.py", line 42\n'
+                "AuthenticationError: insufficient quota\n"
+            ),
+        )
+
+        mock_api = MockGitHubAPI()
+        mock_api.set_issues_detailed("bug", [])  # No matching issues
+        mock_api.set_prs([
+            make_pull_request(
+                number=748,
+                branch="issue-100-fix-search-auth",
+                title="fix: handle Perplexity AuthenticationError in penny.tools.search",
+                body="Catches AuthenticationError quota errors",
+            )
+        ])
+        agent.github_api = mock_api
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+        result = agent.run()
+
+        assert result.success is True
+        assert result.output == "All errors already have open issues"
+        assert len(calls) == 0  # Claude CLI not called
+
     def test_novel_errors_passed_to_claude(self, tmp_path, capture_popen):
         """Errors NOT matching any open issue are passed to Claude."""
         agent, _ = make_monitor_agent(
@@ -455,6 +487,26 @@ class TestErrorDedup:
         result = filter_known_errors([error], open_issues)
         assert len(result) == 1
         assert result[0].message == "DB locked"
+
+    def test_filter_removes_error_matching_open_pr(self):
+        """Errors matching an open PR's title+body are filtered out."""
+        error = ErrorBlock(
+            timestamp="2024-01-15 14:23:45",
+            module="penny.tools.search",
+            level="ERROR",
+            message="Search failed",
+            traceback="AuthenticationError: quota exceeded",
+        )
+        open_prs = [
+            make_pull_request(
+                number=748,
+                branch="issue-100-fix-search-auth",
+                title="Fix search AuthenticationError in penny.tools.search",
+                body="Handles AuthenticationError quota issue",
+            )
+        ]
+        result = filter_known_errors([error], [], open_prs)
+        assert result == []
 
     def test_filter_with_no_open_issues_keeps_all(self):
         error = ErrorBlock(

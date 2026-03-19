@@ -349,39 +349,57 @@ class QualityAgent(Agent):
 
     # --- Deduplication ---
 
-    def _fetch_open_quality_issues(self) -> list[str]:
-        """Fetch titles of open bug+quality issues for dedup. Returns [] on failure."""
+    def _fetch_dedup_texts(self) -> list[str]:
+        """Fetch searchable text from open bug issues AND open PRs for dedup.
+
+        Returns lowercased title+body strings from all open bug issues
+        (not just quality-labeled) and all open PRs. This prevents filing
+        duplicates of issues already tracked by the monitor agent or
+        already being fixed in a PR.
+        """
         if self.github_api is None:
             return []
+
+        texts: list[str] = []
+
+        # All open bug issues (not just quality-labeled)
         try:
-            issues = self.github_api.list_issues_detailed("quality", limit=20)
-            return [issue.title.lower() for issue in issues]
+            bug_issues = self.github_api.list_issues_detailed(TeamConstants.Label.BUG, limit=30)
+            texts.extend(f"{i.title}\n{i.body}".lower() for i in bug_issues)
         except (OSError, RuntimeError) as e:
-            logger.warning(f"[{self.name}] Failed to fetch open quality issues: {e}")
-            return []
+            logger.warning(f"[{self.name}] Failed to fetch bug issues for dedup: {e}")
+
+        # All open PRs
+        try:
+            prs = self.github_api.list_open_prs(limit=30)
+            texts.extend(f"{pr.title}\n{pr.body}".lower() for pr in prs)
+        except (OSError, RuntimeError) as e:
+            logger.warning(f"[{self.name}] Failed to fetch open PRs for dedup: {e}")
+
+        return texts
 
     @staticmethod
-    def _is_duplicate_issue(title: str, existing_titles: list[str]) -> bool:
-        """Check if a proposed issue title matches an existing open issue.
+    def _is_duplicate_issue(title: str, dedup_texts: list[str]) -> bool:
+        """Check if a proposed issue title matches existing issues or PRs.
 
-        Compares the category keyword from the title (the part after 'bug: ')
-        against existing titles. Matches if the category appears in any
-        existing title.
+        Compares the category keywords from the title (the part after
+        'bug: ') against existing issue/PR text (title + body). Matches
+        if a majority of keywords appear in any existing text.
         """
-        if not existing_titles:
+        if not dedup_texts:
             return False
         # Extract category from "bug: <category description>"
         title_lower = title.lower()
         category = title_lower.removeprefix("bug: ").strip()
         if not category:
             return False
-        # Check if any existing title contains the same category keywords
+        # Check if any existing text contains the same category keywords
         category_words = set(category.split()) - {"the", "a", "an", "in", "of", "for", "and", "or"}
         if len(category_words) < 2:
             return False
         return any(
             sum(1 for w in category_words if w in existing) >= len(category_words) // 2 + 1
-            for existing in existing_titles
+            for existing in dedup_texts
         )
 
     # --- run() override ---
@@ -424,8 +442,8 @@ class QualityAgent(Agent):
 
         logger.info(f"[{self.name}] Evaluating {len(pairs)} message pair(s)")
 
-        # Step 2: Fetch open quality issues for dedup
-        open_quality_issues = self._fetch_open_quality_issues()
+        # Step 2: Fetch open bug issues and PRs for dedup
+        dedup_texts = self._fetch_dedup_texts()
 
         # Step 3: Evaluate each pair individually and file issues
         found = 0
@@ -464,7 +482,7 @@ class QualityAgent(Agent):
                 continue
 
             # Dedup: check if a similar quality issue already exists
-            if self._is_duplicate_issue(title, open_quality_issues):
+            if self._is_duplicate_issue(title, dedup_texts):
                 logger.info(f"[{self.name}] Skipping duplicate quality issue: {title}")
                 continue
 
