@@ -362,6 +362,9 @@ class Agent:
         if source_urls and "http" not in content:
             content += "\n\n" + source_urls[0]
 
+        word_count = len(content.split())
+        if word_count < 10:
+            logger.warning("Short response detected (word_count=%d): %s", word_count, content[:100])
         logger.info("Got final answer (length: %d)", len(content))
         return ControllerResponse(
             answer=content,
