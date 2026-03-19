@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.responses import PennyResponse
 from penny.tools.search import SearchTool
 
 _IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
@@ -221,6 +222,94 @@ class TestRepeatCallGuard:
         await agent.close()
 
 
+class TestEmptyContentFallback:
+    """Test that an empty model response falls back to AGENT_EMPTY_RESPONSE."""
+
+    @pytest.mark.asyncio
+    async def test_empty_response_returns_agent_empty_response(self, test_db, mock_ollama):
+        """When the model returns empty content, AGENT_EMPTY_RESPONSE is returned."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        def handler(request, count):
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test prompt")
+        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_response_after_tool_call(self, test_db, mock_ollama):
+        """AGENT_EMPTY_RESPONSE is returned even after preceding tool calls."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test prompt")
+        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
+
+        await agent.close()
+
+
+class TestThinkTagStripping:
+    """Test that <think>...</think> blocks are stripped from final responses."""
+
+    @pytest.mark.asyncio
+    async def test_think_tags_stripped_from_content(self, test_db, mock_ollama):
+        """<think>...</think> blocks in content are removed before sending to user."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        raw = "<think>Internal reasoning here.</think>\nHere is the real answer."
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, raw)
+        )
+
+        response = await agent.run("test")
+        assert "<think>" not in response.answer
+        assert "Internal reasoning here." not in response.answer
+        assert response.answer == "Here is the real answer."
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_think_tags_moved_to_thinking_field(self, test_db, mock_ollama):
+        """Content inside <think> blocks is captured in the thinking field."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        raw = "<think>Step-by-step plan.</think>\nFinal response."
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, raw)
+        )
+
+        response = await agent.run("test")
+        assert response.thinking == "Step-by-step plan."
+        assert response.answer == "Final response."
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_response_without_think_tags_unchanged(self, test_db, mock_ollama):
+        """Responses that contain no <think> tags are returned as-is."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, "Normal answer.")
+        )
+
+        response = await agent.run("test")
+        assert response.answer == "Normal answer."
+        assert response.thinking is None
+
+        await agent.close()
+
+
 class TestAfterStepHook:
     """Test the after_step hook fires after tool calls."""
 
@@ -259,5 +348,70 @@ class TestAfterStepHook:
         assert captured_step_records[0][0].reasoning == "step 1 reason"
         assert len(captured_step_records[1]) == 1
         assert captured_step_records[1][0].reasoning == "step 2 reason"
+
+        await agent.close()
+
+
+class TestEmptyContentRetry:
+    """Test that empty content responses trigger a retry with a follow-up prompt."""
+
+    @pytest.mark.asyncio
+    async def test_empty_content_on_nonfinal_step_retries_with_followup(self, test_db, mock_ollama):
+        """When model returns empty content on a non-final step, agent retries with follow-up."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                # Thinking-only response: empty content, no tool calls
+                return mock_ollama._make_text_response(request, "")
+            # After follow-up injection, model returns actual text
+            return mock_ollama._make_text_response(request, "here's the answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "here's the answer"
+        # Three model calls: tool call, empty response, final answer
+        assert len(mock_ollama.requests) == 3
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_content_on_final_step_retries_and_succeeds(self, test_db, mock_ollama):
+        """When model returns empty content on the final step, agent retries once and succeeds."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=1)
+
+        def handler(request, count):
+            if count == 1:
+                # Final step returns empty content
+                return mock_ollama._make_text_response(request, "")
+            # Retry (extra step) returns real content
+            return mock_ollama._make_text_response(request, "here's the answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "here's the answer"
+        # Two model calls: empty final step + retry
+        assert len(mock_ollama.requests) == 2
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_content_twice_returns_fallback(self, test_db, mock_ollama):
+        """When model returns empty content on both the final step and retry, returns fallback."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=1)
+
+        def handler(request, count):
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
+        # Two model calls: empty final step + one retry that also returns empty
+        assert len(mock_ollama.requests) == 2
 
         await agent.close()

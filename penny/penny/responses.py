@@ -21,6 +21,7 @@ class PennyResponse:
 
     # ── Channel ──────────────────────────────────────────────────────────────
 
+    DELIVERY_FAILURE = "Sorry, I had trouble delivering that message. Please try again."
     THREADING_NOT_SUPPORTED_COMMANDS = "Commands can't be used in threads."
     THREADING_NOT_SUPPORTED_TEST = "Test mode can't be used in threads."
     UNKNOWN_COMMAND = "Unknown command: /{command_name}. Use /commands to see available commands."
@@ -196,3 +197,7 @@ class PennyResponse:
 
     NO_RESULTS_TEXT = "No results found"
     SEARCH_ERROR = "Failed to search: {error}"
+    SEARCH_QUOTA_EXCEEDED = (
+        "Search is temporarily unavailable — the Perplexity API quota has been exceeded."
+        " Please try again later."
+    )
