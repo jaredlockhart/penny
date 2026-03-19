@@ -40,23 +40,32 @@ def enrich_issues_with_pr_status(
     bot_logins: set[str] | None = None,
     processed_at: dict[str, str] | None = None,
 ) -> None:
-    """Enrich in-review issues with CI check and merge conflict status from their PRs.
+    """Enrich issues with PR status: CI checks, merge conflicts, and open-PR detection.
 
-    Mutates FilteredIssue objects in place, setting ci_status,
-    ci_failure_details, merge_conflict, and merge_conflict_branch.
+    For in-review issues: sets ci_status, ci_failure_details, merge_conflict,
+    merge_conflict_branch, has_review_feedback, and review_comments.
+    For bug issues: sets has_open_pr when a matching PR already exists,
+    so the worker skips duplicate work.
     When processed_at is provided, only review feedback newer than
     the agent's last processing time is included (prevents re-addressing
     already-handled comments).
     Fail-open: if the API fails, issues are left unchanged.
     """
     in_review = [i for i in issues if TeamConstants.Label.IN_REVIEW in i.labels]
-    if not in_review:
+    bugs = [i for i in issues if TeamConstants.Label.BUG in i.labels]
+    if not in_review and not bugs:
         return
 
     try:
         prs = _fetch_open_prs(api)
     except OSError, RuntimeError:
         logger.warning("Failed to fetch PR statuses, skipping CI/merge detection")
+        return
+
+    # Flag bug issues that already have an open PR (prevents duplicate work)
+    _flag_bugs_with_open_prs(prs, bugs)
+
+    if not in_review:
         return
 
     pr_by_issue = _match_prs_to_issues(prs, in_review)
@@ -118,6 +127,24 @@ def enrich_issues_with_pr_status(
         if log_output:
             details += f"\n**Error output** (truncated):\n```\n{log_output}\n```"
         issue.ci_failure_details = details
+
+
+def _flag_bugs_with_open_prs(
+    prs: list[PullRequest],
+    bugs: list[FilteredIssue],
+) -> None:
+    """Flag bug issues that already have an open PR matching their issue number."""
+    if not bugs:
+        return
+    pr_by_issue = _match_prs_to_issues(prs, bugs)
+    for issue in bugs:
+        if issue.number in pr_by_issue:
+            issue.has_open_pr = True
+            pr = pr_by_issue[issue.number]
+            logger.info(
+                f"Bug #{issue.number} already has open PR "
+                f"#{pr.number} ({pr.head_ref_name}), skipping"
+            )
 
 
 def _fetch_open_prs(

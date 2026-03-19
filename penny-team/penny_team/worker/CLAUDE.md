@@ -194,7 +194,16 @@ If no merge conflicts and no unaddressed review comments, check the pre-fetched 
 
 Look at the pre-fetched issues for any with the `bug` label. Bug issues are prioritized over `in-progress` features.
 
-If a `bug` issue exists, follow the **Bug Fix Workflow** below instead of the normal feature workflow.
+If a `bug` issue exists:
+- Check if a PR already exists for it:
+  ```bash
+  gh pr list --state open --json number,title,headRefName --limit 10
+  ```
+- **PR exists for this bug** → Move to `in-review` and exit:
+  ```bash
+  gh issue edit <N> --remove-label bug --add-label in-review
+  ```
+- **No PR exists** → Follow the **Bug Fix Workflow** below.
 
 #### Bug Fix Workflow
 

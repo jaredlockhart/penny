@@ -867,6 +867,101 @@ class TestWorkerBugFixFlow:
         assert "Search fails when query is empty" in prompt
         assert "Issue #50" in prompt
 
+    def test_bug_with_open_pr_skipped(
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
+    ):
+        """Bug issue that already has an open PR → skipped (no duplicate work).
+
+        Flow: issue #50 is labeled 'bug', PR #10 exists on branch issue-50-fix
+        → enrich_issues_with_pr_status flags has_open_pr=True
+        → pick_actionable_issue skips it → agent does not run Claude.
+        """
+        agent = make_agent(
+            tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"],
+            github_api=mock_github_api,
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+
+        mock_github_api.set_issues("in-progress", [])
+        mock_github_api.set_issues("in-review", [])
+        mock_github_api.set_issues("bug", make_issue_list_items((50, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("in-progress", [])
+        mock_github_api.set_issues_detailed("in-review", [])
+        mock_github_api.set_issues_detailed("bug", [
+            make_issue_detail(
+                number=50,
+                title="Search fails when query is empty",
+                body="When a user sends an empty search query, the app crashes.",
+                labels=["bug"],
+                comments=[],
+            ),
+        ])
+        mock_github_api.set_prs([
+            make_pull_request(10, "issue-50-fix-empty-search"),
+        ])
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        result = agent.run()
+
+        assert result.success is True
+        assert result.output == "No actionable issues"
+        assert len(calls) == 0
+
+    def test_bug_with_open_pr_falls_through_to_feature(
+        self, tmp_path, mock_github_api, capture_popen, monkeypatch
+    ):
+        """Bug has open PR, but in-progress feature exists → works on feature.
+
+        Flow: bug #50 has open PR → skipped, but feature #43 is actionable
+        → Worker works on the feature instead of doing nothing.
+        """
+        agent = make_agent(
+            tmp_path, name="worker", required_labels=["in-progress", "in-review", "bug"],
+            github_api=mock_github_api,
+        )
+        monkeypatch.setattr(type(agent), "_bot_logins", property(lambda self: BOT_LOGINS))
+
+        mock_github_api.set_issues("in-progress", make_issue_list_items((43, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues("in-review", [])
+        mock_github_api.set_issues("bug", make_issue_list_items((50, "2024-01-01T00:00:00Z")))
+        mock_github_api.set_issues_detailed("in-progress", [
+            make_issue_detail(
+                number=43,
+                title="Add user profiles",
+                labels=["in-progress"],
+                comments=[
+                    {
+                        "author": {"login": "alice"},
+                        "body": "Go ahead and implement this.",
+                        "createdAt": "2024-01-07T00:00:00Z",
+                    },
+                ],
+            ),
+        ])
+        mock_github_api.set_issues_detailed("in-review", [])
+        mock_github_api.set_issues_detailed("bug", [
+            make_issue_detail(
+                number=50,
+                title="Search fails when query is empty",
+                body="Crash on empty query",
+                labels=["bug"],
+                comments=[],
+            ),
+        ])
+        mock_github_api.set_prs([
+            make_pull_request(10, "issue-50-fix-empty-search"),
+        ])
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+
+        result = agent.run()
+
+        assert result.success is True
+        prompt = extract_prompt(calls)
+        assert "Add user profiles" in prompt
+        assert "Issue #43" in prompt
+
     def test_bug_prioritized_over_in_progress(
         self, tmp_path, mock_github_api, capture_popen, monkeypatch
     ):

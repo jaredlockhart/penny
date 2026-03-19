@@ -41,6 +41,7 @@ class FilteredIssue:
     ci_failure_details: str | None = None
     merge_conflict: bool = False
     merge_conflict_branch: str | None = None
+    has_open_pr: bool = False
     has_review_feedback: bool = False
     review_comments: str | None = None
 
@@ -156,6 +157,10 @@ def pick_actionable_issue(
     sorted_issues = sorted(issues, key=lambda i: TeamConstants.Label.BUG not in i.labels)
 
     for issue in sorted_issues:
+        # Bug already has an open PR — worker would duplicate work
+        if issue.has_open_pr:
+            continue
+
         # Check if external signals require attention regardless of comments
         if issue.ci_status == TeamConstants.CI_STATUS_FAILING:
             return issue
