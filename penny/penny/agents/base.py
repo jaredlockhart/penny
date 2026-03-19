@@ -392,7 +392,12 @@ class Agent:
                 self._model_client.model,
                 len(tool_call_records),
             )
-            return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
+            fallback = (
+                PennyResponse.FALLBACK_RESPONSE
+                if tool_call_records
+                else PennyResponse.AGENT_EMPTY_RESPONSE
+            )
+            return ControllerResponse(answer=fallback)
 
         thinking = response.thinking or response.message.thinking
 
@@ -407,7 +412,12 @@ class Agent:
 
         if not content:
             logger.error("Model returned empty content after stripping think tags!")
-            return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
+            fallback = (
+                PennyResponse.FALLBACK_RESPONSE
+                if tool_call_records
+                else PennyResponse.AGENT_EMPTY_RESPONSE
+            )
+            return ControllerResponse(answer=fallback)
 
         if source_urls and "http" not in content:
             content += "\n\n" + source_urls[0]

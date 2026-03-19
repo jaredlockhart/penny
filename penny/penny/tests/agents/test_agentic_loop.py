@@ -143,9 +143,9 @@ class TestLastStepToolRemoval:
 
         response = await agent.run("test")
         # Should NOT get AGENT_MAX_STEPS — hallucinated call is ignored.
-        # With no text content, we get AGENT_EMPTY_RESPONSE instead.
+        # Preceding tool calls → FALLBACK_RESPONSE (friendlier than AGENT_EMPTY_RESPONSE).
         assert "couldn't complete" not in response.answer.lower()
-        assert "empty response" in response.answer.lower()
+        assert response.answer == PennyResponse.FALLBACK_RESPONSE
 
         await agent.close()
 
@@ -242,7 +242,7 @@ class TestEmptyContentFallback:
 
     @pytest.mark.asyncio
     async def test_empty_response_after_tool_call(self, test_db, mock_ollama):
-        """AGENT_EMPTY_RESPONSE is returned even after preceding tool calls."""
+        """FALLBACK_RESPONSE is returned when model returns empty after preceding tool calls."""
         agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
 
         def handler(request, count):
@@ -253,7 +253,40 @@ class TestEmptyContentFallback:
         mock_ollama.set_response_handler(handler)
 
         response = await agent.run("test prompt")
-        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
+        # Preceding tool call → friendlier FALLBACK_RESPONSE, not technical AGENT_EMPTY_RESPONSE
+        assert response.answer == PennyResponse.FALLBACK_RESPONSE
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_response_after_many_tool_calls_uses_fallback(self, test_db, mock_ollama):
+        """FALLBACK_RESPONSE (not AGENT_EMPTY_RESPONSE) is returned after many tool calls.
+
+        Reproduces: model returns empty content on final step after 7 tool calls
+        with MESSAGE_MAX_STEPS=8. The user-facing message should be friendlier
+        than 'the model generated an empty response'.
+        """
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=8)
+
+        call_count = 0
+
+        def handler(request, count):
+            nonlocal call_count
+            call_count += 1
+            # Steps 1-7: tool calls (7 preceding tool calls)
+            if count <= 7:
+                return mock_ollama._make_tool_call_response(
+                    request, "search", {"query": f"topic {count}"}
+                )
+            # Step 8 (final) and any inline retry: empty content
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+        agent.allow_repeat_tools = True
+
+        response = await agent.run("research many topics")
+        # After 7 tool calls, empty final response → FALLBACK_RESPONSE (friendlier)
+        assert response.answer == PennyResponse.FALLBACK_RESPONSE
 
         await agent.close()
 
