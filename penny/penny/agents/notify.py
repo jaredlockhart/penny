@@ -297,19 +297,6 @@ class NotifyAgent(Agent):
         scored.sort(key=lambda pair: pair[1], reverse=True)
         return [t for t, _ in scored[:n]]
 
-    # Phrases that indicate a model refusal or error — disqualify from candidates
-    _DISQUALIFY_PHRASES = (
-        "i can't",
-        "i cannot",
-        "i'm sorry",
-        "i am sorry",
-        "i'm unable",
-        "i am unable",
-        "i apologize",
-        "as an ai",
-        "as a language model",
-    )
-
     async def _generate_one_candidate(
         self, user: str, prompt: str, thought: Thought | None
     ) -> NotifyCandidate | None:
@@ -349,8 +336,7 @@ class NotifyAgent(Agent):
         )
         if answer in error_strings:
             return True
-        lower = answer.lower()
-        return any(phrase in lower for phrase in cls._DISQUALIFY_PHRASES)
+        return cls._is_refusal(answer)
 
     def _build_thought_candidate_context(self, user: str) -> str:
         """Thought candidate context: profile + thought only. No history or conv turns."""

@@ -50,6 +50,20 @@ def _strip_think_tags(content: str) -> tuple[str, str | None]:
     return cleaned, extracted
 
 
+# Phrases that indicate a model refusal — used to detect and retry unhelpful responses
+_REFUSAL_PHRASES = (
+    "i can't",
+    "i cannot",
+    "i'm sorry",
+    "i am sorry",
+    "i'm unable",
+    "i am unable",
+    "i apologize",
+    "as an ai",
+    "as a language model",
+)
+
+
 @dataclass
 class _StepResult:
     """Result of processing all tool calls in one agentic loop step."""
@@ -204,6 +218,12 @@ class Agent:
 
     # ── Agentic loop internals ───────────────────────────────────────────
 
+    @staticmethod
+    def _is_refusal(content: str) -> bool:
+        """Return True if content looks like a model refusal."""
+        lower = content.lower()
+        return any(phrase in lower for phrase in _REFUSAL_PHRASES)
+
     async def _run_agentic_loop(
         self,
         messages: list[dict],
@@ -216,6 +236,7 @@ class Agent:
         called_tools: set[tuple[str, ...]] = set()
         tool_call_records: list[ToolCallRecord] = []
         empty_retries: int = 0
+        refusal_retries: int = 0
 
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
@@ -263,6 +284,35 @@ class Agent:
                 if not is_final_step:
                     continue
                 # On the final step, retry directly — can't extend a for-range loop
+                response = await self._call_model_with_xml_retry(messages, step_tools)
+                if response is None:
+                    return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
+                self.on_response(response)
+
+            if (
+                refusal_retries == 0
+                and response.content.strip()
+                and self._is_refusal(response.content.strip())
+            ):
+                refusal_retries += 1
+                logger.warning(
+                    "Model returned refusal on step %d/%d; nudging for substantive response",
+                    step + 1,
+                    steps,
+                )
+                messages.append(response.message.to_input_message())
+                messages.append(
+                    {
+                        "role": MessageRole.USER,
+                        "content": (
+                            "Please provide a helpful response. "
+                            "Use your search tools or what you know to give a useful answer."
+                        ),
+                    }
+                )
+                if not is_final_step:
+                    continue
+                # On the final step, retry directly
                 response = await self._call_model_with_xml_retry(messages, step_tools)
                 if response is None:
                     return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)

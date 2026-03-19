@@ -415,3 +415,80 @@ class TestEmptyContentRetry:
         assert len(mock_ollama.requests) == 2
 
         await agent.close()
+
+
+class TestRefusalRetry:
+    """Test that model refusals trigger a retry nudge."""
+
+    @pytest.mark.asyncio
+    async def test_refusal_on_nonfinal_step_retries_with_nudge(self, test_db, mock_ollama):
+        """When model refuses on a non-final step, agent injects nudge and continues."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                return mock_ollama._make_text_response(
+                    request, "I'm sorry, but I can't help with that."
+                )
+            return mock_ollama._make_text_response(request, "Here are the vegan smoothie recipes!")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("Give me a list of vegan smoothie recipes")
+        assert response.answer == "Here are the vegan smoothie recipes!"
+        assert len(mock_ollama.requests) == 3
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_refusal_on_final_step_retries_inline(self, test_db, mock_ollama):
+        """When model refuses on the final step, agent retries once inline."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=1)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_text_response(request, "I cannot help with that request.")
+            return mock_ollama._make_text_response(request, "Here is a helpful answer!")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "Here is a helpful answer!"
+        assert len(mock_ollama.requests) == 2
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_refusal_only_retried_once(self, test_db, mock_ollama):
+        """Refusal retry only fires once — second refusal is returned as-is."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            return mock_ollama._make_text_response(request, "I'm sorry, I am unable to help.")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        # Should contain the refusal text (returned as-is after one retry)
+        assert "sorry" in response.answer.lower() or "unable" in response.answer.lower()
+        # Only two model calls: initial refusal + one retry
+        assert len(mock_ollama.requests) == 2
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_normal_response_not_retried(self, test_db, mock_ollama):
+        """Normal responses are not mistakenly flagged as refusals."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, "Here are your recipes!")
+        )
+
+        response = await agent.run("Give me vegan smoothie recipes")
+        assert response.answer == "Here are your recipes!"
+        assert len(mock_ollama.requests) == 1
+
+        await agent.close()
