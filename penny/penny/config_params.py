@@ -103,7 +103,7 @@ ConfigParam(
     key="MESSAGE_MAX_STEPS",
     description="Max agent loop steps per message",
     type=int,
-    default=5,
+    default=8,
     validator=_validate_positive_int,
     group=GROUP_GLOBAL,
 )
