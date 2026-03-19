@@ -278,9 +278,13 @@ class Agent:
                     steps,
                 )
                 messages.append(response.message.to_input_message())
-                messages.append(
-                    {"role": MessageRole.USER, "content": "Please provide your response."}
+                retry_prompt = (
+                    "You've completed your research. Please synthesize your findings "
+                    "and provide a helpful response."
+                    if tool_call_records
+                    else "Please provide your response."
                 )
+                messages.append({"role": MessageRole.USER, "content": retry_prompt})
                 if not is_final_step:
                     continue
                 # On the final step, retry directly — can't extend a for-range loop

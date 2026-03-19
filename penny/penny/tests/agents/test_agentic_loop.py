@@ -416,6 +416,57 @@ class TestEmptyContentRetry:
 
         await agent.close()
 
+    @pytest.mark.asyncio
+    async def test_empty_content_after_tool_calls_uses_synthesis_prompt(self, test_db, mock_ollama):
+        """When model returns empty content after tool calls, retry prompt asks for synthesis."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=2)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                # Final step: empty content after tool call
+                return mock_ollama._make_text_response(request, "")
+            # Retry with stronger prompt: model produces useful response
+            return mock_ollama._make_text_response(
+                request, "Based on my research, here's what I found!"
+            )
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "Based on my research, here's what I found!"
+        # Three model calls: tool call, empty final step, synthesis retry
+        assert len(mock_ollama.requests) == 3
+        # Verify the retry message uses the synthesis prompt
+        retry_messages = mock_ollama.requests[2]["messages"]
+        last_user_msg = next(m for m in reversed(retry_messages) if m["role"] == "user")
+        assert "synthesize" in last_user_msg["content"].lower()
+        assert "research" in last_user_msg["content"].lower()
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_content_without_tool_calls_uses_generic_prompt(self, test_db, mock_ollama):
+        """When model returns empty content with no prior tool calls, generic prompt is used."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=1)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_text_response(request, "")
+            return mock_ollama._make_text_response(request, "here's my answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "here's my answer"
+        # Verify the retry uses the generic prompt, not the synthesis one
+        retry_messages = mock_ollama.requests[1]["messages"]
+        last_user_msg = next(m for m in reversed(retry_messages) if m["role"] == "user")
+        assert last_user_msg["content"] == "Please provide your response."
+
+        await agent.close()
+
 
 class TestRefusalRetry:
     """Test that model refusals trigger a retry nudge."""
