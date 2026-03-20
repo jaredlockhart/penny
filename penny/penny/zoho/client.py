@@ -425,6 +425,67 @@ class ZohoClient:
             text_body=text_body,
         )
 
+    async def draft_response(
+        self,
+        to_addresses: list[str],
+        subject: str,
+        content: str,
+        cc_addresses: list[str] | None = None,
+        bcc_addresses: list[str] | None = None,
+        in_reply_to: str | None = None,
+        mail_format: str = "plaintext",
+    ) -> str | None:
+        """Save an email draft to the Drafts folder.
+
+        Args:
+            to_addresses: List of recipient email addresses
+            subject: Email subject line
+            content: Email body content
+            cc_addresses: Optional CC recipients
+            bcc_addresses: Optional BCC recipients
+            in_reply_to: Optional Message-ID of email being replied to
+            mail_format: 'plaintext' or 'html' (default: plaintext)
+
+        Returns:
+            The draft message ID if successful, None otherwise.
+        """
+        account = await self._ensure_account()
+        headers = await self._get_headers()
+
+        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages"
+
+        payload: dict[str, Any] = {
+            "fromAddress": account.email_address,
+            "toAddress": ",".join(to_addresses),
+            "subject": subject,
+            "content": content,
+            "mode": "draft",
+            "mailFormat": mail_format,
+        }
+
+        if cc_addresses:
+            payload["ccAddress"] = ",".join(cc_addresses)
+        if bcc_addresses:
+            payload["bccAddress"] = ",".join(bcc_addresses)
+        if in_reply_to:
+            payload["inReplyTo"] = in_reply_to
+
+        logger.info("Saving draft to %s: %s", to_addresses, subject)
+
+        resp = await self._http.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Extract the draft message ID from response
+        draft_data = data.get("data", {})
+        message_id = draft_data.get("messageId")
+        if message_id:
+            logger.info("Draft saved successfully: messageId=%s", message_id)
+            return str(message_id)
+
+        logger.warning("Draft saved but no messageId returned: %s", data)
+        return None
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self._http.aclose()

@@ -10,6 +10,7 @@ from penny.commands.models import CommandContext, CommandResult
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool
+from penny.tools.draft_email import DraftEmailTool
 from penny.tools.list_emails import ListEmailsTool
 from penny.tools.list_folders import ListFoldersTool
 from penny.tools.read_emails import ReadEmailsTool
@@ -65,6 +66,7 @@ class ZohoCommand(Command):
                 ListEmailsTool(zoho_client),
                 ListFoldersTool(zoho_client),
                 ReadEmailsTool(zoho_client, context.model_client, prompt),
+                DraftEmailTool(zoho_client),
             ]
 
             agent = Agent(
