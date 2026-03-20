@@ -1,7 +1,7 @@
 """Thought store — persistent inner monologue entries."""
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
@@ -65,29 +65,21 @@ class ThoughtStore:
             thoughts.reverse()
             return thoughts
 
-    @staticmethod
-    def _freshness_cutoff(hours: int) -> datetime:
-        """Rolling cutoff: now minus N hours, as naive UTC."""
-        return datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
-
-    def get_next_unnotified(self, user: str, freshness_hours: int = 24) -> Thought | None:
-        """Get the oldest un-notified thought within the freshness window."""
-        cutoff = self._freshness_cutoff(freshness_hours)
+    def get_next_unnotified(self, user: str) -> Thought | None:
+        """Get the oldest un-notified thought."""
         with self._session() as session:
             return session.exec(
                 select(Thought)
                 .where(
                     Thought.user == user,
                     Thought.notified_at == None,  # noqa: E711
-                    Thought.created_at >= cutoff,
                 )
                 .order_by(Thought.created_at.asc())  # type: ignore[unresolved-attribute]
                 .limit(1)
             ).first()
 
-    def get_all_unnotified(self, user: str, freshness_hours: int = 24) -> list[Thought]:
-        """Get all un-notified thoughts within the freshness window, oldest first."""
-        cutoff = self._freshness_cutoff(freshness_hours)
+    def get_all_unnotified(self, user: str) -> list[Thought]:
+        """Get all un-notified thoughts, oldest first."""
         with self._session() as session:
             return list(
                 session.exec(
@@ -95,17 +87,13 @@ class ThoughtStore:
                     .where(
                         Thought.user == user,
                         Thought.notified_at == None,  # noqa: E711
-                        Thought.created_at >= cutoff,
                     )
                     .order_by(Thought.created_at.asc())  # type: ignore[unresolved-attribute]
                 ).all()
             )
 
-    def get_recent_notified(
-        self, user: str, freshness_hours: int = 24, limit: int = 10
-    ) -> list[Thought]:
-        """Get recently notified thoughts within the freshness window, newest first."""
-        cutoff = self._freshness_cutoff(freshness_hours)
+    def get_recent_notified(self, user: str, limit: int = 1) -> list[Thought]:
+        """Get most recently notified thoughts, newest first."""
         with self._session() as session:
             return list(
                 session.exec(
@@ -113,7 +101,6 @@ class ThoughtStore:
                     .where(
                         Thought.user == user,
                         Thought.notified_at != None,  # noqa: E711
-                        Thought.created_at >= cutoff,
                     )
                     .order_by(Thought.notified_at.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)

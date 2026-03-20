@@ -214,15 +214,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="THOUGHT_FRESHNESS_HOURS",
-    description="Rolling window in hours for thought eligibility (sharing and context)",
-    type=int,
-    default=24,
-    validator=_validate_positive_int,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
-ConfigParam(
     key="THOUGHT_DEDUP_EMBEDDING_THRESHOLD",
     description="Embedding similarity threshold for thought deduplication (0-1)",
     type=float,

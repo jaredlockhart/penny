@@ -124,7 +124,7 @@ async def test_send_notify_thought_candidate(
         assert "quantum" in response["message"].lower()
 
         # Thought should be marked as notified
-        unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER, freshness_hours=24)
+        unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
         assert unnotified is None
 
 
