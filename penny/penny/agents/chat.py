@@ -106,8 +106,7 @@ class ChatAgent(Agent):
         Only notified thoughts appear in chat context so the model
         doesn't reference thoughts the user hasn't seen yet.
         """
-        hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
-        thoughts = self.db.thoughts.get_recent_notified(sender, freshness_hours=hours, limit=1)
+        thoughts = self.db.thoughts.get_recent_notified(sender, limit=1)
         if not thoughts:
             return None
         return f"## Recent Background Thinking\n{thoughts[0].content}"

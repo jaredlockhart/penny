@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
@@ -686,12 +686,9 @@ class Agent:
         return result
 
     def _build_thought_context(self, sender: str) -> str | None:
-        """Build recent thinking summary context within freshness window."""
+        """Build recent thinking summary context. Overridden by ChatAgent and ThinkingAgent."""
         try:
-            hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
-            cutoff = self._freshness_cutoff(hours)
-            all_thoughts = self.db.thoughts.get_recent(sender, limit=self.THOUGHT_CONTEXT_LIMIT)
-            thoughts = [t for t in all_thoughts if t.created_at >= cutoff]
+            thoughts = self.db.thoughts.get_recent(sender, limit=self.THOUGHT_CONTEXT_LIMIT)
             if not thoughts:
                 return None
             lines = [t.content for t in thoughts]
@@ -773,11 +770,6 @@ class Agent:
         Naive because SQLite strips timezone info — all stored datetimes are naive UTC.
         """
         return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-
-    @staticmethod
-    def _freshness_cutoff(hours: int) -> datetime:
-        """Rolling cutoff: now minus N hours, as naive UTC."""
-        return datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
