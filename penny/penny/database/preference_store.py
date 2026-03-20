@@ -51,6 +51,11 @@ class PreferenceStore:
             logger.error("Failed to add preference: %s", e)
             return None
 
+    def get_by_id(self, pref_id: int) -> Preference | None:
+        """Get a single preference by ID."""
+        with self._session() as session:
+            return session.get(Preference, pref_id)
+
     def get_for_user(self, user: str, limit: int = 100) -> list[Preference]:
         """Get all preferences for a user, newest first."""
         with self._session() as session:

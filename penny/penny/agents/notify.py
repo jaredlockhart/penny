@@ -40,7 +40,7 @@ class NotifyCandidate(BaseModel):
     answer: str
     thought: Thought | None = None
     attachments: list[str] = Field(default_factory=list)
-    image_prompt: str | None = None
+    image_prompt: str
 
 
 class NotifyAgent(Agent):
@@ -208,7 +208,7 @@ class NotifyAgent(Agent):
         answer = response.answer.strip() if response.answer else None
         if not answer:
             return False
-        image_prompt = self._extract_first_headline(answer)
+        image_prompt = self._extract_first_headline(answer) or "latest news"
         return await self._send_candidate(
             user,
             NotifyCandidate(
@@ -337,12 +337,19 @@ class NotifyAgent(Agent):
         if self._is_disqualified(answer):
             logger.info("Disqualified candidate: %s", answer[:60])
             return None
-        image_prompt = self._extract_first_headline(answer)
+        image_prompt = self._seed_topic_for(thought) or answer[:50]
         return NotifyCandidate(
             answer=answer,
             thought=thought,
             image_prompt=image_prompt,
         )
+
+    def _seed_topic_for(self, thought: Thought | None) -> str | None:
+        """Look up the seed preference content for a thought."""
+        if not thought or not thought.preference_id:
+            return None
+        pref = self.db.preferences.get_by_id(thought.preference_id)
+        return pref.content if pref else None
 
     @classmethod
     def _is_disqualified(cls, answer: str) -> bool:
@@ -438,9 +445,9 @@ class NotifyAgent(Agent):
             user,
             candidate.answer,
             parent_id=None,
+            image_prompt=candidate.image_prompt,
             attachments=candidate.attachments or None,
             quote_message=None,
-            image_prompt=candidate.image_prompt,
             thought_id=thought_id,
         )
         if candidate.thought and candidate.thought.id is not None:

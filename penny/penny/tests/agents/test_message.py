@@ -149,8 +149,11 @@ async def test_basic_message_flow(
         ]
         assert len(conversation_echoes) == 0, "Conversation echo thoughts should not be logged"
 
-        # Serper image search should have been called for the outgoing message
+        # Serper image search should use the model's search query, not full content
         mock_serper_image.assert_called_once()
+        image_query = mock_serper_image.call_args[0][0]
+        assert image_query == "test search query"
+        assert len(image_query) <= 100
 
         # Outgoing message should have an image attachment
         assert response.get("base64_attachments"), "Response should include an image attachment"

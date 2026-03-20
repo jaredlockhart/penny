@@ -224,36 +224,44 @@ class MessageChannel(ABC):
         )
         return external_id is not None
 
+    MAX_IMAGE_PROMPT_LENGTH = 100
+
     async def send_response(
         self,
         recipient: str,
         content: str,
         parent_id: int | None,
+        image_prompt: str,
         attachments: list[str] | None = None,
         quote_message: MessageLog | None = None,
-        image_prompt: str | None = None,
         thought_id: int | None = None,
     ) -> int | None:
         """
-        Log and send an outgoing message.
+        Log and send an outgoing message with an image attachment.
 
         Args:
             recipient: Identifier for the recipient
             content: Message content
             parent_id: Parent message ID for thread linking
+            image_prompt: Short search query for image attachment (max 100 chars)
             attachments: Optional list of base64-encoded attachments
             quote_message: Optional message to quote-reply to
-            image_prompt: Optional search query to find and attach an image
             thought_id: Optional FK to the thought that triggered this message
 
         Returns:
             Database message ID if send was successful, None otherwise
         """
-        if image_prompt:
-            attachments = await self._resolve_image(image_prompt, attachments)
+        if len(image_prompt) > self.MAX_IMAGE_PROMPT_LENGTH:
+            logger.error(
+                "image_prompt too long (%d chars, max %d): %s",
+                len(image_prompt),
+                self.MAX_IMAGE_PROMPT_LENGTH,
+                image_prompt[:100],
+            )
+            image_prompt = image_prompt[: self.MAX_IMAGE_PROMPT_LENGTH]
 
-        if not attachments and self._should_auto_image():
-            attachments = await self._resolve_image(content, attachments)
+        if not attachments:
+            attachments = await self._resolve_image(image_prompt, attachments)
 
         # Apply channel-specific formatting
         # We log the prepared content so quote matching works correctly
@@ -273,10 +281,20 @@ class MessageChannel(ABC):
         logger.info("Sent response to %s (%d chars)", recipient, len(content))
         return message_id if external_id is not None else None
 
-    def _should_auto_image(self) -> bool:
-        """Whether to auto-search for images on messages without attachments."""
-        serper_key = self._config.serper_api_key if self._config else None
-        return bool(serper_key)
+    @staticmethod
+    def _extract_image_prompt(response) -> str | None:
+        """Extract a short image search query from the agent's tool calls."""
+        for tc in response.tool_calls or []:
+            if tc.tool != "search":
+                continue
+            # Prefer single query, fall back to first of queries list
+            query = tc.arguments.get("query")
+            if query:
+                return query
+            queries = tc.arguments.get("queries")
+            if queries:
+                return queries[0]
+        return None
 
     async def _resolve_image(
         self, image_prompt: str, attachments: list[str] | None
@@ -424,6 +442,7 @@ class MessageChannel(ABC):
             )
 
             answer = response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
+            image_prompt = self._extract_image_prompt(response) or message.content[:100]
             incoming_log = MessageLog(
                 id=incoming_id,
                 direction=PennyConstants.MessageDirection.INCOMING,
@@ -435,6 +454,7 @@ class MessageChannel(ABC):
                 message.sender,
                 answer,
                 parent_id=incoming_id,
+                image_prompt=image_prompt,
                 attachments=response.attachments or None,
                 quote_message=incoming_log,
             )
