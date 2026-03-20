@@ -13,6 +13,16 @@ async def _fake_embed(vec):
     return vec
 
 
+# Mock summary report long enough to pass MIN_THOUGHT_WORDS validation
+MOCK_REPORT = (
+    "Research report on AI topics. Recent developments include new model architectures, "
+    "improved training techniques, and expanded deployment across industries. Key findings "
+    "show significant progress in reasoning capabilities, multimodal understanding, and "
+    "efficient inference. Several major organizations announced new initiatives in open "
+    "source AI development and safety research during the past quarter."
+)
+
+
 def _seed_thinking(penny):
     """Seed a message (so user exists), history, and preference (so seed topic exists)."""
     penny.db.messages.log_message(
@@ -51,9 +61,7 @@ async def test_thinking_loop_accumulates_monologue(
         if count <= 3:
             return mock_ollama._make_text_response(request, f"Thinking step {count}...")
         # Summary call
-        return mock_ollama._make_text_response(
-            request, "Explored AI topics, found new developments."
-        )
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
 
     mock_ollama.set_response_handler(handler)
 
@@ -76,7 +84,7 @@ async def test_thinking_loop_accumulates_monologue(
         # Summary stored as thought
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
         assert len(thoughts) == 1
-        assert "AI topics" in thoughts[0].content
+        assert "AI topics" in thoughts[0].content or "Research report" in thoughts[0].content
 
 
 @pytest.mark.asyncio
@@ -106,9 +114,7 @@ async def test_thinking_loop_uses_tools(
         if count == 3:
             return mock_ollama._make_text_response(request, "Nothing else to explore right now.")
         # Summary call
-        return mock_ollama._make_text_response(
-            request, "Searched for AI news, found recent developments."
-        )
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
 
     mock_ollama.set_response_handler(handler)
 
@@ -128,7 +134,7 @@ async def test_thinking_loop_uses_tools(
         # Summary stored
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
         assert len(thoughts) == 1
-        assert "AI news" in thoughts[0].content
+        assert "Research report" in thoughts[0].content
 
 
 @pytest.mark.asyncio
@@ -149,9 +155,7 @@ async def test_thinking_stores_summary_not_raw_monologue(
         if count == 2:
             return mock_ollama._make_text_response(request, "Also curious about quantum computing.")
         # Summary call
-        return mock_ollama._make_text_response(
-            request, "Thought about space and quantum computing."
-        )
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
 
     mock_ollama.set_response_handler(handler)
 
@@ -165,7 +169,7 @@ async def test_thinking_stores_summary_not_raw_monologue(
 
         # Only the summary should be stored, not raw monologue entries
         assert len(thoughts) == 1
-        assert "space and quantum" in thoughts[0].content
+        assert "Research report" in thoughts[0].content
         assert not any("I'm thinking about" in t for t in thought_texts)
 
 
@@ -418,7 +422,7 @@ async def test_thinking_browses_news_when_no_seed_topics(
         if count == 1:
             return mock_ollama._make_text_response(request, "Found some news.")
         # Summary call
-        return mock_ollama._make_text_response(request, "Breaking news discovered.")
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
 
     mock_ollama.set_response_handler(handler)
 
@@ -704,7 +708,7 @@ async def test_thinking_novel_thought_is_stored(
     def handler(request, count):
         if count == 1:
             return mock_ollama._make_text_response(request, "Found something new!")
-        return mock_ollama._make_text_response(request, "New discovery about a topic.")
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
 
     mock_ollama.set_response_handler(handler)
 

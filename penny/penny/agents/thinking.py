@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 # Probability of a free-thinking cycle (no seed, no context, just vibes)
 FREE_THINKING_PROBABILITY = 1 / 3
 
+# Minimum word count for a thought to be stored (filters model planning text)
+MIN_THOUGHT_WORDS = 50
+
 
 class ThinkingAgent(Agent):
     """Autonomous inner monologue — Penny's conscious mind.
@@ -137,6 +140,11 @@ class ThinkingAgent(Agent):
             return False
         combined = "\n\n---\n\n".join(self._inner_monologue)
         report = await self._summarize_text(combined, Prompt.THINKING_REPORT_PROMPT)
+        if report and len(report.split()) < MIN_THOUGHT_WORDS:
+            logger.info(
+                "[inner_monologue] report too short (%d words), skipping", len(report.split())
+            )
+            report = ""
         if report and not await self._is_duplicate_thought(user, report):
             self.db.thoughts.add(user, report, preference_id=self._seed_pref_id)
             logger.info("[inner_monologue] %s", report[:200])
