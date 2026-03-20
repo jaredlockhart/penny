@@ -133,7 +133,6 @@ class BackgroundScheduler:
                     if schedule.should_run(is_idle):
                         agent = schedule.agent
                         self._current_task = agent.name
-                        logger.debug("Running background task: %s", agent.name)
 
                         try:
                             self._active_task = asyncio.create_task(agent.execute())
