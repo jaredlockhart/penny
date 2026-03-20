@@ -127,6 +127,7 @@ class Thought(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user: str = Field(index=True)
     content: str
+    preference_id: int | None = Field(default=None, foreign_key="preference.id", index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     notified_at: datetime | None = None  # When this thought was shared with the user
 
