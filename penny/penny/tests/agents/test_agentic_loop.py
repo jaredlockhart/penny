@@ -407,6 +407,51 @@ class TestEmptyContentRetry:
 
         await agent.close()
 
+    @pytest.mark.asyncio
+    async def test_think_only_response_triggers_retry(self, test_db, mock_ollama):
+        """When model returns only <think>...</think> with no body, retry is triggered."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                # Think-only response: non-empty raw content but no visible text
+                return mock_ollama._make_text_response(
+                    request, "<think>Let me reason about this...</think>"
+                )
+            # After retry prompt, model produces real content
+            return mock_ollama._make_text_response(request, "here's the answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "here's the answer"
+        # Three calls: tool call, think-only response, retry with real answer
+        assert len(mock_ollama.requests) == 3
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_think_only_response_on_final_step_triggers_retry(self, test_db, mock_ollama):
+        """Think-only response on the final step also triggers the inline retry."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=1)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_text_response(
+                    request, "<think>Internal monologue only.</think>"
+                )
+            return mock_ollama._make_text_response(request, "actual answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "actual answer"
+        assert len(mock_ollama.requests) == 2
+
+        await agent.close()
+
 
 class TestRefusalRetry:
     """Test that model refusals trigger a retry nudge."""

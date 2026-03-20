@@ -270,7 +270,10 @@ class Agent:
             if await self.handle_text_step(response, messages, step, is_final_step):
                 continue
 
-            if not response.content.strip() and empty_retries == 0:
+            # Strip think tags before checking emptiness — model may return only
+            # <think>...</think> with no body text, which would bypass the empty check.
+            effective_content, _ = _strip_think_tags(response.content.strip())
+            if not effective_content and empty_retries == 0:
                 empty_retries += 1
                 logger.warning(
                     "Model returned empty content on step %d/%d; requesting text output",
