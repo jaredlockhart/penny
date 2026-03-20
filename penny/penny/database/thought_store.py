@@ -52,17 +52,14 @@ class ThoughtStore:
             thoughts.reverse()
             return thoughts
 
-    def get_recent_by_preference(
-        self, user: str, preference_id: int, limit: int = 50
-    ) -> list[Thought]:
-        """Get recent thoughts for a user seeded by a specific preference, oldest first."""
+    def get_recent_by_preference(self, user: str, preference_id: int) -> list[Thought]:
+        """Get all thoughts for a user seeded by a specific preference, oldest first."""
         with self._session() as session:
             thoughts = list(
                 session.exec(
                     select(Thought)
                     .where(Thought.user == user, Thought.preference_id == preference_id)
                     .order_by(Thought.created_at.desc())  # type: ignore[unresolved-attribute]
-                    .limit(limit)
                 ).all()
             )
             thoughts.reverse()

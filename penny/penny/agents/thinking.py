@@ -21,9 +21,6 @@ logger = logging.getLogger(__name__)
 # Probability of a free-thinking cycle (no seed, no context, just vibes)
 FREE_THINKING_PROBABILITY = 1 / 3
 
-# Number of recent thoughts to compare against for dedup (wider than context window)
-THOUGHT_DEDUP_WINDOW = 50
-
 
 class ThinkingAgent(Agent):
     """Autonomous inner monologue — Penny's conscious mind.
@@ -124,9 +121,7 @@ class ThinkingAgent(Agent):
         if not self._seed_pref_id:
             return None
         try:
-            thoughts = self.db.thoughts.get_recent_by_preference(
-                sender, self._seed_pref_id, limit=self.THOUGHT_CONTEXT_LIMIT
-            )
+            thoughts = self.db.thoughts.get_recent_by_preference(sender, self._seed_pref_id)
             if not thoughts:
                 return None
             lines = [t.content for t in thoughts]
@@ -174,9 +169,7 @@ class ThinkingAgent(Agent):
         report_vec = await embed_text(self._embedding_model_client, report)
         if report_vec is None:
             return False
-        recent = self.db.thoughts.get_recent_by_preference(
-            user, self._seed_pref_id, limit=THOUGHT_DEDUP_WINDOW
-        )
+        recent = self.db.thoughts.get_recent_by_preference(user, self._seed_pref_id)
         for thought in recent:
             thought_vec = await embed_text(self._embedding_model_client, thought.content)
             if thought_vec is None:
