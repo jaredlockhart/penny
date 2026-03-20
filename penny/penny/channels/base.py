@@ -252,7 +252,7 @@ class MessageChannel(ABC):
             Database message ID if send was successful, None otherwise
         """
         if len(image_prompt) > self.MAX_IMAGE_PROMPT_LENGTH:
-            logger.error(
+            logger.warning(
                 "image_prompt too long (%d chars, max %d): %s",
                 len(image_prompt),
                 self.MAX_IMAGE_PROMPT_LENGTH,

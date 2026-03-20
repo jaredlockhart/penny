@@ -208,7 +208,8 @@ class NotifyAgent(Agent):
         answer = response.answer.strip() if response.answer else None
         if not answer:
             return False
-        image_prompt = self._extract_first_headline(answer) or "latest news"
+        headline = self._extract_first_headline(answer)
+        image_prompt = (headline[:100] if headline else None) or "latest news"
         return await self._send_candidate(
             user,
             NotifyCandidate(
