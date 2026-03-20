@@ -4,16 +4,28 @@ from datetime import UTC, datetime
 
 import pytest
 
+from penny.agents.notify import NotifyAgent
 from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 def _seed_notify(penny):
-    """Seed data needed for notifications: message, history, thought."""
+    """Seed data needed for notifications: message, preference, thought."""
     penny.db.messages.log_message(
         PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
     )
-    penny.db.thoughts.add(TEST_SENDER, "I've been thinking about quantum computing")
+    pref = penny.db.preferences.add(
+        user=TEST_SENDER,
+        content="quantum computing",
+        valence="positive",
+        source_period_start=datetime(2026, 3, 20),
+        source_period_end=datetime(2026, 3, 20),
+    )
+    penny.db.thoughts.add(
+        TEST_SENDER,
+        "I've been thinking about quantum computing",
+        preference_id=pref.id if pref else None,
+    )
 
 
 # ── Eligibility checks ──────────────────────────────────────────────────
@@ -128,8 +140,10 @@ async def test_send_notify_thought_candidate(
         unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
         assert unnotified is None
 
-        # Serper image search should have been called
+        # Serper image search should have been called with the preference topic
         mock_serper_image.assert_called_once()
+        image_query = mock_serper_image.call_args[0][0]
+        assert "quantum computing" in image_query.lower()
         assert response.get("base64_attachments"), "Notification should include an image"
 
 
@@ -142,16 +156,17 @@ async def test_send_notify_news(
     test_user_info,
     running_penny,
     monkeypatch,
+    mock_serper_image,
 ):
-    """News mode generates and sends a news message."""
-    config = make_config()
+    """News mode generates and sends a news message with image."""
+    config = make_config(serper_api_key="test-key")
 
     # Force news path (not checkin)
     monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.0)
 
     def handler(request, count):
         return mock_ollama._make_text_response(
-            request, "interesting news today about AI breakthroughs!"
+            request, "interesting news: **AI Breakthrough** changes everything!"
         )
 
     mock_ollama.set_response_handler(handler)
@@ -165,7 +180,13 @@ async def test_send_notify_news(
 
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
         response = signal_server.outgoing_messages[-1]
-        assert response["message"]  # Non-empty response sent
+        assert response["message"]
+
+        # Image search should use the first bold headline
+        mock_serper_image.assert_called_once()
+        image_query = mock_serper_image.call_args[0][0]
+        assert image_query == "AI Breakthrough"
+        assert response.get("base64_attachments"), "News should include an image"
 
 
 @pytest.mark.asyncio
@@ -177,9 +198,10 @@ async def test_send_notify_checkin(
     test_user_info,
     running_penny,
     monkeypatch,
+    mock_serper_image,
 ):
-    """Check-in sends a message when conditions are met."""
-    config = make_config()
+    """Check-in sends a message with cat meme image."""
+    config = make_config(serper_api_key="test-key")
 
     def handler(request, count):
         return mock_ollama._make_text_response(request, "hey! what have you been up to?")
@@ -196,6 +218,12 @@ async def test_send_notify_checkin(
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
         response = signal_server.outgoing_messages[-1]
         assert response["message"]
+
+        # Image search should use the check-in image prompt config
+        mock_serper_image.assert_called_once()
+        image_query = mock_serper_image.call_args[0][0]
+        assert image_query == "funny cat meme"
+        assert response.get("base64_attachments"), "Check-in should include an image"
 
 
 # ── Image prompt extraction ──────────────────────────────────────────────
@@ -359,7 +387,3 @@ def test_is_disqualified_allows_normal_messages():
     """Normal conversational messages are not disqualified."""
     assert not NotifyAgent._is_disqualified("Hey! Been thinking about quantum computing.")
     assert not NotifyAgent._is_disqualified("Check out this cool new game!")
-
-
-# Need to import NotifyAgent for static method tests
-from penny.agents.notify import NotifyAgent  # noqa: E402
