@@ -25,7 +25,7 @@ class SearchTool(Tool):
 
     name = "search"
     description = (
-        "Search the web for current information. Accepts multiple queries "
+        "Search the web for current information. Accepts up to 5 queries "
         "to search in parallel — use this to gather information on several "
         "aspects of a topic at once instead of searching one at a time."
     )
@@ -35,7 +35,8 @@ class SearchTool(Tool):
             "queries": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "One or more search queries to run in parallel",
+                "maxItems": 5,
+                "description": "One or more search queries to run in parallel (max 5)",
             },
             "query": {
                 "type": "string",
@@ -44,6 +45,8 @@ class SearchTool(Tool):
         },
         "required": [],
     }
+
+    MAX_QUERIES = 5
 
     def __init__(
         self,
@@ -80,6 +83,7 @@ class SearchTool(Tool):
             trigger: SearchTrigger value for log_search (default: user_message)
         """
         queries: list[str] = kwargs.get("queries") or [kwargs["query"]]
+        queries = queries[: self.MAX_QUERIES]
         trigger: str = kwargs.get("trigger", self.default_trigger)
 
         tasks = [self._execute_single_query(q, trigger) for q in queries]
