@@ -4,7 +4,6 @@ import asyncio
 import logging
 import re
 import time
-from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
@@ -165,16 +164,14 @@ class SearchTool(Tool):
         return error.get("type") == "insufficient_quota"  # type: ignore[call-overload]
 
     async def _call_perplexity(self, query: str):
-        """Call Perplexity API with dated query prefix."""
-        today = datetime.now(UTC).strftime("%B %d, %Y")
-        dated_query = f"[Today is {today}] {query}"
+        """Call Perplexity API."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             partial(
                 self.perplexity.responses.create,
                 preset=PennyConstants.PERPLEXITY_PRESET,
-                input=dated_query,
+                input=f"{query}, with urls",
             ),
         )
 
