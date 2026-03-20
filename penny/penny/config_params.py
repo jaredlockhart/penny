@@ -129,7 +129,7 @@ ConfigParam(
     key="IMAGE_MAX_RESULTS",
     description="Max image search results to return",
     type=int,
-    default=3,
+    default=10,
     validator=_validate_positive_int,
     group=GROUP_GLOBAL,
 )
