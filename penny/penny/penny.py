@@ -99,9 +99,6 @@ class Penny:
             SearchTool(
                 perplexity_api_key=self.config.perplexity_api_key,
                 db=db,
-                serper_api_key=self.config.serper_api_key,
-                image_max_results=int(self.config.runtime.IMAGE_MAX_RESULTS),
-                image_download_timeout=self.config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
             )
         ]
 
@@ -112,10 +109,6 @@ class Penny:
         return SearchTool(
             perplexity_api_key=config.perplexity_api_key,
             db=self.db,
-            skip_images=True,
-            serper_api_key=config.serper_api_key,
-            image_max_results=int(config.runtime.IMAGE_MAX_RESULTS),
-            image_download_timeout=config.runtime.IMAGE_DOWNLOAD_TIMEOUT,
             default_trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
         )
 

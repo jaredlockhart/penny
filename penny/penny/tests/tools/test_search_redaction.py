@@ -68,10 +68,6 @@ def _make_search_tool(response) -> SearchTool:
     tool.perplexity = MockPerplexityForNullTests(response)
     tool.db = None
     tool.redact_terms = []
-    tool.skip_images = True
-    tool.serper_api_key = None
-    tool.image_max_results = 3
-    tool.image_download_timeout = 5.0
     return tool
 
 

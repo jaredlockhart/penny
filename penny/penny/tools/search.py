@@ -14,7 +14,6 @@ from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputI
 
 from penny.constants import PennyConstants
 from penny.responses import PennyResponse
-from penny.serper.client import search_image
 from penny.tools.base import Tool
 from penny.tools.models import SearchResult
 
@@ -22,42 +21,40 @@ logger = logging.getLogger(__name__)
 
 
 class SearchTool(Tool):
-    """Combined search tool: Perplexity for text, Serper for images, run in parallel."""
+    """Search tool: runs one or more Perplexity text searches in parallel."""
 
     name = "search"
     description = (
-        "Search the web for current information on a specific topic. "
-        "Returns search results text and attaches a relevant image."
+        "Search the web for current information. Accepts multiple queries "
+        "to search in parallel — use this to gather information on several "
+        "aspects of a topic at once instead of searching one at a time."
     )
     parameters = {
         "type": "object",
         "properties": {
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "One or more search queries to run in parallel",
+            },
             "query": {
                 "type": "string",
-                "description": "The search query",
-            }
+                "description": "Single search query (use queries for multiple)",
+            },
         },
-        "required": ["query"],
+        "required": [],
     }
 
     def __init__(
         self,
         perplexity_api_key: str,
         db=None,
-        skip_images: bool = False,
-        serper_api_key: str | None = None,
         *,
-        image_max_results: int,
-        image_download_timeout: float,
         default_trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
     ):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
         self.redact_terms: list[str] = []
-        self.skip_images = skip_images
-        self.serper_api_key = serper_api_key
-        self.image_max_results = image_max_results
-        self.image_download_timeout = image_download_timeout
         self.default_trigger = default_trigger
 
     @staticmethod
@@ -77,42 +74,49 @@ class SearchTool(Tool):
         return text.strip()
 
     async def execute(self, **kwargs) -> Any:
-        """Run Perplexity text search and optionally Serper image search in parallel.
+        """Run one or more text searches in parallel.
 
         Accepts optional kwargs beyond the tool schema (not exposed to the model):
-            skip_images: Override instance default for this call
             trigger: SearchTrigger value for log_search (default: user_message)
         """
-        query: str = kwargs["query"]
-        skip_images: bool = kwargs.get("skip_images", self.skip_images)
+        queries: list[str] = kwargs.get("queries") or [kwargs["query"]]
         trigger: str = kwargs.get("trigger", self.default_trigger)
-        redacted_query = self._redact_query(query)
 
-        if skip_images:
-            text_result = await self._search_text(redacted_query, trigger)
-            if isinstance(text_result, Exception):
-                return SearchResult(text=PennyResponse.SEARCH_ERROR.format(error=text_result))
-            text, urls = text_result
-            return SearchResult(text=text, urls=urls)
+        tasks = [self._execute_single_query(q, trigger) for q in queries]
+        results = await asyncio.gather(*tasks)
+        return self._merge_results(queries, results)
 
-        text_result, image_result = await asyncio.gather(
-            self._search_text(redacted_query, trigger),
-            self._search_image(redacted_query),
-            return_exceptions=True,
-        )
-
-        # Handle text result
-        urls: list[str] = []
+    async def _execute_single_query(self, query: str, trigger: str) -> SearchResult:
+        """Run text search for a single query."""
+        redacted = self._redact_query(query)
+        text_result = await self._search_text(redacted, trigger)
         if isinstance(text_result, Exception):
-            text = PennyResponse.SEARCH_ERROR.format(error=text_result)
-        else:
-            text, urls = text_result
+            return SearchResult(text=PennyResponse.SEARCH_ERROR.format(error=text_result))
+        text, urls = text_result
+        return SearchResult(text=text, urls=urls)
 
-        # Handle image result
-        if isinstance(image_result, Exception) or image_result is None:
-            return SearchResult(text=text, urls=urls)
+    @staticmethod
+    def _merge_results(queries: list[str], results: list[SearchResult]) -> SearchResult:
+        """Merge multiple search results into one with per-query sections."""
+        if len(results) == 1:
+            return results[0]
 
-        return SearchResult(text=text, image_base64=image_result, urls=urls)
+        sections: list[str] = []
+        all_urls: list[str] = []
+
+        for query, result in zip(queries, results, strict=True):
+            sections.append(f"## Results for: {query}\n{result.text}")
+            all_urls.extend(result.urls)
+
+        # Deduplicate URLs while preserving order
+        seen: set[str] = set()
+        unique_urls: list[str] = []
+        for url in all_urls:
+            if url not in seen:
+                seen.add(url)
+                unique_urls.append(url)
+
+        return SearchResult(text="\n\n".join(sections), urls=unique_urls)
 
     def _redact_query(self, query: str) -> str:
         """Remove redact_terms from query (case-insensitive, whole-word)."""
@@ -208,12 +212,3 @@ class SearchTool(Tool):
                 duration_ms=duration_ms,
                 trigger=trigger,
             )
-
-    async def _search_image(self, query: str) -> str | None:
-        """Search for an image via Serper and return base64 data."""
-        return await search_image(
-            query,
-            api_key=self.serper_api_key,
-            max_results=self.image_max_results,
-            timeout=self.image_download_timeout,
-        )
