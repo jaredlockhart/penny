@@ -408,6 +408,69 @@ class TestEmptyContentRetry:
         await agent.close()
 
 
+class TestToolResultTruncation:
+    """Test that oversized tool results are truncated to prevent context saturation."""
+
+    @pytest.mark.asyncio
+    async def test_large_tool_result_is_truncated(self, test_db, mock_ollama):
+        """Tool results exceeding MAX_TOOL_RESULT_CHARS are truncated with [truncated] suffix."""
+        from unittest.mock import patch
+
+        from penny.tools.models import ToolResult
+
+        agent, db = _make_agent(test_db, mock_ollama)
+        large_result = "x" * (Agent.MAX_TOOL_RESULT_CHARS + 500)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            # Verify the tool result in context was truncated
+            messages = request["messages"]
+            tool_messages = [m for m in messages if m.get("role") == "tool"]
+            assert len(tool_messages) == 1
+            content = tool_messages[0]["content"]
+            assert len(content) <= Agent.MAX_TOOL_RESULT_CHARS + len(" [truncated]")
+            assert content.endswith(" [truncated]")
+            return mock_ollama._make_text_response(request, "done")
+
+        mock_ollama.set_response_handler(handler)
+
+        with patch.object(agent._tool_executor, "execute") as mock_exec:
+            mock_exec.return_value = ToolResult(tool="search", result=large_result)
+            response = await agent.run("test")
+
+        assert response.answer == "done"
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_small_tool_result_not_truncated(self, test_db, mock_ollama):
+        """Tool results within MAX_TOOL_RESULT_CHARS are passed through unchanged."""
+        from unittest.mock import patch
+
+        from penny.tools.models import ToolResult
+
+        agent, db = _make_agent(test_db, mock_ollama)
+        small_result = "x" * 100
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            messages = request["messages"]
+            tool_messages = [m for m in messages if m.get("role") == "tool"]
+            assert len(tool_messages) == 1
+            assert tool_messages[0]["content"] == small_result
+            return mock_ollama._make_text_response(request, "done")
+
+        mock_ollama.set_response_handler(handler)
+
+        with patch.object(agent._tool_executor, "execute") as mock_exec:
+            mock_exec.return_value = ToolResult(tool="search", result=small_result)
+            response = await agent.run("test")
+
+        assert response.answer == "done"
+        await agent.close()
+
+
 class TestRefusalRetry:
     """Test that model refusals trigger a retry nudge."""
 

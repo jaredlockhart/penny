@@ -87,6 +87,7 @@ class Agent:
 
     THOUGHT_CONTEXT_LIMIT = 10
     PREFERRED_POOL_SIZE = 5
+    MAX_TOOL_RESULT_CHARS = 3000
     name: str = "Agent"
 
     def __init__(
@@ -510,12 +511,24 @@ class Agent:
 
         if isinstance(tool_result.result, SearchResult):
             result_str, urls, image = self._format_search_result(tool_result.result)
+            result_str = self._truncate_tool_result(result_str)
             logger.debug("Tool result: %s", result_str[:200])
             return result_str, record, urls, image
 
-        result_str = str(tool_result.result)
+        result_str = self._truncate_tool_result(str(tool_result.result))
         logger.debug("Tool result: %s", result_str[:200])
         return result_str, record, [], None
+
+    def _truncate_tool_result(self, result_str: str) -> str:
+        """Truncate tool result to MAX_TOOL_RESULT_CHARS to prevent context saturation."""
+        if len(result_str) <= self.MAX_TOOL_RESULT_CHARS:
+            return result_str
+        logger.warning(
+            "Tool result truncated from %d to %d chars to prevent context saturation",
+            len(result_str),
+            self.MAX_TOOL_RESULT_CHARS,
+        )
+        return result_str[: self.MAX_TOOL_RESULT_CHARS] + " [truncated]"
 
     @staticmethod
     def _make_call_key(tool_name: str, arguments: dict) -> tuple[str, ...]:
