@@ -131,6 +131,9 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `SERPER_API_KEY`: API key for Serper image search (optional; if unset, messages won't include images)
 - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
 - `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email` command)
+- `ZOHO_API_ID`: Zoho OAuth client ID (optional, enables `/zoho` command)
+- `ZOHO_API_SECRET`: Zoho OAuth client secret (optional, enables `/zoho` command)
+- `ZOHO_REFRESH_TOKEN`: Zoho OAuth refresh token (optional, enables `/zoho` command) — obtain via [OAuth flow](https://www.zoho.com/mail/help/api/using-oauth-2.html)
 - `NEWS_API_KEY`: API key for TheNewsAPI.com (optional; enables news search tool for chat and thinking agents)
 **GitHub App** (required for agent containers and `/bug` command):
 - `GITHUB_APP_ID`: GitHub App ID for authenticated API access

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from penny.jmap.client import JmapClient
+from penny.email.protocol import EmailClient
 from penny.ollama.client import OllamaClient
 from penny.prompts import Prompt
 from penny.tools.base import Tool
@@ -37,11 +37,11 @@ class ReadEmailsTool(Tool):
 
     def __init__(
         self,
-        jmap_client: JmapClient,
+        email_client: EmailClient,
         ollama_client: OllamaClient,
         user_query: str,
     ) -> None:
-        self._jmap = jmap_client
+        self._client = email_client
         self._ollama = ollama_client
         self._user_query = user_query
 
@@ -50,7 +50,7 @@ class ReadEmailsTool(Tool):
         email_ids = kwargs["email_ids"]
         if not email_ids:
             return NO_EMAILS_TO_READ
-        emails = await self._jmap.read_emails(email_ids)
+        emails = await self._client.read_emails(email_ids)
         if not emails:
             return NO_EMAILS_TO_READ
 

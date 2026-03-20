@@ -39,6 +39,7 @@ def create_command_registry(
     github_api: GitHubAPI | None = None,
     image_model_client: OllamaClient | None = None,
     fastmail_api_token: str | None = None,
+    zoho_credentials: tuple[str, str, str] | None = None,
 ) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
@@ -48,6 +49,9 @@ def create_command_registry(
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
         image_model_client: Optional image generation OllamaClient (required for draw command)
+        fastmail_api_token: Optional Fastmail API token (required for email command)
+        zoho_credentials: Optional tuple of (client_id, client_secret, refresh_token)
+                         for Zoho Mail API (required for zoho command)
 
     Returns:
         CommandRegistry with all builtin commands registered
@@ -94,5 +98,12 @@ def create_command_registry(
         from penny.commands.email import EmailCommand
 
         registry.register(EmailCommand(fastmail_api_token))
+
+    # Register zoho command if Zoho credentials are configured
+    if zoho_credentials:
+        from penny.commands.zoho import ZohoCommand
+
+        client_id, client_secret, refresh_token = zoho_credentials
+        registry.register(ZohoCommand(client_id, client_secret, refresh_token))
 
     return registry

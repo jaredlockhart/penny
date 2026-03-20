@@ -29,6 +29,11 @@ class PennyConstants:
     # Email command constants
     JMAP_SESSION_URL = "https://api.fastmail.com/jmap/session"
 
+    # Zoho Mail API constants
+    ZOHO_TOKEN_URL = "https://accounts.zoho.com/oauth/v2/token"
+    ZOHO_ACCOUNTS_URL = "https://mail.zoho.com/api/accounts"
+    ZOHO_API_BASE = "https://mail.zoho.com/api"
+
     # Test mode constants
     TEST_DB_PATH = Path("data/penny/penny-test.db")
 

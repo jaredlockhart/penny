@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from penny.jmap.client import JmapClient
+from penny.email.protocol import EmailClient
 from penny.tools.base import Tool
 
 logger = logging.getLogger(__name__)
@@ -51,12 +51,12 @@ class SearchEmailsTool(Tool):
         "required": [],
     }
 
-    def __init__(self, jmap_client: JmapClient) -> None:
-        self._jmap = jmap_client
+    def __init__(self, email_client: EmailClient) -> None:
+        self._client = email_client
 
     async def execute(self, **kwargs: Any) -> str:
         """Search emails and return formatted summaries."""
-        results = await self._jmap.search_emails(**kwargs)
+        results = await self._client.search_emails(**kwargs)
         if not results:
             return NO_EMAILS_FOUND
         header = f"Found {len(results)} email(s):\n\n"

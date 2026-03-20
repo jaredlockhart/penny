@@ -96,6 +96,9 @@ def _collect_env_vars(channel_type: str) -> dict:
         "log_backup_count": int(os.getenv("LOG_BACKUP_COUNT", "5")),
         "tool_timeout": float(os.getenv("TOOL_TIMEOUT", "60.0")),
         "fastmail_api_token": os.getenv("FASTMAIL_API_TOKEN"),
+        "zoho_api_id": os.getenv("ZOHO_API_ID"),
+        "zoho_api_secret": os.getenv("ZOHO_API_SECRET"),
+        "zoho_refresh_token": os.getenv("ZOHO_REFRESH_TOKEN"),
         "news_api_key": os.getenv("NEWS_API_KEY"),
     }
 
@@ -162,6 +165,11 @@ class Config:
 
     # Scheduler tick interval (seconds)
     scheduler_tick_interval: float = 1.0
+
+    # Zoho API configuration (optional, enables /zoho command)
+    zoho_api_id: str | None = None
+    zoho_api_secret: str | None = None
+    zoho_refresh_token: str | None = None
 
     # Fastmail JMAP configuration (optional, enables /email command)
     fastmail_api_token: str | None = None

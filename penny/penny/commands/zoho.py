@@ -1,4 +1,4 @@
-"""Email search command using Fastmail JMAP."""
+"""Zoho email search command using Zoho Mail API."""
 
 from __future__ import annotations
 
@@ -7,51 +7,64 @@ import logging
 from penny.agents.base import Agent
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.jmap import JmapClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool
+from penny.tools.list_emails import ListEmailsTool
+from penny.tools.list_folders import ListFoldersTool
 from penny.tools.read_emails import ReadEmailsTool
 from penny.tools.search_emails import SearchEmailsTool
+from penny.zoho.client import ZohoClient
 
 logger = logging.getLogger(__name__)
 
 
-class EmailCommand(Command):
-    """Search email and answer questions about it."""
+class ZohoCommand(Command):
+    """Search Zoho email and answer questions about it."""
 
-    name = "email"
-    description = "Search your email and answer questions"
+    name = "zoho"
+    description = "Search your Zoho email and answer questions"
     help_text = (
-        "Usage: /email <question>\n\n"
-        "Ask a question about your email and Penny will search and read "
+        "Usage: /zoho <question>\n\n"
+        "Ask a question about your Zoho email and Penny will search and read "
         "relevant messages to find the answer.\n\n"
         "Examples:\n"
-        "• /email what packages am I expecting\n"
-        "• /email when is my dentist appointment\n"
-        "• /email any emails from mom this week"
+        "• /zoho what packages am I expecting\n"
+        "• /zoho when is my dentist appointment\n"
+        "• /zoho any emails from mom this week"
     )
 
-    def __init__(self, fastmail_api_token: str) -> None:
-        self._fastmail_api_token = fastmail_api_token
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        refresh_token: str,
+    ) -> None:
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._refresh_token = refresh_token
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
-        """Execute the email command."""
+        """Execute the zoho email command."""
         prompt = args.strip()
 
         if not prompt:
-            return CommandResult(text=PennyResponse.EMAIL_NO_QUERY_TEXT)
+            return CommandResult(text=PennyResponse.ZOHO_NO_QUERY_TEXT)
 
-        jmap_client = JmapClient(
-            self._fastmail_api_token,
+        zoho_client = ZohoClient(
+            self._client_id,
+            self._client_secret,
+            self._refresh_token,
             timeout=context.config.runtime.JMAP_REQUEST_TIMEOUT,
             max_body_length=int(context.config.runtime.EMAIL_BODY_MAX_LENGTH),
         )
         agent: Agent | None = None
         try:
             tools: list[Tool] = [
-                SearchEmailsTool(jmap_client),
-                ReadEmailsTool(jmap_client, context.model_client, prompt),
+                SearchEmailsTool(zoho_client),
+                ListEmailsTool(zoho_client),
+                ListFoldersTool(zoho_client),
+                ReadEmailsTool(zoho_client, context.model_client, prompt),
             ]
 
             agent = Agent(
@@ -69,10 +82,10 @@ class EmailCommand(Command):
             return CommandResult(text=response.answer)
 
         except Exception as e:
-            logger.exception("Email search failed")
-            return CommandResult(text=PennyResponse.EMAIL_ERROR.format(error=e))
+            logger.exception("Zoho email search failed")
+            return CommandResult(text=PennyResponse.ZOHO_ERROR.format(error=e))
 
         finally:
             if agent:
                 await agent.close()
-            await jmap_client.close()
+            await zoho_client.close()
