@@ -391,6 +391,65 @@ class TestEmptyContentRetry:
         await agent.close()
 
     @pytest.mark.asyncio
+    async def test_empty_content_after_tool_calls_uses_stronger_retry_prompt(
+        self, test_db, mock_ollama
+    ):
+        """After tool calls, the empty-content retry prompt mentions gathered information."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent.allow_repeat_tools = True
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test2"})
+            if count == 3:
+                # Final step: empty content after tool-call chain
+                return mock_ollama._make_text_response(request, "")
+            # Retry: model now produces a real answer
+            return mock_ollama._make_text_response(request, "here's the answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "here's the answer"
+        # 4 calls: 2 tool calls + empty final step + retry
+        assert len(mock_ollama.requests) == 4
+
+        # The retry prompt (last user message before the retry call) should
+        # acknowledge the gathered information — not just say "Please provide your response."
+        retry_messages = mock_ollama.requests[3]["messages"]
+        user_messages = [m for m in retry_messages if m.get("role") == "user"]
+        retry_prompt = user_messages[-1]["content"]
+        assert "gathered" in retry_prompt.lower()
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_content_no_prior_tools_uses_generic_retry_prompt(
+        self, test_db, mock_ollama
+    ):
+        """Without preceding tool calls, the generic retry prompt is used."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=1)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_text_response(request, "")
+            return mock_ollama._make_text_response(request, "here's the answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "here's the answer"
+
+        retry_messages = mock_ollama.requests[1]["messages"]
+        user_messages = [m for m in retry_messages if m.get("role") == "user"]
+        retry_prompt = user_messages[-1]["content"]
+        assert "please provide your response" in retry_prompt.lower()
+
+        await agent.close()
+
+    @pytest.mark.asyncio
     async def test_empty_content_twice_returns_fallback(self, test_db, mock_ollama):
         """When model returns empty content on both the final step and retry, returns fallback."""
         agent, db = _make_agent(test_db, mock_ollama, max_steps=1)
