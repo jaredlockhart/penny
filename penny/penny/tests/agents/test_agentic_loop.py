@@ -407,6 +407,54 @@ class TestEmptyContentRetry:
 
         await agent.close()
 
+    @pytest.mark.asyncio
+    async def test_empty_after_tool_calls_uses_directive_retry_prompt(self, test_db, mock_ollama):
+        """When tool calls preceded empty content, retry uses a directive prompt."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                # Empty response after tool call
+                return mock_ollama._make_text_response(request, "")
+            # Inspect the retry message injected before this call
+            messages = request["messages"]
+            user_messages = [m for m in messages if m.get("role") == "user"]
+            last_user = user_messages[-1]["content"]
+            assert "research" in last_user.lower(), f"Expected directive prompt, got: {last_user!r}"
+            return mock_ollama._make_text_response(request, "here's the synthesized answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "here's the synthesized answer"
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_without_tool_calls_uses_generic_retry_prompt(self, test_db, mock_ollama):
+        """When no tool calls preceded empty content, retry uses the generic prompt."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=2)
+
+        def handler(request, count):
+            if count == 1:
+                # No tool calls, just empty response
+                return mock_ollama._make_text_response(request, "")
+            # Inspect the retry message injected before this call
+            messages = request["messages"]
+            user_messages = [m for m in messages if m.get("role") == "user"]
+            last_user = user_messages[-1]["content"]
+            assert last_user == "Please provide your response."
+            return mock_ollama._make_text_response(request, "here's the answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "here's the answer"
+
+        await agent.close()
+
 
 class TestRefusalRetry:
     """Test that model refusals trigger a retry nudge."""
