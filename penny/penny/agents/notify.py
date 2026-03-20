@@ -254,7 +254,7 @@ class NotifyAgent(Agent):
     async def _generate_thought_candidates(self, user: str, n: int) -> list[NotifyCandidate]:
         """Generate N thought candidates ranked by preference affinity."""
         candidates: list[NotifyCandidate] = []
-        thoughts = await self._get_top_thoughts(user, n)
+        thoughts = self._get_top_thoughts(user, n)
         for i, thought in enumerate(thoughts):
             candidate = await self._generate_one_candidate(
                 user, Prompt.NOTIFY_PROMPT, thought=thought
@@ -266,36 +266,54 @@ class NotifyAgent(Agent):
                 candidates.append(candidate)
         return candidates
 
-    async def _get_top_thoughts(self, user: str, n: int) -> list[Thought]:
-        """Rank un-notified thoughts by preference affinity and return top N."""
+    def _get_top_thoughts(self, user: str, n: int) -> list[Thought]:
+        """Select diverse unnotified thoughts: 1 free-thinking + N-1 least-recently-notified prefs.
+
+        Selection algorithm:
+        1. Most recent unnotified free-thinking thought (preference_id IS NULL)
+        2. For each preference with unnotified thoughts, find when it was last
+           notified. Pick the N-1 least-recently-notified preferences, and from
+           each take the most recent unnotified thought.
+        """
         hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
-        thoughts = self.db.thoughts.get_all_unnotified(user, freshness_hours=hours)
-        if len(thoughts) <= n:
-            return thoughts
-        return await self._rank_thoughts(user, thoughts, n)
+        all_unnotified = self.db.thoughts.get_all_unnotified(user, freshness_hours=hours)
+        if not all_unnotified:
+            return []
 
-    async def _rank_thoughts(self, user: str, thoughts: list[Thought], n: int) -> list[Thought]:
-        """Score thoughts by preference affinity and return the top N."""
-        likes, dislikes = load_preference_vectors(
-            self.db.preferences.get_with_embeddings(user),
-            PennyConstants.PreferenceValence.POSITIVE,
-            PennyConstants.PreferenceValence.NEGATIVE,
-        )
-        if (not likes and not dislikes) or not self._embedding_model_client:
-            return random.sample(thoughts, n)
+        result: list[Thought] = []
 
-        scored: list[tuple[Thought, float]] = []
-        for thought in thoughts:
-            vec = await embed_text(self._embedding_model_client, thought.content)
-            if vec is None:
-                continue
-            score = compute_sentiment_score(vec, likes, dislikes)
-            scored.append((thought, score))
+        # 1. Most recent free-thinking thought
+        free = [t for t in all_unnotified if t.preference_id is None]
+        if free:
+            result.append(free[-1])
 
-        if not scored:
-            return random.sample(thoughts, n)
-        scored.sort(key=lambda pair: pair[1], reverse=True)
-        return [t for t, _ in scored[:n]]
+        # 2. Group seeded thoughts by preference, find last notified time per pref
+        seeded = [t for t in all_unnotified if t.preference_id is not None]
+        by_pref: dict[int, list[Thought]] = {}
+        for t in seeded:
+            assert t.preference_id is not None
+            by_pref.setdefault(t.preference_id, []).append(t)
+
+        pref_last_notified = self._get_pref_last_notified_times(user, list(by_pref.keys()))
+        ranked = sorted(by_pref.keys(), key=lambda pid: pref_last_notified.get(pid) or "")
+        slots = n - len(result)
+        for pref_id in ranked[:slots]:
+            result.append(by_pref[pref_id][-1])  # most recent unnotified
+
+        return result
+
+    def _get_pref_last_notified_times(self, user: str, preference_ids: list[int]) -> dict[int, str]:
+        """Get the most recent notified_at per preference (for ranking)."""
+        if not preference_ids:
+            return {}
+        all_thoughts = self.db.thoughts.get_recent(user)
+        last_notified: dict[int, str] = {}
+        for t in all_thoughts:
+            if t.preference_id in preference_ids and t.notified_at is not None:
+                ts = str(t.notified_at)
+                if t.preference_id not in last_notified or ts > last_notified[t.preference_id]:
+                    last_notified[t.preference_id] = ts
+        return last_notified
 
     async def _generate_one_candidate(
         self, user: str, prompt: str, thought: Thought | None
