@@ -38,9 +38,9 @@ class ConfigParam:
 
     key: str
     description: str
-    type: type  # int or float
-    default: int | float  # Default value (single source of truth)
-    validator: Callable[[str], int | float]  # Parses and validates value from string
+    type: type  # int, float, or str
+    default: int | float | str  # Default value (single source of truth)
+    validator: Callable[[str], int | float | str]  # Parses and validates value from string
     group: str = GROUP_GLOBAL  # Display group for /config listing
 
     def __post_init__(self) -> None:
@@ -82,6 +82,14 @@ def _validate_positive_float(value: str) -> float:
         raise ValueError("must be a positive number")
 
     return parsed
+
+
+def _validate_non_empty_string(value: str) -> str:
+    """Validate non-empty string."""
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("must be a non-empty string")
+    return stripped
 
 
 def _validate_unit_float(value: str) -> float:
@@ -300,6 +308,15 @@ ConfigParam(
     group=GROUP_NOTIFY,
 )
 
+ConfigParam(
+    key="CHECKIN_IMAGE_PROMPT",
+    description="Image search query for check-in message attachments",
+    type=str,
+    default="funny cat meme",
+    validator=_validate_non_empty_string,
+    group=GROUP_NOTIFY,
+)
+
 
 class RuntimeParams:
     """Accessor for runtime-configurable parameters.
@@ -311,12 +328,12 @@ class RuntimeParams:
     def __init__(
         self,
         db: Database | None = None,
-        env_overrides: dict[str, int | float] | None = None,
+        env_overrides: dict[str, int | float | str] | None = None,
     ) -> None:
         self._db = db
         self._env_overrides = env_overrides or {}
 
-    def __getattr__(self, name: str) -> int | float:
+    def __getattr__(self, name: str) -> int | float | str:
         key = name.upper()
         if key not in RUNTIME_CONFIG_PARAMS:
             raise AttributeError(f"No runtime config param: {name}")
@@ -334,7 +351,7 @@ class RuntimeParams:
         # 3. Fall back to default
         return RUNTIME_CONFIG_PARAMS[key].default
 
-    def _get_db_value(self, key: str) -> int | float | None:
+    def _get_db_value(self, key: str) -> int | float | str | None:
         """Look up a runtime config override from the database."""
         assert self._db is not None  # Caller guards with `if self._db is not None`
         from sqlmodel import Session, select

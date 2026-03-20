@@ -179,7 +179,12 @@ class NotifyAgent(Agent):
         if not answer:
             return False
         return await self._send_candidate(
-            user, NotifyCandidate(answer=answer, attachments=response.attachments or [])
+            user,
+            NotifyCandidate(
+                answer=answer,
+                attachments=response.attachments or [],
+                image_prompt=str(self.config.runtime.CHECKIN_IMAGE_PROMPT),
+            ),
         )
 
     def _build_checkin_context(self, user: str) -> str:
