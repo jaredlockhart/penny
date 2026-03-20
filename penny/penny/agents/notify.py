@@ -370,8 +370,7 @@ class NotifyAgent(Agent):
 
     def _build_notified_thought_context(self, user: str) -> str | None:
         """Build context from recently notified thoughts (already shared with user)."""
-        hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
-        thoughts = self.db.thoughts.get_recent_notified(user, freshness_hours=hours, limit=1)
+        thoughts = self.db.thoughts.get_recent_notified(user, limit=1)
         if not thoughts:
             return None
         return f"## Recent Background Thinking\n{thoughts[0].content}"
@@ -418,8 +417,7 @@ class NotifyAgent(Agent):
         """Embed recent outgoing messages for novelty comparison."""
         if not self._embedding_model_client:
             return []
-        hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
-        contents = self.db.messages.get_recent_outgoing_content(user, hours=hours)
+        contents = self.db.messages.get_recent_outgoing_content(user)
         vecs: list[list[float]] = []
         for content in contents:
             vec = await embed_text(self._embedding_model_client, content)
