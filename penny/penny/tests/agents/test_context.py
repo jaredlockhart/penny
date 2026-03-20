@@ -276,20 +276,23 @@ async def test_dislike_context_deduplicates(
 
 
 @pytest.mark.asyncio
-async def test_thought_context_respects_freshness_window(
+async def test_thought_context_scoped_to_seed_preference(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """Base thought context only includes thoughts within freshness window."""
-    config = make_config(thought_freshness_hours=1)
+    """Thinking agent thought context only includes thoughts for the same seed preference."""
+    config = make_config()
 
     async with running_penny(config) as penny:
-        # Add a recent thought
-        penny.db.thoughts.add(TEST_SENDER, "recent thought about AI")
+        # Add thoughts for two different preferences
+        penny.db.thoughts.add(TEST_SENDER, "thought about AI", preference_id=1)
+        penny.db.thoughts.add(TEST_SENDER, "thought about music", preference_id=2)
 
-        # Base agent _build_thought_context (used by thinking agent)
+        # Scope to preference 1 — should only see the AI thought
+        penny.thinking_agent._seed_pref_id = 1
         context = penny.thinking_agent._build_thought_context(TEST_SENDER)
         assert context is not None
-        assert "recent thought about AI" in context
+        assert "thought about AI" in context
+        assert "thought about music" not in context
 
 
 @pytest.mark.asyncio

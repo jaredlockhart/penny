@@ -171,6 +171,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - **Constants for string literals**: All string literals must be defined as constants or enums — no magic strings in logic
 - **Prefer f-strings**: Always use f-strings over string concatenation with `+`
 - **Datetime columns for ordering, IDs for joining**: Always use datetime columns (`created_at`, `timestamp`, `learned_at`, etc.) for recency ordering in queries. Never use auto-increment IDs (`id`) to infer chronological order — IDs are for joins and lookups only
+- **Always use foreign keys**: Never denormalize by storing copies of data that exists in another table. Use proper FK references (e.g., `preference_id REFERENCES preference(id)`) instead of duplicating column values
 - **Short methods (10-20 lines)**: Every method should be roughly 10-20 lines (hard max ~25). Break long methods into named steps via extraction — don't add new abstractions, just decompose
 - **Summary method at top**: Every class should have a summary method (after `__init__`) that composes calls to other methods, reading like a table of contents. This gives a bird's-eye view of the class's behavior from the top of its definition
 - **Database stores pattern**: Database access is organized into domain-specific store classes (`db.messages`, `db.preferences`, `db.thoughts`, etc.). The `Database` class is a thin facade that creates and exposes stores. Access data via `self.db.messages.log_message(...)`, not `self.db.log_message(...)`
