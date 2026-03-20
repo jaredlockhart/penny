@@ -90,9 +90,8 @@ class NotifyAgent(Agent):
     # ── Cooldown ──────────────────────────────────────────────────────
 
     def _has_recent_thoughts(self, user: str) -> bool:
-        """Check if user has un-notified thoughts within freshness window."""
-        hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
-        return self.db.thoughts.get_next_unnotified(user, freshness_hours=hours) is not None
+        """Check if user has un-notified thoughts."""
+        return self.db.thoughts.get_next_unnotified(user) is not None
 
     def _cooldown_elapsed(self, user: str) -> bool:
         """Check if enough time since last autonomous outgoing message.
@@ -275,8 +274,7 @@ class NotifyAgent(Agent):
            notified. Pick the N-1 least-recently-notified preferences, and from
            each take the most recent unnotified thought.
         """
-        hours = int(self.config.runtime.THOUGHT_FRESHNESS_HOURS)
-        all_unnotified = self.db.thoughts.get_all_unnotified(user, freshness_hours=hours)
+        all_unnotified = self.db.thoughts.get_all_unnotified(user)
         if not all_unnotified:
             return []
 

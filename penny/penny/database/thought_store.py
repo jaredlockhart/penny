@@ -70,24 +70,21 @@ class ThoughtStore:
         """Rolling cutoff: now minus N hours, as naive UTC."""
         return datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
 
-    def get_next_unnotified(self, user: str, freshness_hours: int = 24) -> Thought | None:
-        """Get the oldest un-notified thought within the freshness window."""
-        cutoff = self._freshness_cutoff(freshness_hours)
+    def get_next_unnotified(self, user: str) -> Thought | None:
+        """Get the oldest un-notified thought."""
         with self._session() as session:
             return session.exec(
                 select(Thought)
                 .where(
                     Thought.user == user,
                     Thought.notified_at == None,  # noqa: E711
-                    Thought.created_at >= cutoff,
                 )
                 .order_by(Thought.created_at.asc())  # type: ignore[unresolved-attribute]
                 .limit(1)
             ).first()
 
-    def get_all_unnotified(self, user: str, freshness_hours: int = 24) -> list[Thought]:
-        """Get all un-notified thoughts within the freshness window, oldest first."""
-        cutoff = self._freshness_cutoff(freshness_hours)
+    def get_all_unnotified(self, user: str) -> list[Thought]:
+        """Get all un-notified thoughts, oldest first."""
         with self._session() as session:
             return list(
                 session.exec(
@@ -95,7 +92,6 @@ class ThoughtStore:
                     .where(
                         Thought.user == user,
                         Thought.notified_at == None,  # noqa: E711
-                        Thought.created_at >= cutoff,
                     )
                     .order_by(Thought.created_at.asc())  # type: ignore[unresolved-attribute]
                 ).all()
