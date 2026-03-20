@@ -102,7 +102,7 @@ def _collect_env_vars(channel_type: str) -> dict:
 
 def _build_runtime_params(db: Database | None) -> RuntimeParams:
     """Build runtime params with env overrides."""
-    env_overrides: dict[str, int | float] = {}
+    env_overrides: dict[str, int | float | str] = {}
     for key, param in RUNTIME_CONFIG_PARAMS.items():
         env_val = os.getenv(key)
         if env_val is not None:

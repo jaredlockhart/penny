@@ -10,7 +10,7 @@ import pytest
 from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.jmap.client import JmapClient, _strip_html
 
-_JMAP_TIMEOUT = RUNTIME_CONFIG_PARAMS["JMAP_REQUEST_TIMEOUT"].default
+_JMAP_TIMEOUT = float(RUNTIME_CONFIG_PARAMS["JMAP_REQUEST_TIMEOUT"].default)
 _EMAIL_MAX_LENGTH = int(RUNTIME_CONFIG_PARAMS["EMAIL_BODY_MAX_LENGTH"].default)
 
 FAKE_TOKEN = "fmu1-test-token"

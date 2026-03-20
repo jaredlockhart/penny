@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from penny.database import Database
@@ -328,12 +328,12 @@ class RuntimeParams:
     def __init__(
         self,
         db: Database | None = None,
-        env_overrides: dict[str, int | float | str] | None = None,
+        env_overrides: dict[str, Any] | None = None,
     ) -> None:
         self._db = db
         self._env_overrides = env_overrides or {}
 
-    def __getattr__(self, name: str) -> int | float | str:
+    def __getattr__(self, name: str) -> Any:
         key = name.upper()
         if key not in RUNTIME_CONFIG_PARAMS:
             raise AttributeError(f"No runtime config param: {name}")
@@ -351,7 +351,7 @@ class RuntimeParams:
         # 3. Fall back to default
         return RUNTIME_CONFIG_PARAMS[key].default
 
-    def _get_db_value(self, key: str) -> int | float | str | None:
+    def _get_db_value(self, key: str) -> Any:
         """Look up a runtime config override from the database."""
         assert self._db is not None  # Caller guards with `if self._db is not None`
         from sqlmodel import Session, select

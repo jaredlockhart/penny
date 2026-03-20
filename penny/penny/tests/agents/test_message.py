@@ -58,7 +58,13 @@ async def test_xml_tool_call_not_leaked_to_user(
 
 @pytest.mark.asyncio
 async def test_basic_message_flow(
-    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    mock_serper_image,
 ):
     """
     Test the complete message flow:
@@ -69,13 +75,15 @@ async def test_basic_message_flow(
     5. Ollama returns final response
     6. Penny sends reply via Signal
     """
+    config = make_config(serper_api_key="test-key")
+
     # Configure Ollama to return search tool call, then final response
     mock_ollama.set_default_flow(
         search_query="test search query",
         final_response="here's what i found about your question! 🌟",
     )
 
-    async with running_penny(test_config) as penny:
+    async with running_penny(config) as penny:
         # Verify we have a WebSocket connection
         assert len(signal_server._websockets) == 1, "Penny should have connected to WebSocket"
 
@@ -140,6 +148,12 @@ async def test_basic_message_flow(
             t for t in thoughts if t.content.startswith("Conversation: user said")
         ]
         assert len(conversation_echoes) == 0, "Conversation echo thoughts should not be logged"
+
+        # Serper image search should have been called for the outgoing message
+        mock_serper_image.assert_called_once()
+
+        # Outgoing message should have an image attachment
+        assert response.get("base64_attachments"), "Response should include an image attachment"
 
 
 @pytest.mark.asyncio
