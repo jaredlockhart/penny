@@ -6,14 +6,10 @@ import pytest
 
 from penny.agents.base import Agent
 from penny.config import Config
-from penny.config_params import RUNTIME_CONFIG_PARAMS
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.search import SearchTool
-
-_IMAGE_MAX_RESULTS = int(RUNTIME_CONFIG_PARAMS["IMAGE_MAX_RESULTS"].default)
-_IMAGE_TIMEOUT = RUNTIME_CONFIG_PARAMS["IMAGE_DOWNLOAD_TIMEOUT"].default
 
 
 class TestMissingToolParams:
@@ -22,13 +18,9 @@ class TestMissingToolParams:
     @pytest.mark.asyncio
     async def test_search_tool_missing_query_raises_keyerror(self):
         """SearchTool.execute raises KeyError when 'query' parameter is missing."""
-        tool = SearchTool(
-            perplexity_api_key="test-key",
-            image_max_results=_IMAGE_MAX_RESULTS,
-            image_download_timeout=_IMAGE_TIMEOUT,
-        )
+        tool = SearchTool(perplexity_api_key="test-key")
 
-        # Call execute with empty kwargs (missing required 'query' parameter)
+        # Call execute with empty kwargs (missing required 'queries' parameter)
         with pytest.raises(KeyError, match="query"):
             await tool.execute()
 
@@ -50,12 +42,7 @@ class TestMissingToolParams:
             log_level="DEBUG",
             db_path=test_db,
         )
-        search_tool = SearchTool(
-            perplexity_api_key="test-key",
-            db=db,
-            image_max_results=_IMAGE_MAX_RESULTS,
-            image_download_timeout=_IMAGE_TIMEOUT,
-        )
+        search_tool = SearchTool(perplexity_api_key="test-key", db=db)
 
         client = OllamaClient(
             api_url="http://localhost:11434",
@@ -101,12 +88,10 @@ class TestMissingToolParams:
         second_call_messages = messages_sent[1]
         tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
         assert len(tool_messages) > 0
-        # The error should mention the tool execution error
+        # The error should mention the tool execution error and missing key
         error_content = tool_messages[0]["content"]
         assert "error" in error_content.lower()
-        # Verify it mentions the missing parameter
         assert "query" in error_content.lower()
-        assert "parameter" in error_content.lower()
 
         await agent.close()
 

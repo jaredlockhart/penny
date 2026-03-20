@@ -97,9 +97,10 @@ async def test_send_notify_thought_candidate(
     test_user_info,
     running_penny,
     monkeypatch,
+    mock_serper_image,
 ):
-    """Thought candidate generates and sends a message."""
-    config = make_config(notify_candidates=1)
+    """Thought candidate generates and sends a message with image attachment."""
+    config = make_config(notify_candidates=1, serper_api_key="test-key")
 
     # Force thought candidate path (not checkin, not news)
     monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
@@ -126,6 +127,10 @@ async def test_send_notify_thought_candidate(
         # Thought should be marked as notified
         unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
         assert unnotified is None
+
+        # Serper image search should have been called
+        mock_serper_image.assert_called_once()
+        assert response.get("base64_attachments"), "Notification should include an image"
 
 
 @pytest.mark.asyncio

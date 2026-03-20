@@ -5,6 +5,7 @@ import contextlib
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -161,6 +162,17 @@ def test_user_info(test_config):
         date_of_birth="1990-01-01",
     )
     return db
+
+
+FAKE_IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUg=="  # Tiny valid base64
+
+
+@pytest.fixture
+def mock_serper_image(monkeypatch):
+    """Mock Serper image search at the channel level. Returns a fake base64 image."""
+    mock = AsyncMock(return_value=FAKE_IMAGE_BASE64)
+    monkeypatch.setattr("penny.serper.client.search_image", mock)
+    return mock
 
 
 @pytest.fixture
