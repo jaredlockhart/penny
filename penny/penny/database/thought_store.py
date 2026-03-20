@@ -19,13 +19,14 @@ class ThoughtStore:
     def _session(self) -> Session:
         return Session(self.engine)
 
-    def add(self, user: str, content: str) -> Thought | None:
+    def add(self, user: str, content: str, preference_id: int | None = None) -> Thought | None:
         """Append a thought to the log. Returns the created Thought or None."""
         try:
             with self._session() as session:
                 thought = Thought(
                     user=user,
                     content=content,
+                    preference_id=preference_id,
                     created_at=datetime.now(UTC),
                 )
                 session.add(thought)
@@ -46,6 +47,19 @@ class ThoughtStore:
                     .where(Thought.user == user)
                     .order_by(Thought.created_at.desc())  # type: ignore[unresolved-attribute]
                     .limit(limit)
+                ).all()
+            )
+            thoughts.reverse()
+            return thoughts
+
+    def get_recent_by_preference(self, user: str, preference_id: int) -> list[Thought]:
+        """Get all thoughts for a user seeded by a specific preference, oldest first."""
+        with self._session() as session:
+            thoughts = list(
+                session.exec(
+                    select(Thought)
+                    .where(Thought.user == user, Thought.preference_id == preference_id)
+                    .order_by(Thought.created_at.desc())  # type: ignore[unresolved-attribute]
                 ).all()
             )
             thoughts.reverse()

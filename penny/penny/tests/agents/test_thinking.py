@@ -8,6 +8,11 @@ from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER
 
 
+async def _fake_embed(vec):
+    """Return a fixed embedding vector (mock for embed_text)."""
+    return vec
+
+
 def _seed_thinking(penny):
     """Seed a message (so user exists), history, and preference (so seed topic exists)."""
     penny.db.messages.log_message(
@@ -46,7 +51,9 @@ async def test_thinking_loop_accumulates_monologue(
         if count <= 3:
             return mock_ollama._make_text_response(request, f"Thinking step {count}...")
         # Summary call
-        return mock_ollama._make_text_response(request, "Explored AI topics, found nothing new.")
+        return mock_ollama._make_text_response(
+            request, "Explored AI topics, found new developments."
+        )
 
     mock_ollama.set_response_handler(handler)
 
@@ -304,8 +311,12 @@ async def test_thinking_context_has_no_raw_conversation(
             recipient=TEST_SENDER,
         )
 
-        # Seed a thought
-        penny.db.thoughts.add(TEST_SENDER, "test thought")
+        # Seed a thought with matching seed topic
+        penny.db.thoughts.add(
+            TEST_SENDER,
+            "test thought",
+            preference_id=1,
+        )
 
         await penny.thinking_agent.execute()
 
@@ -404,7 +415,10 @@ async def test_thinking_browses_news_when_no_seed_topics(
 
     def handler(request, count):
         requests_seen.append(request)
-        return mock_ollama._make_text_response(request, "ok")
+        if count == 1:
+            return mock_ollama._make_text_response(request, "Found some news.")
+        # Summary call
+        return mock_ollama._make_text_response(request, "Breaking news discovered.")
 
     mock_ollama.set_response_handler(handler)
 
@@ -596,6 +610,122 @@ async def test_thinking_empty_monologue_skips_storage(
 
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
         assert len(thoughts) == 0
+
+
+@pytest.mark.asyncio
+async def test_thinking_duplicate_thought_skips_storage(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """When a new thought is too similar to an existing one, it is not stored."""
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=1,
+    )
+
+    # Mock embed_text to return identical vectors (similarity = 1.0 → duplicate)
+    duplicate_vec = [1.0, 0.0, 0.0]
+    monkeypatch.setattr(
+        "penny.agents.thinking.embed_text",
+        lambda _client, _text: _fake_embed(duplicate_vec),  # noqa: ARG005
+    )
+
+    def handler(request, count):
+        if count == 1:
+            return mock_ollama._make_text_response(request, "Yep, same old stuff.")
+        return mock_ollama._make_text_response(
+            request, "Confirmed the album still exists, nothing new."
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+
+        # Set a fake embedding client so dedup runs (normally None in tests)
+        penny.thinking_agent._embedding_model_client = object()
+
+        # Seed an existing thought with the same seed topic
+        penny.db.thoughts.add(
+            TEST_SENDER,
+            "Old thought about the same topic.",
+            preference_id=1,
+        )
+
+        await penny.thinking_agent.execute()
+
+        # Only the pre-seeded thought should exist (new one was deduplicated)
+        thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        assert len(thoughts) == 1
+        assert "Old thought" in thoughts[0].content
+
+        # Preference should still be marked as thought-about (prevents re-thinking)
+        pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER)
+        assert any(p.last_thought_at is not None for p in pool)
+
+
+@pytest.mark.asyncio
+async def test_thinking_novel_thought_is_stored(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """When a new thought is sufficiently different from existing ones, it is stored."""
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=1,
+    )
+
+    # Mock embed_text to return orthogonal vectors (similarity = 0.0 → novel)
+    call_count = 0
+
+    async def _alternating_embed(_client, _text):
+        nonlocal call_count
+        call_count += 1
+        # First call = new report, second call = existing thought → orthogonal
+        if call_count % 2 == 1:
+            return [1.0, 0.0, 0.0]
+        return [0.0, 1.0, 0.0]
+
+    monkeypatch.setattr("penny.agents.thinking.embed_text", _alternating_embed)
+
+    def handler(request, count):
+        if count == 1:
+            return mock_ollama._make_text_response(request, "Found something new!")
+        return mock_ollama._make_text_response(request, "New discovery about a topic.")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+
+        # Set a fake embedding client so dedup runs (normally None in tests)
+        penny.thinking_agent._embedding_model_client = object()
+
+        # Seed an existing thought with the same seed topic but different content
+        penny.db.thoughts.add(
+            TEST_SENDER,
+            "Old thought about a different topic.",
+            preference_id=1,
+        )
+
+        await penny.thinking_agent.execute()
+
+        # Both the old and new thoughts should exist
+        thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        assert len(thoughts) == 2
 
 
 @pytest.mark.asyncio

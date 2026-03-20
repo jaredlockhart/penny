@@ -12,6 +12,8 @@ import random
 
 from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
+from penny.ollama.embeddings import cosine_similarity
+from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
@@ -109,17 +111,39 @@ class ThinkingAgent(Agent):
         ]
         return "\n\n".join(s for s in sections if s)
 
+    def _build_thought_context(self, sender: str) -> str | None:
+        """Build thought context scoped to the current seed preference.
+
+        Only prior thoughts about the same preference are relevant —
+        they show what Penny already found so she can dig deeper or
+        find new angles instead of repeating herself.
+        """
+        if not self._seed_pref_id:
+            return None
+        try:
+            thoughts = self.db.thoughts.get_recent_by_preference(sender, self._seed_pref_id)
+            if not thoughts:
+                return None
+            lines = [t.content for t in thoughts]
+            logger.debug("Built preference-scoped thought context (%d thoughts)", len(thoughts))
+            return "## Recent Background Thinking\n" + "\n\n".join(lines)
+        except Exception:
+            logger.warning("Thought context retrieval failed, proceeding without")
+            return None
+
     async def after_run(self, user: str) -> bool:
-        """Produce a detailed research report and store as a thought."""
+        """Summarize the monologue, dedup against same-seed thoughts, and store."""
         if not self._inner_monologue:
             return False
         combined = "\n\n---\n\n".join(self._inner_monologue)
         report = await self._summarize_text(combined, Prompt.THINKING_REPORT_PROMPT)
-        if report:
-            self.db.thoughts.add(user, report)
-            if self._seed_pref_id is not None:
-                self.db.preferences.mark_thought_about(self._seed_pref_id)
+        if report and not await self._is_duplicate_thought(user, report):
+            self.db.thoughts.add(user, report, preference_id=self._seed_pref_id)
             logger.info("[inner_monologue] %s", report[:200])
+        elif report:
+            logger.info("[inner_monologue] duplicate thought, skipping storage")
+        if self._seed_pref_id is not None:
+            self.db.preferences.mark_thought_about(self._seed_pref_id)
         return True
 
     # ── Model calls ────────────────────────────────────────────────────────
@@ -136,6 +160,31 @@ class ThinkingAgent(Agent):
         except Exception as e:
             logger.error("Summarization failed: %s", e)
             return ""
+
+    async def _is_duplicate_thought(self, user: str, report: str) -> bool:
+        """Check if report is too similar to a same-preference thought via embedding similarity."""
+        if not self._embedding_model_client or not self._seed_pref_id:
+            return False
+        threshold = float(self.config.runtime.THOUGHT_DEDUP_EMBEDDING_THRESHOLD)
+        report_vec = await embed_text(self._embedding_model_client, report)
+        if report_vec is None:
+            return False
+        recent = self.db.thoughts.get_recent_by_preference(user, self._seed_pref_id)
+        for thought in recent:
+            thought_vec = await embed_text(self._embedding_model_client, thought.content)
+            if thought_vec is None:
+                continue
+            sim = cosine_similarity(report_vec, thought_vec)
+            if sim >= threshold:
+                logger.info(
+                    "[inner_monologue] sim=%.3f >= %.2f vs thought #%s (pref #%s)",
+                    sim,
+                    threshold,
+                    thought.id,
+                    self._seed_pref_id,
+                )
+                return True
+        return False
 
     # ── Loop hooks ─────────────────────────────────────────────────────────
 
