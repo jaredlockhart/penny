@@ -337,12 +337,19 @@ class NotifyAgent(Agent):
         if self._is_disqualified(answer):
             logger.info("Disqualified candidate: %s", answer[:60])
             return None
-        image_prompt = self._extract_first_headline(answer) or answer[:50]
+        image_prompt = self._seed_topic_for(thought) or answer[:50]
         return NotifyCandidate(
             answer=answer,
             thought=thought,
             image_prompt=image_prompt,
         )
+
+    def _seed_topic_for(self, thought: Thought | None) -> str | None:
+        """Look up the seed preference content for a thought."""
+        if not thought or not thought.preference_id:
+            return None
+        pref = self.db.preferences.get_by_id(thought.preference_id)
+        return pref.content if pref else None
 
     @classmethod
     def _is_disqualified(cls, answer: str) -> bool:
