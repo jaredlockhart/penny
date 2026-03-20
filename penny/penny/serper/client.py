@@ -13,6 +13,7 @@ from penny.serper.models import SerperImageResponse
 logger = logging.getLogger(__name__)
 
 SERPER_IMAGES_URL = "https://google.serper.dev/images"
+BLOCKED_IMAGE_DOMAINS = frozenset({"tiktok.com", "instagram.com", "facebook.com"})
 ALLOWED_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
 ALLOWED_IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 _EXT_TO_MIME: dict[str, str] = {
@@ -73,6 +74,10 @@ async def _download_first_valid(
     """Download first valid image from results, skip non-raster formats."""
     for result in response.images:
         if not result.imageUrl:
+            continue
+        domain = urlparse(result.imageUrl).hostname or ""
+        if any(blocked in domain for blocked in BLOCKED_IMAGE_DOMAINS):
+            logger.debug("Skipping blocked domain %s: %s", domain, result.imageUrl)
             continue
         ext = _parse_extension(result.imageUrl)
         if ext and ext not in ALLOWED_IMAGE_EXTENSIONS:
