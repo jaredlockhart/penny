@@ -313,14 +313,13 @@ async def test_conversation_prompt_includes_antirefusal_instruction(
         )
         await signal_server.wait_for_message(timeout=10.0)
 
-    # Verify the system prompt sent to Ollama includes the anti-refusal instruction
+    # Verify the system prompt instructs the model to always provide something useful
     first_request = mock_ollama.requests[0]
     messages = first_request.get("messages", [])
     system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
-    assert (
-        "never refuse" in system_text.lower()
-        or "never give a generic refusal" in system_text.lower()
-    ), "CONVERSATION_PROMPT should instruct the model never to refuse a request"
+    assert "offer to dig deeper" in system_text.lower(), (
+        "CONVERSATION_PROMPT should instruct the model to always offer help"
+    )
 
 
 @pytest.mark.skip(reason="Entity context injection temporarily disabled")

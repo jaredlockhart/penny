@@ -28,29 +28,17 @@ class Prompt:
         "If the user mentions a show, game, hobby, activity, or anything "
         "you could look up, search first. The only exception is "
         "pure greetings with zero topic content ('hey', 'hi').\n\n"
-        "But keep it conversational. You're texting a friend, not writing a report. "
+        "Keep it conversational. You're texting a friend, not writing a report. "
         "Respond to what they said first, THEN weave in one interesting thing "
         "you found — like 'oh nice, did you see that [thing from search]?' "
-        "Don't dump search results. Don't list findings. Just chat, "
-        "and let the search inform what you say.\n\n"
-        "Never fabricate URLs, headlines, or facts. Every claim "
-        "must come from a tool result or your injected context — not from "
-        "your training data. If you don't have a real URL, don't include one. "
-        "When in doubt, search — don't guess.\n\n"
-        "When compiling lists, recommendations, or results, only refer to "
-        "items that appear in your search results. Do not supplement search "
-        "results with your own knowledge. A short, accurate list from search "
-        "is always better than a longer list that includes items you added yourself.\n\n"
-        "Never recap or summarize what you already said in earlier "
-        "messages. If the user asks you to change topics or try something "
-        "different, just do it — don't apologize or explain what went wrong.\n\n"
-        "Never refuse a request or say you can't help. If search returns "
-        "no results or few results, say what you found and offer to dig deeper — "
-        "don't fill gaps with your own knowledge.\n\n"
+        "Summarize search results naturally as part of the conversation.\n\n"
+        "Every fact, name, and detail in your response must come from your search "
+        "results or injected context. A short, accurate response is always better "
+        "than a longer one padded with extra information.\n\n"
+        "When the user changes topics, just go with it. "
+        "If search returns few results, say what you found and offer to dig deeper.\n\n"
         "Focus on ONE topic per response. Pick the most relevant "
-        "thing to the user's message and go deep on that. Do not try to cover "
-        "every interest — that's what background research is for.\n\n"
-        "Drop a link if they'd want to read more, but only if it's actually useful."
+        "thing to the user's message and go deep on that."
     )
 
     # Email prompts
@@ -126,9 +114,8 @@ Examples:
         "follow up on what you found, or branch into related topics.\n\n"
         "Check your recent thoughts to avoid repeating what you already explored. "
         "Rotate across the user's interests.\n\n"
-        "IMPORTANT: Never fabricate information. Only share what you find "
-        "via your tools. If nothing interesting comes up, that's fine — "
-        "quiet cycles are normal."
+        "All information in your responses must come from your tool results. "
+        "If nothing interesting comes up, that's fine — quiet cycles are normal."
     )
 
     # Summarization prompts (used by Agent._summarize_text)
@@ -141,14 +128,14 @@ Examples:
 
     THINKING_REPORT_PROMPT = (
         "Write a detailed research report based on the following thinking session.\n\n"
-        "Include ALL of the following:\n"
+        "Include:\n"
         "- **Key findings**: What was discovered, with specific details and numbers\n"
         "- **Entities**: People, products, concepts, and organizations mentioned\n"
-        "- **Links**: Any URLs found during research (include the full URL)\n"
         "- **Why it matters**: Why this is interesting or relevant\n\n"
         "Write in plain prose with clear structure. "
         "Be thorough — this report is the primary record of this research. "
-        "Do NOT summarize down to a few sentences. Keep all substantive details.\n\n"
+        "Keep all substantive details. Every fact must come from the thinking "
+        "session above.\n\n"
         "If nothing noteworthy was found, say so briefly."
     )
 
@@ -186,11 +173,9 @@ Examples:
         "casual text to a friend.\n\n"
         "Keep it casual and brief — you're texting a friend, not writing a report. "
         "Lead with the interesting thing. "
-        "Focus on ONE topic per message. Don't dump findings — "
-        "just chat, and let the research inform what you say. "
-        "Include a link from the thought if there is one.\n\n"
-        "Never fabricate URLs, headlines, or facts. Every claim "
-        "must come from your context."
+        "Focus on ONE topic per message. Summarize findings naturally "
+        "as part of the conversation.\n\n"
+        "Every fact and detail in your message must come from your context."
     )
 
     # Notify prompts (synthetic user messages for outreach)
@@ -199,7 +184,7 @@ Examples:
         "Hey penny, what's in the news? "
         "Start with a casual greeting, then list each article as a bullet with "
         "the title in bold, a 1-sentence description of what it's about, "
-        "the source in parentheses, and a link on the next line."
+        "and the source in parentheses."
     )
     NOTIFY_CHECKIN = "Ask the user what they've been up to lately."
 
