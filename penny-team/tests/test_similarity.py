@@ -8,6 +8,8 @@ dedup (TCR, cosine similarity, serialization, dedup strategies).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from similarity.dedup import DedupStrategy, is_embedding_duplicate
@@ -106,4 +108,69 @@ class TestIsEmbeddingDuplicate:
             embedding_threshold=0.9,
             tcr_threshold=0.6,
         )
+        assert result is None
+
+
+class TestEmbedBatch:
+    """Tests for the Ollama embed utility (mocked HTTP)."""
+
+    def test_successful_embed(self, monkeypatch):
+        from penny_team.utils.ollama_embed import embed_batch
+
+        def mock_urlopen(req, timeout=None):
+            body = json.loads(req.data)
+            assert body["model"] == "test-model"
+            assert body["input"] == ["hello", "world"]
+
+            class FakeResp:
+                def read(self):
+                    return json.dumps(
+                        {"embeddings": [[0.1, 0.2], [0.3, 0.4]]}
+                    ).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    pass
+
+            return FakeResp()
+
+        monkeypatch.setattr("penny_team.utils.ollama_embed.urllib.request.urlopen", mock_urlopen)
+        result = embed_batch(["hello", "world"], "http://localhost:11434", "test-model")
+        assert result == [[0.1, 0.2], [0.3, 0.4]]
+
+    def test_empty_input_returns_empty(self):
+        from penny_team.utils.ollama_embed import embed_batch
+
+        assert embed_batch([], "http://localhost:11434", "model") == []
+
+    def test_network_error_returns_none(self, monkeypatch):
+        from penny_team.utils.ollama_embed import embed_batch
+
+        def fail_urlopen(req, timeout=None):
+            raise OSError("Connection refused")
+
+        monkeypatch.setattr("penny_team.utils.ollama_embed.urllib.request.urlopen", fail_urlopen)
+        result = embed_batch(["hello"], "http://localhost:11434", "model")
+        assert result is None
+
+    def test_mismatched_count_returns_none(self, monkeypatch):
+        from penny_team.utils.ollama_embed import embed_batch
+
+        def mock_urlopen(req, timeout=None):
+            class FakeResp:
+                def read(self):
+                    return json.dumps({"embeddings": [[0.1]]}).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    pass
+
+            return FakeResp()
+
+        monkeypatch.setattr("penny_team.utils.ollama_embed.urllib.request.urlopen", mock_urlopen)
+        result = embed_batch(["a", "b", "c"], "http://localhost:11434", "model")
         assert result is None
