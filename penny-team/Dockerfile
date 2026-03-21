@@ -42,6 +42,11 @@ COPY . /repo
 RUN mkdir -p /repo/data/penny-team/state /repo/data/penny-team/logs \
     /repo/data/penny/logs /repo/data/penny/backups /repo/data/private
 
+# Symlink shared packages so PYTHONPATH=/shared works at build time (tests)
+RUN mkdir -p /shared \
+    && ln -s /repo/github_api /shared/github_api \
+    && ln -s /repo/similarity /shared/similarity
+
 # Install Python deps from baked-in source
 RUN cd /repo/penny && uv pip install --system . --group dev --quiet
 RUN cd /repo/penny-team && uv pip install --system . --group dev --quiet

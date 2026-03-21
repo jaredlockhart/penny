@@ -279,15 +279,31 @@ class MonitorAgent(Agent):
         new_offset = self.log_path.stat().st_size
         return content, new_offset
 
-    def _fetch_open_bug_issues(self) -> list[IssueDetail]:
-        """Fetch open bug issues for dedup. Returns empty list on failure."""
+    def _fetch_dedup_issues(self) -> list[IssueDetail]:
+        """Fetch open bug AND in-review issues for dedup.
+
+        Includes in-review because the Worker relabels bugs from 'bug' to
+        'in-review' after pushing a PR.  Without this, the same error gets
+        filed again once the original issue leaves the 'bug' label.
+        Returns empty list on failure (fail-open).
+        """
         if self.github_api is None:
             return []
-        try:
-            return self.github_api.list_issues_detailed(TeamConstants.Label.BUG, limit=30)
-        except (OSError, RuntimeError) as e:
-            logger.warning(f"[{self.name}] Failed to fetch open bug issues: {e}")
-            return []  # Fail-open: skip dedup rather than blocking
+
+        issues: list[IssueDetail] = []
+        seen: set[int] = set()
+
+        for label in (TeamConstants.Label.BUG, TeamConstants.Label.IN_REVIEW):
+            try:
+                batch = self.github_api.list_issues_detailed(label, limit=30)
+                for issue in batch:
+                    if issue.number not in seen:
+                        issues.append(issue)
+                        seen.add(issue.number)
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"[{self.name}] Failed to fetch {label} issues: {e}")
+
+        return issues
 
     def _fetch_open_prs(self) -> list[PullRequest]:
         """Fetch open PRs for dedup. Returns empty list on failure."""
@@ -337,8 +353,8 @@ class MonitorAgent(Agent):
 
         logger.info(f"[{self.name}] Found {len(errors)} error(s) in logs")
 
-        # Python-space dedup: filter out errors matching open bug issues or PRs
-        open_issues = self._fetch_open_bug_issues()
+        # Python-space dedup: filter out errors matching open bug/in-review issues or PRs
+        open_issues = self._fetch_dedup_issues()
         open_prs = self._fetch_open_prs()
         errors = filter_known_errors(errors, open_issues, open_prs)
 

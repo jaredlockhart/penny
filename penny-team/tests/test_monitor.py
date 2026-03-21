@@ -518,3 +518,47 @@ class TestErrorDedup:
         )
         result = filter_known_errors([error], [])
         assert len(result) == 1
+
+
+# =============================================================================
+# In-review dedup — integration test
+# =============================================================================
+
+
+class TestInReviewDedup:
+    """Errors matching in-review issues (not just bug) should be filtered."""
+
+    def test_in_review_issue_filters_matching_error(self, tmp_path, capture_popen):
+        """An error that matches an in-review issue is filtered before Claude."""
+        agent, _ = make_monitor_agent(
+            tmp_path,
+            log_content=(
+                "2024-01-15 14:23:45 - penny.tools.search - ERROR - Search failed\n"
+                "Traceback (most recent call last):\n"
+                '  File "penny/tools/search.py", line 42\n'
+                "AuthenticationError: insufficient quota\n"
+            ),
+        )
+
+        mock_api = MockGitHubAPI()
+        # No bug-labeled issues — the issue was already moved to in-review
+        mock_api.set_issues_detailed("bug", [])
+        mock_api.set_issues_detailed(
+            "in-review",
+            [
+                make_issue_detail(
+                    number=785,
+                    title="bug: Perplexity search fails with AuthenticationError",
+                    body="Module: penny.tools.search\nAuthenticationError: insufficient quota",
+                    labels=["in-review"],
+                )
+            ],
+        )
+        agent.github_api = mock_api
+
+        calls = capture_popen(stdout_lines=[result_event()], returncode=0)
+        result = agent.run()
+
+        assert result.success is True
+        assert result.output == "All errors already have open issues"
+        assert len(calls) == 0  # Claude CLI not called

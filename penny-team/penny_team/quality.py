@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from github_api.api import GitHubAPI
+from similarity.embeddings import token_containment_ratio
 
 from penny_team.base import Agent, AgentRun
 from penny_team.constants import TeamConstants
@@ -350,29 +351,31 @@ class QualityAgent(Agent):
     # --- Deduplication ---
 
     def _fetch_dedup_texts(self) -> list[str]:
-        """Fetch searchable text from open bug issues AND open PRs for dedup.
+        """Fetch searchable text from open bug/in-review issues AND open PRs.
 
-        Returns lowercased title+body strings from all open bug issues
-        (not just quality-labeled) and all open PRs. This prevents filing
-        duplicates of issues already tracked by the monitor agent or
-        already being fixed in a PR.
+        Includes in-review issues because the Worker relabels bugs from
+        'bug' to 'in-review' after pushing a PR.  Without this, the same
+        quality issue gets filed again once the original leaves the 'bug' label.
         """
         if self.github_api is None:
             return []
 
         texts: list[str] = []
+        seen: set[int] = set()
 
-        # All open bug issues (not just quality-labeled)
-        try:
-            bug_issues = self.github_api.list_issues_detailed(TeamConstants.Label.BUG, limit=30)
-            texts.extend(f"{i.title}\n{i.body}".lower() for i in bug_issues)
-        except (OSError, RuntimeError) as e:
-            logger.warning(f"[{self.name}] Failed to fetch bug issues for dedup: {e}")
+        for label in (TeamConstants.Label.BUG, TeamConstants.Label.IN_REVIEW):
+            try:
+                issues = self.github_api.list_issues_detailed(label, limit=30)
+                for issue in issues:
+                    if issue.number not in seen:
+                        texts.append(f"{issue.title} {issue.body}")
+                        seen.add(issue.number)
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"[{self.name}] Failed to fetch {label} issues for dedup: {e}")
 
-        # All open PRs
         try:
             prs = self.github_api.list_open_prs(limit=30)
-            texts.extend(f"{pr.title}\n{pr.body}".lower() for pr in prs)
+            texts.extend(f"{pr.title} {pr.body}" for pr in prs)
         except (OSError, RuntimeError) as e:
             logger.warning(f"[{self.name}] Failed to fetch open PRs for dedup: {e}")
 
@@ -382,23 +385,16 @@ class QualityAgent(Agent):
     def _is_duplicate_issue(title: str, dedup_texts: list[str]) -> bool:
         """Check if a proposed issue title matches existing issues or PRs.
 
-        Compares the category keywords from the title (the part after
-        'bug: ') against existing issue/PR text (title + body). Matches
-        if a majority of keywords appear in any existing text.
+        Uses token containment ratio (TCR) for fuzzy matching, which catches
+        paraphrases that exact keyword overlap would miss.
         """
         if not dedup_texts:
             return False
-        # Extract category from "bug: <category description>"
-        title_lower = title.lower()
-        category = title_lower.removeprefix("bug: ").strip()
+        category = title.lower().removeprefix("bug: ").strip()
         if not category:
             return False
-        # Check if any existing text contains the same category keywords
-        category_words = set(category.split()) - {"the", "a", "an", "in", "of", "for", "and", "or"}
-        if len(category_words) < 2:
-            return False
         return any(
-            sum(1 for w in category_words if w in existing) >= len(category_words) // 2 + 1
+            token_containment_ratio(category, existing) >= TeamConstants.TCR_DEDUP_THRESHOLD
             for existing in dedup_texts
         )
 
@@ -442,7 +438,7 @@ class QualityAgent(Agent):
 
         logger.info(f"[{self.name}] Evaluating {len(pairs)} message pair(s)")
 
-        # Step 2: Fetch open bug issues and PRs for dedup
+        # Step 2: Fetch open bug/in-review issue and PR texts for dedup
         dedup_texts = self._fetch_dedup_texts()
 
         # Step 3: Evaluate each pair individually and file issues

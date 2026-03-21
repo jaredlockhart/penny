@@ -1,27 +1,32 @@
-"""Shared similarity checking and deduplication operations.
+"""Penny-specific similarity operations.
 
-Composes the low-level primitives from embeddings.py with OllamaClient
-embedding calls.  All functions are stateless — thresholds and clients
-are passed as parameters.
+Re-exports DedupStrategy and is_embedding_duplicate from the shared
+similarity package for backward compatibility.  Keeps penny-specific
+functions that depend on OllamaClient or penny's data model.
 """
 
 from __future__ import annotations
 
 import logging
-from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from penny.ollama.embeddings import (
-    cosine_similarity,
-    deserialize_embedding,
-    token_containment_ratio,
-    tokenize_entity_name,
-)
+from similarity.dedup import DedupStrategy, is_embedding_duplicate
+from similarity.embeddings import cosine_similarity, deserialize_embedding
 
 if TYPE_CHECKING:
     from penny.ollama.client import OllamaClient
 
 logger = logging.getLogger(__name__)
+
+# Re-export so existing `from penny.ollama.similarity import DedupStrategy` works
+__all__ = [
+    "DedupStrategy",
+    "compute_sentiment_score",
+    "embed_text",
+    "is_embedding_duplicate",
+    "load_preference_vectors",
+    "novelty_score",
+]
 
 # ── Safe embedding helper ─────────────────────────────────────────────────────
 
@@ -39,105 +44,6 @@ async def embed_text(
     except Exception:
         logger.warning("Failed to embed text: %.60s", text)
         return None
-
-
-# ── Embedding dedup ───────────────────────────────────────────────────────────
-
-
-class DedupStrategy(StrEnum):
-    """How to combine TCR and embedding signals for dedup."""
-
-    EMBEDDING_ONLY = "embedding_only"
-    TCR_AND_EMBEDDING = "tcr_and_embedding"
-    TCR_OR_EMBEDDING = "tcr_or_embedding"
-
-
-def is_embedding_duplicate(
-    candidate_name: str,
-    candidate_vec: list[float] | None,
-    existing_items: list[tuple[str, bytes | None]],
-    strategy: DedupStrategy,
-    embedding_threshold: float,
-    tcr_threshold: float = 0.0,
-) -> int | None:
-    """Check if a candidate is a semantic duplicate of any existing item.
-
-    Args:
-        candidate_name: Name/text of the candidate item.
-        candidate_vec: Pre-computed embedding (None → no match possible).
-        existing_items: List of (name, serialized_embedding_or_None).
-        strategy: How to combine TCR and embedding signals.
-        embedding_threshold: Cosine similarity threshold for embedding match.
-        tcr_threshold: Token containment ratio threshold (ignored for
-            EMBEDDING_ONLY).
-
-    Returns:
-        Index of the matching existing item, or None if no duplicate found.
-    """
-    candidate_tokens = tokenize_entity_name(candidate_name)
-
-    for idx, (existing_name, existing_bytes) in enumerate(existing_items):
-        tcr_pass = _check_tcr(
-            candidate_name, candidate_tokens, existing_name, strategy, tcr_threshold
-        )
-
-        if strategy == DedupStrategy.TCR_AND_EMBEDDING and not tcr_pass:
-            continue
-
-        if candidate_vec is not None:
-            embed_pass = _check_embedding(candidate_vec, existing_bytes, embedding_threshold)
-        else:
-            embed_pass = False
-
-        if _is_match(strategy, tcr_pass, embed_pass):
-            return idx
-
-    return None
-
-
-def _check_tcr(
-    candidate_name: str,
-    candidate_tokens: list[str],
-    existing_name: str,
-    strategy: DedupStrategy,
-    tcr_threshold: float,
-) -> bool:
-    """Evaluate the TCR signal for one candidate–existing pair."""
-    if strategy == DedupStrategy.EMBEDDING_ONLY:
-        return False
-
-    existing_tokens = tokenize_entity_name(existing_name)
-    shorter_len = min(len(candidate_tokens), len(existing_tokens))
-
-    # Single-token bypass: TCR is meaningless with one token (e.g. acronyms).
-    if shorter_len <= 1 and strategy == DedupStrategy.TCR_AND_EMBEDDING:
-        return True
-
-    tcr = token_containment_ratio(candidate_name, existing_name)
-    return tcr >= tcr_threshold
-
-
-def _check_embedding(
-    candidate_vec: list[float],
-    existing_bytes: bytes | None,
-    embedding_threshold: float,
-) -> bool:
-    """Evaluate the embedding similarity signal for one pair."""
-    if existing_bytes is None:
-        return False
-    existing_vec = deserialize_embedding(existing_bytes)
-    sim = cosine_similarity(candidate_vec, existing_vec)
-    return sim >= embedding_threshold
-
-
-def _is_match(strategy: DedupStrategy, tcr_pass: bool, embed_pass: bool) -> bool:
-    """Combine TCR and embedding signals according to the strategy."""
-    if strategy == DedupStrategy.EMBEDDING_ONLY:
-        return embed_pass
-    if strategy == DedupStrategy.TCR_AND_EMBEDDING:
-        return embed_pass  # tcr_pass already enforced by caller skip
-    # TCR_OR_EMBEDDING
-    return tcr_pass or embed_pass
 
 
 # ── Sentiment scoring ────────────────────────────────────────────────────────

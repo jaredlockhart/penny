@@ -167,6 +167,9 @@ class TeamConstants:
     ENV_OLLAMA_URL = "OLLAMA_API_URL"
     ENV_OLLAMA_MODEL = "OLLAMA_BACKGROUND_MODEL"
 
+    # Token containment ratio threshold for issue dedup (quality agent)
+    TCR_DEDUP_THRESHOLD = 0.6
+
     # Data directory layout (relative to project root)
     PENNY_DB_RELATIVE_PATH = "data/penny/penny.db"
     PENNY_LOG_RELATIVE_PATH = "data/penny/logs/penny.log"
