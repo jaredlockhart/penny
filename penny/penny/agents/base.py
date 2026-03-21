@@ -50,6 +50,30 @@ def _strip_think_tags(content: str) -> tuple[str, str | None]:
     return cleaned, extracted
 
 
+# Truncate tool results in the message history when many preceding tool calls caused
+# context saturation and the model returned empty content on the synthesis step.
+_TOOL_RESULT_TRUNCATION_THRESHOLD = 3  # number of preceding tool calls that triggers truncation
+_TOOL_RESULT_MAX_CHARS = 500  # max characters per tool result message after truncation
+
+
+def _build_strong_nudge(messages: list[dict]) -> str:
+    """Build a context-aware nudge that includes the original user question.
+
+    Called when many preceding tool calls may have saturated the model's context.
+    Including the original question gives the model a clear target after heavy tool use.
+    """
+    original_question = next(
+        (m["content"] for m in messages if m.get("role") == MessageRole.USER),
+        None,
+    )
+    if original_question:
+        return (
+            f"You have gathered enough information from your searches. "
+            f"Please provide your final answer to: {original_question}"
+        )
+    return "You have gathered enough information. Please provide your final response."
+
+
 # Phrases that indicate a model refusal — used to detect and retry unhelpful responses
 _REFUSAL_PHRASES = (
     "i can't",
@@ -87,6 +111,7 @@ class Agent:
 
     THOUGHT_CONTEXT_LIMIT = 10
     PREFERRED_POOL_SIZE = 5
+    MAX_TOOL_RESULT_CHARS = 3000
     name: str = "Agent"
 
     def __init__(
@@ -265,12 +290,18 @@ class Agent:
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
                     break
+                # Reset empty retry counter so the synthesis step gets a retry even if
+                # a previous intermediate step already consumed it.
+                empty_retries = 0
                 continue
 
             if await self.handle_text_step(response, messages, step, is_final_step):
                 continue
 
-            if not response.content.strip() and empty_retries == 0:
+            # Strip think tags before checking emptiness — model may return only
+            # <think>...</think> with no body text, which would bypass the empty check.
+            effective_content, _ = _strip_think_tags(response.content.strip())
+            if not effective_content and empty_retries == 0:
                 empty_retries += 1
                 logger.warning(
                     "Model returned empty content on step %d/%d; requesting text output",
@@ -278,9 +309,21 @@ class Agent:
                     steps,
                 )
                 messages.append(response.message.to_input_message())
-                messages.append(
-                    {"role": MessageRole.USER, "content": "Please provide your response."}
-                )
+                if len(tool_call_records) >= _TOOL_RESULT_TRUNCATION_THRESHOLD:
+                    logger.warning(
+                        "Truncating tool results before retry (preceding_tool_calls=%d)",
+                        len(tool_call_records),
+                    )
+                    messages = self._truncate_tool_messages(messages)
+                    nudge = _build_strong_nudge(messages)
+                elif tool_call_records:
+                    nudge = (
+                        "You've completed your research. Please synthesize your findings "
+                        "and provide a helpful response."
+                    )
+                else:
+                    nudge = "Please provide your response."
+                messages.append({"role": MessageRole.USER, "content": nudge})
                 if not is_final_step:
                     continue
                 # On the final step, retry directly — can't extend a for-range loop
@@ -376,6 +419,22 @@ class Agent:
 
         return response
 
+    @staticmethod
+    def _truncate_tool_messages(messages: list[dict]) -> list[dict]:
+        """Truncate tool result messages to reduce context size before retrying.
+
+        Called when many preceding tool calls may have saturated the model's
+        context window, causing an empty response on the synthesis step.
+        """
+        result = []
+        for msg in messages:
+            if msg.get("role") == MessageRole.TOOL:
+                content = msg.get("content", "")
+                if len(content) > _TOOL_RESULT_MAX_CHARS:
+                    msg = {**msg, "content": content[:_TOOL_RESULT_MAX_CHARS] + "... [truncated]"}
+            result.append(msg)
+        return result
+
     def _build_final_response(
         self,
         response,
@@ -392,7 +451,12 @@ class Agent:
                 self._model_client.model,
                 len(tool_call_records),
             )
-            return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
+            fallback = (
+                PennyResponse.FALLBACK_RESPONSE
+                if tool_call_records
+                else PennyResponse.AGENT_EMPTY_RESPONSE
+            )
+            return ControllerResponse(answer=fallback)
 
         thinking = response.thinking or response.message.thinking
 
@@ -407,7 +471,12 @@ class Agent:
 
         if not content:
             logger.error("Model returned empty content after stripping think tags!")
-            return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
+            fallback = (
+                PennyResponse.FALLBACK_RESPONSE
+                if tool_call_records
+                else PennyResponse.AGENT_EMPTY_RESPONSE
+            )
+            return ControllerResponse(answer=fallback)
 
         if source_urls and "http" not in content:
             content += "\n\n" + source_urls[0]
@@ -510,12 +579,24 @@ class Agent:
 
         if isinstance(tool_result.result, SearchResult):
             result_str, urls, image = self._format_search_result(tool_result.result)
+            result_str = self._truncate_tool_result(result_str)
             logger.debug("Tool result: %s", result_str[:200])
             return result_str, record, urls, image
 
-        result_str = str(tool_result.result)
+        result_str = self._truncate_tool_result(str(tool_result.result))
         logger.debug("Tool result: %s", result_str[:200])
         return result_str, record, [], None
+
+    def _truncate_tool_result(self, result_str: str) -> str:
+        """Truncate tool result to MAX_TOOL_RESULT_CHARS to prevent context saturation."""
+        if len(result_str) <= self.MAX_TOOL_RESULT_CHARS:
+            return result_str
+        logger.warning(
+            "Tool result truncated from %d to %d chars to prevent context saturation",
+            len(result_str),
+            self.MAX_TOOL_RESULT_CHARS,
+        )
+        return result_str[: self.MAX_TOOL_RESULT_CHARS] + " [truncated]"
 
     @staticmethod
     def _make_call_key(tool_name: str, arguments: dict) -> tuple[str, ...]:

@@ -134,9 +134,9 @@ class TestLastStepToolRemoval:
 
         response = await agent.run("test")
         # Should NOT get AGENT_MAX_STEPS — hallucinated call is ignored.
-        # With no text content, we get AGENT_EMPTY_RESPONSE instead.
+        # Preceding tool calls → FALLBACK_RESPONSE (friendlier than AGENT_EMPTY_RESPONSE).
         assert "couldn't complete" not in response.answer.lower()
-        assert "empty response" in response.answer.lower()
+        assert response.answer == PennyResponse.FALLBACK_RESPONSE
 
         await agent.close()
 
@@ -233,7 +233,7 @@ class TestEmptyContentFallback:
 
     @pytest.mark.asyncio
     async def test_empty_response_after_tool_call(self, test_db, mock_ollama):
-        """AGENT_EMPTY_RESPONSE is returned even after preceding tool calls."""
+        """FALLBACK_RESPONSE is returned when model returns empty after preceding tool calls."""
         agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
 
         def handler(request, count):
@@ -244,7 +244,7 @@ class TestEmptyContentFallback:
         mock_ollama.set_response_handler(handler)
 
         response = await agent.run("test prompt")
-        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
+        assert response.answer == PennyResponse.FALLBACK_RESPONSE
 
         await agent.close()
 
@@ -405,6 +405,145 @@ class TestEmptyContentRetry:
         # Two model calls: empty final step + one retry that also returns empty
         assert len(mock_ollama.requests) == 2
 
+        await agent.close()
+
+
+class TestEmptyContentAfterToolCalls:
+    """Tests for combined empty-content fixes: synthesis prompt, think tag stripping,
+    retry counter reset, context truncation, and fallback response."""
+
+    @pytest.mark.asyncio
+    async def test_synthesis_prompt_after_tool_calls(self, test_db, mock_ollama):
+        """When model returns empty after tool calls, retry uses synthesis prompt."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=2)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                return mock_ollama._make_text_response(request, "")
+            return mock_ollama._make_text_response(request, "Here's what I found!")
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("test question")
+        assert response.answer == "Here's what I found!"
+
+        retry_messages = mock_ollama.requests[2]["messages"]
+        last_user = next(m for m in reversed(retry_messages) if m["role"] == "user")
+        assert "synthesize" in last_user["content"].lower()
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_generic_prompt_without_tool_calls(self, test_db, mock_ollama):
+        """Without tool calls, empty-content retry uses generic prompt."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=1)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_text_response(request, "")
+            return mock_ollama._make_text_response(request, "here's my answer")
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("test question")
+        assert response.answer == "here's my answer"
+
+        retry_messages = mock_ollama.requests[1]["messages"]
+        last_user = next(m for m in reversed(retry_messages) if m["role"] == "user")
+        assert last_user["content"] == "Please provide your response."
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_think_only_response_triggers_retry(self, test_db, mock_ollama):
+        """Model returning only <think> tags with no body triggers retry."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                return mock_ollama._make_text_response(
+                    request, "<think>Let me reason about this...</think>"
+                )
+            return mock_ollama._make_text_response(request, "here's the answer")
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("test question")
+        assert response.answer == "here's the answer"
+        assert len(mock_ollama.requests) == 3
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_retry_counter_resets_after_tool_calls(self, test_db, mock_ollama):
+        """empty_retries resets after tool calls so synthesis step gets a retry."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=5)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "first"})
+            if count == 2:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "second"})
+            if count == 3:
+                return mock_ollama._make_text_response(request, "")
+            if count == 4:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "third"})
+            if count == 5:
+                return mock_ollama._make_text_response(request, "")
+            return mock_ollama._make_text_response(request, "synthesized answer")
+
+        mock_ollama.set_response_handler(handler)
+        agent.allow_repeat_tools = True
+        response = await agent.run("test question")
+        assert response.answer == "synthesized answer"
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_fallback_response_after_tool_calls(self, test_db, mock_ollama):
+        """FALLBACK_RESPONSE (not AGENT_EMPTY_RESPONSE) when empty after tool calls."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("test prompt")
+        assert response.answer == PennyResponse.FALLBACK_RESPONSE
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_tool_result_truncated_at_source(self, test_db, mock_ollama):
+        """Tool results exceeding MAX_TOOL_RESULT_CHARS are truncated."""
+        from unittest.mock import patch
+
+        from penny.tools.models import ToolResult
+
+        agent, db = _make_agent(test_db, mock_ollama)
+        large_result = "x" * (Agent.MAX_TOOL_RESULT_CHARS + 500)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            messages = request["messages"]
+            tool_messages = [m for m in messages if m.get("role") == "tool"]
+            assert len(tool_messages) == 1
+            content = tool_messages[0]["content"]
+            assert len(content) <= Agent.MAX_TOOL_RESULT_CHARS + len(" [truncated]")
+            assert content.endswith(" [truncated]")
+            return mock_ollama._make_text_response(request, "done")
+
+        mock_ollama.set_response_handler(handler)
+
+        with patch.object(agent._tool_executor, "execute") as mock_exec:
+            mock_exec.return_value = ToolResult(tool="search", result=large_result)
+            response = await agent.run("test")
+
+        assert response.answer == "done"
         await agent.close()
 
 
