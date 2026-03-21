@@ -408,6 +408,89 @@ class TestEmptyContentRetry:
         await agent.close()
 
 
+class TestToolResultTruncation:
+    """Test that tool results are truncated when many tool calls precede an empty response."""
+
+    @pytest.mark.asyncio
+    async def test_tool_results_truncated_on_retry_when_many_tool_calls(
+        self, test_db, mock_ollama, mock_search_with_results
+    ):
+        """When 3+ tool calls precede an empty response, tool results are truncated before retry.
+
+        This simulates the context-saturation scenario: 3 search calls each return a long
+        result (>500 chars). The final synthesis step returns empty. The retry must send
+        truncated tool messages to reduce context pressure.
+        """
+        long_result = "X" * 800  # 800 chars > _TOOL_RESULT_MAX_CHARS (500)
+        mock_search_with_results(text=long_result)
+
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=5)
+        agent.allow_repeat_tools = True
+
+        call_count = 0
+
+        def handler(request, count):
+            nonlocal call_count
+            call_count = count
+            if count <= 3:
+                return mock_ollama._make_tool_call_response(
+                    request, "search", {"query": f"query {count}"}
+                )
+            if count == 4:
+                # After 3 tool calls, synthesis step returns empty
+                return mock_ollama._make_text_response(request, "")
+            # Retry after truncation succeeds
+            return mock_ollama._make_text_response(request, "synthesized answer")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "synthesized answer"
+
+        # The 5th request is the retry — its tool messages should be truncated
+        retry_request = mock_ollama.requests[4]
+        tool_messages = [m for m in retry_request["messages"] if m.get("role") == "tool"]
+        assert len(tool_messages) >= 3, "Expected at least 3 tool messages in retry context"
+        for msg in tool_messages:
+            assert len(msg["content"]) <= 500 + len("... [truncated]")
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_tool_results_not_truncated_below_threshold(
+        self, test_db, mock_ollama, mock_search_with_results
+    ):
+        """With fewer than 3 preceding tool calls, tool results are NOT truncated on retry."""
+        long_result = "Y" * 800
+        mock_search_with_results(text=long_result)
+
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=4)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            if count == 2:
+                # Only 1 preceding tool call — no truncation
+                return mock_ollama._make_text_response(request, "")
+            # Retry succeeds
+            return mock_ollama._make_text_response(request, "answer without truncation")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test question")
+        assert response.answer == "answer without truncation"
+
+        # The 3rd request is the retry — tool messages should NOT be truncated
+        retry_request = mock_ollama.requests[2]
+        tool_messages = [m for m in retry_request["messages"] if m.get("role") == "tool"]
+        assert len(tool_messages) >= 1
+        # Content should remain long (not truncated)
+        for msg in tool_messages:
+            assert "... [truncated]" not in msg["content"]
+
+        await agent.close()
+
+
 class TestRefusalRetry:
     """Test that model refusals trigger a retry nudge."""
 
