@@ -51,6 +51,9 @@ penny-team/                     — Autonomous dev team (Claude CLI agents)
 github_api/                     — Shared GitHub API client (GraphQL + REST)
   api.py                        — GitHubAPI class (typed Pydantic return values)
   auth.py                       — GitHubAuth (App JWT token generation)
+similarity/                     — Shared similarity primitives (penny + penny-team)
+  embeddings.py                 — Pure math: cosine similarity, TCR, serialization
+  dedup.py                      — Dedup strategies (TCR + embedding)
 Makefile                        — Dev commands (make up, make check, make prod)
 docker-compose.yml              — signal-api + penny + team services
 docker-compose.override.yml     — Dev source volume overrides

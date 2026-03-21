@@ -1,5 +1,6 @@
-"""Re-export shim — actual implementations live in the shared similarity package."""
+"""Shared similarity primitives for penny and penny-team."""
 
+from similarity.dedup import DedupStrategy, is_embedding_duplicate
 from similarity.embeddings import (
     cosine_similarity,
     deserialize_embedding,
@@ -11,9 +12,11 @@ from similarity.embeddings import (
 )
 
 __all__ = [
+    "DedupStrategy",
     "cosine_similarity",
     "deserialize_embedding",
     "find_similar",
+    "is_embedding_duplicate",
     "normalize_unicode",
     "serialize_embedding",
     "token_containment_ratio",

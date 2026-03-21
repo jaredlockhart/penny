@@ -4,6 +4,7 @@ services:
       - ./penny/penny:/penny/penny
       - ./penny/pyproject.toml:/penny/pyproject.toml
       - ./github_api:/shared/github_api:ro
+      - ./similarity:/shared/similarity:ro
 
   team:
     build:
@@ -17,3 +18,4 @@ services:
       - ./penny-team/tests:/repo/penny-team/tests
       - ./penny-team/pyproject.toml:/repo/penny-team/pyproject.toml
       - ./github_api:/shared/github_api:ro
+      - ./similarity:/shared/similarity:ro
