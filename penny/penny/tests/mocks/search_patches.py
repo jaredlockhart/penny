@@ -1,9 +1,9 @@
-"""Patches for search-related SDKs (Perplexity)."""
+"""Patches for search-related SDKs (Perplexity, Serper)."""
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -54,14 +54,15 @@ class MockPerplexity:
 
 @pytest.fixture
 def mock_search(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fixture to patch Perplexity with default mock."""
+    """Fixture to patch Perplexity and image search with default mocks."""
     monkeypatch.setattr("penny.tools.search.Perplexity", MockPerplexity)
+    monkeypatch.setattr("penny.tools.search.search_image", AsyncMock(return_value=None))
 
 
 @pytest.fixture
 def mock_search_with_results(monkeypatch: pytest.MonkeyPatch):
     """
-    Fixture factory to patch Perplexity with custom results.
+    Fixture factory to patch Perplexity and image search with custom results.
 
     Usage:
         def test_something(mock_search_with_results):
@@ -83,5 +84,6 @@ def mock_search_with_results(monkeypatch: pytest.MonkeyPatch):
                 self.responses = MockPerplexityResponses(response)
 
         monkeypatch.setattr("penny.tools.search.Perplexity", ConfiguredPerplexity)
+        monkeypatch.setattr("penny.tools.search.search_image", AsyncMock(return_value=None))
 
     return _configure

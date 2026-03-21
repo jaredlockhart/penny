@@ -321,15 +321,16 @@ class NotifyAgent(Agent):
     async def _generate_one_candidate(
         self, user: str, prompt: str, thought: Thought | None
     ) -> NotifyCandidate | None:
-        """Generate a single notification candidate — no tools.
+        """Generate a single notification candidate via the agentic loop.
 
-        The thought already contains complete research. The model just
-        needs to summarize it conversationally, not search again.
+        Uses thought-specific context (profile + thought) without
+        conversation turns, so the model focuses on the thought
+        rather than continuing the conversation.
         """
         self._pending_thought = thought
         context = self._build_thought_candidate_context(user)
-        self._install_tools([])
-        response = await self.run(prompt=prompt, context=context, max_steps=1)
+        self._install_tools(self.get_tools(user))
+        response = await self.run(prompt=prompt, context=context)
         self._pending_thought = None
         answer = response.answer.strip() if response.answer else None
         if not answer:
@@ -337,10 +338,15 @@ class NotifyAgent(Agent):
         if self._is_disqualified(answer):
             logger.info("Disqualified candidate: %s", answer[:60])
             return None
-        image_prompt = self._seed_topic_for(thought) or answer[:50]
+        image_prompt = (
+            self._extract_search_query(response.tool_calls)
+            or self._seed_topic_for(thought)
+            or answer[:50]
+        )
         return NotifyCandidate(
             answer=answer,
             thought=thought,
+            attachments=response.attachments or [],
             image_prompt=image_prompt,
         )
 
