@@ -50,6 +50,11 @@ def _strip_think_tags(content: str) -> tuple[str, str | None]:
     return cleaned, extracted
 
 
+# Truncate tool results in the message history when many preceding tool calls caused
+# context saturation and the model returned empty content on the synthesis step.
+_TOOL_RESULT_TRUNCATION_THRESHOLD = 3  # number of preceding tool calls that triggers truncation
+_TOOL_RESULT_MAX_CHARS = 500  # max characters per tool result message after truncation
+
 # Phrases that indicate a model refusal — used to detect and retry unhelpful responses
 _REFUSAL_PHRASES = (
     "i can't",
@@ -62,6 +67,24 @@ _REFUSAL_PHRASES = (
     "as an ai",
     "as a language model",
 )
+
+
+def _build_strong_nudge(messages: list[dict]) -> str:
+    """Build a context-aware nudge that includes the original user question.
+
+    Called when many preceding tool calls may have saturated the model's context.
+    Including the original question gives the model a clear target after heavy tool use.
+    """
+    original_question = next(
+        (m["content"] for m in messages if m.get("role") == MessageRole.USER),
+        None,
+    )
+    if original_question:
+        return (
+            f"You have gathered enough information from your searches. "
+            f"Please provide your final answer to: {original_question}"
+        )
+    return "You have gathered enough information. Please provide your final response."
 
 
 @dataclass
@@ -278,9 +301,16 @@ class Agent:
                     steps,
                 )
                 messages.append(response.message.to_input_message())
-                messages.append(
-                    {"role": MessageRole.USER, "content": "Please provide your response."}
-                )
+                if len(tool_call_records) >= _TOOL_RESULT_TRUNCATION_THRESHOLD:
+                    logger.warning(
+                        "Truncating tool results before retry (preceding_tool_calls=%d)",
+                        len(tool_call_records),
+                    )
+                    messages = self._truncate_tool_messages(messages)
+                    nudge = _build_strong_nudge(messages)
+                else:
+                    nudge = "Please provide your response."
+                messages.append({"role": MessageRole.USER, "content": nudge})
                 if not is_final_step:
                     continue
                 # On the final step, retry directly — can't extend a for-range loop
@@ -375,6 +405,23 @@ class Agent:
             )
 
         return response
+
+    @staticmethod
+    def _truncate_tool_messages(messages: list[dict]) -> list[dict]:
+        """Truncate tool result messages to reduce context size before retrying.
+
+        Called when many preceding tool calls may have saturated the model's context window,
+        causing an empty response on the synthesis step. Truncating tool results gives the
+        model a shorter context to work with on the retry.
+        """
+        result = []
+        for msg in messages:
+            if msg.get("role") == MessageRole.TOOL:
+                content = msg.get("content", "")
+                if len(content) > _TOOL_RESULT_MAX_CHARS:
+                    msg = {**msg, "content": content[:_TOOL_RESULT_MAX_CHARS] + "... [truncated]"}
+            result.append(msg)
+        return result
 
     def _build_final_response(
         self,
