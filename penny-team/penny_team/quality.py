@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import urllib.request
 from dataclasses import dataclass
@@ -16,10 +17,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from github_api.api import GitHubAPI
-from similarity.embeddings import token_containment_ratio
+from similarity.embeddings import cosine_similarity, token_containment_ratio
 
 from penny_team.base import Agent, AgentRun
 from penny_team.constants import TeamConstants
+from penny_team.utils.ollama_embed import embed_batch
 
 logger = logging.getLogger(__name__)
 
@@ -381,22 +383,53 @@ class QualityAgent(Agent):
 
         return texts
 
+    def _embed_dedup_texts(self, texts: list[str]) -> list[list[float]] | None:
+        """Embed dedup texts via Ollama. Returns None if unavailable."""
+        model = os.getenv(TeamConstants.ENV_OLLAMA_EMBEDDING_MODEL)
+        if not model or not texts:
+            return None
+        url = os.getenv(TeamConstants.ENV_OLLAMA_URL, TeamConstants.OLLAMA_DEFAULT_URL)
+        return embed_batch(texts, url, model)
+
+    def _embed_candidate(self, title: str) -> list[float] | None:
+        """Embed a single candidate title. Returns None if unavailable."""
+        model = os.getenv(TeamConstants.ENV_OLLAMA_EMBEDDING_MODEL)
+        if not model:
+            return None
+        url = os.getenv(TeamConstants.ENV_OLLAMA_URL, TeamConstants.OLLAMA_DEFAULT_URL)
+        vecs = embed_batch([title], url, model)
+        return vecs[0] if vecs else None
+
     @staticmethod
-    def _is_duplicate_issue(title: str, dedup_texts: list[str]) -> bool:
+    def _is_duplicate_issue(
+        title: str,
+        dedup_texts: list[str],
+        candidate_vec: list[float] | None = None,
+        existing_vecs: list[list[float]] | None = None,
+    ) -> bool:
         """Check if a proposed issue title matches existing issues or PRs.
 
-        Uses token containment ratio (TCR) for fuzzy matching, which catches
-        paraphrases that exact keyword overlap would miss.
+        Uses TCR OR embedding similarity — if either signal exceeds its
+        threshold, the issue is considered a duplicate.  Falls back to
+        TCR-only when embeddings are unavailable.
         """
         if not dedup_texts:
             return False
         category = title.lower().removeprefix("bug: ").strip()
         if not category:
             return False
-        return any(
-            token_containment_ratio(category, existing) >= TeamConstants.TCR_DEDUP_THRESHOLD
-            for existing in dedup_texts
-        )
+
+        for idx, existing in enumerate(dedup_texts):
+            tcr = token_containment_ratio(category, existing)
+            if tcr >= TeamConstants.TCR_DEDUP_THRESHOLD:
+                return True
+
+            if candidate_vec and existing_vecs and idx < len(existing_vecs):
+                sim = cosine_similarity(candidate_vec, existing_vecs[idx])
+                if sim >= TeamConstants.EMBEDDING_DEDUP_THRESHOLD:
+                    return True
+
+        return False
 
     # --- run() override ---
 
@@ -440,6 +473,7 @@ class QualityAgent(Agent):
 
         # Step 2: Fetch open bug/in-review issue and PR texts for dedup
         dedup_texts = self._fetch_dedup_texts()
+        existing_vecs = self._embed_dedup_texts(dedup_texts)
 
         # Step 3: Evaluate each pair individually and file issues
         found = 0
@@ -478,7 +512,8 @@ class QualityAgent(Agent):
                 continue
 
             # Dedup: check if a similar quality issue already exists
-            if self._is_duplicate_issue(title, dedup_texts):
+            candidate_vec = self._embed_candidate(title)
+            if self._is_duplicate_issue(title, dedup_texts, candidate_vec, existing_vecs):
                 logger.info(f"[{self.name}] Skipping duplicate quality issue: {title}")
                 continue
 

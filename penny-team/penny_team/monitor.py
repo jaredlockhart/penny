@@ -9,15 +9,18 @@ and create new bug issues for the Worker agent to fix.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from github_api.api import GitHubAPI, IssueDetail, PullRequest
+from similarity.embeddings import cosine_similarity
 
 from penny_team.base import Agent, AgentRun
 from penny_team.constants import TeamConstants
+from penny_team.utils.ollama_embed import embed_batch
 
 logger = logging.getLogger(__name__)
 
@@ -119,27 +122,37 @@ def filter_known_errors(
     errors: list[ErrorBlock],
     open_issues: list[IssueDetail],
     open_prs: list[PullRequest] | None = None,
+    existing_vecs: list[list[float]] | None = None,
 ) -> list[ErrorBlock]:
     """Remove errors that already have a matching open bug issue or PR.
 
-    Matches by checking if the error's module AND exception type both
-    appear in an existing issue's or PR's title or body. This is
-    intentionally conservative — both must match to suppress the error.
+    Uses substring matching (module + exception in text) as the primary
+    signal, with embedding similarity as a supplementary catch for cases
+    where the text doesn't contain the raw error verbatim.
     """
-    # Build searchable text from both issues and PRs (title + body, lowercased)
     all_texts = [f"{issue.title}\n{issue.body}".lower() for issue in open_issues]
     all_texts += [f"{pr.title}\n{pr.body}".lower() for pr in (open_prs or [])]
 
     if not all_texts:
         return errors
 
-    novel: list[ErrorBlock] = []
-    for error in errors:
-        sig = extract_error_signature(error)
-        module_part, exception_part = sig.split(":", 1)
+    # Embed error signatures if embedding model is available
+    sigs = [extract_error_signature(e) for e in errors]
+    sig_vecs = _embed_signatures(sigs) if existing_vecs else None
 
-        # Check if both module and exception appear in any open issue or PR
+    novel: list[ErrorBlock] = []
+    for i, error in enumerate(errors):
+        module_part, exception_part = sigs[i].split(":", 1)
+
+        # Primary: substring match (module + exception both in text)
         is_known = any(module_part in text and exception_part in text for text in all_texts)
+
+        # Supplementary: embedding similarity
+        if not is_known and sig_vecs and sig_vecs[i] and existing_vecs:
+            is_known = any(
+                cosine_similarity(sig_vecs[i], ev) >= TeamConstants.EMBEDDING_DEDUP_THRESHOLD
+                for ev in existing_vecs
+            )
 
         if is_known:
             logger.info(f"[monitor] Skipping known error: {error.module} / {exception_part}")
@@ -147,6 +160,15 @@ def filter_known_errors(
             novel.append(error)
 
     return novel
+
+
+def _embed_signatures(sigs: list[str]) -> list[list[float]] | None:
+    """Embed error signatures via Ollama. Returns None if unavailable."""
+    model = os.getenv(TeamConstants.ENV_OLLAMA_EMBEDDING_MODEL)
+    if not model:
+        return None
+    url = os.getenv(TeamConstants.ENV_OLLAMA_URL, TeamConstants.OLLAMA_DEFAULT_URL)
+    return embed_batch(sigs, url, model)
 
 
 def format_errors_for_prompt(errors: list[ErrorBlock]) -> str:
@@ -315,6 +337,21 @@ class MonitorAgent(Agent):
             logger.warning(f"[{self.name}] Failed to fetch open PRs: {e}")
             return []  # Fail-open: skip dedup rather than blocking
 
+    @staticmethod
+    def _embed_dedup_texts(
+        issues: list[IssueDetail], prs: list[PullRequest]
+    ) -> list[list[float]] | None:
+        """Embed issue/PR titles for dedup. Returns None if unavailable."""
+        model = os.getenv(TeamConstants.ENV_OLLAMA_EMBEDDING_MODEL)
+        if not model:
+            return None
+        url = os.getenv(TeamConstants.ENV_OLLAMA_URL, TeamConstants.OLLAMA_DEFAULT_URL)
+        texts = [f"{i.title} {i.body}" for i in issues]
+        texts += [f"{p.title} {p.body}" for p in prs]
+        if not texts:
+            return None
+        return embed_batch(texts, url, model)
+
     def run(self) -> AgentRun:
         """Read new log content, extract errors, dedup, and run Claude to file bug issues."""
         logger.info(f"[{self.name}] Starting cycle #{self.run_count + 1}")
@@ -356,7 +393,8 @@ class MonitorAgent(Agent):
         # Python-space dedup: filter out errors matching open bug/in-review issues or PRs
         open_issues = self._fetch_dedup_issues()
         open_prs = self._fetch_open_prs()
-        errors = filter_known_errors(errors, open_issues, open_prs)
+        existing_vecs = self._embed_dedup_texts(open_issues, open_prs)
+        errors = filter_known_errors(errors, open_issues, open_prs, existing_vecs)
 
         if not errors:
             self._save_offset(new_offset)

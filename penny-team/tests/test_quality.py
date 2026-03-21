@@ -557,6 +557,28 @@ class TestQualityRun:
         assert "Filed 0 issue(s)" in result.output
         api.create_issue.assert_not_called()
 
+    def test_embedding_catches_duplicate_that_tcr_misses(self):
+        """When TCR is below threshold but embeddings are similar, issue is blocked."""
+        from penny_team.quality import QualityAgent
+
+        # Titles with low TCR overlap but semantically similar
+        dedup_texts = ["bug: rate limiting on external API calls"]
+
+        # Without embeddings: TCR below 0.6 → not duplicate
+        assert not QualityAgent._is_duplicate_issue(
+            "bug: API throttling errors", dedup_texts
+        )
+
+        # With embeddings: high cosine similarity → duplicate
+        candidate_vec = [1.0, 0.0, 0.0]
+        existing_vecs = [[0.95, 0.1, 0.0]]  # similar direction
+        assert QualityAgent._is_duplicate_issue(
+            "bug: API throttling errors",
+            dedup_texts,
+            candidate_vec=candidate_vec,
+            existing_vecs=existing_vecs,
+        )
+
     def test_privacy_validation_blocks_leaky_description(self, tmp_path, monkeypatch):
         """If bug description contains original content, issue is NOT filed."""
         api = MockGitHubAPI()

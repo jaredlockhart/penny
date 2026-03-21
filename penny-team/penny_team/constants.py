@@ -166,9 +166,11 @@ class TeamConstants:
     # Environment variable keys for Ollama config
     ENV_OLLAMA_URL = "OLLAMA_API_URL"
     ENV_OLLAMA_MODEL = "OLLAMA_BACKGROUND_MODEL"
+    ENV_OLLAMA_EMBEDDING_MODEL = "OLLAMA_EMBEDDING_MODEL"
 
-    # Token containment ratio threshold for issue dedup (quality agent)
+    # Dedup thresholds (TCR + embedding, used by monitor and quality agents)
     TCR_DEDUP_THRESHOLD = 0.6
+    EMBEDDING_DEDUP_THRESHOLD = 0.75
 
     # Data directory layout (relative to project root)
     PENNY_DB_RELATIVE_PATH = "data/penny/penny.db"

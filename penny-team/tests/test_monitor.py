@@ -525,6 +525,47 @@ class TestErrorDedup:
 # =============================================================================
 
 
+class TestEmbeddingDedup:
+    """Embedding similarity supplements substring matching when available."""
+
+    def test_embedding_catches_error_that_substring_misses(self):
+        """When substring matching misses but embedding is similar, error is filtered."""
+        error = ErrorBlock(
+            timestamp="2024-01-15 14:23:45",
+            module="penny.tools.search",
+            level="ERROR",
+            message="Search failed",
+            traceback="AuthenticationError: quota exceeded",
+        )
+        # Issue text that does NOT contain "penny.tools.search" verbatim
+        # (e.g., Claude rewrote it), so substring match would miss
+        open_issues = [
+            make_issue_detail(
+                number=1,
+                title="bug: Perplexity search authentication error",
+                body="The search tool fails with an auth error when quota is exhausted.",
+                labels=["bug"],
+            )
+        ]
+
+        # Without embeddings: substring miss → error passes through
+        result = filter_known_errors([error], open_issues)
+        assert len(result) == 1
+
+        # With embeddings: high similarity → error is filtered
+        # Simulate both the error sig and issue text having similar embeddings
+        existing_vecs = [[1.0, 0.0, 0.0]]  # one vec per text
+        # Monkey-patch _embed_signatures to return a similar vector
+        import penny_team.monitor as monitor_mod
+        original = monitor_mod._embed_signatures
+        monitor_mod._embed_signatures = lambda sigs: [[0.95, 0.05, 0.0]]
+        try:
+            result = filter_known_errors([error], open_issues, existing_vecs=existing_vecs)
+            assert len(result) == 0
+        finally:
+            monitor_mod._embed_signatures = original
+
+
 class TestInReviewDedup:
     """Errors matching in-review issues (not just bug) should be filtered."""
 
