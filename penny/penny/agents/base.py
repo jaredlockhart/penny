@@ -265,6 +265,9 @@ class Agent:
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
                     break
+                # Reset empty retry counter so the synthesis step gets a retry even if
+                # a previous intermediate step already consumed it.
+                empty_retries = 0
                 continue
 
             if await self.handle_text_step(response, messages, step, is_final_step):

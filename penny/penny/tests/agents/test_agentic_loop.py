@@ -407,6 +407,41 @@ class TestEmptyContentRetry:
 
         await agent.close()
 
+    @pytest.mark.asyncio
+    async def test_empty_retry_available_after_subsequent_tool_calls(self, test_db, mock_ollama):
+        """Empty retry counter resets after tool calls, so retry fires on the final synthesis step.
+
+        Scenario: tool call → empty (retry fires) → tool call → empty (retry must fire again)
+        Without the fix, the second empty response returns AGENT_EMPTY_RESPONSE because
+        empty_retries is already 1 from the earlier intermediate step.
+        """
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=5)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "first"})
+            if count == 2:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "second"})
+            if count == 3:
+                # Empty response on non-final step — retry fires, empty_retries → 1
+                return mock_ollama._make_text_response(request, "")
+            if count == 4:
+                # Model makes another tool call in response to the retry prompt
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "third"})
+            if count == 5:
+                # Empty again on final step — retry must still be available
+                return mock_ollama._make_text_response(request, "")
+            # Retry on final step should reach here and produce real content
+            return mock_ollama._make_text_response(request, "here's the synthesized answer")
+
+        mock_ollama.set_response_handler(handler)
+        agent.allow_repeat_tools = True
+
+        response = await agent.run("test question")
+        assert response.answer == "here's the synthesized answer"
+
+        await agent.close()
+
 
 class TestRefusalRetry:
     """Test that model refusals trigger a retry nudge."""
