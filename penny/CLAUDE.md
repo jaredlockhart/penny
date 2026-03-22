@@ -129,7 +129,7 @@ penny/
     user_store.py     — UserStore: get_info, save_info, mute/unmute
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0007)
+    migrations/       — Numbered migration files (0001–0008)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client (chat, generate, embed)
     models.py         — ChatResponse, ChatResponseMessage
@@ -308,7 +308,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `RuntimeParams` class provides attribute access: `config.runtime.IDLE_SECONDS`
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Groups: Global (max steps, image/email timeouts, embedding batch limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, weekly context limit), Notify (check interval, cooldowns, news cooldown, candidates, check-in image prompt)
+- Groups: Global (max steps, image/email timeouts, embedding batch limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, mention threshold, weekly context limit), Notify (check interval, cooldowns, news cooldown, candidates, check-in image prompt)
 
 ## Data Model
 
@@ -323,7 +323,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **Schedule**: User-created cron tasks — `cron_expression`, `prompt_text`, `user_timezone`
 - **MuteState**: Per-user mute state — row exists = muted, delete = unmuted
 - **Thought**: Inner monologue entries — `content` (full monologue), `preference_id` FK (seed preference), `notified_at`
-- **Preference**: User sentiment signals — `content`, `valence` (positive/negative), `embedding` (serialized float32 vector), `source_period_start`/`end`, `last_thought_at`
+- **Preference**: User sentiment signals — `content`, `valence` (positive/negative), `source` (manual/extracted), `mention_count`, `embedding` (serialized float32 vector), `source_period_start`/`end`, `last_thought_at`. Extracted preferences must reach `PREFERENCE_MENTION_THRESHOLD` mentions before becoming thinking candidates; manual (`/like`) preferences bypass this gate
 - **ConversationHistory**: Topic summaries — `period_start`, `period_end`, `duration` (daily/weekly/monthly), `topics` (bullet-point list), `embedding`
 
 ## Message Flow
@@ -378,7 +378,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0007):
+File-based migration system in `database/migrations/` (currently 0001–0008):
 - Each migration is a numbered Python file (e.g., `0001_initial_schema.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -396,6 +396,7 @@ Notable migrations:
 - 0005: `preference.last_thought_at` column
 - 0006: `messagelog.thought_id` FK (links messages to notification thoughts)
 - 0007: `thought.preference_id` FK (links thoughts to seed preferences)
+- 0008: `preference.source` + `preference.mention_count` (mention threshold gating)
 
 ## Extending
 

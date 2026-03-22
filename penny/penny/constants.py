@@ -49,6 +49,12 @@ class PennyConstants:
         POSITIVE = "positive"
         NEGATIVE = "negative"
 
+    class PreferenceSource(StrEnum):
+        """How a preference was created."""
+
+        MANUAL = "manual"
+        EXTRACTED = "extracted"
+
     POSITIVE_REACTION_EMOJIS = frozenset(
         {
             "\U0001f44d",  # 👍
