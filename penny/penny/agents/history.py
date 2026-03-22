@@ -262,13 +262,13 @@ class HistoryAgent(Agent):
         if not identified:
             return False
 
-        self._bump_existing_mentions(identified.existing, existing)
+        bumped_ids = self._bump_existing_mentions(identified.existing, existing)
 
-        new_topics = [t.strip() for t in identified.new if t.strip()]
+        new_topics = self._filter_new_topics(identified, existing)
         if not new_topics:
             return bool(identified.existing)
 
-        survivors = await self._dedup_preference_topics(new_topics, existing)
+        survivors = await self._dedup_preference_topics(new_topics, existing, bumped_ids)
         if not survivors:
             return bool(identified.existing)
 
@@ -281,14 +281,30 @@ class HistoryAgent(Agent):
         self._store_classified_preferences(user, classified, start, end, embedding_lookup)
         return True
 
-    def _bump_existing_mentions(self, mentioned: list[str], existing: list[Preference]) -> None:
-        """Increment mention_count for existing preferences the LLM recognized."""
+    def _bump_existing_mentions(self, mentioned: list[str], existing: list[Preference]) -> set[int]:
+        """Increment mention_count for existing preferences the LLM recognized.
+
+        Returns set of preference IDs that were bumped (to avoid double-counting in dedup).
+        """
+        bumped: set[int] = set()
         content_to_pref = {p.content.lower(): p for p in existing}
         for name in mentioned:
             pref = content_to_pref.get(name.strip().lower())
-            if pref:
-                self.db.preferences.increment_mention_count(pref.id)  # type: ignore[arg-type]
+            if pref and pref.id is not None:
+                self.db.preferences.increment_mention_count(pref.id)
+                bumped.add(pref.id)
                 logger.info("Preference '%s' mention count incremented", pref.content[:50])
+        return bumped
+
+    @staticmethod
+    def _filter_new_topics(
+        identified: IdentifiedPreferenceTopics, existing: list[Preference]
+    ) -> list[str]:
+        """Filter new topics to exclude anything already in existing or known preferences."""
+        existing_lower = {p.content.lower() for p in existing}
+        identified_existing_lower = {n.strip().lower() for n in identified.existing}
+        exclude = existing_lower | identified_existing_lower
+        return [t.strip() for t in identified.new if t.strip() and t.strip().lower() not in exclude]
 
     # ── Pass 1: topic identification ─────────────────────────────────────
 
@@ -367,17 +383,22 @@ class HistoryAgent(Agent):
     # ── Dedup ────────────────────────────────────────────────────────────
 
     async def _dedup_preference_topics(
-        self, topics: list[str], existing_prefs: list[Preference]
+        self,
+        topics: list[str],
+        existing_prefs: list[Preference],
+        already_bumped: set[int] | None = None,
     ) -> list[tuple[str, bytes | None]]:
         """Embed topics, dedup against existing, increment mention count on match.
 
         When a topic matches an existing DB preference, increments its mention_count
-        instead of silently skipping. New unique topics are returned as survivors.
+        instead of silently skipping (unless already bumped this pass).
+        New unique topics are returned as survivors.
         """
         existing_items: list[tuple[str, bytes | None]] = [
             (p.content, p.embedding) for p in existing_prefs
         ]
         db_pref_count = len(existing_prefs)
+        bumped = already_bumped or set()
         survivors: list[tuple[str, bytes | None]] = []
 
         for topic in topics:
@@ -393,7 +414,7 @@ class HistoryAgent(Agent):
                 tcr_threshold=self.config.runtime.PREFERENCE_DEDUP_TCR_THRESHOLD,
             )
             if match_idx is not None:
-                self._handle_dedup_match(match_idx, db_pref_count, existing_prefs, topic)
+                self._handle_dedup_match(match_idx, db_pref_count, existing_prefs, topic, bumped)
                 continue
 
             survivors.append((topic, embedding))
@@ -406,11 +427,16 @@ class HistoryAgent(Agent):
         db_pref_count: int,
         existing_prefs: list[Preference],
         topic: str,
+        already_bumped: set[int],
     ) -> None:
-        """Increment mention count for DB matches, log intra-batch duplicates."""
+        """Increment mention count for DB matches, skip if already bumped this pass."""
         if match_idx < db_pref_count:
             matched = existing_prefs[match_idx]
+            if matched.id in already_bumped:
+                logger.debug("Skipping already-bumped preference: '%s'", matched.content[:50])
+                return
             self.db.preferences.increment_mention_count(matched.id)  # type: ignore[arg-type]
+            already_bumped.add(matched.id)  # type: ignore[arg-type]
             logger.info(
                 "Preference '%s' mention count incremented (matches '%s')",
                 topic[:50],

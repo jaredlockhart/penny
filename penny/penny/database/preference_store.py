@@ -61,7 +61,8 @@ class PreferenceStore:
             with self._session() as session:
                 pref = session.get(Preference, pref_id)
                 if pref:
-                    pref.mention_count = (pref.mention_count or 1) + 1
+                    current = pref.mention_count if pref.mention_count is not None else 0
+                    pref.mention_count = current + 1
                     session.add(pref)
                     session.commit()
         except Exception as e:
