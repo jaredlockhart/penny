@@ -124,7 +124,9 @@ class ThinkingAgent(Agent):
         if not self._seed_pref_id:
             return None
         try:
-            thoughts = self.db.thoughts.get_recent_by_preference(sender, self._seed_pref_id)
+            thoughts = self.db.thoughts.get_recent_by_preference(
+                sender, self._seed_pref_id, limit=self.THOUGHT_CONTEXT_LIMIT
+            )
             if not thoughts:
                 return None
             lines = [t.content for t in thoughts]
