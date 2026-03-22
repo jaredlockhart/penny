@@ -208,6 +208,7 @@ class Agent:
         self._search_tool = search_tool
         self._news_tool = news_tool
         self._current_user: str | None = None
+        self._tool_result_text: list[str] = []
 
         self._tool_registry = ToolRegistry()
         for tool in self.tools:
@@ -301,6 +302,7 @@ class Agent:
         context: str | None = None,
     ) -> ControllerResponse:
         """Run the agentic loop — prompt in, response out."""
+        self._tool_result_text = []
         messages = self._build_messages(prompt, history, system_prompt, context=context)
         tools = self._tool_registry.get_ollama_tools()
         steps = max_steps if max_steps is not None else self.max_steps
@@ -467,7 +469,12 @@ class Agent:
         return False
 
     async def after_step(self, step_records: list[ToolCallRecord], messages: list[dict]) -> None:
-        """Hook called after each step's tool calls. Override in subclasses."""
+        """Capture tool result text for URL validation. Override in subclasses (call super)."""
+        for msg in messages:
+            if msg.get("role") == MessageRole.TOOL:
+                content = msg.get("content", "")
+                if content:
+                    self._tool_result_text.append(content)
 
     def should_stop_loop(self, step_records: list[ToolCallRecord]) -> bool:
         """Check if the loop should stop early. Override in subclasses."""
@@ -700,6 +707,34 @@ class Agent:
             sources = "\n".join(urls)
             text += f"\n\nSources:\n{sources}"
         return text, urls, result.image_base64
+
+    # ── URL validation ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_urls(text: str) -> list[str]:
+        """Extract all URLs from text (both markdown links and bare URLs)."""
+        md_urls = [m.group(2) for m in _MARKDOWN_LINK_URL_PATTERN.finditer(text)]
+        bare_urls = [m.group(1) for m in _BARE_URL_PATTERN.finditer(text)]
+        seen: set[str] = set()
+        urls: list[str] = []
+        for url in md_urls + bare_urls:
+            cleaned = url.rstrip(".,;:!?\"')>}]")
+            if cleaned not in seen:
+                seen.add(cleaned)
+                urls.append(cleaned)
+        return urls
+
+    @classmethod
+    def _find_hallucinated_urls(cls, text: str, source_text: str) -> list[str]:
+        """Return URLs in text that don't appear verbatim in the source text."""
+        urls = cls._extract_urls(text)
+        if not urls:
+            return []
+        return [url for url in urls if url not in source_text]
+
+    def _get_source_text(self) -> str:
+        """Combined tool result text from the current run for URL validation."""
+        return "\n".join(self._tool_result_text)
 
     # ── Message building ─────────────────────────────────────────────────
 

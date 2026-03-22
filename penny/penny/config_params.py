@@ -216,7 +216,7 @@ ConfigParam(
     key="INNER_MONOLOGUE_MAX_STEPS",
     description="Max thinking loop steps per inner monologue cycle",
     type=int,
-    default=10,
+    default=5,
     validator=_validate_positive_int,
     group=GROUP_INNER_MONOLOGUE,
 )

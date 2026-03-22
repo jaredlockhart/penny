@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
-from penny.agents.models import ToolCallRecord
+from penny.agents.models import ControllerResponse, ToolCallRecord
 from penny.constants import PennyConstants
 from penny.database.models import Thought
 from penny.ollama.similarity import (
@@ -202,12 +202,15 @@ class NotifyAgent(Agent):
             return [self._news_tool]
         return []
 
+    # Max retries for notification URL validation
+    NOTIFY_URL_RETRIES = 2
+
     async def _send_news(self, user: str) -> bool:
         """Send a news message — profile + history only, news tool only."""
         logger.info("Notify news for %s", user)
         context = self._build_news_context(user)
         self._install_tools(self._get_news_tools())
-        response = await self.run(
+        response = await self._run_with_url_validation(
             prompt=Prompt.NOTIFY_NEWS,
             context=context,
         )
@@ -343,7 +346,12 @@ class NotifyAgent(Agent):
         self._pending_thought = thought
         context = self._build_thought_candidate_context(user)
         self._install_tools(self.get_tools(user))
-        response = await self.run(prompt=prompt, context=context)
+        extra_source = thought.content if thought else ""
+        response = await self._run_with_url_validation(
+            prompt=prompt,
+            context=context,
+            extra_source=extra_source,
+        )
         self._pending_thought = None
         answer = response.answer.strip() if response.answer else None
         if not answer:
@@ -361,6 +369,37 @@ class NotifyAgent(Agent):
             attachments=response.attachments or [],
             image_prompt=image_prompt,
         )
+
+    # ── URL-validated run ────────────────────────────────────────────
+
+    async def _run_with_url_validation(
+        self,
+        prompt: str,
+        context: str,
+        extra_source: str = "",
+    ) -> ControllerResponse:
+        """Run agentic loop, retrying if the response contains hallucinated URLs."""
+        response = ControllerResponse(answer="")
+        for attempt in range(1 + self.NOTIFY_URL_RETRIES):
+            response = await self.run(prompt=prompt, context=context)
+            answer = response.answer.strip() if response.answer else ""
+            if not answer:
+                return response
+            source_text = self._get_source_text()
+            if extra_source:
+                source_text = extra_source + "\n" + source_text
+            bad_urls = self._find_hallucinated_urls(answer, source_text)
+            if not bad_urls:
+                return response
+            logger.warning(
+                "Notify URL validation attempt %d/%d: %d hallucinated URL(s): %s",
+                attempt + 1,
+                1 + self.NOTIFY_URL_RETRIES,
+                len(bad_urls),
+                ", ".join(u[:80] for u in bad_urls),
+            )
+        logger.warning("Notify exhausted URL validation retries, using last attempt")
+        return response
 
     # Prefix of the tools-unavailable response (parameterized, so exact match won't work)
     _TOOLS_UNAVAILABLE_PREFIX = PennyResponse.AGENT_TOOLS_UNAVAILABLE.split("(")[0]
