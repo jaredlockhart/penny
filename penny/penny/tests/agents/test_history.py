@@ -318,6 +318,63 @@ async def test_preference_extraction_skips_already_extracted_days(
         assert len(already_extracted) == 1
 
 
+@pytest.mark.asyncio
+async def test_preference_extraction_marks_messages_processed(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Messages are marked processed after preference extraction, preventing re-bumps."""
+    config = make_config(history_interval=99999.0)
+
+    extract_call_count = 0
+
+    def handler(request, count):
+        nonlocal extract_call_count
+        messages = request.get("messages", [])
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
+
+        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
+            extract_call_count += 1
+            result = json.dumps({"new": ["hiking trails"], "existing": []})
+            return mock_ollama._make_text_response(request, result)
+
+        if "classify" in prompt_text.lower() or "valence" in prompt_text.lower():
+            result = json.dumps(
+                {"preferences": [{"content": "hiking trails", "valence": "positive"}]}
+            )
+            return mock_ollama._make_text_response(request, result)
+
+        return mock_ollama._make_text_response(request, "- Topics")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "I love hiking trails in the mountains",
+        )
+
+        # First extraction: should process the message
+        await penny.history_agent.execute()
+        first_count = extract_call_count
+
+        # Second extraction: message is now processed, should NOT re-extract
+        extract_call_count = 0
+        await penny.history_agent.execute()
+
+        # Identification should not be called again (no unprocessed messages)
+        assert extract_call_count == 0, (
+            f"Expected 0 identification calls on second run, got {extract_call_count}"
+        )
+
+        # Only one preference should exist (not duplicated)
+        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
+        hiking_prefs = [p for p in prefs if "hiking" in p.content.lower()]
+        assert len(hiking_prefs) == 1
+        assert first_count >= 1
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 

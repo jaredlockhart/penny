@@ -47,6 +47,16 @@ def up(conn: sqlite3.Connection) -> None:
     if "ix_preference_source" not in indexes:
         conn.execute("CREATE INDEX ix_preference_source ON preference (source)")
 
+    # Mark all existing messages as processed so only new messages are extracted
+    msg_tables = [
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='messagelog'"
+        ).fetchall()
+    ]
+    if msg_tables:
+        conn.execute("UPDATE messagelog SET processed = 1 WHERE processed = 0")
+
     conn.commit()
 
 

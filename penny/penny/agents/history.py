@@ -222,10 +222,24 @@ class HistoryAgent(Agent):
     # ── Preference extraction ─────────────────────────────────────────────
 
     async def _extract_today_preferences(self, user: str) -> bool:
-        """Extract preferences from today's messages."""
-        day_start = self._midnight_today()
-        day_end = datetime.now(UTC).replace(tzinfo=None)
-        return await self._extract_preferences(user, day_start, day_end)
+        """Extract preferences from unprocessed messages only."""
+        messages = self.db.messages.get_unprocessed(user, limit=100)
+        reactions = self.db.messages.get_user_reactions(user, limit=100)
+        if not messages and not reactions:
+            return False
+
+        conversation = self._build_unprocessed_content(messages, reactions)
+        if not conversation:
+            return False
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+        did_work = await self._extract_preferences_from_content(
+            user, conversation, self._midnight_today(), now
+        )
+        message_ids = [m.id for m in messages if m.id is not None]
+        reaction_ids = [r.id for r in reactions if r.id is not None]
+        self.db.messages.mark_processed(message_ids + reaction_ids)
+        return did_work
 
     async def _extract_day_preferences(
         self, user: str, day_start: datetime, day_end: datetime
@@ -233,14 +247,15 @@ class HistoryAgent(Agent):
         """Extract preferences for a completed day (skip if already done)."""
         if self.db.preferences.exists_for_period(user, day_start):
             return
-        await self._extract_preferences(user, day_start, day_end)
+        conversation = self._build_conversation_content(user, day_start, day_end)
+        if conversation:
+            await self._extract_preferences_from_content(user, conversation, day_start, day_end)
 
-    async def _extract_preferences(self, user: str, start: datetime, end: datetime) -> bool:
+    async def _extract_preferences_from_content(
+        self, user: str, conversation: str, start: datetime, end: datetime
+    ) -> bool:
         """Two-pass preference extraction: identify topics, dedup, classify valence."""
         existing = self.db.preferences.get_for_user(user)
-        conversation = self._build_conversation_content(user, start, end)
-        if not conversation:
-            return False
 
         identified = await self._identify_preference_topics(conversation, existing)
         if not identified:
@@ -276,8 +291,21 @@ class HistoryAgent(Agent):
 
     # ── Pass 1: topic identification ─────────────────────────────────────
 
+    def _build_unprocessed_content(self, messages: list, reactions: list) -> str | None:
+        """Build conversation text from pre-fetched unprocessed messages and reactions."""
+        if not messages and not reactions:
+            return None
+        parts: list[str] = []
+        if messages:
+            parts.append(self._format_messages(messages))
+        if reactions:
+            reaction_text = self._format_reactions(reactions)
+            if reaction_text:
+                parts.append(reaction_text)
+        return "\n\n".join(parts) if parts else None
+
     def _build_conversation_content(self, user: str, start: datetime, end: datetime) -> str | None:
-        """Build user-only conversation text for preference extraction.
+        """Build user-only conversation text for preference extraction (backfill path).
 
         Only includes incoming (user) messages and reactions — Penny's
         responses are excluded so the model doesn't extract Penny's
