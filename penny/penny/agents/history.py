@@ -58,7 +58,7 @@ class HistoryAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
 
     async def execute_for_user(self, user: str) -> bool:
-        """Summarize today's conversation, extract preferences, then backfill past days."""
+        """Summarize today's conversation, extract preferences, backfill days and weeks."""
         did_work = await self._summarize_today(user)
         did_work = await self._extract_today_preferences(user) or did_work
 
@@ -68,6 +68,8 @@ class HistoryAgent(Agent):
             await self._summarize_day(user, day_start, day_end)
             await self._extract_day_preferences(user, day_start, day_end)
             did_work = True
+
+        did_work = await self._rollup_completed_weeks(user) or did_work
 
         return did_work
 
@@ -137,6 +139,80 @@ class HistoryAgent(Agent):
             embedding=embedding,
         )
         logger.info("History entry created for %s on %s", user, day_start.date())
+
+    # ── Weekly rollup ──────────────────────────────────────────────────────
+
+    async def _rollup_completed_weeks(self, user: str) -> bool:
+        """Summarize completed weeks from daily entries into weekly history entries."""
+        max_weeks = 2
+        weeks = self._find_unrolled_weeks(user, max_weeks)
+        if not weeks:
+            return False
+
+        did_work = False
+        for week_start, week_end in weeks:
+            input_text = self._gather_weekly_input(user, week_start, week_end)
+            if not input_text:
+                continue
+
+            response = await self.run(prompt=input_text)
+            topics = response.answer.strip()
+            if not topics:
+                continue
+
+            embedding = await self._embed_text(topics)
+            self.db.history.add(
+                user=user,
+                period_start=week_start,
+                period_end=week_end,
+                duration=PennyConstants.HistoryDuration.WEEKLY,
+                topics=topics,
+                embedding=embedding,
+            )
+            logger.info("Weekly rollup created for %s: %s", user, week_start.date())
+            did_work = True
+        return did_work
+
+    def _find_unrolled_weeks(self, user: str, max_weeks: int) -> list[tuple[datetime, datetime]]:
+        """Find completed ISO weeks with daily entries but no weekly entry."""
+        daily = PennyConstants.HistoryDuration.DAILY
+        weekly = PennyConstants.HistoryDuration.WEEKLY
+
+        earliest_daily = self.db.history.get_recent(user, daily, limit=1)
+        if not earliest_daily:
+            return []
+
+        first_start = earliest_daily[0].period_start
+        first_monday = first_start - timedelta(days=first_start.weekday())
+        first_monday = first_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        today = self._midnight_today()
+        current_monday = today - timedelta(days=today.weekday())
+
+        weeks: list[tuple[datetime, datetime]] = []
+        cursor = first_monday
+        while cursor < current_monday and len(weeks) < max_weeks:
+            week_end = cursor + timedelta(days=7)
+            has_daily = bool(self.db.history.get_in_range(user, daily, cursor, week_end))
+            has_weekly = self.db.history.exists(user, cursor, weekly)
+            if has_daily and not has_weekly:
+                weeks.append((cursor, week_end))
+            cursor = week_end
+        return weeks
+
+    def _gather_weekly_input(self, user: str, week_start: datetime, week_end: datetime) -> str:
+        """Concatenate daily topic entries for a week as input text."""
+        daily = PennyConstants.HistoryDuration.DAILY
+        entries = self.db.history.get_in_range(user, daily, week_start, week_end)
+        if not entries:
+            return ""
+
+        lines: list[str] = []
+        for entry in entries:
+            date_label = entry.period_start.strftime("%b %-d")
+            lines.append(f"{date_label}:")
+            lines.append(entry.topics.strip())
+        return "\n".join(lines)
 
     # ── Preference extraction ─────────────────────────────────────────────
 
