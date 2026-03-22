@@ -69,104 +69,50 @@ How information flows through Penny's cognitive systems — from perception to m
 
 ```mermaid
 flowchart TB
-    %% ── Perception ──────────────────────────────────────────────────
     User((User)) -->|message| Chat
-    User -->|emoji reaction| Prefs
+    User -->|reaction| Memory
 
-    %% ── Active Mind (foreground) ────────────────────────────────────
-    subgraph Active["🗣 Active Mind — ChatAgent"]
-        Chat["Receive message<br>+ assemble context"]
-        Search["Search web<br>(Perplexity)"]
-        Respond["Compose response"]
-        Chat --> Search --> Respond
+    subgraph Conversation["🗣 Conversation"]
+        Chat[ChatAgent<br>search web + respond]
     end
 
-    %% Context assembly arrows into ChatAgent
-    Profile -.->|name| Chat
-    DailyH -.->|"recent topics<br>(7 days)"| Chat
-    WeeklyH -.->|"older themes<br>(4 weeks)"| Chat
-    Thoughts -.->|"recent thinking"| Chat
-    Dislikes -.->|"topics to avoid"| Chat
-    Conv -.->|"recent turns<br>(since last rollup)"| Chat
+    Memory -.->|"profile · history · thoughts · dislikes"| Chat
+    Chat -->|reply| User
+    Chat -->|log| Memory
 
-    Respond -->|reply| User
-    Respond -->|log| Conv
-
-    %% ── Memory ──────────────────────────────────────────────────────
-    subgraph Memory["🧠 Memory — SQLite"]
-        Profile["Profile<br>name · location · tz"]
-        Conv["Conversation Log<br>all messages"]
-        DailyH["Daily Summaries<br>topic bullets per day"]
-        WeeklyH["Weekly Summaries<br>rolled-up themes"]
-        Likes["Positive Preferences<br>topics user likes"]
-        Dislikes["Negative Preferences<br>topics user dislikes"]
-        Thoughts["Thoughts<br>inner monologue entries"]
-        Prefs["Preferences"]
-        Likes ---|valence| Prefs
-        Dislikes ---|valence| Prefs
+    subgraph Memory["🧠 Memory"]
+        Messages[Messages]
+        Summaries["Daily & Weekly<br>Summaries"]
+        Preferences["Preferences<br>likes · dislikes"]
+        Thoughts[Thoughts]
     end
 
-    %% ── Subconscious (background, when idle) ────────────────────────
-    subgraph Subconscious["💭 Subconscious — Background Agents"]
-        direction TB
-
-        subgraph Digest["HistoryAgent — Digest & Learn"]
-            Summarize["Summarize today's<br>messages → daily entry"]
-            Extract["Extract preferences<br>from conversation"]
-            Rollup["Roll up completed<br>weeks → weekly entry"]
-        end
-
-        subgraph Think["ThinkingAgent — Inner Monologue"]
-            Pick["Pick a random<br>positive preference"]
-            Research["Search + reason<br>(multi-step loop)"]
-            Store["Summarize monologue<br>→ store thought"]
-            Pick --> Research --> Store
-        end
-
-        subgraph Notify["NotifyAgent — Outreach"]
-            Score["Score un-notified<br>thoughts by novelty<br>+ preference alignment"]
-            Compose["Compose message<br>+ find image"]
-            Send["Send to user<br>(with backoff)"]
-            Score --> Compose --> Send
-        end
+    subgraph Background["💭 Background — when idle"]
+        History["HistoryAgent<br>summarize conversations,<br>extract preferences"]
+        Thinking["ThinkingAgent<br>pick a preference,<br>research it, store thought"]
+        Notify["NotifyAgent<br>score thoughts,<br>share the best one"]
     end
 
-    %% ── Subconscious reads from memory ──────────────────────────────
-    Conv -->|"today's messages"| Summarize
-    Conv -->|"user messages<br>+ reactions"| Extract
-    DailyH -->|"completed weeks"| Rollup
+    Messages --> History
+    History --> Summaries
+    History --> Preferences
+    Preferences --> Thinking
+    Thinking --> Thoughts
+    Thoughts --> Notify
+    Notify -->|proactive message| User
 
-    %% ── Subconscious writes to memory ──────────────────────────────
-    Summarize -->|upsert| DailyH
-    Extract -->|"new likes/dislikes<br>(deduped via TCR +<br>embedding similarity)"| Prefs
-    Rollup -->|create| WeeklyH
-    Store -->|append| Thoughts
-
-    %% ── Subconscious reads from memory ──────────────────────────────
-    Likes -->|"seed topic"| Pick
-    Thoughts -->|"un-notified"| Score
-    Likes -->|"sentiment scoring"| Score
-
-    %% ── Outreach to user ────────────────────────────────────────────
-    Send -->|proactive message| User
-
-    %% ── Styling ─────────────────────────────────────────────────────
-    style Active fill:#e8f5e9,stroke:#2e7d32
+    style Conversation fill:#e8f5e9,stroke:#2e7d32
     style Memory fill:#e3f2fd,stroke:#1565c0
-    style Subconscious fill:#fff3e0,stroke:#e65100
-    style Digest fill:#fff8e1,stroke:#f9a825
-    style Think fill:#fff8e1,stroke:#f9a825
-    style Notify fill:#fff8e1,stroke:#f9a825
+    style Background fill:#fff3e0,stroke:#e65100
 ```
 
 ### The Cognitive Cycle
 
-1. **Perception**: User sends a message or emoji reaction
-2. **Conversation**: ChatAgent searches the web and responds, drawing on memory for context — profile, conversation history (daily + weekly summaries), recent thoughts, and topics to avoid
-3. **Digestion**: When idle, HistoryAgent processes the day's messages — summarizing conversations into daily topic entries, extracting new preferences (likes/dislikes) from what the user said and reacted to, and rolling up completed weeks into weekly summaries
-4. **Reflection**: ThinkingAgent picks a random positive preference, searches the web, and has a multi-step inner monologue — reasoning through what it finds. The result is stored as a thought, linked to the seed preference
-5. **Initiative**: NotifyAgent scores un-notified thoughts by novelty (avoiding recent repeats) and sentiment (preference alignment), composes a message with an image, and sends it — with exponential backoff so Penny doesn't overwhelm the user
-6. **The cycle repeats**: the user's reaction to a notification becomes new input, which feeds back into conversation, digestion, and reflection
+1. **Conversation** — user sends a message, ChatAgent searches the web and responds. Context is assembled from memory: profile, daily + weekly summaries, recent thoughts, and topics to avoid
+2. **Digestion** — when idle, HistoryAgent summarizes conversations into daily and weekly entries, and extracts preferences (likes/dislikes) from what the user said and reacted to
+3. **Reflection** — ThinkingAgent picks a random positive preference, searches the web, and reasons through what it finds. The result is stored as a thought
+4. **Initiative** — NotifyAgent scores un-notified thoughts by novelty and preference alignment, composes a message, and sends it with exponential backoff
+5. **Repeat** — the user's reaction feeds back into conversation, digestion, and reflection
 
 ### Models
 
