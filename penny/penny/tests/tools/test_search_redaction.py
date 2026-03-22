@@ -68,6 +68,7 @@ def _make_search_tool(response) -> SearchTool:
     tool.perplexity = MockPerplexityForNullTests(response)
     tool.db = None
     tool.redact_terms = []
+    tool._quota_exceeded = False
     return tool
 
 
@@ -217,3 +218,20 @@ class TestQuotaExceededHandling:
         mock_response.status_code = 401
         e = perplexity.AuthenticationError("error", response=mock_response, body=None)
         assert SearchTool._is_quota_error(e) is False
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_skips_api_after_quota_error(self):
+        """After a quota error, subsequent _search_text calls skip the API entirely."""
+        tool = _make_search_tool(MockResponseNullOutput())
+        quota_error = _make_quota_error()
+        with patch.object(
+            tool, "_call_perplexity", AsyncMock(side_effect=quota_error)
+        ) as mock_call:
+            text1, urls1 = await tool._search_text("first query")
+            text2, urls2 = await tool._search_text("second query")
+        assert text1 == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert text2 == PennyResponse.SEARCH_QUOTA_EXCEEDED
+        assert urls1 == []
+        assert urls2 == []
+        # Only the first call hits the API; the second short-circuits via _quota_exceeded flag
+        mock_call.assert_called_once()
