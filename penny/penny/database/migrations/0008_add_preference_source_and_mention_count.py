@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 # Default threshold — used to grandfather existing extracted preferences
-DEFAULT_MENTION_THRESHOLD = 3
+DEFAULT_MENTION_THRESHOLD = 2
 
 
 def up(conn: sqlite3.Connection) -> None:

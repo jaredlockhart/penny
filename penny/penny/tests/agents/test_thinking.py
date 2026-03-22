@@ -834,7 +834,7 @@ async def test_thinking_skips_extracted_preference_below_threshold(
             PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello"
         )
 
-        # Add an extracted preference with mention_count=1 (below default threshold of 3)
+        # Add an extracted preference with mention_count=1 (below default threshold of 2)
         penny.db.preferences.add(
             user=TEST_SENDER,
             content="casual topic",
@@ -883,7 +883,7 @@ async def test_thinking_uses_extracted_preference_at_threshold(
             PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello"
         )
 
-        # Add an extracted preference with mention_count=3 (meets default threshold)
+        # Add an extracted preference with mention_count=3 (meets default threshold of 2)
         penny.db.preferences.add(
             user=TEST_SENDER,
             content="repeated interest topic",

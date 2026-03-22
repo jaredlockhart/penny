@@ -205,7 +205,7 @@ ConfigParam(
     key="PREFERENCE_MENTION_THRESHOLD",
     description="Minimum mention count for extracted preferences to become thinking candidates",
     type=int,
-    default=3,
+    default=2,
     validator=_validate_positive_int,
     group=GROUP_HISTORY,
 )
