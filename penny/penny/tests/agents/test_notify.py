@@ -226,6 +226,53 @@ async def test_send_notify_checkin(
         assert response.get("base64_attachments"), "Check-in should include an image"
 
 
+@pytest.mark.asyncio
+async def test_image_falls_back_to_message_content(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """When image_prompt fails, falls back to message content for image search."""
+    from unittest.mock import AsyncMock
+
+    from penny.tests.conftest import FAKE_IMAGE_BASE64
+
+    config = make_config(notify_candidates=1, serper_api_key="test-key")
+
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(request, "hey, quantum computing is wild lately!")
+
+    mock_ollama.set_response_handler(handler)
+
+    # First call (image_prompt) returns None, second call (content fallback) succeeds
+    mock = AsyncMock(side_effect=[None, FAKE_IMAGE_BASE64])
+    monkeypatch.setattr("penny.serper.client.search_image", mock)
+
+    async with running_penny(config) as penny:
+        _seed_notify(penny)
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+        response = signal_server.outgoing_messages[-1]
+
+        # Should have called Serper twice: image_prompt then content fallback
+        assert mock.call_count == 2
+        # Second call should use the message content (truncated to 300 chars)
+        fallback_query = mock.call_args_list[1][0][0]
+        assert "quantum" in fallback_query.lower()
+        assert len(fallback_query) <= 300
+        assert response.get("base64_attachments"), "Fallback should produce an image"
+
+
 # ── Image prompt extraction ──────────────────────────────────────────────
 
 
