@@ -236,9 +236,10 @@ class HistoryAgent(Agent):
         did_work = await self._extract_preferences_from_content(
             user, conversation, self._midnight_today(), now
         )
-        message_ids = [m.id for m in messages if m.id is not None]
-        reaction_ids = [r.id for r in reactions if r.id is not None]
-        self.db.messages.mark_processed(message_ids + reaction_ids)
+        if did_work:
+            message_ids = [m.id for m in messages if m.id is not None]
+            reaction_ids = [r.id for r in reactions if r.id is not None]
+            self.db.messages.mark_processed(message_ids + reaction_ids)
         return did_work
 
     async def _extract_day_preferences(

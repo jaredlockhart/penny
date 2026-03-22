@@ -375,6 +375,69 @@ async def test_preference_extraction_marks_messages_processed(
         assert first_count >= 1
 
 
+@pytest.mark.asyncio
+async def test_failed_extraction_does_not_mark_processed(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """When preference extraction fails, messages stay unprocessed for retry."""
+    config = make_config(history_interval=99999.0)
+
+    call_count = 0
+
+    def handler(request, count):
+        nonlocal call_count
+        messages = request.get("messages", [])
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
+
+        # Identification calls: fail on first run, succeed on second
+        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
+            call_count += 1
+            if call_count == 1:
+                return mock_ollama._make_text_response(request, "INVALID JSON")
+            result = json.dumps({"new": ["espresso drinks"], "existing": []})
+            return mock_ollama._make_text_response(request, result)
+
+        if "classify" in prompt_text.lower() or "valence" in prompt_text.lower():
+            result = json.dumps(
+                {"preferences": [{"content": "espresso drinks", "valence": "positive"}]}
+            )
+            return mock_ollama._make_text_response(request, result)
+
+        return mock_ollama._make_text_response(request, "- Topics")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "I really enjoy espresso drinks",
+        )
+
+        # First run: identification returns invalid JSON, extraction fails
+        await penny.history_agent.execute()
+
+        # Messages should still be unprocessed
+        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
+        assert len(unprocessed) >= 1
+
+        # No preference should be created
+        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
+        espresso_prefs = [p for p in prefs if "espresso" in p.content.lower()]
+        assert len(espresso_prefs) == 0
+
+        # Second run: identification succeeds, messages get processed
+        await penny.history_agent.execute()
+
+        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
+        assert len(unprocessed) == 0
+
+        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
+        espresso_prefs = [p for p in prefs if "espresso" in p.content.lower()]
+        assert len(espresso_prefs) == 1
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
