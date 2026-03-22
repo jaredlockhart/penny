@@ -227,7 +227,7 @@ async def test_send_notify_checkin(
 
 
 @pytest.mark.asyncio
-async def test_image_falls_back_to_message_content(
+async def test_image_uses_content_when_no_image_prompt(
     signal_server,
     mock_ollama,
     make_config,
@@ -235,27 +235,26 @@ async def test_image_falls_back_to_message_content(
     test_user_info,
     running_penny,
     monkeypatch,
+    mock_serper_image,
 ):
-    """When image_prompt fails, falls back to message content for image search."""
-    from unittest.mock import AsyncMock
-
-    from penny.tests.conftest import FAKE_IMAGE_BASE64
-
+    """Free-thinking thought (no seed topic) uses message content for image search."""
     config = make_config(notify_candidates=1, serper_api_key="test-key")
 
     monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
 
     def handler(request, count):
-        return mock_ollama._make_text_response(request, "hey, quantum computing is wild lately!")
+        return mock_ollama._make_text_response(
+            request, "hey, did you know nitrous oxide lifetimes are shrinking?"
+        )
 
     mock_ollama.set_response_handler(handler)
 
-    # First call (image_prompt) returns None, second call (content fallback) succeeds
-    mock = AsyncMock(side_effect=[None, FAKE_IMAGE_BASE64])
-    monkeypatch.setattr("penny.serper.client.search_image", mock)
-
     async with running_penny(config) as penny:
-        _seed_notify(penny)
+        # Seed a free-thinking thought (no preference_id)
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
+        )
+        penny.db.thoughts.add(TEST_SENDER, "Thinking about atmospheric chemistry")
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
 
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
@@ -264,13 +263,13 @@ async def test_image_falls_back_to_message_content(
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
         response = signal_server.outgoing_messages[-1]
 
-        # Should have called Serper twice: image_prompt then content fallback
-        assert mock.call_count == 2
-        # Second call should use the message content (truncated to 300 chars)
-        fallback_query = mock.call_args_list[1][0][0]
-        assert "quantum" in fallback_query.lower()
-        assert len(fallback_query) <= 300
-        assert response.get("base64_attachments"), "Fallback should produce an image"
+        # With no search query and no seed topic, image_prompt is empty.
+        # Channel should use content fallback (message text).
+        mock_serper_image.assert_called_once()
+        image_query = mock_serper_image.call_args[0][0]
+        assert "nitrous" in image_query.lower()
+        assert len(image_query) <= 300
+        assert response.get("base64_attachments"), "Content fallback should produce an image"
 
 
 # ── Image prompt extraction ──────────────────────────────────────────────

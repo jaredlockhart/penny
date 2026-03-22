@@ -255,8 +255,7 @@ class MessageChannel(ABC):
 
         if not attachments and image_prompt:
             attachments = await self._resolve_image(image_prompt, attachments)
-
-        if not attachments:
+        elif not attachments:
             attachments = await self._resolve_image(content[: self.MAX_IMAGE_PROMPT_LENGTH], None)
 
         # Apply channel-specific formatting
