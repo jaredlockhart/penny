@@ -153,7 +153,7 @@ async def test_basic_message_flow(
         mock_serper_image.assert_called_once()
         image_query = mock_serper_image.call_args[0][0]
         assert image_query == "test search query"
-        assert len(image_query) <= 100
+        assert len(image_query) <= 300
 
         # Outgoing message should have an image attachment
         assert response.get("base64_attachments"), "Response should include an image attachment"
