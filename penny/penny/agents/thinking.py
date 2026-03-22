@@ -218,7 +218,8 @@ class ThinkingAgent(Agent):
         messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=content).to_dict())
         if not self._free_thinking:
             await self._rebuild_system_prompt(messages)
-        messages.append(ChatMessage(role=MessageRole.USER, content="keep exploring").to_dict())
+        nudge = "dig deeper into what you just found"
+        messages.append(ChatMessage(role=MessageRole.USER, content=nudge).to_dict())
         return True
 
     async def _rebuild_system_prompt(self, messages: list[dict]) -> None:
