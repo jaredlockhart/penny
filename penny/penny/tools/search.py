@@ -58,6 +58,7 @@ class SearchTool(Tool):
         self.db = db
         self.redact_terms: list[str] = []
         self.default_trigger = default_trigger
+        self._quota_exceeded = False
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -137,11 +138,15 @@ class SearchTool(Tool):
         trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
     ) -> tuple[str, list[str]]:
         """Search via Perplexity — summary method. Returns (text, urls)."""
+        if self._quota_exceeded:
+            logger.debug("Skipping Perplexity call — quota already exceeded")
+            return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
         start = time.time()
         try:
             response = await self._call_perplexity(query)
         except perplexity.AuthenticationError as e:
             if self._is_quota_error(e):
+                self._quota_exceeded = True
                 logger.error("Perplexity quota exceeded: %s", e)
                 return PennyResponse.SEARCH_QUOTA_EXCEEDED, []
             raise
