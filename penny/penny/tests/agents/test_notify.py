@@ -433,3 +433,82 @@ def test_is_disqualified_allows_normal_messages():
     """Normal conversational messages are not disqualified."""
     assert not NotifyAgent._is_disqualified("Hey! Been thinking about quantum computing.")
     assert not NotifyAgent._is_disqualified("Check out this cool new game!")
+
+
+# ── Tools-unavailable notification ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_news_tools_unavailable_sends_message(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """News mode sends tools-unavailable message when the news API fails."""
+    from penny.responses import PennyResponse
+
+    config = make_config()
+
+    # Force news path
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.0)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(
+            request, PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(tools="fetch_news")
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_notify(penny)
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+        msg = signal_server.outgoing_messages[-1]["message"]
+        assert "wasn't able to get results" in msg
+        assert "fetch_news" in msg
+
+
+@pytest.mark.asyncio
+async def test_thought_tools_unavailable_sends_message(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Thought candidate sends tools-unavailable message when search API fails."""
+    from penny.responses import PennyResponse
+
+    config = make_config(notify_candidates=1)
+
+    # Force thought candidate path
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(
+            request, PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(tools="search")
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_notify(penny)
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+        msg = signal_server.outgoing_messages[-1]["message"]
+        assert "wasn't able to get results" in msg
+        assert "search" in msg

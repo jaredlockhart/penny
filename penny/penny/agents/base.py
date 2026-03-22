@@ -99,6 +99,22 @@ def _strip_think_tags(content: str) -> tuple[str, str | None]:
     return cleaned, extracted
 
 
+# Prefixes in tool result strings that indicate a failed or empty result.
+# Checked after tool execution to mark ToolCallRecord.failed = True.
+_TOOL_FAILURE_PREFIXES = (
+    "Error: ",
+    "No recent news found",
+    PennyResponse.NO_RESULTS_TEXT,
+    PennyResponse.SEARCH_QUOTA_EXCEEDED[:40],
+    "Failed to search:",
+)
+
+
+def _is_tool_result_failed(result_str: str) -> bool:
+    """Return True if a tool result indicates failure (error, no results, quota exceeded)."""
+    return any(result_str.startswith(prefix) for prefix in _TOOL_FAILURE_PREFIXES)
+
+
 # Truncate tool results in the message history when many preceding tool calls caused
 # context saturation and the model returned empty content on the synthesis step.
 _TOOL_RESULT_TRUNCATION_THRESHOLD = 3  # number of preceding tool calls that triggers truncation
@@ -160,7 +176,7 @@ class Agent:
 
     THOUGHT_CONTEXT_LIMIT = 10
     PREFERRED_POOL_SIZE = 5
-    MAX_TOOL_RESULT_CHARS = 3000
+    MAX_TOOL_RESULT_CHARS = 8000
     name: str = "Agent"
 
     def __init__(
@@ -339,6 +355,23 @@ class Agent:
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
                     break
+                # If every tool call so far has failed and there have been at least
+                # two, abort early rather than letting the model hallucinate from
+                # nothing. A single failure gets one more chance — the model sees
+                # the error and may produce text or try a different query.
+                if len(tool_call_records) >= 2 and all(r.failed for r in tool_call_records):
+                    failed_tools = sorted({r.tool for r in tool_call_records})
+                    logger.warning(
+                        "All %d tool call(s) failed — aborting: %s",
+                        len(tool_call_records),
+                        ", ".join(failed_tools),
+                    )
+                    return ControllerResponse(
+                        answer=PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(
+                            tools=", ".join(failed_tools)
+                        ),
+                        tool_calls=tool_call_records,
+                    )
                 # Reset empty retry counter so the synthesis step gets a retry even if
                 # a previous intermediate step already consumed it.
                 empty_retries = 0
@@ -625,16 +658,19 @@ class Agent:
 
         if tool_result.error:
             result_str = f"Error: {tool_result.error}"
-            logger.debug("Tool result: %s", result_str[:200])
+            record.failed = True
+            logger.debug("Tool result (failed): %s", result_str[:200])
             return result_str, record, [], None
 
         if isinstance(tool_result.result, SearchResult):
             result_str, urls, image = self._format_search_result(tool_result.result)
             result_str = self._truncate_tool_result(result_str)
+            record.failed = _is_tool_result_failed(result_str)
             logger.debug("Tool result: %s", result_str[:200])
             return result_str, record, urls, image
 
         result_str = self._truncate_tool_result(str(tool_result.result))
+        record.failed = _is_tool_result_failed(result_str)
         logger.debug("Tool result: %s", result_str[:200])
         return result_str, record, [], None
 
