@@ -260,6 +260,15 @@ ConfigParam(
     group=GROUP_HISTORY,
 )
 
+ConfigParam(
+    key="WEEKLY_CONTEXT_LIMIT",
+    description="Max weekly history entries to show in context",
+    type=int,
+    default=4,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
+)
+
 
 # ── Notify ───────────────────────────────────────────────────────────────────
 

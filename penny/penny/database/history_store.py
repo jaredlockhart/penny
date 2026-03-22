@@ -115,6 +115,29 @@ class HistoryStore:
             logger.error("Failed to upsert history entry: %s", e)
             return None
 
+    def get_in_range(
+        self,
+        user: str,
+        duration: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[ConversationHistory]:
+        """Get entries of a given duration within a date range, oldest first."""
+        with self._session() as session:
+            entries = list(
+                session.exec(
+                    select(ConversationHistory)
+                    .where(
+                        ConversationHistory.user == user,
+                        ConversationHistory.duration == duration,
+                        ConversationHistory.period_start >= start,
+                        ConversationHistory.period_start < end,
+                    )
+                    .order_by(ConversationHistory.period_start.asc())  # type: ignore[unresolved-attribute]
+                ).all()
+            )
+            return entries
+
     def exists(self, user: str, period_start: datetime, duration: str) -> bool:
         """Check if an entry already exists for a given period."""
         with self._session() as session:
