@@ -79,7 +79,7 @@ async def test_thinking_loop_accumulates_monologue(
         # "continue" messages should be injected between text steps
         second_request_msgs = requests_seen[1]["messages"]
         user_msgs = [m for m in second_request_msgs if m.get("role") == "user"]
-        assert any(m.get("content") == "keep exploring" for m in user_msgs)
+        assert any(m.get("content") == "dig deeper into what you just found" for m in user_msgs)
 
         # Summary stored as thought
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
@@ -208,9 +208,9 @@ async def test_thinking_seed_topic_drives_prompt(
         first_msgs = requests_seen[0]["messages"]
         user_msgs = [m for m in first_msgs if m.get("role") == "user"]
 
-        # Should have "Think about ..." not "go"
+        # Should have "Search for ..." seed topic, not a generic prompt
         first_user = user_msgs[0]["content"]
-        assert first_user.startswith("Think about ")
+        assert first_user.startswith("Search for ")
         assert first_user != "go"
 
 
@@ -492,9 +492,8 @@ async def test_thinking_free_mode_has_no_context(
         # But the prompt should be the free-thinking prompt
         user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
         assert any(
-            "free" in m.get("content", "").lower()
-            or "explore" in m.get("content", "").lower()
-            or "think" in m.get("content", "").lower()
+            "search for" in m.get("content", "").lower()
+            or "interesting" in m.get("content", "").lower()
             for m in user_msgs
         )
 

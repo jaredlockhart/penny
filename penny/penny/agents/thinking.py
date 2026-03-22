@@ -147,9 +147,17 @@ class ThinkingAgent(Agent):
             report = ""
         if report and not await self._is_duplicate_thought(user, report):
             self.db.thoughts.add(user, report, preference_id=self._seed_pref_id)
-            logger.info("[inner_monologue] %s", report[:200])
+            logger.info(
+                "[inner_monologue] stored thought (seed=%s): %s",
+                self._seed_topic or "free",
+                report[:200],
+            )
         elif report:
-            logger.info("[inner_monologue] duplicate thought, skipping storage")
+            logger.info(
+                "[inner_monologue] discarded duplicate (seed=%s): %s",
+                self._seed_topic or "free",
+                report[:100],
+            )
         if self._seed_pref_id is not None:
             self.db.preferences.mark_thought_about(self._seed_pref_id)
         return True
@@ -218,7 +226,8 @@ class ThinkingAgent(Agent):
         messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=content).to_dict())
         if not self._free_thinking:
             await self._rebuild_system_prompt(messages)
-        messages.append(ChatMessage(role=MessageRole.USER, content="keep exploring").to_dict())
+        nudge = "dig deeper into what you just found"
+        messages.append(ChatMessage(role=MessageRole.USER, content=nudge).to_dict())
         return True
 
     async def _rebuild_system_prompt(self, messages: list[dict]) -> None:
