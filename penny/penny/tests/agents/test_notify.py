@@ -140,7 +140,7 @@ async def test_send_notify_thought_candidate(
         unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
         assert unnotified is None
 
-        # Serper image search should have been called with the preference topic
+        # Serper image search should have been called with the message content
         mock_serper_image.assert_called_once()
         image_query = mock_serper_image.call_args[0][0]
         assert "quantum computing" in image_query.lower()
