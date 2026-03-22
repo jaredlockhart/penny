@@ -110,6 +110,7 @@ class Penny:
             perplexity_api_key=config.perplexity_api_key,
             db=self.db,
             default_trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
+            max_queries=1,
         )
 
     def _create_chat_agent(self, db: Database) -> ChatAgent:
