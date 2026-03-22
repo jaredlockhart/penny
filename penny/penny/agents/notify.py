@@ -196,17 +196,27 @@ class NotifyAgent(Agent):
         ]
         return "\n\n".join(s for s in sections if s)
 
+    def _get_news_tools(self) -> list:
+        """News notifications only get the news tool — no search fallback."""
+        if self._news_tool:
+            return [self._news_tool]
+        return []
+
     async def _send_news(self, user: str) -> bool:
-        """Send a news message — profile + history only, tools enabled."""
+        """Send a news message — profile + history only, news tool only."""
         logger.info("Notify news for %s", user)
         context = self._build_news_context(user)
-        self._install_tools(self.get_tools(user))
+        self._install_tools(self._get_news_tools())
         response = await self.run(
             prompt=Prompt.NOTIFY_NEWS,
             context=context,
         )
         answer = response.answer.strip() if response.answer else None
         if not answer:
+            return False
+        if self._is_tools_unavailable(answer):
+            return await self._send_tools_unavailable(user, answer)
+        if self._is_disqualified(answer):
             return False
         image_prompt = self._extract_first_headline(answer) or "latest news"
         return await self._send_candidate(
@@ -247,9 +257,12 @@ class NotifyAgent(Agent):
 
     async def _send_best_candidate(self, user: str) -> bool:
         """Generate thought candidates, score, send the best."""
+        self._last_tools_unavailable: str | None = None
         n = int(self.config.runtime.NOTIFY_CANDIDATES)
         candidates = await self._generate_thought_candidates(user, n)
         if not candidates:
+            if self._last_tools_unavailable:
+                return await self._send_tools_unavailable(user, self._last_tools_unavailable)
             logger.warning("No viable notification candidates for %s", user)
             return False
         winner = await self._pick_best_candidate(user, candidates)
@@ -335,6 +348,9 @@ class NotifyAgent(Agent):
         answer = response.answer.strip() if response.answer else None
         if not answer:
             return None
+        if self._is_tools_unavailable(answer):
+            self._last_tools_unavailable = answer
+            return None
         if self._is_disqualified(answer):
             logger.info("Disqualified candidate: %s", answer[:60])
             return None
@@ -355,6 +371,23 @@ class NotifyAgent(Agent):
         pref = self.db.preferences.get_by_id(thought.preference_id)
         return pref.content if pref else None
 
+    # Prefix of the tools-unavailable response (parameterized, so exact match won't work)
+    _TOOLS_UNAVAILABLE_PREFIX = PennyResponse.AGENT_TOOLS_UNAVAILABLE.split("(")[0]
+
+    @classmethod
+    def _is_tools_unavailable(cls, answer: str) -> bool:
+        """Check if the answer is a tools-unavailable system response."""
+        return answer.startswith(cls._TOOLS_UNAVAILABLE_PREFIX)
+
+    async def _send_tools_unavailable(self, user: str, answer: str) -> bool:
+        """Send a tools-unavailable message so the user knows to investigate."""
+        assert self._channel is not None
+        logger.warning("Sending tools-unavailable notification to %s: %s", user, answer)
+        await self._channel.send_response(
+            user, answer, parent_id=None, image_prompt="", quote_message=None
+        )
+        return True
+
     @classmethod
     def _is_disqualified(cls, answer: str) -> bool:
         """Check if a candidate is an error fallback or model refusal."""
@@ -365,6 +398,8 @@ class NotifyAgent(Agent):
             PennyResponse.FALLBACK_RESPONSE,
         )
         if answer in error_strings:
+            return True
+        if answer.startswith(cls._TOOLS_UNAVAILABLE_PREFIX):
             return True
         return cls._is_refusal(answer)
 

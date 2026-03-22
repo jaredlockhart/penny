@@ -1,5 +1,7 @@
 """Tests for agentic loop changes: reasoning, last step, and after_step hook."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +9,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.responses import PennyResponse
+from penny.tools.models import ToolResult
 from penny.tools.search import SearchTool
 
 
@@ -168,6 +171,10 @@ class TestRepeatCallGuard:
     async def test_same_tool_different_args_allowed(self, test_db, mock_ollama):
         """Calling the same tool with different arguments is allowed."""
         agent, db = _make_agent(test_db, mock_ollama, max_steps=4)
+        # Mock tool executor so tool calls don't fail (this test checks dedup, not tools)
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(tool="search", result="search result")
+        )
 
         def handler(request, count):
             if count == 1:
@@ -308,6 +315,10 @@ class TestAfterStepHook:
     async def testafter_step_called_with_step_records(self, test_db, mock_ollama):
         """after_step receives only the records from the current step."""
         agent, db = _make_agent(test_db, mock_ollama, max_steps=3)
+        # Mock tool executor so tool calls don't fail (this test checks after_step hook)
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(tool="search", result="search result")
+        )
 
         captured_step_records = []
 
@@ -479,6 +490,10 @@ class TestEmptyContentAfterToolCalls:
     async def test_retry_counter_resets_after_tool_calls(self, test_db, mock_ollama):
         """empty_retries resets after tool calls so synthesis step gets a retry."""
         agent, db = _make_agent(test_db, mock_ollama, max_steps=5)
+        # Mock tool executor so tool calls don't fail (this test checks retry counter)
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(tool="search", result="search result")
+        )
 
         def handler(request, count):
             if count == 1:
@@ -702,5 +717,60 @@ class TestMalformedUrlCleaning:
 
         assert "https://bad.example/path-" not in response.answer
         assert source_url in response.answer
+
+        await agent.close()
+
+
+class TestAllToolsFailedAbort:
+    """Test that the agentic loop aborts when all tool calls fail."""
+
+    @pytest.mark.asyncio
+    async def test_aborts_when_all_tool_calls_fail(self, test_db, mock_ollama):
+        """Loop aborts with AGENT_TOOLS_UNAVAILABLE when all tools return errors."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=5)
+        # Mock tool executor to always return an error
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(tool="search", result=None, error="API unavailable")
+        )
+
+        def handler(request, count):
+            # Model keeps trying tool calls — all fail
+            return mock_ollama._make_tool_call_response(
+                request, "search", {"query": f"attempt {count}"}
+            )
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("what's the news?")
+        assert response.answer.startswith("Sorry, I wasn't able to get results right now")
+        assert "search" in response.answer
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_no_abort_when_some_tools_succeed(self, test_db, mock_ollama):
+        """Loop continues when at least one tool call succeeds."""
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=4)
+
+        call_count = 0
+
+        async def alternating_executor(tool_call):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ToolResult(tool="search", result=None, error="API unavailable")
+            return ToolResult(tool="search", result="found some results")
+
+        agent._tool_executor.execute = alternating_executor
+
+        def handler(request, count):
+            if count <= 2:
+                return mock_ollama._make_tool_call_response(
+                    request, "search", {"query": f"q{count}"}
+                )
+            return mock_ollama._make_text_response(request, "here are results")
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("test")
+        assert response.answer == "here are results"
 
         await agent.close()
