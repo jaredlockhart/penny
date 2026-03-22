@@ -622,3 +622,85 @@ class TestRefusalRetry:
         assert len(mock_ollama.requests) == 1
 
         await agent.close()
+
+
+class TestMalformedUrlCleaning:
+    """Test that truncated or malformed URLs are stripped from final responses."""
+
+    @pytest.mark.asyncio
+    async def test_bare_truncated_url_removed(self, test_db, mock_ollama):
+        """Bare URL ending with a hyphen (truncated path) is removed from the response."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        raw = "Check this out: https://travelguide.com/destination- for details."
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, raw)
+        )
+
+        response = await agent.run("tell me about travel")
+        assert "https://travelguide.com/destination-" not in response.answer
+        assert "Check this out:" in response.answer
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_markdown_link_truncated_url_keeps_text(self, test_db, mock_ollama):
+        """Markdown link [text](bad_url) strips the URL but preserves the link text."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        raw = "Visit [Travel Guide](https://travelguide.com/destination-) for more info."
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, raw)
+        )
+
+        response = await agent.run("travel info")
+        assert "https://travelguide.com/destination-" not in response.answer
+        assert "Travel Guide" in response.answer
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_valid_url_unchanged(self, test_db, mock_ollama):
+        """A well-formed URL is not touched."""
+        agent, db = _make_agent(test_db, mock_ollama)
+
+        raw = "See https://example.com/article for more."
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, raw)
+        )
+
+        response = await agent.run("article link")
+        assert "https://example.com/article" in response.answer
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_source_url_appended_after_malformed_url_stripped(self, test_db, mock_ollama):
+        """When a malformed URL is stripped, source URL fallback appends a real URL."""
+        from unittest.mock import patch
+
+        from penny.tools.models import SearchResult, ToolResult
+
+        agent, db = _make_agent(test_db, mock_ollama, max_steps=2)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_ollama._make_text_response(
+                request, "Found something at https://bad.example/path-"
+            )
+
+        mock_ollama.set_response_handler(handler)
+
+        source_url = "https://real-source.com/article"
+        with patch.object(agent._tool_executor, "execute") as mock_exec:
+            mock_exec.return_value = ToolResult(
+                tool="search",
+                result=SearchResult(text="result", urls=[source_url]),
+            )
+            response = await agent.run("test query")
+
+        assert "https://bad.example/path-" not in response.answer
+        assert source_url in response.answer
+
+        await agent.close()

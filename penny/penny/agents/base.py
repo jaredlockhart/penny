@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import urllib.parse as _urlparse
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -26,6 +27,54 @@ _XML_TAG_PATTERN = re.compile(r"<[a-zA-Z]\w*[\s=>].*</[a-zA-Z]\w*>", re.DOTALL)
 
 # Matches <think>...</think> blocks emitted inline by some models (e.g. DeepSeek-R1, Qwen3)
 _THINK_TAG_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
+
+# Matches markdown links [text](url) and bare URLs for validation
+_MARKDOWN_LINK_URL_PATTERN = re.compile(r"\[([^\]]*)\]\((https?://[^)]*)\)")
+_BARE_URL_PATTERN = re.compile(r"(?<!\()(https?://\S+)")
+
+
+def _is_url_truncated(url: str) -> bool:
+    """Return True if url appears truncated or malformed.
+
+    Checks for missing host and trailing hyphen (the most common sign of a cut-off path).
+    Strips trailing prose punctuation before validation so sentence-ending periods
+    don't cause false positives.
+    """
+    cleaned = url.rstrip(".,;:!?\"')>}]")
+    try:
+        parsed = _urlparse.urlparse(cleaned)
+    except Exception:
+        return True
+    if not parsed.netloc or "." not in parsed.netloc:
+        return True
+    return cleaned.endswith("-")
+
+
+def _clean_malformed_urls(content: str) -> str:
+    """Remove truncated or malformed URLs from model-generated content.
+
+    For markdown links [text](bad_url), the link text is preserved.
+    For bare malformed URLs, the URL token is removed entirely.
+    Valid URLs are left unchanged.
+    """
+
+    def fix_md_link(m: re.Match) -> str:
+        text, url = m.group(1), m.group(2)
+        if _is_url_truncated(url):
+            logger.warning("Stripped malformed URL from markdown link: %.120s", url)
+            return text
+        return m.group(0)
+
+    def fix_bare_url(m: re.Match) -> str:
+        url = m.group(1)
+        if _is_url_truncated(url):
+            logger.warning("Stripped malformed bare URL: %.120s", url)
+            return ""
+        return m.group(0)
+
+    content = _MARKDOWN_LINK_URL_PATTERN.sub(fix_md_link, content)
+    content = _BARE_URL_PATTERN.sub(fix_bare_url, content)
+    return content
 
 
 def _has_xml_tags(content: str) -> bool:
@@ -477,6 +526,8 @@ class Agent:
                 else PennyResponse.AGENT_EMPTY_RESPONSE
             )
             return ControllerResponse(answer=fallback)
+
+        content = _clean_malformed_urls(content)
 
         if source_urls and "http" not in content:
             content += "\n\n" + source_urls[0]
