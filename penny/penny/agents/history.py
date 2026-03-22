@@ -16,6 +16,7 @@ from pydantic import Field as PydanticField
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
+from penny.database.models import Preference
 from penny.ollama.embeddings import deserialize_embedding, serialize_embedding
 from penny.ollama.similarity import DedupStrategy, is_embedding_duplicate
 from penny.prompts import Prompt
@@ -241,8 +242,7 @@ class HistoryAgent(Agent):
         if not topics:
             return False
 
-        existing_items = [(p.content, p.embedding) for p in existing]
-        survivors = await self._dedup_preference_topics(topics, existing_items)
+        survivors = await self._dedup_preference_topics(topics, existing)
         if not survivors:
             return False
 
@@ -318,10 +318,19 @@ class HistoryAgent(Agent):
     # ── Dedup ────────────────────────────────────────────────────────────
 
     async def _dedup_preference_topics(
-        self, topics: list[str], existing_items: list[tuple[str, bytes | None]]
+        self, topics: list[str], existing_prefs: list[Preference]
     ) -> list[tuple[str, bytes | None]]:
-        """Embed topics and dedup against existing. Returns (topic, embedding) survivors."""
+        """Embed topics, dedup against existing, increment mention count on match.
+
+        When a topic matches an existing DB preference, increments its mention_count
+        instead of silently skipping. New unique topics are returned as survivors.
+        """
+        existing_items: list[tuple[str, bytes | None]] = [
+            (p.content, p.embedding) for p in existing_prefs
+        ]
+        db_pref_count = len(existing_prefs)
         survivors: list[tuple[str, bytes | None]] = []
+
         for topic in topics:
             embedding = await self._embed_text(topic)
             candidate_vec = deserialize_embedding(embedding) if embedding else None
@@ -335,16 +344,31 @@ class HistoryAgent(Agent):
                 tcr_threshold=self.config.runtime.PREFERENCE_DEDUP_TCR_THRESHOLD,
             )
             if match_idx is not None:
-                logger.debug(
-                    "Skipping duplicate preference topic: '%s' matches '%s'",
-                    topic[:50],
-                    existing_items[match_idx][0][:50],
-                )
+                self._handle_dedup_match(match_idx, db_pref_count, existing_prefs, topic)
                 continue
 
             survivors.append((topic, embedding))
             existing_items.append((topic, embedding))
         return survivors
+
+    def _handle_dedup_match(
+        self,
+        match_idx: int,
+        db_pref_count: int,
+        existing_prefs: list[Preference],
+        topic: str,
+    ) -> None:
+        """Increment mention count for DB matches, log intra-batch duplicates."""
+        if match_idx < db_pref_count:
+            matched = existing_prefs[match_idx]
+            self.db.preferences.increment_mention_count(matched.id)  # type: ignore[arg-type]
+            logger.info(
+                "Preference '%s' mention count incremented (matches '%s')",
+                topic[:50],
+                matched.content[:50],
+            )
+        else:
+            logger.debug("Skipping intra-batch duplicate: '%s'", topic[:50])
 
     # ── Pass 2: valence classification ───────────────────────────────────
 
@@ -400,6 +424,7 @@ class HistoryAgent(Agent):
                 source_period_start=start,
                 source_period_end=end,
                 embedding=embedding,
+                source=PennyConstants.PreferenceSource.EXTRACTED,
             )
             logger.info("Preference stored for %s: %s (%s)", user, content[:50], pref.valence)
 

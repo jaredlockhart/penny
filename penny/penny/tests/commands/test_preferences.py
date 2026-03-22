@@ -110,6 +110,7 @@ async def test_like_adds_preference(signal_server, test_config, mock_ollama, run
         )
         assert len(prefs) == 1
         assert prefs[0].content == "dark roast coffee"
+        assert prefs[0].source == "manual"
 
 
 @pytest.mark.asyncio

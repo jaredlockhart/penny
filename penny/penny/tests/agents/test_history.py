@@ -213,6 +213,71 @@ async def test_preference_extraction_stores_preferences(
         prefs = penny.db.preferences.get_for_user(TEST_SENDER)
         if prefs:
             assert any("coffee" in p.content.lower() for p in prefs)
+            coffee_prefs = [p for p in prefs if "coffee" in p.content.lower()]
+            for p in coffee_prefs:
+                assert p.source == "extracted"
+                assert p.mention_count == 1
+
+
+@pytest.mark.asyncio
+async def test_preference_dedup_increments_mention_count(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """When HistoryAgent extracts a topic matching an existing preference, mention_count goes up."""
+    config = make_config(history_interval=99999.0)
+
+    def handler(request, count):
+        messages = request.get("messages", [])
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
+
+        # Check identification/classification BEFORE summarization (both may contain "User:")
+        if "identify" in prompt_text.lower() or "new preference" in prompt_text.lower():
+            result = json.dumps({"topics": ["dark roast coffee"]})
+            return mock_ollama._make_text_response(request, result)
+
+        if "classify" in prompt_text.lower() or "valence" in prompt_text.lower():
+            result = json.dumps(
+                {"preferences": [{"content": "dark roast coffee", "valence": "positive"}]}
+            )
+            return mock_ollama._make_text_response(request, result)
+
+        if "User:" in prompt_text:
+            return mock_ollama._make_text_response(request, "- Discussed coffee")
+
+        return mock_ollama._make_text_response(request, "- Topics")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Seed an existing preference that should match
+        existing = penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="dark roast coffee",
+            valence="positive",
+            source_period_start=datetime(2026, 3, 1),
+            source_period_end=datetime(2026, 3, 2),
+        )
+        assert existing is not None
+        assert existing.mention_count == 1
+
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "I love dark roast coffee so much",
+        )
+
+        await penny.history_agent.execute()
+
+        # The existing preference should have its mention count incremented
+        updated = penny.db.preferences.get_by_id(existing.id)
+        assert updated is not None
+        assert updated.mention_count == 2
+
+        # No duplicate preference should be created
+        all_prefs = penny.db.preferences.get_for_user(TEST_SENDER)
+        coffee_prefs = [p for p in all_prefs if "coffee" in p.content.lower()]
+        assert len(coffee_prefs) == 1
 
 
 @pytest.mark.asyncio

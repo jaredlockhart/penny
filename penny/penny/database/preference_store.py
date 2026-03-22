@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, or_, select
 
 from penny.database.models import Preference
 
@@ -29,6 +29,8 @@ class PreferenceStore:
         source_period_start: datetime,
         source_period_end: datetime,
         embedding: bytes | None = None,
+        source: str = "extracted",
+        mention_count: int = 1,
     ) -> Preference | None:
         """Insert a preference. Returns the created record or None."""
         try:
@@ -41,6 +43,8 @@ class PreferenceStore:
                     source_period_start=source_period_start,
                     source_period_end=source_period_end,
                     created_at=datetime.now(UTC),
+                    source=source,
+                    mention_count=mention_count,
                 )
                 session.add(pref)
                 session.commit()
@@ -50,6 +54,18 @@ class PreferenceStore:
         except Exception as e:
             logger.error("Failed to add preference: %s", e)
             return None
+
+    def increment_mention_count(self, pref_id: int) -> None:
+        """Increment the mention_count for a preference."""
+        try:
+            with self._session() as session:
+                pref = session.get(Preference, pref_id)
+                if pref:
+                    pref.mention_count = (pref.mention_count or 1) + 1
+                    session.add(pref)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to increment mention count for preference %d: %s", pref_id, e)
 
     def get_by_id(self, pref_id: int) -> Preference | None:
         """Get a single preference by ID."""
@@ -80,10 +96,13 @@ class PreferenceStore:
                 ).all()
             )
 
-    def get_least_recent_positive(self, user: str, pool_size: int = 5) -> list[Preference]:
+    def get_least_recent_positive(
+        self, user: str, pool_size: int = 5, mention_threshold: int = 1
+    ) -> list[Preference]:
         """Get the N least-recently-thought-about positive preferences.
 
         NULLs (never thought about) come first, then oldest last_thought_at.
+        Manual preferences always pass. Extracted preferences must meet mention_threshold.
         """
         with self._session() as session:
             return list(
@@ -92,6 +111,10 @@ class PreferenceStore:
                     .where(
                         Preference.user == user,
                         Preference.valence == "positive",
+                        or_(
+                            Preference.source == "manual",
+                            Preference.mention_count >= mention_threshold,
+                        ),
                     )
                     .order_by(
                         Preference.last_thought_at.is_(None).desc(),  # type: ignore[union-attr]
