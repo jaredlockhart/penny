@@ -121,17 +121,17 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 
 **Ollama**:
 - `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
-- `OLLAMA_MODEL`: Text model for all agents (default: gpt-oss:20b). Falls back to `OLLAMA_FOREGROUND_MODEL` if set
-- `OLLAMA_BACKGROUND_MODEL`: Used by the penny-team Quality agent for response evaluation — if set, the Quality agent is registered
+- `OLLAMA_MODEL`: Single text model for all penny agents — chat, thinking, history, notify, schedules (default: gpt-oss:20b)
+- `OLLAMA_BACKGROUND_MODEL`: Used only by penny-team's Quality agent for response evaluation — if set, the Quality agent is registered. Not used by penny
 - `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
 - `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables the `/draw` command when set
-- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model for semantic validation and dedup (e.g., embeddinggemma). Optional; if unset, uses the background model for embeddings
+- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model for preference/history dedup and embeddings (e.g., embeddinggemma). Optional; preferences stored without embeddings if unset
 - `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
 - `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 
 **API Keys**:
 - `PERPLEXITY_API_KEY`: API key for web search
-- `SERPER_API_KEY`: API key for Serper image search (optional; if unset, messages won't include images)
+- `SERPER_API_KEY`: API key for Serper image search (optional; if unset, notifications won't include images)
 - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
 - `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email` command)
 - `NEWS_API_KEY`: API key for TheNewsAPI.com (optional; enables news search tool for chat and thinking agents)
@@ -141,9 +141,8 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `GITHUB_APP_INSTALLATION_ID`: GitHub App installation ID for the repository
 
 **Behavior**:
-- `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 8)
-- `EMAIL_MAX_STEPS`: Max agent loop steps for `/email` command (default: 5)
-- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 60)
+- `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 8, runtime-configurable via `/config`)
+- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 60, runtime-configurable via `/config`)
 - `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
 
 **Logging**:

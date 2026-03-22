@@ -29,46 +29,39 @@ Penny is a feed only for you. Private, personal, and local.
 
 ### Conversations
 
-When you send Penny a message, she always searches the web before responding — she never makes things up from model knowledge. A local LLM (via [Ollama](https://ollama.com)) reads the search results and writes a response in her own voice: casual, calm, with sources. Every response includes a relevant image when one is available.
+When you send Penny a message, she always searches the web before responding — she never makes things up from model knowledge. A local LLM (via [Ollama](https://ollama.com)) reads the search results and writes a response in her own voice: casual, calm, with sources.
 
 Penny talks to you over [Signal](https://signal.org) or [Discord](https://discord.com) — the same apps you already use to message people. Quote-reply to continue a thread; she'll walk the conversation history for context.
 
-### Knowledge
+### Preferences
 
-Every conversation leaves a trace. When you ask about something, Penny doesn't just answer — she remembers. Behind the scenes, a knowledge pipeline extracts **entities** (products, people, topics) and **facts** from every search result and message. These get stored in a local knowledge graph, deduplicated against what she already knows, and linked back to the conversations that produced them.
+Penny builds a model of what you care about. After each day's conversations, the **HistoryAgent** extracts preference topics from what you said and how you reacted — things you expressed interest in, opinions you shared, emoji reactions you left. Each preference is classified as positive or negative and deduplicated against what she already knows using token overlap and embedding similarity.
 
-Entity creation is user-gated: only your messages and searches can introduce new entities. Penny's own background research can deepen knowledge about existing entities, but never widen the graph on its own. This keeps the knowledge base focused on what you actually care about.
+You can also manage preferences directly: `/like dark roast coffee`, `/dislike cold weather`, `/unlike`, `/undislike`. These drive what Penny thinks about and what she shares with you.
 
-Embeddings are central to knowledge quality. Every entity and fact gets an embedding vector (computed by a dedicated local embedding model), and these vectors are used throughout the system: validating that a candidate entity is semantically related to the query that surfaced it, catching duplicate entities at insertion time (token overlap + cosine similarity), detecting paraphrased facts before storing them, and pre-filtering the entity list so extraction only considers entities relevant to each search result. This keeps the knowledge graph clean without relying on exact string matching.
+### Thinking
 
-### Interest
+When Penny is idle, she thinks. The **ThinkingAgent** picks a random topic from your positive preferences, searches the web, and has an inner monologue — reasoning through what she finds. The result is stored as a **thought**, linked back to the preference that seeded it.
 
-Penny builds a model of what you're interested in — not from explicit "like" buttons, but from how you naturally interact. Searching for something, mentioning a topic, reacting with an emoji, expressing an opinion — these all generate **engagement signals** that add heat to entities. Heat decays over time (7-day half-life by default), so Penny's attention shifts as yours does.
+Thoughts bleed into chat context, so Penny has continuity of her own reasoning. When she finds something interesting, the **NotifyAgent** shares it with you — scoring candidates by novelty (avoiding repeats) and sentiment (preference alignment), with exponential backoff so she doesn't overwhelm you.
 
-Heat drives everything downstream: which entities get researched first, which discoveries get surfaced, and how entities are ranked when you browse your knowledge base.
+### Memory
 
-### Learning
-
-When Penny is idle, she researches the things you're most interested in. The **EnrichAgent** picks the highest-priority entity (heat weighted by how little she knows about it), searches the web for new information, extracts facts from the results, and deduplicates them against existing knowledge using embedding similarity.
-
-You can also tell Penny to learn about something specific with `/learn <topic>`. She'll search immediately, discover entities from the results, and continue researching them in the background. When she's done, she sends a summary of what she found.
-
-### Notifications
-
-Penny proactively shares what she discovers. A **NotificationAgent** watches for un-notified facts, picks the most interesting entity, and composes a message — one at a time, with exponential backoff. If you don't respond, she backs off (up to an hour between messages). When you send a message, the backoff resets. She won't overwhelm you, but she won't go quiet either.
+The **HistoryAgent** also summarizes each day's conversations into topic bullets. Once a week completes, daily summaries are rolled up into weekly entries. This gives Penny a sliding window of context — recent daily detail plus older weekly summaries — so she remembers what you've talked about over weeks, not just the last few messages.
 
 ### Commands
 
 Beyond regular conversation, Penny supports slash commands:
 
-- **/learn** — express interest in a topic for background research
-- **/memory** — browse your knowledge base, ranked by interest score
+- **/like**, **/dislike** — view or add preferences
+- **/unlike**, **/undislike** — remove preferences
 - **/schedule** — set up recurring tasks (e.g., `/schedule daily 9am weather forecast`)
-- **/config** — tune runtime parameters (idle threshold, extraction settings, etc.)
+- **/config** — tune runtime parameters (scheduling intervals, notification settings, etc.)
 - **/profile** — set your name, location, and timezone
 - **/draw** — generate images via a local model
 - **/bug**, **/feature** — file GitHub issues
 - **/email** — search your Fastmail inbox
+- **/mute**, **/unmute** — silence or resume notifications
 
 ## Architecture
 
@@ -77,58 +70,45 @@ flowchart TD
     User((User)) -->|message| Channel[Signal / Discord]
 
     subgraph Foreground["Foreground Loop"]
-        Channel --> MA[MessageAgent]
-        MA -->|"prompt + tools"| FG["Ollama<br>foreground model"]
-        FG -->|tool call| Search[SearchTool]
+        Channel --> CA[ChatAgent]
+        CA -->|"prompt + tools"| LLM["Ollama"]
+        LLM -->|tool call| Search[SearchTool]
+        LLM -->|tool call| News[FetchNewsTool]
         Search --> Perplexity[Perplexity API]
-        Search --> Serper[Serper API]
-        Search -.->|results| FG
-        FG -->|response| MA
+        Search -.->|results| LLM
+        News -.->|results| LLM
+        LLM -->|response| CA
     end
 
-    MA -->|reply + image| Channel --> User
-    MA & Search -->|log| DB[(SQLite)]
+    CA -->|reply| Channel --> User
+    CA & Search -->|log| DB[(SQLite)]
 
     subgraph Background["Background (when idle)"]
         direction TB
-        Extract["ExtractionPipeline<br>messages → search logs<br>→ enrichment → embeddings"]
-        Learn[LearnAgent] -->|search| Search2[SearchTool]
-        Extract -.->|delegates| Learn
-        Notify["NotificationAgent<br>fact discovery + backoff"]
+        History["HistoryAgent<br>summarize + extract preferences"]
+        Notify["NotifyAgent<br>thoughts · news · check-ins"]
+        Think["ThinkingAgent<br>inner monologue + search"]
+        SE["ScheduleExecutor<br>user cron tasks"]
     end
 
-    DB -.-> Extract & Notify
-    Extract & Notify -->|entities, facts| DB
+    DB -.-> History & Notify & Think
+    History -->|"summaries + preferences"| DB
+    Think -->|"stored thoughts"| DB
     Notify -->|proactive message| Channel
-    Search2 -.->|new searches| DB
 
     User -.->|"resets idle · cancels background"| Background
 ```
 
 ### Models
 
-Penny uses up to five Ollama model roles, all running locally:
+Penny uses up to four Ollama model roles, all running locally:
 
 | Role | Purpose | Required? |
 |---|---|---|
-| **Foreground** | User-facing responses — fast model for real-time chat | Yes |
-| **Background** | Entity/fact extraction, notification composition, learn queries | Yes (defaults to foreground) |
-| **Embedding** | Semantic similarity for entity dedup, fact dedup, and validation | Optional (falls back to background) |
+| **Model** | Single model for all agents — chat, thinking, history, notify, schedules | Yes |
+| **Embedding** | Semantic similarity for preference dedup and history embeddings | Optional |
 | **Vision** | Image captioning when users send photos | Optional |
 | **Image** | Image generation via `/draw` | Optional |
-
-### Extraction Pipeline
-
-The knowledge pipeline runs as a single background task with four phases in strict priority order:
-
-1. **User messages** — extract entities and sentiment from what the user said
-2. **Search logs** — two-pass extraction (identify entities, then extract facts per entity) from search results
-3. **Enrichment** — delegate to LearnAgent for background research on interesting entities (only runs when phases 1 and 2 are fully drained)
-4. **Embedding backfill** — compute missing embeddings for new facts and entities
-
-Extraction mode depends on what triggered the search. User-triggered searches can create new entities (after structural and semantic validation). Penny-triggered enrichment searches can only add facts to existing entities — they never create new ones.
-
-New entities pass through three quality gates: a structural filter (rejects LLM artifacts, URLs, bare numbers, dates, locations), a semantic filter (embedding similarity to the triggering query), and post-fact pruning (LLM checks if extracted facts are actually relevant to the entity). Duplicates are caught at insertion time using token containment ratio + embedding cosine similarity.
 
 ### Scheduling
 
@@ -138,7 +118,7 @@ User-created scheduled tasks (via `/schedule`) run on their own timer regardless
 
 ### Runtime Configuration
 
-38 parameters are tunable at runtime via `/config` — extraction thresholds, engagement strengths, notification backoff, scheduling intervals, and more. Values follow a three-tier lookup: database override → environment variable → default. Changes take effect immediately without restart.
+23 parameters are tunable at runtime via `/config` — scheduling intervals, notification backoff, preference dedup thresholds, inner monologue settings, and more. Values follow a three-tier lookup: database override → environment variable → default. Changes take effect immediately without restart.
 
 ## Setup & Running
 
@@ -200,8 +180,7 @@ DISCORD_CHANNEL_ID="your-channel-id"
 
 # Ollama Configuration
 OLLAMA_API_URL="http://host.docker.internal:11434"
-OLLAMA_FOREGROUND_MODEL="gpt-oss:20b"    # Fast model for user-facing messages
-OLLAMA_BACKGROUND_MODEL="gpt-oss:20b"    # Smarter model for background tasks (defaults to foreground)
+OLLAMA_MODEL="gpt-oss:20b"               # Single model for all agents
 
 # Perplexity Configuration
 PERPLEXITY_API_KEY="your-api-key"
@@ -212,8 +191,8 @@ LOG_LEVEL="INFO"
 # LOG_FILE="/penny/data/penny/logs/penny.log"  # Optional
 
 # Agent behavior (optional, defaults shown)
-MESSAGE_MAX_STEPS=5
-IDLE_SECONDS=15                     # Global idle threshold for background tasks
+MESSAGE_MAX_STEPS=8
+IDLE_SECONDS=60                     # Global idle threshold for background tasks
 
 # Fastmail JMAP (optional, enables /email command)
 # FASTMAIL_API_TOKEN="your-api-token"
@@ -235,27 +214,27 @@ Penny auto-detects which channel to use based on configured credentials:
 
 **Ollama:**
 - `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
-- `OLLAMA_FOREGROUND_MODEL`: Fast model for user-facing messages (default: gpt-oss:20b)
-- `OLLAMA_BACKGROUND_MODEL`: Smarter model for background tasks (default: same as foreground)
+- `OLLAMA_MODEL`: Single model for all agents (default: gpt-oss:20b)
 - `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional
 - `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables `/draw`
-- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model (e.g., embeddinggemma). Optional; if unset, uses background model
+- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model (e.g., embeddinggemma). Optional
 - `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
 - `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 
 **API Keys:**
 - `PERPLEXITY_API_KEY`: API key for web search
-- `SERPER_API_KEY`: API key for Serper image search (optional; if unset, responses won't include images)
+- `SERPER_API_KEY`: API key for Serper image search (optional; if unset, notifications won't include images)
+- `NEWS_API_KEY`: API key for TheNewsAPI.com (optional; enables news search tool)
 - `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email`)
 
 **GitHub App** (optional, enables `/bug` and `/feature`; required for agent containers):
 - `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATION_ID`
 
 **Behavior:**
-- `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 5)
+- `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 8)
 - `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 60)
 - `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
-- Many more parameters are runtime-configurable via `/config` (38 total)
+- 23 parameters are runtime-configurable via `/config`
 
 **Logging:**
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)
@@ -298,7 +277,7 @@ make check       # Run format, lint, typecheck, and tests
 
 CI runs `make check` in Docker on every push to `main` and on pull requests via GitHub Actions.
 
-Tests cover the full message flow (search, response, threading, typing indicators), all background agents (extraction, learn, notification, scheduler coordination), every slash command, vision processing, and tool edge cases. External services are replaced with mock servers and SDK patches — a mock Signal WebSocket server, a mock Ollama client with configurable responses, and mock search APIs.
+Tests cover the full message flow (search, response, threading, typing indicators), all background agents (history, thinking, notify, scheduler coordination), every slash command, vision processing, and tool edge cases. External services are replaced with mock servers and SDK patches — a mock Signal WebSocket server, a mock Ollama client with configurable responses, and mock search APIs.
 
 </details>
 
@@ -317,6 +296,7 @@ bug → in-review → closed                                                    
 - **Architect**: Writes detailed specs for `specification` issues, handles spec feedback
 - **Worker**: Implements `in-progress` issues — creates branches, writes code/tests, runs `make check`, opens PRs; addresses PR feedback on `in-review` issues; fixes `bug` issues directly
 - **Monitor**: Watches production logs for errors, deduplicates against existing issues, and files `bug` issues automatically
+- **Quality**: Evaluates Penny's response quality via Ollama, files `bug` issues for low-quality output (optional, requires `OLLAMA_BACKGROUND_MODEL`)
 
 Each agent checks for matching GitHub issue labels before waking Claude CLI, so idle cycles cost ~1 second instead of a full Claude invocation.
 

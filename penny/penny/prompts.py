@@ -179,6 +179,8 @@ Examples:
         "Lead with the interesting thing. "
         "Focus on ONE topic per message. Summarize findings naturally "
         "as part of the conversation.\n\n"
+        "Include a follow-up URL so the user can read more about what you tell them. "
+        "Pull the URL from your thought context or search results.\n\n"
         "Every fact and detail in your message must come from your context."
     )
 

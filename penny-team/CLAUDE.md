@@ -20,6 +20,7 @@ penny-team/
       codeowners.py     — Parses .github/CODEOWNERS for trusted usernames
       issue_filter.py   — Pre-fetches and filters issue content by trusted authors
       pr_checks.py      — Detects failing CI checks on PRs, enriches issues for worker
+      ollama_embed.py   — Embedding batch operations for quality agent TCR dedup
     product-manager/
       CLAUDE.md         — PM agent prompt (requirements gathering)
     architect/
@@ -36,6 +37,7 @@ penny-team/
     test_worker.py           — Worker agent flow + PR status + bug fix tests (integration + unit)
     test_monitor.py          — Monitor agent flow + error extraction tests (integration + unit)
     test_quality.py          — Quality agent flow + privacy validation tests (integration + unit)
+    test_similarity.py       — Shared similarity package primitives (TCR, cosine, embeddings)
 
   Tests strongly prefer integration style — test through agent.run() / has_work()
   entry points with MockGitHubAPI (for GitHub data) and MockPopen (for Claude CLI).
