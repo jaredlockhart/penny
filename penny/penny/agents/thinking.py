@@ -134,12 +134,15 @@ class ThinkingAgent(Agent):
             logger.warning("Thought context retrieval failed, proceeding without")
             return None
 
+    # Max retries for summary URL validation
+    SUMMARY_URL_RETRIES = 2
+
     async def after_run(self, user: str) -> bool:
         """Summarize the monologue, dedup against same-seed thoughts, and store."""
         if not self._inner_monologue:
             return False
         combined = "\n\n---\n\n".join(self._inner_monologue)
-        report = await self._summarize_text(combined, Prompt.THINKING_REPORT_PROMPT)
+        report = await self._summarize_with_url_validation(combined)
         if report and len(report.split()) < MIN_THOUGHT_WORDS:
             logger.info(
                 "[inner_monologue] report too short (%d words), skipping", len(report.split())
@@ -176,6 +179,27 @@ class ThinkingAgent(Agent):
         except Exception as e:
             logger.error("Summarization failed: %s", e)
             return ""
+
+    async def _summarize_with_url_validation(self, combined: str) -> str:
+        """Summarize monologue, retrying if the report contains hallucinated URLs."""
+        source_text = self._get_source_text()
+        report = ""
+        for attempt in range(1 + self.SUMMARY_URL_RETRIES):
+            report = await self._summarize_text(combined, Prompt.THINKING_REPORT_PROMPT)
+            if not report:
+                return ""
+            bad_urls = self._find_hallucinated_urls(report, source_text)
+            if not bad_urls:
+                return report
+            logger.warning(
+                "[inner_monologue] summary attempt %d/%d has %d hallucinated URL(s): %s",
+                attempt + 1,
+                1 + self.SUMMARY_URL_RETRIES,
+                len(bad_urls),
+                ", ".join(u[:80] for u in bad_urls),
+            )
+        logger.warning("[inner_monologue] exhausted URL validation retries, using last attempt")
+        return report
 
     async def _is_duplicate_thought(self, user: str, report: str) -> bool:
         """Check if report is too similar to a same-preference thought via embedding similarity."""
