@@ -19,14 +19,14 @@ async def test_image_with_text_captions_then_forwards(
     test_user_info,
     running_penny,
 ):
-    """Image + text: vision model captions, then foreground model responds without search."""
+    """Image + text: vision model captions, then main model responds without search."""
     config = make_config(ollama_vision_model="test-vision-model")
 
     def handler(request, count):
         if count == 1:
             # Vision model captioning call
             return mock_ollama._make_text_response(request, "a cute orange cat")
-        # Foreground model: direct response without tool call
+        # Main model: direct response without tool call
         return mock_ollama._make_text_response(request, "that's a cute cat! 🐱")
 
     mock_ollama.set_response_handler(handler)
@@ -41,7 +41,7 @@ async def test_image_with_text_captions_then_forwards(
         response = await signal_server.wait_for_message(timeout=10.0)
         assert "cat" in response["message"].lower()
 
-        # Verify two-step flow: vision model called first, then foreground model
+        # Verify two-step flow: vision model called first, then main model
         await wait_until(lambda: len(mock_ollama.requests) >= 2)
 
         # First call: vision model with images
@@ -51,7 +51,7 @@ async def test_image_with_text_captions_then_forwards(
         assert any("images" in m for m in user_msgs)
         assert any(Prompt.VISION_AUTO_DESCRIBE_PROMPT in m.get("content", "") for m in user_msgs)
 
-        # Second call: foreground model with combined text prompt (no images, no tools)
+        # Second call: main model with combined text prompt (no images, no tools)
         foreground_request = mock_ollama.requests[1]
         assert foreground_request["model"] == "test-model"
         user_msgs = [m for m in foreground_request["messages"] if m["role"] == "user"]
@@ -86,7 +86,7 @@ async def test_image_without_text_captions_then_forwards(
         if count == 1:
             # Vision model captioning
             return mock_ollama._make_text_response(request, "a sunset over the ocean")
-        # Foreground model: direct response without tool call
+        # Main model: direct response without tool call
         return mock_ollama._make_text_response(request, "beautiful sunset! 🌅")
 
     mock_ollama.set_response_handler(handler)
@@ -107,7 +107,7 @@ async def test_image_without_text_captions_then_forwards(
         caption_request = mock_ollama.requests[0]
         assert caption_request["model"] == "test-vision-model"
 
-        # Second call: foreground model with image-only context (no images, no tools)
+        # Second call: main model with image-only context (no images, no tools)
         foreground_request = mock_ollama.requests[1]
         assert foreground_request["model"] == "test-model"
         user_msgs = [m for m in foreground_request["messages"] if m["role"] == "user"]
@@ -180,5 +180,5 @@ async def test_non_image_attachment_ignored(
         user_messages = [m for m in first_request["messages"] if m["role"] == "user"]
         assert not any("images" in m for m in user_messages)
 
-        # Should use the foreground model, not vision model
+        # Should use the main model, not vision model
         assert first_request["model"] == "test-model"

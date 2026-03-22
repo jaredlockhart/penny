@@ -157,7 +157,7 @@ class ThinkingAgent(Agent):
     # ── Model calls ────────────────────────────────────────────────────────
 
     async def _summarize_text(self, content: str, prompt: str) -> str:
-        """Summarize content using the background model. Returns empty string on failure."""
+        """Summarize content using the model. Returns empty string on failure."""
         messages = [
             {"role": "system", "content": prompt},
             {"role": "user", "content": content},
@@ -205,9 +205,15 @@ class ThinkingAgent(Agent):
     async def handle_text_step(
         self, response, messages: list[dict], step: int, is_final: bool
     ) -> bool:
-        """Inject 'keep exploring' continuation to drive the thinking loop."""
+        """Inject 'keep exploring' continuation to drive the thinking loop.
+
+        On the final step, return True to prevent the base agent from injecting
+        a 'provide your final answer' synthesis nudge — on_response already
+        captured the text, and after_run handles summarization via
+        THINKING_REPORT_PROMPT.
+        """
         if is_final:
-            return False
+            return True
         content = response.content.strip()
         messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=content).to_dict())
         if not self._free_thinking:
