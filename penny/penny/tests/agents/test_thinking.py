@@ -747,3 +747,52 @@ async def test_scheduler_runs_history_before_thinking(
         assert history_idx < thinking_idx, (
             "History should run before thinking in scheduler priority"
         )
+
+
+# ── URL validation ──────────────────────────────────────────────────────
+
+
+class TestSummaryUrlValidation:
+    """Test that hallucinated URLs are detected in thought summaries."""
+
+    def test_valid_urls_pass(self):
+        """URLs that appear in source text are not flagged."""
+        from penny.agents.thinking import ThinkingAgent
+
+        source = "Check out https://example.com/article and https://arxiv.org/abs/1234"
+        report = "Found this: https://example.com/article"
+        assert ThinkingAgent._find_hallucinated_urls(report, source) == []
+
+    def test_hallucinated_urls_detected(self):
+        """URLs not in source text are flagged."""
+        from penny.agents.thinking import ThinkingAgent
+
+        source = "Check out https://example.com/real-article for details."
+        report = "Read more: https://example.com/fake-article"
+        bad = ThinkingAgent._find_hallucinated_urls(report, source)
+        assert len(bad) == 1
+        assert "fake-article" in bad[0]
+
+    def test_no_urls_passes(self):
+        """Report with no URLs passes validation."""
+        from penny.agents.thinking import ThinkingAgent
+
+        assert ThinkingAgent._find_hallucinated_urls("No links here.", "some source") == []
+
+    def test_markdown_urls_checked(self):
+        """URLs inside markdown links are also validated."""
+        from penny.agents.thinking import ThinkingAgent
+
+        source = "Found at https://real.com/page"
+        report = "See [this article](https://fake.com/page) for details."
+        bad = ThinkingAgent._find_hallucinated_urls(report, source)
+        assert len(bad) == 1
+        assert "fake.com" in bad[0]
+
+    def test_trailing_punctuation_stripped(self):
+        """URLs with trailing punctuation still match source."""
+        from penny.agents.thinking import ThinkingAgent
+
+        source = "URL: https://example.com/article"
+        report = "Check https://example.com/article."
+        assert ThinkingAgent._find_hallucinated_urls(report, source) == []
