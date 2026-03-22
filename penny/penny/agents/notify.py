@@ -339,9 +339,7 @@ class NotifyAgent(Agent):
             logger.info("Disqualified candidate: %s", answer[:60])
             return None
         image_prompt = (
-            self._extract_search_query(response.tool_calls)
-            or self._seed_topic_for(thought)
-            or answer[:50]
+            self._extract_search_query(response.tool_calls) or self._seed_topic_for(thought) or ""
         )
         return NotifyCandidate(
             answer=answer,

@@ -1,4 +1,4 @@
-"""Integration tests for HistoryAgent: daily summarization and preference extraction."""
+"""Integration tests for HistoryAgent: daily/weekly summarization and preference extraction."""
 
 import json
 from datetime import UTC, datetime, timedelta
@@ -334,3 +334,121 @@ async def test_no_messages_produces_no_history(
             TEST_SENDER, PennyConstants.HistoryDuration.DAILY, limit=10
         )
         assert len(entries) == 0
+
+
+# ── Weekly rollup ─────────────────────────────────────────────────────────
+
+
+def _seed_daily_entries(penny, user, monday):
+    """Seed daily history entries for a full Mon-Sun week starting at monday."""
+    for i in range(7):
+        day = monday + timedelta(days=i)
+        penny.db.history.add(
+            user=user,
+            period_start=day,
+            period_end=day + timedelta(days=1),
+            duration=PennyConstants.HistoryDuration.DAILY,
+            topics=f"- Topic from {day.strftime('%b %-d')}",
+        )
+
+
+@pytest.mark.asyncio
+async def test_weekly_rollup_creates_entry_from_daily_entries(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Weekly rollup summarizes a completed week's daily entries into a weekly entry."""
+    config = make_config(history_interval=99999.0)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(request, "- Weekly themes discussed")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Seed daily entries for a completed week (2+ weeks ago to ensure it's complete)
+        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        two_weeks_ago_monday = today - timedelta(days=today.weekday() + 14)
+        _seed_daily_entries(penny, TEST_SENDER, two_weeks_ago_monday)
+
+        await penny.history_agent._rollup_completed_weeks(TEST_SENDER)
+
+        weekly_entries = penny.db.history.get_recent(
+            TEST_SENDER, PennyConstants.HistoryDuration.WEEKLY, limit=10
+        )
+        assert len(weekly_entries) == 1
+        assert weekly_entries[0].period_start == two_weeks_ago_monday
+        assert "Weekly themes" in weekly_entries[0].topics
+
+
+@pytest.mark.asyncio
+async def test_weekly_rollup_skips_incomplete_week(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Weekly rollup does not create an entry for the current (incomplete) week."""
+    config = make_config(history_interval=99999.0)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(request, "- Should not appear")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Seed daily entries for the current week only
+        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        this_monday = today - timedelta(days=today.weekday())
+        for i in range(today.weekday() + 1):
+            day = this_monday + timedelta(days=i)
+            penny.db.history.add(
+                user=TEST_SENDER,
+                period_start=day,
+                period_end=day + timedelta(days=1),
+                duration=PennyConstants.HistoryDuration.DAILY,
+                topics=f"- Topic from today's week day {i}",
+            )
+
+        await penny.history_agent._rollup_completed_weeks(TEST_SENDER)
+
+        weekly_entries = penny.db.history.get_recent(
+            TEST_SENDER, PennyConstants.HistoryDuration.WEEKLY, limit=10
+        )
+        assert len(weekly_entries) == 0
+
+
+@pytest.mark.asyncio
+async def test_history_context_includes_weekly_entries(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """_build_history_context includes both weekly and daily entries."""
+    config = make_config(history_interval=99999.0)
+
+    async with running_penny(config) as penny:
+        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+
+        # Seed a weekly entry from 2 weeks ago
+        two_weeks_ago_monday = today - timedelta(days=today.weekday() + 14)
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=two_weeks_ago_monday,
+            period_end=two_weeks_ago_monday + timedelta(days=7),
+            duration=PennyConstants.HistoryDuration.WEEKLY,
+            topics="- Discussed AI developments\n- Talked about cooking",
+        )
+
+        # Seed a daily entry for today
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=today,
+            period_end=today + timedelta(hours=12),
+            duration=PennyConstants.HistoryDuration.DAILY,
+            topics="- Morning coffee chat",
+        )
+
+        context = penny.chat_agent._build_history_context(TEST_SENDER)
+        assert context is not None
+        assert "Week of" in context
+        assert "AI developments" in context
+        assert "Morning coffee chat" in context
+        # Weekly entries should appear before daily
+        week_pos = context.index("Week of")
+        daily_pos = context.index("Morning coffee chat")
+        assert week_pos < daily_pos
