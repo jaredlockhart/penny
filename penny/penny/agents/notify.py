@@ -354,22 +354,13 @@ class NotifyAgent(Agent):
         if self._is_disqualified(answer):
             logger.info("Disqualified candidate: %s", answer[:60])
             return None
-        image_prompt = (
-            self._extract_search_query(response.tool_calls) or self._seed_topic_for(thought) or ""
-        )
+        image_prompt = self._extract_search_query(response.tool_calls) or ""
         return NotifyCandidate(
             answer=answer,
             thought=thought,
             attachments=response.attachments or [],
             image_prompt=image_prompt,
         )
-
-    def _seed_topic_for(self, thought: Thought | None) -> str | None:
-        """Look up the seed preference content for a thought."""
-        if not thought or not thought.preference_id:
-            return None
-        pref = self.db.preferences.get_by_id(thought.preference_id)
-        return pref.content if pref else None
 
     # Prefix of the tools-unavailable response (parameterized, so exact match won't work)
     _TOOLS_UNAVAILABLE_PREFIX = PennyResponse.AGENT_TOOLS_UNAVAILABLE.split("(")[0]
