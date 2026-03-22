@@ -63,41 +63,110 @@ Beyond regular conversation, Penny supports slash commands:
 - **/email** — search your Fastmail inbox
 - **/mute**, **/unmute** — silence or resume notifications
 
-## Architecture
+## Penny's Mind
+
+How information flows through Penny's cognitive systems — from perception to memory to thought to action.
 
 ```mermaid
-flowchart TD
-    User((User)) -->|message| Channel[Signal / Discord]
+flowchart TB
+    %% ── Perception ──────────────────────────────────────────────────
+    User((User)) -->|message| Chat
+    User -->|emoji reaction| Prefs
 
-    subgraph Foreground["Foreground Loop"]
-        Channel --> CA[ChatAgent]
-        CA -->|"prompt + tools"| LLM["Ollama"]
-        LLM -->|tool call| Search[SearchTool]
-        LLM -->|tool call| News[FetchNewsTool]
-        Search --> Perplexity[Perplexity API]
-        Search -.->|results| LLM
-        News -.->|results| LLM
-        LLM -->|response| CA
+    %% ── Active Mind (foreground) ────────────────────────────────────
+    subgraph Active["🗣 Active Mind — ChatAgent"]
+        Chat["Receive message<br>+ assemble context"]
+        Search["Search web<br>(Perplexity)"]
+        Respond["Compose response"]
+        Chat --> Search --> Respond
     end
 
-    CA -->|reply| Channel --> User
-    CA & Search -->|log| DB[(SQLite)]
+    %% Context assembly arrows into ChatAgent
+    Profile -.->|name| Chat
+    DailyH -.->|"recent topics<br>(7 days)"| Chat
+    WeeklyH -.->|"older themes<br>(4 weeks)"| Chat
+    Thoughts -.->|"recent thinking"| Chat
+    Dislikes -.->|"topics to avoid"| Chat
+    Conv -.->|"recent turns<br>(since last rollup)"| Chat
 
-    subgraph Background["Background (when idle)"]
+    Respond -->|reply| User
+    Respond -->|log| Conv
+
+    %% ── Memory ──────────────────────────────────────────────────────
+    subgraph Memory["🧠 Memory — SQLite"]
+        Profile["Profile<br>name · location · tz"]
+        Conv["Conversation Log<br>all messages"]
+        DailyH["Daily Summaries<br>topic bullets per day"]
+        WeeklyH["Weekly Summaries<br>rolled-up themes"]
+        Likes["Positive Preferences<br>topics user likes"]
+        Dislikes["Negative Preferences<br>topics user dislikes"]
+        Thoughts["Thoughts<br>inner monologue entries"]
+        Prefs["Preferences"]
+        Likes ---|valence| Prefs
+        Dislikes ---|valence| Prefs
+    end
+
+    %% ── Subconscious (background, when idle) ────────────────────────
+    subgraph Subconscious["💭 Subconscious — Background Agents"]
         direction TB
-        History["HistoryAgent<br>summarize + extract preferences"]
-        Notify["NotifyAgent<br>thoughts · news · check-ins"]
-        Think["ThinkingAgent<br>inner monologue + search"]
-        SE["ScheduleExecutor<br>user cron tasks"]
+
+        subgraph Digest["HistoryAgent — Digest & Learn"]
+            Summarize["Summarize today's<br>messages → daily entry"]
+            Extract["Extract preferences<br>from conversation"]
+            Rollup["Roll up completed<br>weeks → weekly entry"]
+        end
+
+        subgraph Think["ThinkingAgent — Inner Monologue"]
+            Pick["Pick a random<br>positive preference"]
+            Research["Search + reason<br>(multi-step loop)"]
+            Store["Summarize monologue<br>→ store thought"]
+            Pick --> Research --> Store
+        end
+
+        subgraph Notify["NotifyAgent — Outreach"]
+            Score["Score un-notified<br>thoughts by novelty<br>+ preference alignment"]
+            Compose["Compose message<br>+ find image"]
+            Send["Send to user<br>(with backoff)"]
+            Score --> Compose --> Send
+        end
     end
 
-    DB -.-> History & Notify & Think
-    History -->|"summaries + preferences"| DB
-    Think -->|"stored thoughts"| DB
-    Notify -->|proactive message| Channel
+    %% ── Subconscious reads from memory ──────────────────────────────
+    Conv -->|"today's messages"| Summarize
+    Conv -->|"user messages<br>+ reactions"| Extract
+    DailyH -->|"completed weeks"| Rollup
 
-    User -.->|"resets idle · cancels background"| Background
+    %% ── Subconscious writes to memory ──────────────────────────────
+    Summarize -->|upsert| DailyH
+    Extract -->|"new likes/dislikes<br>(deduped via TCR +<br>embedding similarity)"| Prefs
+    Rollup -->|create| WeeklyH
+    Store -->|append| Thoughts
+
+    %% ── Subconscious reads from memory ──────────────────────────────
+    Likes -->|"seed topic"| Pick
+    Thoughts -->|"un-notified"| Score
+    Likes -->|"sentiment scoring"| Score
+
+    %% ── Outreach to user ────────────────────────────────────────────
+    Send -->|proactive message| User
+
+    %% ── Styling ─────────────────────────────────────────────────────
+    style Active fill:#e8f5e9,stroke:#2e7d32
+    style Memory fill:#e3f2fd,stroke:#1565c0
+    style Subconscious fill:#fff3e0,stroke:#e65100
+    style Digest fill:#fff8e1,stroke:#f9a825
+    style Think fill:#fff8e1,stroke:#f9a825
+    style Notify fill:#fff8e1,stroke:#f9a825
 ```
+
+### The Cognitive Cycle
+
+1. **Perception**: User sends a message or emoji reaction
+2. **Conversation**: ChatAgent searches the web and responds, drawing on memory for context — profile, conversation history (daily + weekly summaries), recent thoughts, and topics to avoid
+3. **Digestion**: When idle, HistoryAgent processes the day's messages — summarizing conversations into daily topic entries, extracting new preferences (likes/dislikes) from what the user said and reacted to, and rolling up completed weeks into weekly summaries
+4. **Reflection**: ThinkingAgent picks a random positive preference, searches the web, and has a multi-step inner monologue — reasoning through what it finds. The result is stored as a thought, linked to the seed preference
+5. **Initiative**: NotifyAgent scores un-notified thoughts by novelty (avoiding recent repeats) and sentiment (preference alignment), composes a message with an image, and sends it — with exponential backoff so Penny doesn't overwhelm the user
+6. **The cycle repeats**: the user's reaction to a notification becomes new input, which feeds back into conversation, digestion, and reflection
 
 ### Models
 
@@ -112,7 +181,7 @@ Penny uses up to four Ollama model roles, all running locally:
 
 ### Scheduling
 
-A priority-based scheduler runs background tasks when the system is idle (default: 60 seconds after the last message). Foreground messages immediately cancel the active background task to free Ollama for the user — cancelled work is idempotent and resumes next cycle.
+Background agents run in priority order when idle (default: 60s after last message): schedule executor (always) → history → notify → thinking. Agents with no work are skipped. Foreground messages cancel the active background task immediately.
 
 User-created scheduled tasks (via `/schedule`) run on their own timer regardless of idle state, so a daily weather briefing won't be blocked by an active conversation.
 
