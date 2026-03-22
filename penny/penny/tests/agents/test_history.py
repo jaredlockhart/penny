@@ -187,7 +187,7 @@ async def test_preference_extraction_stores_preferences(
 
         # Preference identification (pass 1) — check for identification keywords
         if "identify" in prompt_text.lower() or "new preference" in prompt_text.lower():
-            result = json.dumps({"topics": ["Single-origin coffee beans"]})
+            result = json.dumps({"new": ["Single-origin coffee beans"], "existing": []})
             return mock_ollama._make_text_response(request, result)
 
         # Preference valence classification (pass 2)
@@ -220,10 +220,10 @@ async def test_preference_extraction_stores_preferences(
 
 
 @pytest.mark.asyncio
-async def test_preference_dedup_increments_mention_count(
+async def test_existing_preference_mention_increments_count(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """When HistoryAgent extracts a topic matching an existing preference, mention_count goes up."""
+    """When LLM identifies a known preference was discussed, mention_count goes up."""
     config = make_config(history_interval=99999.0)
 
     def handler(request, count):
@@ -231,15 +231,9 @@ async def test_preference_dedup_increments_mention_count(
         user_msgs = [m for m in messages if m.get("role") == "user"]
         prompt_text = " ".join(m.get("content", "") for m in user_msgs)
 
-        # Check identification/classification BEFORE summarization (both may contain "User:")
-        if "identify" in prompt_text.lower() or "new preference" in prompt_text.lower():
-            result = json.dumps({"topics": ["dark roast coffee"]})
-            return mock_ollama._make_text_response(request, result)
-
-        if "classify" in prompt_text.lower() or "valence" in prompt_text.lower():
-            result = json.dumps(
-                {"preferences": [{"content": "dark roast coffee", "valence": "positive"}]}
-            )
+        # Identification: LLM recognizes known pref, no new topics
+        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
+            result = json.dumps({"new": [], "existing": ["dark roast coffee"]})
             return mock_ollama._make_text_response(request, result)
 
         if "User:" in prompt_text:
@@ -250,7 +244,7 @@ async def test_preference_dedup_increments_mention_count(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Seed an existing preference that should match
+        # Seed an existing preference
         existing = penny.db.preferences.add(
             user=TEST_SENDER,
             content="dark roast coffee",

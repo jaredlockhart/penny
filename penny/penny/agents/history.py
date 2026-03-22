@@ -25,11 +25,15 @@ logger = logging.getLogger(__name__)
 
 
 class IdentifiedPreferenceTopics(BaseModel):
-    """Schema for pass 1: new preference topics found in conversation."""
+    """Schema for pass 1: preference topics found in conversation."""
 
-    topics: list[str] = PydanticField(
+    new: list[str] = PydanticField(
         default_factory=list,
-        description="New preference topics (3-10 words each)",
+        description="New preference topics not already known (3-10 words each)",
+    )
+    existing: list[str] = PydanticField(
+        default_factory=list,
+        description="Already-known preference content strings discussed in the conversation",
     )
 
 
@@ -238,22 +242,37 @@ class HistoryAgent(Agent):
         if not conversation:
             return False
 
-        topics = await self._identify_preference_topics(conversation, existing)
-        if not topics:
+        identified = await self._identify_preference_topics(conversation, existing)
+        if not identified:
             return False
 
-        survivors = await self._dedup_preference_topics(topics, existing)
+        self._bump_existing_mentions(identified.existing, existing)
+
+        new_topics = [t.strip() for t in identified.new if t.strip()]
+        if not new_topics:
+            return bool(identified.existing)
+
+        survivors = await self._dedup_preference_topics(new_topics, existing)
         if not survivors:
-            return False
+            return bool(identified.existing)
 
         survivor_topics = [topic for topic, _emb in survivors]
         classified = await self._classify_preference_valence(survivor_topics, conversation)
         if not classified:
-            return False
+            return bool(identified.existing)
 
         embedding_lookup = {topic.lower(): emb for topic, emb in survivors}
         self._store_classified_preferences(user, classified, start, end, embedding_lookup)
         return True
+
+    def _bump_existing_mentions(self, mentioned: list[str], existing: list[Preference]) -> None:
+        """Increment mention_count for existing preferences the LLM recognized."""
+        content_to_pref = {p.content.lower(): p for p in existing}
+        for name in mentioned:
+            pref = content_to_pref.get(name.strip().lower())
+            if pref:
+                self.db.preferences.increment_mention_count(pref.id)  # type: ignore[arg-type]
+                logger.info("Preference '%s' mention count incremented", pref.content[:50])
 
     # ── Pass 1: topic identification ─────────────────────────────────────
 
@@ -281,8 +300,10 @@ class HistoryAgent(Agent):
                 parts.append(reaction_text)
         return "\n\n".join(parts) if parts else None
 
-    async def _identify_preference_topics(self, conversation: str, existing: list) -> list[str]:
-        """Pass 1: ask model to identify new preference topics (no valence)."""
+    async def _identify_preference_topics(
+        self, conversation: str, existing: list
+    ) -> IdentifiedPreferenceTopics | None:
+        """Pass 1: ask model to identify new and existing preference topics."""
         known_context = self._build_known_preferences_context(existing)
         prompt = f"{Prompt.PREFERENCE_IDENTIFICATION_PROMPT}\n\n{conversation}"
         if known_context:
@@ -295,12 +316,11 @@ class HistoryAgent(Agent):
                 format=IdentifiedPreferenceTopics.model_json_schema(),
             )
             if not response.content or not response.content.strip():
-                return []
-            result = IdentifiedPreferenceTopics.model_validate_json(response.content)
-            return [t.strip() for t in result.topics if t.strip()]
+                return None
+            return IdentifiedPreferenceTopics.model_validate_json(response.content)
         except Exception as e:
             logger.error("Preference topic identification failed: %s", e)
-            return []
+            return None
 
     @staticmethod
     def _build_known_preferences_context(existing: list) -> str:
