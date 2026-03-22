@@ -168,7 +168,7 @@ class SearchTool(Tool):
         error = body.get("error")  # type: ignore[call-overload]
         if not isinstance(error, dict):
             return False
-        return error.get("type") == "insufficient_quota"  # type: ignore[call-overload]
+        return error.get("type") == "insufficient_quota"
 
     async def _call_perplexity(self, query: str):
         """Call Perplexity API."""
