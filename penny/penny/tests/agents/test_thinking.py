@@ -79,7 +79,7 @@ async def test_thinking_loop_accumulates_monologue(
         # "continue" messages should be injected between text steps
         second_request_msgs = requests_seen[1]["messages"]
         user_msgs = [m for m in second_request_msgs if m.get("role") == "user"]
-        assert any(m.get("content") == "keep exploring" for m in user_msgs)
+        assert any(m.get("content") == "dig deeper into what you just found" for m in user_msgs)
 
         # Summary stored as thought
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
@@ -208,9 +208,9 @@ async def test_thinking_seed_topic_drives_prompt(
         first_msgs = requests_seen[0]["messages"]
         user_msgs = [m for m in first_msgs if m.get("role") == "user"]
 
-        # Should have "Think about ..." not "go"
+        # Should have "Search for ..." seed topic, not a generic prompt
         first_user = user_msgs[0]["content"]
-        assert first_user.startswith("Think about ")
+        assert first_user.startswith("Search for ")
         assert first_user != "go"
 
 
@@ -492,9 +492,8 @@ async def test_thinking_free_mode_has_no_context(
         # But the prompt should be the free-thinking prompt
         user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
         assert any(
-            "free" in m.get("content", "").lower()
-            or "explore" in m.get("content", "").lower()
-            or "think" in m.get("content", "").lower()
+            "search for" in m.get("content", "").lower()
+            or "interesting" in m.get("content", "").lower()
             for m in user_msgs
         )
 
@@ -748,3 +747,52 @@ async def test_scheduler_runs_history_before_thinking(
         assert history_idx < thinking_idx, (
             "History should run before thinking in scheduler priority"
         )
+
+
+# ── URL validation ──────────────────────────────────────────────────────
+
+
+class TestSummaryUrlValidation:
+    """Test that hallucinated URLs are detected in thought summaries."""
+
+    def test_valid_urls_pass(self):
+        """URLs that appear in source text are not flagged."""
+        from penny.agents.thinking import ThinkingAgent
+
+        source = "Check out https://example.com/article and https://arxiv.org/abs/1234"
+        report = "Found this: https://example.com/article"
+        assert ThinkingAgent._find_hallucinated_urls(report, source) == []
+
+    def test_hallucinated_urls_detected(self):
+        """URLs not in source text are flagged."""
+        from penny.agents.thinking import ThinkingAgent
+
+        source = "Check out https://example.com/real-article for details."
+        report = "Read more: https://example.com/fake-article"
+        bad = ThinkingAgent._find_hallucinated_urls(report, source)
+        assert len(bad) == 1
+        assert "fake-article" in bad[0]
+
+    def test_no_urls_passes(self):
+        """Report with no URLs passes validation."""
+        from penny.agents.thinking import ThinkingAgent
+
+        assert ThinkingAgent._find_hallucinated_urls("No links here.", "some source") == []
+
+    def test_markdown_urls_checked(self):
+        """URLs inside markdown links are also validated."""
+        from penny.agents.thinking import ThinkingAgent
+
+        source = "Found at https://real.com/page"
+        report = "See [this article](https://fake.com/page) for details."
+        bad = ThinkingAgent._find_hallucinated_urls(report, source)
+        assert len(bad) == 1
+        assert "fake.com" in bad[0]
+
+    def test_trailing_punctuation_stripped(self):
+        """URLs with trailing punctuation still match source."""
+        from penny.agents.thinking import ThinkingAgent
+
+        source = "URL: https://example.com/article"
+        report = "Check https://example.com/article."
+        assert ThinkingAgent._find_hallucinated_urls(report, source) == []

@@ -40,12 +40,19 @@ async def search_image(
     if not api_key:
         return None
 
+    logger.info("Image search query: %s", query[:120])
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await _fetch_results(client, query, api_key, max_results)
             if not response.images:
+                logger.info("Image search returned no results")
                 return None
-            return await _download_first_valid(client, response)
+            result = await _download_first_valid(client, response)
+            if result:
+                logger.info("Image search found image")
+            else:
+                logger.info("Image search: all results failed to download")
+            return result
     except Exception as e:
         logger.warning("Image search failed: %s", e)
         return None

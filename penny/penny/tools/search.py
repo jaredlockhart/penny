@@ -1,4 +1,4 @@
-"""Search tool — Perplexity text search with optional Serper image search."""
+"""Search tool — Perplexity text search."""
 
 import asyncio
 import logging

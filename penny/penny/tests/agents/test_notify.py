@@ -140,7 +140,7 @@ async def test_send_notify_thought_candidate(
         unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
         assert unnotified is None
 
-        # Serper image search should have been called with the preference topic
+        # Serper image search should have been called with the message content
         mock_serper_image.assert_called_once()
         image_query = mock_serper_image.call_args[0][0]
         assert "quantum computing" in image_query.lower()
@@ -224,6 +224,52 @@ async def test_send_notify_checkin(
         image_query = mock_serper_image.call_args[0][0]
         assert image_query == "funny cat meme"
         assert response.get("base64_attachments"), "Check-in should include an image"
+
+
+@pytest.mark.asyncio
+async def test_image_uses_content_when_no_image_prompt(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+    mock_serper_image,
+):
+    """Free-thinking thought (no seed topic) uses message content for image search."""
+    config = make_config(notify_candidates=1, serper_api_key="test-key")
+
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(
+            request, "hey, did you know nitrous oxide lifetimes are shrinking?"
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Seed a free-thinking thought (no preference_id)
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
+        )
+        penny.db.thoughts.add(TEST_SENDER, "Thinking about atmospheric chemistry")
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+        response = signal_server.outgoing_messages[-1]
+
+        # With no search query and no seed topic, image_prompt is empty.
+        # Channel should use content fallback (message text).
+        mock_serper_image.assert_called_once()
+        image_query = mock_serper_image.call_args[0][0]
+        assert "nitrous" in image_query.lower()
+        assert len(image_query) <= 300
+        assert response.get("base64_attachments"), "Content fallback should produce an image"
 
 
 # ── Image prompt extraction ──────────────────────────────────────────────
@@ -387,3 +433,82 @@ def test_is_disqualified_allows_normal_messages():
     """Normal conversational messages are not disqualified."""
     assert not NotifyAgent._is_disqualified("Hey! Been thinking about quantum computing.")
     assert not NotifyAgent._is_disqualified("Check out this cool new game!")
+
+
+# ── Tools-unavailable notification ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_news_tools_unavailable_sends_message(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """News mode sends tools-unavailable message when the news API fails."""
+    from penny.responses import PennyResponse
+
+    config = make_config()
+
+    # Force news path
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.0)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(
+            request, PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(tools="fetch_news")
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_notify(penny)
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+        msg = signal_server.outgoing_messages[-1]["message"]
+        assert "wasn't able to get results" in msg
+        assert "fetch_news" in msg
+
+
+@pytest.mark.asyncio
+async def test_thought_tools_unavailable_sends_message(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Thought candidate sends tools-unavailable message when search API fails."""
+    from penny.responses import PennyResponse
+
+    config = make_config(notify_candidates=1)
+
+    # Force thought candidate path
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(
+            request, PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(tools="search")
+        )
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_notify(penny)
+        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+        msg = signal_server.outgoing_messages[-1]["message"]
+        assert "wasn't able to get results" in msg
+        assert "search" in msg

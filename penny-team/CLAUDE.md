@@ -20,6 +20,7 @@ penny-team/
       codeowners.py     — Parses .github/CODEOWNERS for trusted usernames
       issue_filter.py   — Pre-fetches and filters issue content by trusted authors
       pr_checks.py      — Detects failing CI checks on PRs, enriches issues for worker
+      ollama_embed.py   — Embedding batch operations for quality agent TCR dedup
     product-manager/
       CLAUDE.md         — PM agent prompt (requirements gathering)
     architect/
@@ -36,6 +37,7 @@ penny-team/
     test_worker.py           — Worker agent flow + PR status + bug fix tests (integration + unit)
     test_monitor.py          — Monitor agent flow + error extraction tests (integration + unit)
     test_quality.py          — Quality agent flow + privacy validation tests (integration + unit)
+    test_similarity.py       — Shared similarity package primitives (TCR, cosine, embeddings)
 
   Tests strongly prefer integration style — test through agent.run() / has_work()
   entry points with MockGitHubAPI (for GitHub data) and MockPopen (for Claude CLI).
@@ -123,7 +125,7 @@ Monitor agent automatically detects errors in penny's production logs and files 
 - `penny_team/monitor.py`: `MonitorAgent` subclass that reads `data/penny/logs/penny.log` instead of GitHub issues
 - Tracks byte offset in `data/penny-team/state/monitor.state.json` to only process new log content
 - Python code extracts ERROR/CRITICAL lines and tracebacks from new content
-- **Python-space dedup**: Before calling Claude, fetches open bug issues via `GitHubAPI` and filters out errors whose module + exception type already appear in an existing issue's title/body — prevents duplicate filing
+- **Python-space dedup**: Before calling Claude, fetches open bug AND in-review issues (plus open PRs) via `GitHubAPI` and filters out errors whose module + exception type already appear in an existing issue's or PR's title/body — includes in-review because Worker relabels bugs quickly
 - Claude CLI analyzes remaining novel errors and creates new issues
 - First run reads last 100KB of log to avoid processing entire history
 - Log rotation detected by file size < saved offset (resets to 0)
@@ -138,6 +140,7 @@ Quality agent evaluates Penny's response quality and files bug issues for low-qu
 - Calls Ollama `OLLAMA_BACKGROUND_MODEL` directly (not Claude CLI) for quality evaluation
 - Two-step LLM flow per pair: (1) single-pair quality evaluation, (2) privacy-safe bug description if bad
 - **Privacy enforcement**: Python validates that original user messages and Penny responses are NOT substrings in the filed issue body — hard block, skips filing on failure
+- **Dedup via TCR**: Uses token containment ratio (from shared `similarity/` package) against open bug + in-review issues and PRs (title+body) — catches paraphrased duplicates that keyword matching misses
 - Filed issues get `bug` + `quality` labels; max 3 issues per cycle (safety cap)
 - Optional: only registered when `OLLAMA_BACKGROUND_MODEL` env var is set
 

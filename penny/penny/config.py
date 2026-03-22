@@ -72,7 +72,7 @@ def _validate_channel_config(channel_type: str) -> None:
 
 def _collect_env_vars(channel_type: str) -> dict:
     """Read all config environment variables and return as constructor kwargs."""
-    ollama_model = os.getenv("OLLAMA_MODEL", os.getenv("OLLAMA_FOREGROUND_MODEL", "gpt-oss:20b"))
+    ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
     return {
         "channel_type": channel_type,
         "signal_number": os.getenv("SIGNAL_NUMBER"),

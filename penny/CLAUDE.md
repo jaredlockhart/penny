@@ -8,11 +8,10 @@ flowchart TD
 
     subgraph Foreground["Foreground (ChatAgent)"]
         Channel -->|extract| CA[ChatAgent]
-        CA -->|"prompt + tools"| FG_Ollama["Ollama<br>foreground model"]
+        CA -->|"prompt + tools"| FG_Ollama["Ollama<br>Ollama"]
         FG_Ollama -->|tool call| Search[SearchTool]
         FG_Ollama -->|tool call| News[FetchNewsTool]
         Search -->|text| Perplexity[Perplexity API]
-        Search -->|images| Serper[Serper API]
         News -->|articles| TheNewsAPI[TheNewsAPI.com]
         Search -.->|results| FG_Ollama
         News -.->|results| FG_Ollama
@@ -26,15 +25,19 @@ flowchart TD
     subgraph Scheduler["Background Scheduler (when idle)"]
         direction TB
 
-        SE[ScheduleExecutor] -->|"cron tasks"| FG_Ollama2["Ollama<br>foreground model"]
+        SE[ScheduleExecutor] -->|"cron tasks"| FG_Ollama2["Ollama<br>Ollama"]
 
-        Think[ThinkingAgent] -->|"inner monologue<br>+ tools"| BG_Ollama["Ollama<br>background model"]
+        Think[ThinkingAgent] -->|"inner monologue<br>+ tools"| FG_Ollama3["Ollama<br>Ollama"]
         Think -.->|"stored thoughts"| DB
 
-        History[HistoryAgent] -->|"summarize<br>conversations"| BG_Ollama
-        History -.->|"topic summaries"| DB
+        History[HistoryAgent] -->|"summarize + extract<br>preferences"| FG_Ollama4["Ollama<br>Ollama"]
+        History -.->|"topic summaries<br>+ preferences"| DB
+
+        Notify[NotifyAgent] -->|"thoughts, news,<br>check-ins"| FG_Ollama5["Ollama<br>Ollama"]
+        Notify -.->|"image search"| Serper[Serper API]
     end
 
+    Notify -->|proactive message| Channel
     User -.->|"resets idle<br>cancels background"| Scheduler
 ```
 
@@ -42,10 +45,10 @@ flowchart TD
 - **Ollama**: Local LLM inference (default model: gpt-oss:20b)
 - **Vision**: Optional vision model (e.g., qwen3-vl) for processing image attachments from Signal
 - **Image Generation**: Optional image model (e.g., x/z-image-turbo) for generating images via `/draw` command
-- **Embedding Model**: Optional dedicated embedding model (e.g., embeddinggemma) for preference deduplication
+- **Embedding Model**: Optional dedicated embedding model (e.g., embeddinggemma) for preference deduplication and history embeddings
 - **Perplexity**: Web search — Penny always searches before answering, never uses model knowledge alone
-- **Serper**: Image search (Google Images) — runs in parallel with Perplexity, attaches a relevant image to every response
-- **SQLite**: Logs all prompts, searches, and messages; stores thread history via parent-child links
+- **Serper**: Image search (Google Images) — standalone module used by NotifyAgent to attach images to notifications
+- **SQLite**: Logs all prompts, searches, and messages; stores preferences, thoughts, and conversation history
 
 ## Directory Structure
 
@@ -53,9 +56,9 @@ flowchart TD
 penny/
   penny.py            — Entry point. Penny class: creates agents, channel, scheduler
   config.py           — Config dataclass loaded from .env, channel auto-detection
-  config_params.py    — ConfigParam definitions for runtime-configurable settings
-  constants.py        — System prompt, research prompts, trigger enums
-  prompts.py          — LLM prompt templates (thinking, history)
+  config_params.py    — ConfigParam + RuntimeParams: runtime-configurable settings with 3-tier lookup
+  constants.py        — Enums (SearchTrigger, HistoryDuration, PreferenceValence), reaction emojis
+  prompts.py          — LLM prompt templates (thinking, history, preference extraction)
   responses.py        — All user-facing response strings (PennyResponse class)
   startup.py          — Startup announcement message generation (git commit info)
   datetime_utils.py   — Timezone derivation from location (geopy + timezonefinder)
@@ -65,7 +68,7 @@ penny/
     chat.py           — ChatAgent: conversation-mode agent (handles user messages with tools)
     notify.py         — NotifyAgent: notification outreach (thoughts, news, check-ins)
     thinking.py       — ThinkingAgent: continuous inner monologue loop
-    history.py        — HistoryAgent: daily conversation topic summarization
+    history.py        — HistoryAgent: daily/weekly summarization + preference extraction
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
     schedules.py      — PeriodicSchedule, AlwaysRunSchedule, DelayedSchedule implementations
@@ -75,6 +78,7 @@ penny/
     base.py           — Command ABC, CommandRegistry
     models.py         — CommandContext, CommandResult, CommandError
     github_issue.py   — GitHubIssueCommand base class for /bug and /feature
+    preference_base.py — PreferenceBaseCommand, PreferenceAddCommand, PreferenceRemoveCommand
     config.py         — /config: view and modify runtime settings
     debug.py          — /debug: show agent status, git commit, system info
     index.py          — /commands: list available commands
@@ -83,6 +87,10 @@ penny/
     unschedule.py     — /unschedule: delete a scheduled task
     mute.py           — /mute: silence Penny's notifications
     unmute.py         — /unmute: resume Penny's notifications
+    like.py           — /like: show or add positive preferences
+    unlike.py         — /unlike: remove positive preferences
+    dislike.py        — /dislike: show or add negative preferences
+    undislike.py      — /undislike: remove negative preferences
     test.py           — /test: isolated test mode for development
     draw.py           — /draw: generate images via Ollama image model (optional)
     bug.py            — /bug: file GitHub issues (optional, requires GitHub App)
@@ -91,11 +99,14 @@ penny/
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult
-    search.py         — SearchTool: Perplexity text + Serper images (run in parallel)
+    search.py         — SearchTool: Perplexity text search (no images)
     news.py           — NewsTool: TheNewsAPI.com client (optional, requires NEWS_API_KEY)
     fetch_news.py     — FetchNewsTool: tool wrapper for NewsTool (used by chat + thinking)
     search_emails.py  — SearchEmailsTool (Fastmail JMAP)
     read_emails.py    — ReadEmailTool (Fastmail JMAP)
+  serper/
+    client.py         — search_image(): async Serper image search, returns base64 data URI
+    models.py         — SerperImageResult, SerperImageResponse Pydantic models
   jmap/
     client.py         — JmapClient: Fastmail JMAP API client (httpx)
     models.py         — JmapSession, EmailAddress, EmailSummary, EmailDetail
@@ -113,15 +124,17 @@ penny/
     message_store.py  — MessageStore: log_message, log_prompt, log_command, threads
     search_store.py   — SearchStore: log, get, mark_extracted
     thought_store.py  — ThoughtStore: inner monologue persistence
-    history_store.py  — HistoryStore: conversation topic summaries
+    history_store.py  — HistoryStore: daily/weekly conversation topic summaries
+    preference_store.py — PreferenceStore: add, query, dedup, embedding management
     user_store.py     — UserStore: get_info, save_info, mute/unmute
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0037)
+    migrations/       — Numbered migration files (0001–0007)
   ollama/
-    client.py         — OllamaClient: wraps official ollama SDK async client
+    client.py         — OllamaClient: wraps official ollama SDK async client (chat, generate, embed)
     models.py         — ChatResponse, ChatResponseMessage
-    embeddings.py     — Embedding utilities (serialize, deserialize, find_similar, token_containment_ratio)
+    embeddings.py     — Re-exports from shared similarity/ package (serialize, deserialize, TCR)
+    similarity.py     — Penny-specific: embed_text, sentiment scores, novelty, preference vectors
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
     test_embeddings.py, test_similarity.py, test_periodic_schedule.py, test_scheduler.py
@@ -130,13 +143,14 @@ penny/
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
       search_patches.py — Perplexity + Serper image search monkeypatches
     agents/           — Per-agent integration tests
-      test_message.py, test_thinking.py, test_agentic_loop.py
+      test_message.py, test_thinking.py, test_agentic_loop.py,
+      test_context.py, test_history.py, test_notify.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py,
       test_signal_formatting.py, test_startup_announcement.py
     commands/         — Per-command tests
       test_commands.py, test_config.py, test_debug.py, test_draw.py, test_email.py,
-      test_feature.py, test_mute.py,
+      test_feature.py, test_mute.py, test_preferences.py,
       test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
@@ -144,7 +158,7 @@ penny/
       test_client.py
     tools/            — Tool tests
       test_search_redaction.py, test_tool_timeout.py, test_tool_not_found.py,
-      test_missing_tool_params.py, test_tool_reasoning.py
+      test_missing_tool_params.py, test_tool_reasoning.py, test_news_tool.py
 Dockerfile            — Python 3.12-slim
 pyproject.toml        — Dependencies and project metadata
 ```
@@ -173,7 +187,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 **ChatAgent** (`agents/chat.py`)
 - Handles incoming user messages with tools (search, news)
 - Context: profile + history + notified thoughts + conversation turns
-- Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the foreground model
+- Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the Ollama
 
 **NotifyAgent** (`agents/notify.py`)
 - Notification outreach — sends thoughts, news, and check-ins when users are idle
@@ -192,10 +206,12 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Stored thought summaries bleed into chat context, giving Penny continuity of inner reasoning
 
 **HistoryAgent** (`agents/history.py`)
-- Background worker that compacts daily conversations into topic summaries
-- Runs on a PeriodicSchedule (lowest priority — after thinking)
-- For each user: summarizes today's messages (midnight to now) via upsert (rolling update)
-- Backfills completed past days that lack history entries
+- Background worker that compacts conversations into topic summaries and extracts user preferences
+- Runs on a PeriodicSchedule (highest priority among idle tasks — before notify and thinking)
+- Each cycle per user: (1) summarize today, (2) extract today's preferences, (3) backfill past days, (4) roll up completed weeks
+- Daily summaries: messages midnight-to-now, upserted (rolling update); backfill for completed days without entries
+- Weekly rollups: consolidates daily entries from completed ISO weeks into weekly summary entries (max 2 per cycle)
+- Preference extraction: two-pass LLM pipeline — (1) identify new topics from user messages + reactions, (2) classify valence (positive/negative). Topics are deduped against existing preferences via TCR + embedding similarity before storage
 - Stored summaries used as seed topics for ThinkingAgent and as context for ChatAgent
 
 **ScheduleExecutor** (`scheduler/schedule_runner.py`)
@@ -226,7 +242,7 @@ The `scheduler/` module manages background tasks:
 
 **PeriodicSchedule**
 - Runs periodically while system is idle at a configurable interval
-- Used for the thinking agent and history agent (default: 10s, near-continuous while idle)
+- Used for history (3600s), notify (300s), and thinking (1200s) agents
 - Tracks last run time and fires again after interval elapses
 - Resets when a message arrives
 
@@ -272,26 +288,43 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/profile** (`profile.py`): View or update user profile (name, location, DOB). Derives IANA timezone from location. Required before Penny will chat
 - **/schedule** (`schedule.py`): Create and list recurring cron-based background tasks (uses LLM to parse natural language timing)
 - **/unschedule** (`unschedule.py`): Delete a scheduled task. `/unschedule` shows numbered list; `/unschedule <N>` deletes
-- **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop`
+- **/mute** (`mute.py`): Silence Penny's autonomous notifications
+- **/unmute** (`unmute.py`): Resume Penny's notifications
+- **/like** (`like.py`): Show positive preferences or add one (e.g., `/like dark roast coffee`)
+- **/unlike** (`unlike.py`): Remove a positive preference by number
+- **/dislike** (`dislike.py`): Show negative preferences or add one
+- **/undislike** (`undislike.py`): Remove a negative preference by number
 
 ### Conditional Commands (registered based on config)
+- **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop` (requires message agent factory)
 - **/draw** (`draw.py`): Generate images via Ollama image model (requires `OLLAMA_IMAGE_MODEL`)
 - **/bug** (`bug.py`): File a bug report on GitHub (requires GitHub App config)
 - **/feature** (`feature.py`): File a feature request on GitHub (requires GitHub App config)
 - **/email** (`email.py`): Search Fastmail email via JMAP (requires `FASTMAIL_API_TOKEN`)
 
 ### Runtime Configuration
-- `/config` reads and writes to a `RuntimeConfig` table in SQLite (migration `0002_add_runtime_config_table.py`)
+- `/config` reads and writes to a `RuntimeConfig` table in SQLite
 - `ConfigParam` definitions in `config_params.py` declare runtime-configurable settings with types and validation
+- `RuntimeParams` class provides attribute access: `config.runtime.IDLE_SECONDS`
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Categories: scheduling intervals, preference dedup, inner monologue settings, and more
+- Groups: Global (max steps, image/email timeouts, embedding batch limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, weekly context limit), Notify (check interval, cooldowns, news cooldown, candidates, check-in image prompt)
 
 ## Data Model
 
-- **Thought** (`database/models.py`): Inner monologue entries from the ThinkingAgent. Has `summary` (condensed reasoning), `content` (full monologue), `seed_topic`, and `sender` (user context)
-- **ConversationHistory** (`database/models.py`): Daily conversation topic summaries. Has `sender`, `date`, `topics` (comma-separated), `summary`
-- **Preference** (`database/models.py`): User sentiment signals (positive/negative). Has `content`, `valence`, `embedding`, and provenance timestamps
+All tables defined in `database/models.py` as SQLModel classes:
+
+- **PromptLog**: Every Ollama call — `model`, `messages` (JSON), `response` (JSON), `thinking`, `duration_ms`
+- **SearchLog**: Every Perplexity search — `query`, `response`, `trigger` (user_message/penny_enrichment), `extracted` flag
+- **MessageLog**: Every user/agent message — `direction`, `sender`, `content`, `parent_id` (thread chain), `external_id` (platform ID), `is_reaction`, `thought_id` FK (notification source)
+- **UserInfo**: User profile — `name`, `location`, `timezone` (IANA), `date_of_birth`
+- **CommandLog**: Command invocations — `command_name`, `command_args`, `response`, `error`
+- **RuntimeConfig**: User-configurable settings — `key`, `value` (string, parsed on read)
+- **Schedule**: User-created cron tasks — `cron_expression`, `prompt_text`, `user_timezone`
+- **MuteState**: Per-user mute state — row exists = muted, delete = unmuted
+- **Thought**: Inner monologue entries — `content` (full monologue), `preference_id` FK (seed preference), `notified_at`
+- **Preference**: User sentiment signals — `content`, `valence` (positive/negative), `embedding` (serialized float32 vector), `source_period_start`/`end`, `last_thought_at`
+- **ConversationHistory**: Topic summaries — `period_start`, `period_end`, `duration` (daily/weekly/monthly), `topics` (bullet-point list), `embedding`
 
 ## Message Flow
 
@@ -318,7 +351,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 - **Always search**: System prompt forces search on every message — no hallucinated answers
 - **One search per message**: System prompt tells model it only gets one search, so it combines everything into a single comprehensive query
-- **Parallel search + images**: Single `SearchTool` runs Perplexity (text) and Serper (images) concurrently via `asyncio.gather`, image failures degrade gracefully to text-only. `skip_images` flag disables image search
+- **Separated search and images**: `SearchTool` handles Perplexity text search only. Image search (`serper/`) is a standalone module used by NotifyAgent for notification attachments, not part of the search tool chain
 - **URL extraction**: URLs extracted from Perplexity results, appended as Sources list so the model can pick the most relevant one
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
@@ -329,7 +362,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free Ollama immediately; cancelled work is idempotent and retried next cycle
 - **Commands don't interrupt background**: Slash commands run cooperatively without cancelling the active background task
-- **Vision captioning**: When images are present and `OLLAMA_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the foreground model. Search tools are disabled for image messages
+- **Vision captioning**: When images are present and `OLLAMA_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the Ollama. Search tools are disabled for image messages
 - **Channel abstraction**: Signal and Discord share the same interface; easy to add more platforms
 - **Async throughout**: asyncio, httpx.AsyncClient, ollama.AsyncClient, discord.py
 - **Host networking**: Docker container uses --network host for simplicity (all services on localhost)
@@ -345,7 +378,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0004):
+File-based migration system in `database/migrations/` (currently 0001–0007):
 - Each migration is a numbered Python file (e.g., `0001_initial_schema.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -360,6 +393,9 @@ Notable migrations:
 - 0002: `thought.notified_at` column
 - 0003: Preference deduplication
 - 0004: Drop `entity` and `fact` tables (knowledge system removed)
+- 0005: `preference.last_thought_at` column
+- 0006: `messagelog.thought_id` FK (links messages to notification thoughts)
+- 0007: `thought.preference_id` FK (links thoughts to seed preferences)
 
 ## Extending
 

@@ -224,7 +224,7 @@ class MessageChannel(ABC):
         )
         return external_id is not None
 
-    MAX_IMAGE_PROMPT_LENGTH = 100
+    MAX_IMAGE_PROMPT_LENGTH = 300
 
     async def send_response(
         self,
@@ -243,7 +243,7 @@ class MessageChannel(ABC):
             recipient: Identifier for the recipient
             content: Message content
             parent_id: Parent message ID for thread linking
-            image_prompt: Short search query for image attachment (max 100 chars)
+            image_prompt: Search query for image attachment (max 300 chars)
             attachments: Optional list of base64-encoded attachments
             quote_message: Optional message to quote-reply to
             thought_id: Optional FK to the thought that triggered this message
@@ -251,17 +251,12 @@ class MessageChannel(ABC):
         Returns:
             Database message ID if send was successful, None otherwise
         """
-        if len(image_prompt) > self.MAX_IMAGE_PROMPT_LENGTH:
-            logger.error(
-                "image_prompt too long (%d chars, max %d): %s",
-                len(image_prompt),
-                self.MAX_IMAGE_PROMPT_LENGTH,
-                image_prompt[:100],
-            )
-            image_prompt = image_prompt[: self.MAX_IMAGE_PROMPT_LENGTH]
+        image_prompt = image_prompt[: self.MAX_IMAGE_PROMPT_LENGTH]
 
-        if not attachments:
+        if not attachments and image_prompt:
             attachments = await self._resolve_image(image_prompt, attachments)
+        elif not attachments:
+            attachments = await self._resolve_image(content[: self.MAX_IMAGE_PROMPT_LENGTH], None)
 
         # Apply channel-specific formatting
         # We log the prepared content so quote matching works correctly

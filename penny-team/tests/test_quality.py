@@ -456,6 +456,129 @@ class TestQualityRun:
         assert "Filed 0 issue(s)" in result.output
         api.create_issue.assert_not_called()
 
+    def test_duplicate_detected_against_in_review_issue(self, tmp_path, monkeypatch):
+        """Quality agent skips filing when matching issue has moved to in-review."""
+        api = MockGitHubAPI()
+        api.create_issue = MagicMock(return_value="https://github.com/test/issues/2")
+        # No bug-labeled issues — the Worker already moved it to in-review
+        api.set_issues_detailed("bug", [])
+        api.set_issues_detailed(
+            "in-review",
+            [
+                make_issue_detail(
+                    number=100,
+                    title="bug: Function call syntax leaked in response",
+                    body="Penny exposed function call syntax to the user.",
+                    labels=["in-review"],
+                )
+            ],
+        )
+        agent, db_path = make_quality_agent(tmp_path, github_api=api)
+        _insert_message_pair(
+            db_path,
+            user_message="What time is it?",
+            response="<function=get_time>{}</function> The time is 3pm",
+        )
+
+        evaluation_response = {
+            "is_bad": True,
+            "category": "exposed_function_call",
+            "reason": "Function call syntax leaked to user",
+        }
+        bug_description = {
+            "title": "bug: Function call syntax leaked in response",
+            "body": (
+                "*[Quality Agent]*\n\n"
+                "## Quality Issue\n\nExposed function call.\n\n"
+                "## Example (Contrived)\n\nExample.\n\n"
+                "## Suggested Fix\n\nSanitize output."
+            ),
+        }
+        mock_urlopen = mock_ollama_factory([evaluation_response, bug_description])
+        monkeypatch.setattr("penny_team.quality.urllib.request.urlopen", mock_urlopen)
+
+        result = agent.run()
+
+        assert result.success is True
+        assert "Filed 0 issue(s)" in result.output
+        api.create_issue.assert_not_called()
+
+    def test_tcr_catches_paraphrased_duplicate(self, tmp_path, monkeypatch):
+        """TCR matching catches paraphrased titles that keyword matching would miss.
+
+        Simulates the real-world scenario: monitor filed a bug about empty
+        content after tool calls, then quality tries to file a similar bug
+        with slightly different wording.  The title+body of the existing
+        issue gives TCR enough tokens to detect the overlap.
+        """
+        api = MockGitHubAPI()
+        api.create_issue = MagicMock(return_value="https://github.com/test/issues/2")
+        api.set_issues_detailed(
+            "bug",
+            [
+                make_issue_detail(
+                    number=785,
+                    title="bug: model returns empty content after 7 tool calls",
+                    body=(
+                        "**Module**: penny.agents.base\n"
+                        "Model returned empty content! model=gpt-oss:20b, "
+                        "preceding_tool_calls=7\n\n"
+                        "The model returns empty content after exhausting "
+                        "tool calls, falling back to AGENT_EMPTY_RESPONSE."
+                    ),
+                    labels=["bug"],
+                )
+            ],
+        )
+        agent, db_path = make_quality_agent(tmp_path, github_api=api)
+        _insert_message_pair(db_path)
+
+        evaluation_response = {
+            "is_bad": True,
+            "category": "empty_response",
+            "reason": "Empty response after tool usage",
+        }
+        # Paraphrased title — same concept, slightly different words
+        bug_description = {
+            "title": "bug: model returns empty content after exhausting tool calls",
+            "body": (
+                "*[Quality Agent]*\n\n"
+                "## Quality Issue\n\nEmpty response.\n\n"
+                "## Example (Contrived)\n\nExample.\n\n"
+                "## Suggested Fix\n\nAdd retry."
+            ),
+        }
+        mock_urlopen = mock_ollama_factory([evaluation_response, bug_description])
+        monkeypatch.setattr("penny_team.quality.urllib.request.urlopen", mock_urlopen)
+
+        result = agent.run()
+
+        assert result.success is True
+        assert "Filed 0 issue(s)" in result.output
+        api.create_issue.assert_not_called()
+
+    def test_embedding_catches_duplicate_that_tcr_misses(self):
+        """When TCR is below threshold but embeddings are similar, issue is blocked."""
+        from penny_team.quality import QualityAgent
+
+        # Titles with low TCR overlap but semantically similar
+        dedup_texts = ["bug: rate limiting on external API calls"]
+
+        # Without embeddings: TCR below 0.6 → not duplicate
+        assert not QualityAgent._is_duplicate_issue(
+            "bug: API throttling errors", dedup_texts
+        )
+
+        # With embeddings: high cosine similarity → duplicate
+        candidate_vec = [1.0, 0.0, 0.0]
+        existing_vecs = [[0.95, 0.1, 0.0]]  # similar direction
+        assert QualityAgent._is_duplicate_issue(
+            "bug: API throttling errors",
+            dedup_texts,
+            candidate_vec=candidate_vec,
+            existing_vecs=existing_vecs,
+        )
+
     def test_privacy_validation_blocks_leaky_description(self, tmp_path, monkeypatch):
         """If bug description contains original content, issue is NOT filed."""
         api = MockGitHubAPI()

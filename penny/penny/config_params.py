@@ -216,7 +216,7 @@ ConfigParam(
     key="INNER_MONOLOGUE_MAX_STEPS",
     description="Max thinking loop steps per inner monologue cycle",
     type=int,
-    default=10,
+    default=5,
     validator=_validate_positive_int,
     group=GROUP_INNER_MONOLOGUE,
 )
@@ -256,6 +256,15 @@ ConfigParam(
     description="Max daily history entries to show in context",
     type=int,
     default=7,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
+)
+
+ConfigParam(
+    key="WEEKLY_CONTEXT_LIMIT",
+    description="Max weekly history entries to show in context",
+    type=int,
+    default=4,
     validator=_validate_positive_int,
     group=GROUP_HISTORY,
 )

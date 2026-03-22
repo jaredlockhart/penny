@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import urllib.request
 from dataclasses import dataclass
@@ -16,9 +17,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from github_api.api import GitHubAPI
+from similarity.embeddings import cosine_similarity, token_containment_ratio
 
 from penny_team.base import Agent, AgentRun
 from penny_team.constants import TeamConstants
+from penny_team.utils.ollama_embed import embed_batch
 
 logger = logging.getLogger(__name__)
 
@@ -350,57 +353,83 @@ class QualityAgent(Agent):
     # --- Deduplication ---
 
     def _fetch_dedup_texts(self) -> list[str]:
-        """Fetch searchable text from open bug issues AND open PRs for dedup.
+        """Fetch searchable text from open bug/in-review issues AND open PRs.
 
-        Returns lowercased title+body strings from all open bug issues
-        (not just quality-labeled) and all open PRs. This prevents filing
-        duplicates of issues already tracked by the monitor agent or
-        already being fixed in a PR.
+        Includes in-review issues because the Worker relabels bugs from
+        'bug' to 'in-review' after pushing a PR.  Without this, the same
+        quality issue gets filed again once the original leaves the 'bug' label.
         """
         if self.github_api is None:
             return []
 
         texts: list[str] = []
+        seen: set[int] = set()
 
-        # All open bug issues (not just quality-labeled)
-        try:
-            bug_issues = self.github_api.list_issues_detailed(TeamConstants.Label.BUG, limit=30)
-            texts.extend(f"{i.title}\n{i.body}".lower() for i in bug_issues)
-        except (OSError, RuntimeError) as e:
-            logger.warning(f"[{self.name}] Failed to fetch bug issues for dedup: {e}")
+        for label in (TeamConstants.Label.BUG, TeamConstants.Label.IN_REVIEW):
+            try:
+                issues = self.github_api.list_issues_detailed(label, limit=30)
+                for issue in issues:
+                    if issue.number not in seen:
+                        texts.append(f"{issue.title} {issue.body}")
+                        seen.add(issue.number)
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"[{self.name}] Failed to fetch {label} issues for dedup: {e}")
 
-        # All open PRs
         try:
             prs = self.github_api.list_open_prs(limit=30)
-            texts.extend(f"{pr.title}\n{pr.body}".lower() for pr in prs)
+            texts.extend(f"{pr.title} {pr.body}" for pr in prs)
         except (OSError, RuntimeError) as e:
             logger.warning(f"[{self.name}] Failed to fetch open PRs for dedup: {e}")
 
         return texts
 
+    def _embed_dedup_texts(self, texts: list[str]) -> list[list[float]] | None:
+        """Embed dedup texts via Ollama. Returns None if unavailable."""
+        model = os.getenv(TeamConstants.ENV_OLLAMA_EMBEDDING_MODEL)
+        if not model or not texts:
+            return None
+        url = os.getenv(TeamConstants.ENV_OLLAMA_URL, TeamConstants.OLLAMA_DEFAULT_URL)
+        return embed_batch(texts, url, model)
+
+    def _embed_candidate(self, title: str) -> list[float] | None:
+        """Embed a single candidate title. Returns None if unavailable."""
+        model = os.getenv(TeamConstants.ENV_OLLAMA_EMBEDDING_MODEL)
+        if not model:
+            return None
+        url = os.getenv(TeamConstants.ENV_OLLAMA_URL, TeamConstants.OLLAMA_DEFAULT_URL)
+        vecs = embed_batch([title], url, model)
+        return vecs[0] if vecs else None
+
     @staticmethod
-    def _is_duplicate_issue(title: str, dedup_texts: list[str]) -> bool:
+    def _is_duplicate_issue(
+        title: str,
+        dedup_texts: list[str],
+        candidate_vec: list[float] | None = None,
+        existing_vecs: list[list[float]] | None = None,
+    ) -> bool:
         """Check if a proposed issue title matches existing issues or PRs.
 
-        Compares the category keywords from the title (the part after
-        'bug: ') against existing issue/PR text (title + body). Matches
-        if a majority of keywords appear in any existing text.
+        Uses TCR OR embedding similarity — if either signal exceeds its
+        threshold, the issue is considered a duplicate.  Falls back to
+        TCR-only when embeddings are unavailable.
         """
         if not dedup_texts:
             return False
-        # Extract category from "bug: <category description>"
-        title_lower = title.lower()
-        category = title_lower.removeprefix("bug: ").strip()
+        category = title.lower().removeprefix("bug: ").strip()
         if not category:
             return False
-        # Check if any existing text contains the same category keywords
-        category_words = set(category.split()) - {"the", "a", "an", "in", "of", "for", "and", "or"}
-        if len(category_words) < 2:
-            return False
-        return any(
-            sum(1 for w in category_words if w in existing) >= len(category_words) // 2 + 1
-            for existing in dedup_texts
-        )
+
+        for idx, existing in enumerate(dedup_texts):
+            tcr = token_containment_ratio(category, existing)
+            if tcr >= TeamConstants.TCR_DEDUP_THRESHOLD:
+                return True
+
+            if candidate_vec and existing_vecs and idx < len(existing_vecs):
+                sim = cosine_similarity(candidate_vec, existing_vecs[idx])
+                if sim >= TeamConstants.EMBEDDING_DEDUP_THRESHOLD:
+                    return True
+
+        return False
 
     # --- run() override ---
 
@@ -442,8 +471,9 @@ class QualityAgent(Agent):
 
         logger.info(f"[{self.name}] Evaluating {len(pairs)} message pair(s)")
 
-        # Step 2: Fetch open bug issues and PRs for dedup
+        # Step 2: Fetch open bug/in-review issue and PR texts for dedup
         dedup_texts = self._fetch_dedup_texts()
+        existing_vecs = self._embed_dedup_texts(dedup_texts)
 
         # Step 3: Evaluate each pair individually and file issues
         found = 0
@@ -482,7 +512,8 @@ class QualityAgent(Agent):
                 continue
 
             # Dedup: check if a similar quality issue already exists
-            if self._is_duplicate_issue(title, dedup_texts):
+            candidate_vec = self._embed_candidate(title)
+            if self._is_duplicate_issue(title, dedup_texts, candidate_vec, existing_vecs):
                 logger.info(f"[{self.name}] Skipping duplicate quality issue: {title}")
                 continue
 

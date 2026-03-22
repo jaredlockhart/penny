@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import urllib.parse as _urlparse
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -27,6 +28,54 @@ _XML_TAG_PATTERN = re.compile(r"<[a-zA-Z]\w*[\s=>].*</[a-zA-Z]\w*>", re.DOTALL)
 # Matches <think>...</think> blocks emitted inline by some models (e.g. DeepSeek-R1, Qwen3)
 _THINK_TAG_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
 
+# Matches markdown links [text](url) and bare URLs for validation
+_MARKDOWN_LINK_URL_PATTERN = re.compile(r"\[([^\]]*)\]\((https?://[^)]*)\)")
+_BARE_URL_PATTERN = re.compile(r"(?<!\()(https?://\S+)")
+
+
+def _is_url_truncated(url: str) -> bool:
+    """Return True if url appears truncated or malformed.
+
+    Checks for missing host and trailing hyphen (the most common sign of a cut-off path).
+    Strips trailing prose punctuation before validation so sentence-ending periods
+    don't cause false positives.
+    """
+    cleaned = url.rstrip(".,;:!?\"')>}]")
+    try:
+        parsed = _urlparse.urlparse(cleaned)
+    except Exception:
+        return True
+    if not parsed.netloc or "." not in parsed.netloc:
+        return True
+    return cleaned.endswith("-")
+
+
+def _clean_malformed_urls(content: str) -> str:
+    """Remove truncated or malformed URLs from model-generated content.
+
+    For markdown links [text](bad_url), the link text is preserved.
+    For bare malformed URLs, the URL token is removed entirely.
+    Valid URLs are left unchanged.
+    """
+
+    def fix_md_link(m: re.Match) -> str:
+        text, url = m.group(1), m.group(2)
+        if _is_url_truncated(url):
+            logger.warning("Stripped malformed URL from markdown link: %.120s", url)
+            return text
+        return m.group(0)
+
+    def fix_bare_url(m: re.Match) -> str:
+        url = m.group(1)
+        if _is_url_truncated(url):
+            logger.warning("Stripped malformed bare URL: %.120s", url)
+            return ""
+        return m.group(0)
+
+    content = _MARKDOWN_LINK_URL_PATTERN.sub(fix_md_link, content)
+    content = _BARE_URL_PATTERN.sub(fix_bare_url, content)
+    return content
+
 
 def _has_xml_tags(content: str) -> bool:
     """Return True if content contains XML-like tag pairs."""
@@ -48,6 +97,46 @@ def _strip_think_tags(content: str) -> tuple[str, str | None]:
     cleaned = _THINK_TAG_PATTERN.sub(_collect, content).strip()
     extracted = "\n\n".join(thinking_parts) if thinking_parts else None
     return cleaned, extracted
+
+
+# Prefixes in tool result strings that indicate a failed or empty result.
+# Checked after tool execution to mark ToolCallRecord.failed = True.
+_TOOL_FAILURE_PREFIXES = (
+    "Error: ",
+    "No recent news found",
+    PennyResponse.NO_RESULTS_TEXT,
+    PennyResponse.SEARCH_QUOTA_EXCEEDED[:40],
+    "Failed to search:",
+)
+
+
+def _is_tool_result_failed(result_str: str) -> bool:
+    """Return True if a tool result indicates failure (error, no results, quota exceeded)."""
+    return any(result_str.startswith(prefix) for prefix in _TOOL_FAILURE_PREFIXES)
+
+
+# Truncate tool results in the message history when many preceding tool calls caused
+# context saturation and the model returned empty content on the synthesis step.
+_TOOL_RESULT_TRUNCATION_THRESHOLD = 3  # number of preceding tool calls that triggers truncation
+_TOOL_RESULT_MAX_CHARS = 500  # max characters per tool result message after truncation
+
+
+def _build_strong_nudge(messages: list[dict]) -> str:
+    """Build a context-aware nudge that includes the original user question.
+
+    Called when many preceding tool calls may have saturated the model's context.
+    Including the original question gives the model a clear target after heavy tool use.
+    """
+    original_question = next(
+        (m["content"] for m in messages if m.get("role") == MessageRole.USER),
+        None,
+    )
+    if original_question:
+        return (
+            f"You have gathered enough information from your searches. "
+            f"Please provide your final answer to: {original_question}"
+        )
+    return "You have gathered enough information. Please provide your final response."
 
 
 # Phrases that indicate a model refusal — used to detect and retry unhelpful responses
@@ -87,6 +176,7 @@ class Agent:
 
     THOUGHT_CONTEXT_LIMIT = 10
     PREFERRED_POOL_SIZE = 5
+    MAX_TOOL_RESULT_CHARS = 8000
     name: str = "Agent"
 
     def __init__(
@@ -118,6 +208,7 @@ class Agent:
         self._search_tool = search_tool
         self._news_tool = news_tool
         self._current_user: str | None = None
+        self._tool_result_text: list[str] = []
 
         self._tool_registry = ToolRegistry()
         for tool in self.tools:
@@ -211,6 +302,7 @@ class Agent:
         context: str | None = None,
     ) -> ControllerResponse:
         """Run the agentic loop — prompt in, response out."""
+        self._tool_result_text = []
         messages = self._build_messages(prompt, history, system_prompt, context=context)
         tools = self._tool_registry.get_ollama_tools()
         steps = max_steps if max_steps is not None else self.max_steps
@@ -265,12 +357,35 @@ class Agent:
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
                     break
+                # If every tool call so far has failed and there have been at least
+                # two, abort early rather than letting the model hallucinate from
+                # nothing. A single failure gets one more chance — the model sees
+                # the error and may produce text or try a different query.
+                if len(tool_call_records) >= 2 and all(r.failed for r in tool_call_records):
+                    failed_tools = sorted({r.tool for r in tool_call_records})
+                    logger.warning(
+                        "All %d tool call(s) failed — aborting: %s",
+                        len(tool_call_records),
+                        ", ".join(failed_tools),
+                    )
+                    return ControllerResponse(
+                        answer=PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(
+                            tools=", ".join(failed_tools)
+                        ),
+                        tool_calls=tool_call_records,
+                    )
+                # Reset empty retry counter so the synthesis step gets a retry even if
+                # a previous intermediate step already consumed it.
+                empty_retries = 0
                 continue
 
             if await self.handle_text_step(response, messages, step, is_final_step):
                 continue
 
-            if not response.content.strip() and empty_retries == 0:
+            # Strip think tags before checking emptiness — model may return only
+            # <think>...</think> with no body text, which would bypass the empty check.
+            effective_content, _ = _strip_think_tags(response.content.strip())
+            if not effective_content and empty_retries == 0:
                 empty_retries += 1
                 logger.warning(
                     "Model returned empty content on step %d/%d; requesting text output",
@@ -278,9 +393,21 @@ class Agent:
                     steps,
                 )
                 messages.append(response.message.to_input_message())
-                messages.append(
-                    {"role": MessageRole.USER, "content": "Please provide your response."}
-                )
+                if len(tool_call_records) >= _TOOL_RESULT_TRUNCATION_THRESHOLD:
+                    logger.warning(
+                        "Truncating tool results before retry (preceding_tool_calls=%d)",
+                        len(tool_call_records),
+                    )
+                    messages = self._truncate_tool_messages(messages)
+                    nudge = _build_strong_nudge(messages)
+                elif tool_call_records:
+                    nudge = (
+                        "You've completed your research. Please synthesize your findings "
+                        "and provide a helpful response."
+                    )
+                else:
+                    nudge = "Please provide your response."
+                messages.append({"role": MessageRole.USER, "content": nudge})
                 if not is_final_step:
                     continue
                 # On the final step, retry directly — can't extend a for-range loop
@@ -342,7 +469,12 @@ class Agent:
         return False
 
     async def after_step(self, step_records: list[ToolCallRecord], messages: list[dict]) -> None:
-        """Hook called after each step's tool calls. Override in subclasses."""
+        """Capture tool result text for URL validation. Override in subclasses (call super)."""
+        for msg in messages:
+            if msg.get("role") == MessageRole.TOOL:
+                content = msg.get("content", "")
+                if content:
+                    self._tool_result_text.append(content)
 
     def should_stop_loop(self, step_records: list[ToolCallRecord]) -> bool:
         """Check if the loop should stop early. Override in subclasses."""
@@ -376,6 +508,22 @@ class Agent:
 
         return response
 
+    @staticmethod
+    def _truncate_tool_messages(messages: list[dict]) -> list[dict]:
+        """Truncate tool result messages to reduce context size before retrying.
+
+        Called when many preceding tool calls may have saturated the model's
+        context window, causing an empty response on the synthesis step.
+        """
+        result = []
+        for msg in messages:
+            if msg.get("role") == MessageRole.TOOL:
+                content = msg.get("content", "")
+                if len(content) > _TOOL_RESULT_MAX_CHARS:
+                    msg = {**msg, "content": content[:_TOOL_RESULT_MAX_CHARS] + "... [truncated]"}
+            result.append(msg)
+        return result
+
     def _build_final_response(
         self,
         response,
@@ -392,7 +540,12 @@ class Agent:
                 self._model_client.model,
                 len(tool_call_records),
             )
-            return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
+            fallback = (
+                PennyResponse.FALLBACK_RESPONSE
+                if tool_call_records
+                else PennyResponse.AGENT_EMPTY_RESPONSE
+            )
+            return ControllerResponse(answer=fallback)
 
         thinking = response.thinking or response.message.thinking
 
@@ -407,7 +560,14 @@ class Agent:
 
         if not content:
             logger.error("Model returned empty content after stripping think tags!")
-            return ControllerResponse(answer=PennyResponse.AGENT_EMPTY_RESPONSE)
+            fallback = (
+                PennyResponse.FALLBACK_RESPONSE
+                if tool_call_records
+                else PennyResponse.AGENT_EMPTY_RESPONSE
+            )
+            return ControllerResponse(answer=fallback)
+
+        content = _clean_malformed_urls(content)
 
         if source_urls and "http" not in content:
             content += "\n\n" + source_urls[0]
@@ -505,17 +665,32 @@ class Agent:
 
         if tool_result.error:
             result_str = f"Error: {tool_result.error}"
-            logger.debug("Tool result: %s", result_str[:200])
+            record.failed = True
+            logger.debug("Tool result (failed): %s", result_str[:200])
             return result_str, record, [], None
 
         if isinstance(tool_result.result, SearchResult):
             result_str, urls, image = self._format_search_result(tool_result.result)
+            result_str = self._truncate_tool_result(result_str)
+            record.failed = _is_tool_result_failed(result_str)
             logger.debug("Tool result: %s", result_str[:200])
             return result_str, record, urls, image
 
-        result_str = str(tool_result.result)
+        result_str = self._truncate_tool_result(str(tool_result.result))
+        record.failed = _is_tool_result_failed(result_str)
         logger.debug("Tool result: %s", result_str[:200])
         return result_str, record, [], None
+
+    def _truncate_tool_result(self, result_str: str) -> str:
+        """Truncate tool result to MAX_TOOL_RESULT_CHARS to prevent context saturation."""
+        if len(result_str) <= self.MAX_TOOL_RESULT_CHARS:
+            return result_str
+        logger.warning(
+            "Tool result truncated from %d to %d chars to prevent context saturation",
+            len(result_str),
+            self.MAX_TOOL_RESULT_CHARS,
+        )
+        return result_str[: self.MAX_TOOL_RESULT_CHARS] + " [truncated]"
 
     @staticmethod
     def _make_call_key(tool_name: str, arguments: dict) -> tuple[str, ...]:
@@ -532,6 +707,34 @@ class Agent:
             sources = "\n".join(urls)
             text += f"\n\nSources:\n{sources}"
         return text, urls, result.image_base64
+
+    # ── URL validation ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_urls(text: str) -> list[str]:
+        """Extract all URLs from text (both markdown links and bare URLs)."""
+        md_urls = [m.group(2) for m in _MARKDOWN_LINK_URL_PATTERN.finditer(text)]
+        bare_urls = [m.group(1) for m in _BARE_URL_PATTERN.finditer(text)]
+        seen: set[str] = set()
+        urls: list[str] = []
+        for url in md_urls + bare_urls:
+            cleaned = url.rstrip(".,;:!?\"')>}]")
+            if cleaned not in seen:
+                seen.add(cleaned)
+                urls.append(cleaned)
+        return urls
+
+    @classmethod
+    def _find_hallucinated_urls(cls, text: str, source_text: str) -> list[str]:
+        """Return URLs in text that don't appear verbatim in the source text."""
+        urls = cls._extract_urls(text)
+        if not urls:
+            return []
+        return [url for url in urls if url not in source_text]
+
+    def _get_source_text(self) -> str:
+        """Combined tool result text from the current run for URL validation."""
+        return "\n".join(self._tool_result_text)
 
     # ── Message building ─────────────────────────────────────────────────
 
@@ -636,40 +839,60 @@ class Agent:
             return None
 
     def _build_history_context(self, sender: str) -> str | None:
-        """Build daily conversation history with dates and topic sub-bullets.
+        """Build conversation history with weekly summaries and daily details.
 
         Format:
-            Mar 1:
-            - topic1
-            - topic2
+            Week of Mar 3:
+            - weekly theme 1
+            Mar 15:
+            - daily topic 1
             Today:
-            - topic3
+            - daily topic 2
         """
         try:
-            limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
-            entries = self.db.history.get_recent(
-                sender, PennyConstants.HistoryDuration.DAILY, limit=limit
-            )
-            if not entries:
-                return None
-
-            today = self._midnight_today()
             lines: list[str] = []
-            for entry in entries:
-                is_today = entry.period_start == today
-                date_label = "Today" if is_today else entry.period_start.strftime("%b %-d")
-                topics = self._extract_topic_lines(entry.topics)
-                if topics:
-                    lines.append(f"{date_label}:")
-                    lines.extend(f"- {t}" for t in topics)
+            lines.extend(self._format_weekly_entries(sender))
+            lines.extend(self._format_daily_entries(sender))
             if not lines:
                 return None
 
-            logger.debug("Built history context (%d entries)", len(entries))
+            logger.debug("Built history context")
             return "## Conversation History\n" + "\n".join(lines)
         except Exception:
             logger.warning("History context retrieval failed, proceeding without")
             return None
+
+    def _format_weekly_entries(self, sender: str) -> list[str]:
+        """Format weekly history entries with 'Week of' date labels."""
+        weekly_limit = int(self.config.runtime.WEEKLY_CONTEXT_LIMIT)
+        entries = self.db.history.get_recent(
+            sender, PennyConstants.HistoryDuration.WEEKLY, limit=weekly_limit
+        )
+        lines: list[str] = []
+        for entry in entries:
+            date_label = f"Week of {entry.period_start.strftime('%b %-d')}"
+            topics = self._extract_topic_lines(entry.topics)
+            if topics:
+                lines.append(f"{date_label}:")
+                lines.extend(f"- {t}" for t in topics)
+        return lines
+
+    def _format_daily_entries(self, sender: str) -> list[str]:
+        """Format daily history entries with date labels."""
+        daily_limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
+        entries = self.db.history.get_recent(
+            sender, PennyConstants.HistoryDuration.DAILY, limit=daily_limit
+        )
+        today = self._midnight_today()
+        lines: list[str] = []
+        for entry in entries:
+            is_today = entry.period_start == today
+            date_label = "Today" if is_today else entry.period_start.strftime("%b %-d")
+            topics = self._extract_topic_lines(entry.topics)
+            if topics:
+                lines.append(f"{date_label}:")
+                lines.extend(f"- {t}" for t in topics)
+        return lines
 
     @staticmethod
     def _extract_topic_lines(topics: str) -> list[str]:
