@@ -39,16 +39,15 @@ while true; do
 
     log "New commits on origin/main: ${LAST_REF:0:7} -> ${CURRENT:0:7}"
 
-    # Update working tree (so override volume mounts serve current code)
-    if ! git merge --ff-only origin/main; then
-        log "Fast-forward failed, resetting to origin/main"
-        git reset --hard origin/main
-    fi
-
-    # Rebuild and restart only the penny container
+    # Build penny image from origin/main via git archive (never touches working tree)
     log "Rebuilding and restarting penny..."
     GIT_MSG=$(git log -1 --pretty=%B "$CURRENT" | tr '\n' ' ' | sed 's/ *$//')
-    if GIT_COMMIT="${CURRENT:0:7}" GIT_COMMIT_MESSAGE="$GIT_MSG" $COMPOSE up -d --build penny; then
+    if git archive origin/main -- penny/ \
+        | docker build -t penny:latest \
+            --build-arg "GIT_COMMIT=${CURRENT:0:7}" \
+            --build-arg "GIT_COMMIT_MESSAGE=$GIT_MSG" \
+            -f penny/Dockerfile - \
+        && $COMPOSE up -d --no-build penny; then
         log "penny rebuilt and restarted"
     else
         log "Restart failed, will retry next cycle"
