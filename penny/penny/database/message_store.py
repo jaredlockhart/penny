@@ -467,18 +467,6 @@ class MessageStore:
         except Exception as e:
             logger.error("Failed to mark messages as processed: %s", e)
 
-    def mark_reaction_processed(self, message_id: int) -> None:
-        """Mark a reaction message as processed."""
-        try:
-            with self._session() as session:
-                msg = session.get(MessageLog, message_id)
-                if msg and msg.is_reaction:
-                    msg.processed = True
-                    session.add(msg)
-                    session.commit()
-        except Exception as e:
-            logger.error("Failed to mark reaction as processed: %s", e)
-
     # --- Aggregate queries ---
 
     def count(self) -> int:

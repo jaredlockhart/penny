@@ -33,7 +33,6 @@ class SearchLog(SQLModel, table=True):
     query: str = Field(index=True)
     response: str
     duration_ms: int | None = None
-    extracted: bool = Field(default=False)  # True after entity extraction processing
     trigger: str = Field(default="user_message", index=True)  # SearchTrigger enum value
 
 

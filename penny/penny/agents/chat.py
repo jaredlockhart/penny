@@ -21,13 +21,12 @@ class ChatAgent(Agent):
 
     Context matrix:
 
-        Mode     | Entities | History | Thought    | Turns | Tools | Steps
-        -------- | -------- | ------- | ---------- | ----- | ----- | -----
-        User Msg | msg      | 7d      | 1 notified | yes   | all   | 5
-        Vision   | msg      | 7d      | 1 notified | yes   | none  | 1
+        Mode     | History | Thought    | Turns | Tools | Steps
+        -------- | ------- | ---------- | ----- | ----- | -----
+        User Msg | 7d      | 1 notified | yes   | all   | 5
+        Vision   | 7d      | 1 notified | yes   | none  | 1
 
-    All modes include profile (user name). Entity anchor column
-    shows what drives the embedding similarity search.
+    All modes include profile (user name).
 
     Conv turns only include messages since the last history rollup's
     period_end, so rolled-up content isn't duplicated as raw turns.
@@ -46,19 +45,15 @@ class ChatAgent(Agent):
         content: str,
         sender: str,
         images: list[str] | None = None,
-        entity_anchor: str | None = None,
     ) -> ControllerResponse:
         """Handle an incoming message — summary method.
 
         Builds context, processes images, runs agentic loop.
-        entity_anchor overrides what drives entity similarity search
-        (e.g. thought content for notifications).
         """
         self._current_user = sender
-        self._pending_content = entity_anchor or content
         try:
             content, has_images = await self._process_images(content, images)
-            context_text = await self.get_context(sender)
+            context_text = await self.get_context(sender, content)
             history = self.get_history(sender)
 
             if has_images:
@@ -81,20 +76,13 @@ class ChatAgent(Agent):
             )
         finally:
             self._current_user = None
-            self._pending_content = None
 
     # ── Hooks ─────────────────────────────────────────────────────────────
 
-    async def get_context(self, user: str) -> str:
-        """Full context — profile, history, thought.
-
-        Entity context disabled while evaluating usefulness.
-        """
-        content = self._pending_content
+    async def get_context(self, user: str, content: str | None = None) -> str:
+        """Full context — profile, history, thought."""
         sections: list[str | None] = [
             self._build_profile_context(user, content),
-            # TODO: entity context disabled while evaluating usefulness
-            # await self._build_entity_context(user, content),
             self._build_history_context(user),
             self._build_thought_context(user),
         ]

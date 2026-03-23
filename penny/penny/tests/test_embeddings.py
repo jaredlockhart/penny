@@ -4,14 +4,16 @@ import math
 
 import ollama
 import pytest
+from similarity.embeddings import (
+    find_similar,
+    token_containment_ratio,
+    tokenize_entity_name,
+)
 
 from penny.ollama.embeddings import (
     cosine_similarity,
     deserialize_embedding,
-    find_similar,
     serialize_embedding,
-    token_containment_ratio,
-    tokenize_entity_name,
 )
 
 

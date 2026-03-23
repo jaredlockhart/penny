@@ -36,15 +36,6 @@ class ToolCallRecord(BaseModel):
     )
 
 
-class GeneratedQuery(BaseModel):
-    """Schema for LLM response: a single search query."""
-
-    query: str = Field(
-        default="",
-        description="Search query to execute, or empty string if research is complete",
-    )
-
-
 class ControllerResponse(BaseModel):
     """Response from the agentic controller."""
 

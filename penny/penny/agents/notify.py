@@ -48,11 +48,11 @@ class NotifyAgent(Agent):
 
     Context matrix — each mode gets tailored context:
 
-        Mode     | Entities | History | Thought    | Turns | Tools | Steps
-        -------- | -------- | ------- | ---------- | ----- | ----- | -----
-        Checkin  | -        | 7d      | 1 notified | yes   | none  | 1
-        News     | -        | 7d      | -          | -     | all   | 5
-        Thought  | thought  | 7d      | the thought| -     | all   | 5
+        Mode     | History | Thought    | Turns | Tools | Steps
+        -------- | ------- | ---------- | ----- | ----- | -----
+        Checkin  | 7d      | 1 notified | yes   | none  | 1
+        News     | 7d      | -          | -     | news  | 5
+        Thought  | 7d      | the thought| -     | all   | 5
 
     All modes include profile (user name).
     """
