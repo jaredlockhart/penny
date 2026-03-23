@@ -18,7 +18,7 @@ from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
 
-# Probability of a free-thinking cycle (no seed, no context, just vibes)
+# Probability of a free-thinking cycle (no seed topic — Penny picks her own)
 FREE_THINKING_PROBABILITY = 1 / 3
 
 # Minimum word count for a thought to be stored (filters model planning text)
@@ -31,15 +31,9 @@ class ThinkingAgent(Agent):
     Each cycle picks ONE random seed topic from history
     to focus on, keeping thinking rotating across interests.
 
-    Context matrix — each mode gets tailored context:
-
-        Mode       | Thoughts | Dislikes | Tools       | Steps
-        ---------- | -------- | -------- | ----------- | -----
-        Seeded     | 10       | yes      | search+news | 5
-        Browse News| 10       | yes      | search+news | 5
-        Free Think | -        | -        | search+news | 5
-
-    All modes include profile (user name) except free think.
+    All modes get the same context: profile, recent thoughts
+    (scoped by preference_id), and dislikes. The only difference
+    is the initial prompt (seed topic vs free exploration).
 
     Thinking loop::
 
@@ -66,7 +60,6 @@ class ThinkingAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.max_steps = int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
         self._inner_monologue: list[str] = []
-        self._free_thinking: bool = False
         self._seed_topic: str | None = None
         self._seed_pref_id: int | None = None
 
@@ -75,13 +68,11 @@ class ThinkingAgent(Agent):
     async def get_prompt(self, user: str) -> str | None:
         """Pick a seed topic or let Penny free-think (~1/3 of the time)."""
         self._inner_monologue = []
-        self._free_thinking = False
         self._seed_topic = None
         self._seed_pref_id = None
 
         if random.random() < FREE_THINKING_PROBABILITY:
             logger.info("Free thinking cycle for %s", user)
-            self._free_thinking = True
             return Prompt.THINKING_FREE
 
         threshold = int(self.config.runtime.PREFERENCE_MENTION_THRESHOLD)
@@ -97,14 +88,11 @@ class ThinkingAgent(Agent):
         return Prompt.THINKING_SEED.format(seed=pref.content)
 
     async def get_context(self, user: str) -> str:
-        """Slim context — profile, entities (seed-anchored), thoughts, and dislikes.
+        """Slim context — profile, thoughts, and dislikes.
 
-        Free-thinking cycles get no context so Penny explores freely.
-        Browse news skips entities (no meaningful anchor).
-        Seeded cycles anchor entities to the seed topic.
+        All modes (seeded, free, browse news) get the same context shape:
+        profile, recent thoughts scoped to the mode, and dislikes.
         """
-        if self._free_thinking:
-            return ""
         sections: list[str | None] = [
             self._build_profile_context(user, None),
             self._build_thought_context(user),
@@ -113,14 +101,11 @@ class ThinkingAgent(Agent):
         return "\n\n".join(s for s in sections if s)
 
     def _build_thought_context(self, sender: str) -> str | None:
-        """Build thought context scoped to the current seed preference.
+        """Build thought context scoped to the current preference_id.
 
-        Only prior thoughts about the same preference are relevant —
-        they show what Penny already found so she can dig deeper or
-        find new angles instead of repeating herself.
+        Shows what Penny already explored so she avoids repeating herself.
+        Works for both seeded (preference_id=<int>) and free (preference_id=None).
         """
-        if not self._seed_pref_id:
-            return None
         try:
             thoughts = self.db.thoughts.get_recent_by_preference(
                 sender, self._seed_pref_id, limit=self.THOUGHT_CONTEXT_LIMIT
@@ -128,7 +113,7 @@ class ThinkingAgent(Agent):
             if not thoughts:
                 return None
             lines = [t.content for t in thoughts]
-            logger.debug("Built preference-scoped thought context (%d thoughts)", len(thoughts))
+            logger.debug("Built thought context (%d thoughts)", len(thoughts))
             return "## Recent Background Thinking\n" + "\n\n".join(lines)
         except Exception:
             logger.warning("Thought context retrieval failed, proceeding without")
@@ -202,8 +187,8 @@ class ThinkingAgent(Agent):
         return report
 
     async def _is_duplicate_thought(self, user: str, report: str) -> bool:
-        """Check if report is too similar to a same-preference thought via embedding similarity."""
-        if not self._embedding_model_client or not self._seed_pref_id:
+        """Check if report is too similar to a same-scope thought via embedding similarity."""
+        if not self._embedding_model_client:
             return False
         threshold = float(self.config.runtime.THOUGHT_DEDUP_EMBEDDING_THRESHOLD)
         report_vec = await embed_text(self._embedding_model_client, report)
@@ -248,8 +233,7 @@ class ThinkingAgent(Agent):
             return True
         content = response.content.strip()
         messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=content).to_dict())
-        if not self._free_thinking:
-            await self._rebuild_system_prompt(messages)
+        await self._rebuild_system_prompt(messages)
         nudge = "dig deeper into what you just found"
         messages.append(ChatMessage(role=MessageRole.USER, content=nudge).to_dict())
         return True

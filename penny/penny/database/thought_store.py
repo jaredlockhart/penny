@@ -53,13 +53,16 @@ class ThoughtStore:
             return thoughts
 
     def get_recent_by_preference(
-        self, user: str, preference_id: int, limit: int | None = None
+        self, user: str, preference_id: int | None, limit: int | None = None
     ) -> list[Thought]:
-        """Get thoughts for a user seeded by a specific preference, oldest first."""
+        """Get thoughts for a user scoped by preference_id, oldest first.
+
+        Works for both seeded (preference_id=<int>) and free (preference_id=None) thoughts.
+        """
         with self._session() as session:
             query = (
                 select(Thought)
-                .where(Thought.user == user, Thought.preference_id == preference_id)
+                .where(Thought.user == user, Thought.preference_id == preference_id)  # noqa: E711
                 .order_by(Thought.created_at.desc())  # type: ignore[unresolved-attribute]
             )
             if limit is not None:
