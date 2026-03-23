@@ -5,6 +5,14 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
+class ZohoCredentials(BaseModel):
+    """Zoho OAuth credentials for API access."""
+
+    client_id: str
+    client_secret: str
+    refresh_token: str
+
+
 class ZohoSession(BaseModel):
     """Cached Zoho OAuth session data."""
 

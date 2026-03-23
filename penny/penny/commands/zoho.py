@@ -70,7 +70,7 @@ class ZohoCommand(Command):
             ]
 
             agent = Agent(
-                system_prompt=Prompt.EMAIL_SYSTEM_PROMPT,
+                system_prompt=Prompt.ZOHO_SYSTEM_PROMPT,
                 model_client=context.model_client,
                 tools=tools,
                 db=context.db,

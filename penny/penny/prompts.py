@@ -59,6 +59,23 @@ class Prompt:
         "Use bullet points when summarizing multiple emails or findings."
     )
 
+    ZOHO_SYSTEM_PROMPT = (
+        "You are searching the user's Zoho email to answer their question. "
+        "You have five tools: search_emails, list_emails, list_folders, "
+        "read_emails, and draft_email.\n\n"
+        "Strategy:\n"
+        "1. Search for relevant emails using search_emails, or browse a folder "
+        "with list_emails\n"
+        "2. Use list_folders to discover available folders if needed\n"
+        "3. Read promising emails with read_emails (pass all relevant IDs at once)\n"
+        "4. If the user asks you to draft a reply, use draft_email to save it "
+        "to their Drafts folder for review\n"
+        "5. Synthesize a clear, concise answer\n\n"
+        "Be concise. Include specific dates, names, and details. "
+        "Use **bold** for key terms, dates, and names. "
+        "Use bullet points when summarizing multiple emails or findings."
+    )
+
     EMAIL_SUMMARIZE_PROMPT = (
         'The user asked: "{query}"\n\n'
         "Extract the key information from these emails that is relevant to the user's question. "

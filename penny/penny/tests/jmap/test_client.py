@@ -8,7 +8,8 @@ import httpx
 import pytest
 
 from penny.config_params import RUNTIME_CONFIG_PARAMS
-from penny.jmap.client import JmapClient, _strip_html
+from penny.html_utils import strip_html
+from penny.jmap.client import JmapClient
 
 _JMAP_TIMEOUT = float(RUNTIME_CONFIG_PARAMS["JMAP_REQUEST_TIMEOUT"].default)
 _EMAIL_MAX_LENGTH = int(RUNTIME_CONFIG_PARAMS["EMAIL_BODY_MAX_LENGTH"].default)
@@ -259,9 +260,9 @@ async def test_read_emails_not_found():
     await client.close()
 
 
-def test_strip_html():
+def teststrip_html():
     """Test HTML tag stripping utility."""
-    assert _strip_html("<p>Hello <b>world</b></p>") == "Hello world"
-    assert _strip_html("no tags here") == "no tags here"
-    assert _strip_html("<div><span>nested</span></div>") == "nested"
-    assert _strip_html("") == ""
+    assert strip_html("<p>Hello <b>world</b></p>") == "Hello world"
+    assert strip_html("no tags here") == "no tags here"
+    assert strip_html("<div><span>nested</span></div>") == "nested"
+    assert strip_html("") == ""

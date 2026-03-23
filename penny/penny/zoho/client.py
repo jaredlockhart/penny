@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import html.parser
 import logging
+import re
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
 from penny.constants import PennyConstants
+from penny.html_utils import strip_html
 from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary
 from penny.zoho.models import ZohoAccount, ZohoFolder, ZohoSession
 
@@ -17,26 +19,24 @@ logger = logging.getLogger(__name__)
 
 EMAIL_SEARCH_LIMIT = 10
 
+# Regex for Zoho date format DD-MMM-YYYY (e.g., 12-Sep-2017)
+_ZOHO_DATE_RE = re.compile(r"^\d{1,2}-[A-Za-z]{3}-\d{4}$")
 
-class _HTMLTextExtractor(html.parser.HTMLParser):
-    """Simple HTML tag stripper."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        self._parts.append(data)
-
-    def get_text(self) -> str:
-        return "".join(self._parts)
-
-
-def _strip_html(html_text: str) -> str:
-    """Strip HTML tags and return plain text."""
-    extractor = _HTMLTextExtractor()
-    extractor.feed(html_text)
-    return extractor.get_text()
+# Month abbreviations for ISO 8601 → Zoho date conversion
+_MONTH_ABBREVS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+]
 
 
 class ZohoClient:
@@ -246,26 +246,28 @@ class ZohoClient:
         """
         search_parts = []
         if text:
-            # Use 'entire:' for full-text search across all email content
-            # Quote if contains spaces for exact phrase matching
-            if " " in text:
-                search_parts.append(f'entire:"{text}"')
+            escaped = text.replace('"', "")
+            if " " in escaped:
+                search_parts.append(f'entire:"{escaped}"')
             else:
-                search_parts.append(f"entire:{text}")
+                search_parts.append(f"entire:{escaped}")
         if from_addr:
-            search_parts.append(f"sender:{from_addr}")
+            search_parts.append(f"sender:{from_addr.replace('"', '')}")
         if subject:
-            # Quote subjects containing spaces or special characters
-            if " " in subject or ":" in subject:
-                search_parts.append(f'subject:"{subject}"')
+            escaped = subject.replace('"', "")
+            if " " in escaped or ":" in escaped:
+                search_parts.append(f'subject:"{escaped}"')
             else:
-                search_parts.append(f"subject:{subject}")
-        # Note: Zoho date format is DD-MMM-YYYY (e.g., 12-Sep-2017)
-        # Skip date filters if format doesn't match to avoid empty results
-        if after and self._is_valid_zoho_date(after):
-            search_parts.append(f"fromDate:{after}")
-        if before and self._is_valid_zoho_date(before):
-            search_parts.append(f"toDate:{before}")
+                search_parts.append(f"subject:{escaped}")
+        # Zoho date format is DD-MMM-YYYY — convert from ISO 8601 if needed
+        if after:
+            zoho_date = self._to_zoho_date(after)
+            if zoho_date:
+                search_parts.append(f"fromDate:{zoho_date}")
+        if before:
+            zoho_date = self._to_zoho_date(before)
+            if zoho_date:
+                search_parts.append(f"toDate:{zoho_date}")
 
         # Join with :: for AND logic between conditions
         search_key = "::".join(search_parts) if search_parts else "newMails"
@@ -304,27 +306,10 @@ class ZohoClient:
         )
 
     def _make_email_id(self, e: dict[str, Any]) -> str:
-        """Create an ID from the message URI or folderId:messageId."""
-        # Prefer URI as it's the canonical way to fetch the message
-        uri = e.get("URI", "")
-        if uri:
-            return uri
-        # Fallback to folder:message format
+        """Create a folderId:messageId composite ID."""
         folder_id = e.get("folderId", "")
         message_id = e.get("messageId", "")
         return f"{folder_id}:{message_id}"
-
-    def _parse_email_id(self, email_id: str) -> tuple[str | None, str]:
-        """Parse an email ID into (uri_or_none, folder:message_or_id).
-
-        If email_id is a URI, returns (uri, "").
-        If email_id is folder:message format, returns (None, email_id).
-        """
-        if email_id.startswith("http"):
-            return email_id, ""
-        if ":" in email_id:
-            return None, email_id
-        return None, email_id
 
     def _format_timestamp(self, ts: int | str) -> str:
         """Format a Unix timestamp (ms) to ISO 8601."""
@@ -332,8 +317,6 @@ class ZohoClient:
             return ""
         try:
             ts_int = int(ts)
-            from datetime import UTC, datetime
-
             dt = datetime.fromtimestamp(ts_int / 1000, tz=UTC)
             return dt.isoformat()
         except ValueError, TypeError:
@@ -342,11 +325,33 @@ class ZohoClient:
     @staticmethod
     def _is_valid_zoho_date(date_str: str) -> bool:
         """Check if date string is in Zoho format DD-MMM-YYYY (e.g., 12-Sep-2017)."""
-        import re
+        return bool(_ZOHO_DATE_RE.match(date_str))
 
-        # Zoho expects DD-MMM-YYYY format
-        pattern = r"^\d{1,2}-[A-Za-z]{3}-\d{4}$"
-        return bool(re.match(pattern, date_str))
+    @staticmethod
+    def _convert_to_zoho_date(date_str: str) -> str | None:
+        """Convert ISO 8601 date string to Zoho DD-MMM-YYYY format.
+
+        Accepts formats like 2026-01-15, 2026-01-15T00:00:00Z, etc.
+        Returns None if parsing fails.
+        """
+        try:
+            # Strip time/timezone suffix for simple date parsing
+            date_part = date_str.split("T")[0]
+            parts = date_part.split("-")
+            if len(parts) != 3:
+                return None
+            year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+            if not (1 <= month <= 12):
+                return None
+            return f"{day}-{_MONTH_ABBREVS[month - 1]}-{year}"
+        except ValueError, IndexError:
+            return None
+
+    def _to_zoho_date(self, date_str: str) -> str | None:
+        """Accept Zoho DD-MMM-YYYY or ISO 8601 date, return Zoho format or None."""
+        if self._is_valid_zoho_date(date_str):
+            return date_str
+        return self._convert_to_zoho_date(date_str)
 
     async def read_emails(self, email_ids: list[str]) -> list[EmailDetail]:
         """Fetch full email bodies by IDs."""
@@ -397,11 +402,11 @@ class ZohoClient:
         resp.raise_for_status()
         content_data = resp.json().get("data", {})
 
-        text_body = content_data.get("content", "")
+        text_body = content_data.get("content") or ""
 
-        # Strip HTML if content appears to be HTML
-        if text_body and "<" in text_body:
-            text_body = _strip_html(text_body)
+        # Strip HTML if content contains HTML tags
+        if text_body and re.search(r"<[a-zA-Z][^>]*>", text_body):
+            text_body = strip_html(text_body)
 
         # Truncate long bodies
         if len(text_body) > self._max_body_length:
