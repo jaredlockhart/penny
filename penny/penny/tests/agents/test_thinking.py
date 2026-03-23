@@ -41,6 +41,7 @@ def _seed_thinking(penny):
         valence="positive",
         source_period_start=datetime(2026, 3, 3),
         source_period_end=datetime(2026, 3, 4),
+        source=PennyConstants.PreferenceSource.MANUAL,
     )
 
 
@@ -249,6 +250,7 @@ async def test_thinking_marks_preference_and_rotates(
             valence="positive",
             source_period_start=datetime(2026, 3, 3),
             source_period_end=datetime(2026, 3, 4),
+            source=PennyConstants.PreferenceSource.MANUAL,
         )
         pref_b = penny.db.preferences.add(
             user=TEST_SENDER,
@@ -256,6 +258,7 @@ async def test_thinking_marks_preference_and_rotates(
             valence="positive",
             source_period_start=datetime(2026, 3, 3),
             source_period_end=datetime(2026, 3, 4),
+            source=PennyConstants.PreferenceSource.MANUAL,
         )
         assert pref_a is not None and pref_b is not None
 
@@ -796,3 +799,104 @@ class TestSummaryUrlValidation:
         source = "URL: https://example.com/article"
         report = "Check https://example.com/article."
         assert ThinkingAgent._find_hallucinated_urls(report, source) == []
+
+
+# ── Mention threshold ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_thinking_skips_extracted_preference_below_threshold(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Extracted preferences below mention threshold are not used as thinking seeds."""
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=1,
+    )
+
+    requests_seen: list[dict] = []
+
+    def handler(request, count):
+        requests_seen.append(request)
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello"
+        )
+
+        # Add an extracted preference with mention_count=1 (below default threshold of 2)
+        penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="casual topic",
+            valence="positive",
+            source_period_start=datetime(2026, 3, 3),
+            source_period_end=datetime(2026, 3, 4),
+            source=PennyConstants.PreferenceSource.EXTRACTED,
+            mention_count=1,
+        )
+
+        await penny.thinking_agent.execute()
+
+        # Should fall back to browse news (no eligible seed preferences)
+        user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
+        first_user = user_msgs[0]["content"]
+        assert "casual topic" not in first_user
+
+
+@pytest.mark.asyncio
+async def test_thinking_uses_extracted_preference_at_threshold(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Extracted preferences at/above mention threshold ARE used as thinking seeds."""
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=1,
+    )
+
+    requests_seen: list[dict] = []
+
+    def handler(request, count):
+        requests_seen.append(request)
+        return mock_ollama._make_text_response(request, "ok")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello"
+        )
+
+        # Add an extracted preference with mention_count=3 (meets default threshold of 2)
+        penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="repeated interest topic",
+            valence="positive",
+            source_period_start=datetime(2026, 3, 3),
+            source_period_end=datetime(2026, 3, 4),
+            source=PennyConstants.PreferenceSource.EXTRACTED,
+            mention_count=3,
+        )
+
+        await penny.thinking_agent.execute()
+
+        # Should use the preference as a seed
+        user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
+        first_user = user_msgs[0]["content"]
+        assert "repeated interest topic" in first_user

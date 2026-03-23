@@ -144,6 +144,8 @@ class Preference(SQLModel, table=True):
     source_period_end: datetime  # End of source conversation period
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     last_thought_at: datetime | None = None  # When this preference was last used as a thinking seed
+    mention_count: int = Field(default=1)  # Times this topic was mentioned in conversation
+    source: str = Field(default="extracted", index=True)  # PreferenceSource enum value
 
 
 class ConversationHistory(SQLModel, table=True):

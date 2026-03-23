@@ -53,11 +53,13 @@ class SearchTool(Tool):
         db=None,
         *,
         default_trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
+        max_queries: int | None = None,
     ):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
         self.redact_terms: list[str] = []
         self.default_trigger = default_trigger
+        self._max_queries = max_queries or self.MAX_QUERIES
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -82,7 +84,7 @@ class SearchTool(Tool):
             trigger: SearchTrigger value for log_search (default: user_message)
         """
         queries: list[str] = kwargs.get("queries") or [kwargs["query"]]
-        queries = queries[: self.MAX_QUERIES]
+        queries = queries[: self._max_queries]
         trigger: str = kwargs.get("trigger", self.default_trigger)
 
         tasks = [self._execute_single_query(q, trigger) for q in queries]

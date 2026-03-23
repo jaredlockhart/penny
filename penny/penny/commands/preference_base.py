@@ -60,6 +60,7 @@ class PreferenceAddCommand(PreferenceBaseCommand):
             valence=self.valence,
             source_period_start=now,
             source_period_end=now,
+            source=PennyConstants.PreferenceSource.MANUAL,
         )
         label = self._valence_label()
         return CommandResult(text=PennyResponse.PREF_ADDED.format(content=content, valence=label))

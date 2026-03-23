@@ -87,7 +87,8 @@ class ThinkingAgent(Agent):
             self._free_thinking = True
             return Prompt.THINKING_FREE
 
-        pool = self.db.preferences.get_least_recent_positive(user)
+        threshold = int(self.config.runtime.PREFERENCE_MENTION_THRESHOLD)
+        pool = self.db.preferences.get_least_recent_positive(user, mention_threshold=threshold)
         if not pool:
             logger.info("No preferences for %s, browsing news", user)
             return Prompt.THINKING_BROWSE_NEWS

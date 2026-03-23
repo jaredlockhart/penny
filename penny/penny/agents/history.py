@@ -16,6 +16,7 @@ from pydantic import Field as PydanticField
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
+from penny.database.models import Preference
 from penny.ollama.embeddings import deserialize_embedding, serialize_embedding
 from penny.ollama.similarity import DedupStrategy, is_embedding_duplicate
 from penny.prompts import Prompt
@@ -24,11 +25,15 @@ logger = logging.getLogger(__name__)
 
 
 class IdentifiedPreferenceTopics(BaseModel):
-    """Schema for pass 1: new preference topics found in conversation."""
+    """Schema for pass 1: preference topics found in conversation."""
 
-    topics: list[str] = PydanticField(
+    new: list[str] = PydanticField(
         default_factory=list,
-        description="New preference topics (3-10 words each)",
+        description="New preference topics not already known (3-10 words each)",
+    )
+    existing: list[str] = PydanticField(
+        default_factory=list,
+        description="Already-known preference content strings discussed in the conversation",
     )
 
 
@@ -217,10 +222,25 @@ class HistoryAgent(Agent):
     # ── Preference extraction ─────────────────────────────────────────────
 
     async def _extract_today_preferences(self, user: str) -> bool:
-        """Extract preferences from today's messages."""
-        day_start = self._midnight_today()
-        day_end = datetime.now(UTC).replace(tzinfo=None)
-        return await self._extract_preferences(user, day_start, day_end)
+        """Extract preferences from unprocessed messages only."""
+        messages = self.db.messages.get_unprocessed(user, limit=100)
+        reactions = self.db.messages.get_user_reactions(user, limit=100)
+        if not messages and not reactions:
+            return False
+
+        conversation = self._build_unprocessed_content(messages, reactions)
+        if not conversation:
+            return False
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+        did_work = await self._extract_preferences_from_content(
+            user, conversation, self._midnight_today(), now
+        )
+        if did_work:
+            message_ids = [m.id for m in messages if m.id is not None]
+            reaction_ids = [r.id for r in reactions if r.id is not None]
+            self.db.messages.mark_processed(message_ids + reaction_ids)
+        return did_work
 
     async def _extract_day_preferences(
         self, user: str, day_start: datetime, day_end: datetime
@@ -228,37 +248,81 @@ class HistoryAgent(Agent):
         """Extract preferences for a completed day (skip if already done)."""
         if self.db.preferences.exists_for_period(user, day_start):
             return
-        await self._extract_preferences(user, day_start, day_end)
+        conversation = self._build_conversation_content(user, day_start, day_end)
+        if conversation:
+            await self._extract_preferences_from_content(user, conversation, day_start, day_end)
 
-    async def _extract_preferences(self, user: str, start: datetime, end: datetime) -> bool:
+    async def _extract_preferences_from_content(
+        self, user: str, conversation: str, start: datetime, end: datetime
+    ) -> bool:
         """Two-pass preference extraction: identify topics, dedup, classify valence."""
         existing = self.db.preferences.get_for_user(user)
-        conversation = self._build_conversation_content(user, start, end)
-        if not conversation:
+
+        identified = await self._identify_preference_topics(conversation, existing)
+        if not identified:
             return False
 
-        topics = await self._identify_preference_topics(conversation, existing)
-        if not topics:
-            return False
+        bumped_ids = self._bump_existing_mentions(identified.existing, existing)
 
-        existing_items = [(p.content, p.embedding) for p in existing]
-        survivors = await self._dedup_preference_topics(topics, existing_items)
+        new_topics = self._filter_new_topics(identified, existing)
+        if not new_topics:
+            return bool(identified.existing)
+
+        survivors = await self._dedup_preference_topics(new_topics, existing, bumped_ids)
         if not survivors:
-            return False
+            return bool(identified.existing)
 
         survivor_topics = [topic for topic, _emb in survivors]
         classified = await self._classify_preference_valence(survivor_topics, conversation)
         if not classified:
-            return False
+            return bool(identified.existing)
 
         embedding_lookup = {topic.lower(): emb for topic, emb in survivors}
         self._store_classified_preferences(user, classified, start, end, embedding_lookup)
         return True
 
+    def _bump_existing_mentions(self, mentioned: list[str], existing: list[Preference]) -> set[int]:
+        """Increment mention_count for existing preferences the LLM recognized.
+
+        Returns set of preference IDs that were bumped (to avoid double-counting in dedup).
+        """
+        bumped: set[int] = set()
+        content_to_pref = {p.content.lower(): p for p in existing}
+        for name in mentioned:
+            pref = content_to_pref.get(name.strip().lower())
+            if pref and pref.id is not None:
+                self.db.preferences.increment_mention_count(pref.id)
+                bumped.add(pref.id)
+                logger.info("Preference '%s' mention count incremented", pref.content[:50])
+        return bumped
+
+    @staticmethod
+    def _filter_new_topics(
+        identified: IdentifiedPreferenceTopics, existing: list[Preference]
+    ) -> list[str]:
+        """Filter new topics to exclude anything already in existing or known preferences."""
+        existing_lower = {p.content.lower() for p in existing}
+        identified_existing_lower = {n.strip().lower() for n in identified.existing}
+        exclude = existing_lower | identified_existing_lower
+        return [t.strip() for t in identified.new if t.strip() and t.strip().lower() not in exclude]
+
     # ── Pass 1: topic identification ─────────────────────────────────────
 
+    def _build_unprocessed_content(self, messages: list, reactions: list) -> str | None:
+        """Build conversation text from pre-fetched unprocessed messages and reactions."""
+        if not messages and not reactions:
+            return None
+        parts: list[str] = []
+        if messages:
+            parts.append(self._format_messages(messages))
+        if reactions:
+            reaction_text = self._format_reactions(reactions)
+            if reaction_text:
+                parts.append(reaction_text)
+        return "\n\n".join(parts) if parts else None
+
     def _build_conversation_content(self, user: str, start: datetime, end: datetime) -> str | None:
-        """Build user-only conversation text for preference extraction.
+        """Build user-only conversation text for preference extraction (backfill path).
 
         Only includes incoming (user) messages and reactions — Penny's
         responses are excluded so the model doesn't extract Penny's
@@ -281,8 +345,10 @@ class HistoryAgent(Agent):
                 parts.append(reaction_text)
         return "\n\n".join(parts) if parts else None
 
-    async def _identify_preference_topics(self, conversation: str, existing: list) -> list[str]:
-        """Pass 1: ask model to identify new preference topics (no valence)."""
+    async def _identify_preference_topics(
+        self, conversation: str, existing: list
+    ) -> IdentifiedPreferenceTopics | None:
+        """Pass 1: ask model to identify new and existing preference topics."""
         known_context = self._build_known_preferences_context(existing)
         prompt = f"{Prompt.PREFERENCE_IDENTIFICATION_PROMPT}\n\n{conversation}"
         if known_context:
@@ -295,12 +361,11 @@ class HistoryAgent(Agent):
                 format=IdentifiedPreferenceTopics.model_json_schema(),
             )
             if not response.content or not response.content.strip():
-                return []
-            result = IdentifiedPreferenceTopics.model_validate_json(response.content)
-            return [t.strip() for t in result.topics if t.strip()]
+                return None
+            return IdentifiedPreferenceTopics.model_validate_json(response.content)
         except Exception as e:
             logger.error("Preference topic identification failed: %s", e)
-            return []
+            return None
 
     @staticmethod
     def _build_known_preferences_context(existing: list) -> str:
@@ -318,10 +383,24 @@ class HistoryAgent(Agent):
     # ── Dedup ────────────────────────────────────────────────────────────
 
     async def _dedup_preference_topics(
-        self, topics: list[str], existing_items: list[tuple[str, bytes | None]]
+        self,
+        topics: list[str],
+        existing_prefs: list[Preference],
+        already_bumped: set[int] | None = None,
     ) -> list[tuple[str, bytes | None]]:
-        """Embed topics and dedup against existing. Returns (topic, embedding) survivors."""
+        """Embed topics, dedup against existing, increment mention count on match.
+
+        When a topic matches an existing DB preference, increments its mention_count
+        instead of silently skipping (unless already bumped this pass).
+        New unique topics are returned as survivors.
+        """
+        existing_items: list[tuple[str, bytes | None]] = [
+            (p.content, p.embedding) for p in existing_prefs
+        ]
+        db_pref_count = len(existing_prefs)
+        bumped = already_bumped or set()
         survivors: list[tuple[str, bytes | None]] = []
+
         for topic in topics:
             embedding = await self._embed_text(topic)
             candidate_vec = deserialize_embedding(embedding) if embedding else None
@@ -335,16 +414,36 @@ class HistoryAgent(Agent):
                 tcr_threshold=self.config.runtime.PREFERENCE_DEDUP_TCR_THRESHOLD,
             )
             if match_idx is not None:
-                logger.debug(
-                    "Skipping duplicate preference topic: '%s' matches '%s'",
-                    topic[:50],
-                    existing_items[match_idx][0][:50],
-                )
+                self._handle_dedup_match(match_idx, db_pref_count, existing_prefs, topic, bumped)
                 continue
 
             survivors.append((topic, embedding))
             existing_items.append((topic, embedding))
         return survivors
+
+    def _handle_dedup_match(
+        self,
+        match_idx: int,
+        db_pref_count: int,
+        existing_prefs: list[Preference],
+        topic: str,
+        already_bumped: set[int],
+    ) -> None:
+        """Increment mention count for DB matches, skip if already bumped this pass."""
+        if match_idx < db_pref_count:
+            matched = existing_prefs[match_idx]
+            if matched.id in already_bumped:
+                logger.debug("Skipping already-bumped preference: '%s'", matched.content[:50])
+                return
+            self.db.preferences.increment_mention_count(matched.id)  # type: ignore[arg-type]
+            already_bumped.add(matched.id)  # type: ignore[arg-type]
+            logger.info(
+                "Preference '%s' mention count incremented (matches '%s')",
+                topic[:50],
+                matched.content[:50],
+            )
+        else:
+            logger.debug("Skipping intra-batch duplicate: '%s'", topic[:50])
 
     # ── Pass 2: valence classification ───────────────────────────────────
 
@@ -400,6 +499,7 @@ class HistoryAgent(Agent):
                 source_period_start=start,
                 source_period_end=end,
                 embedding=embedding,
+                source=PennyConstants.PreferenceSource.EXTRACTED,
             )
             logger.info("Preference stored for %s: %s (%s)", user, content[:50], pref.valence)
 
