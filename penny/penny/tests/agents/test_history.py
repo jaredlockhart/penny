@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlmodel import select
 
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog
@@ -436,6 +437,153 @@ async def test_failed_extraction_does_not_mark_processed(
         prefs = penny.db.preferences.get_for_user(TEST_SENDER)
         espresso_prefs = [p for p in prefs if "espresso" in p.content.lower()]
         assert len(espresso_prefs) == 1
+
+
+# ── Reaction preference extraction ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reaction_extracts_preference_with_deterministic_valence(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Thumbs-up/down reactions create preferences with emoji-determined valence."""
+    config = make_config(history_interval=99999.0)
+
+    def handler(request, count):
+        messages = request.get("messages", [])
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
+
+        # Reaction topic extraction — responds to the reaction pipeline prompt
+        if "extract" in prompt_text.lower() and "preference topic" in prompt_text.lower():
+            result = json.dumps(
+                {
+                    "topics": [
+                        {"index": 0, "content": "Hiking trails near Boulder Colorado"},
+                        {"index": 1, "content": "Kale smoothie recipes"},
+                    ]
+                }
+            )
+            return mock_ollama._make_text_response(request, result)
+
+        # Summarization
+        if "User:" in prompt_text:
+            return mock_ollama._make_text_response(request, "- No topics")
+
+        return mock_ollama._make_text_response(request, "- Topics")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Log Penny's outgoing messages that will be reacted to
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            TEST_SENDER,
+            "I found some great hiking trails near Boulder!",
+        )
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            TEST_SENDER,
+            "You should try kale smoothies, they're super healthy.",
+        )
+
+        # Get the outgoing message IDs to use as parent_id for reactions
+        with penny.db.get_session() as session:
+            hiking_msg = session.exec(
+                select(MessageLog).where(MessageLog.content.contains("hiking"))  # type: ignore[union-attr]
+            ).first()
+            kale_msg = session.exec(
+                select(MessageLog).where(MessageLog.content.contains("kale"))  # type: ignore[union-attr]
+            ).first()
+        assert hiking_msg and kale_msg
+        hiking_msg_id = hiking_msg.id
+        kale_msg_id = kale_msg.id
+
+        # Insert reactions with explicit timestamps — get_user_reactions returns
+        # newest-first (DESC), so hiking must be newer to appear at index 0
+        now = datetime.now(UTC).replace(tzinfo=None)
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "\U0001f44e",
+            PennyConstants.MessageDirection.INCOMING,
+            now - timedelta(seconds=1),
+            is_reaction=True,
+            parent_id=kale_msg_id,
+        )
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "\U0001f44d",
+            PennyConstants.MessageDirection.INCOMING,
+            now,
+            is_reaction=True,
+            parent_id=hiking_msg_id,
+        )
+
+        await penny.history_agent.execute()
+
+        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
+        hiking_prefs = [p for p in prefs if "hiking" in p.content.lower()]
+        kale_prefs = [p for p in prefs if "kale" in p.content.lower()]
+
+        assert len(hiking_prefs) == 1, f"Expected 1 hiking preference, got {hiking_prefs}"
+        assert hiking_prefs[0].valence == "positive"
+        assert hiking_prefs[0].source == "extracted"
+
+        assert len(kale_prefs) == 1, f"Expected 1 kale preference, got {kale_prefs}"
+        assert kale_prefs[0].valence == "negative"
+        assert kale_prefs[0].source == "extracted"
+
+        # Reactions should be marked processed
+        reactions = penny.db.messages.get_user_reactions(TEST_SENDER, limit=100)
+        assert len(reactions) == 0, "Reactions should be marked processed after extraction"
+
+
+@pytest.mark.asyncio
+async def test_reaction_without_parent_is_skipped(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Reactions without a parent message are skipped, not erroring."""
+    config = make_config(history_interval=99999.0)
+
+    reaction_topic_calls = 0
+
+    def handler(request, count):
+        nonlocal reaction_topic_calls
+        messages = request.get("messages", [])
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
+
+        if "extract" in prompt_text.lower() and "preference topic" in prompt_text.lower():
+            reaction_topic_calls += 1
+            return mock_ollama._make_text_response(request, json.dumps({"topics": []}))
+
+        if "User:" in prompt_text:
+            return mock_ollama._make_text_response(request, "- No topics")
+
+        return mock_ollama._make_text_response(request, "- Topics")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Reaction with no parent_id
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "\U0001f44d",
+            PennyConstants.MessageDirection.INCOMING,
+            datetime.now(UTC).replace(tzinfo=None),
+            is_reaction=True,
+        )
+
+        await penny.history_agent.execute()
+
+        # No LLM call should have been made for reaction topics
+        assert reaction_topic_calls == 0, "Should not call LLM for parentless reactions"
+
+        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
+        assert len(prefs) == 0
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

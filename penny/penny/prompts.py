@@ -252,3 +252,15 @@ Examples:
         "not that they're struggling to find it.\n\n"
         "Return each topic with its valence. Use the exact topic text provided."
     )
+
+    REACTION_TOPIC_EXTRACTION_PROMPT = (
+        "Extract a single preference topic (3-10 words) from each numbered message below. "
+        "The user reacted to each message with an emoji, indicating preference.\n\n"
+        "RULES:\n"
+        "- Return one topic per message\n"
+        "- Make topics fully qualified so they can be understood without context\n"
+        "- Bad: 'the movie', 'that recipe'\n"
+        "- Good: 'Dune Part Two (2024 film)', 'homemade sourdough bread recipe'\n"
+        "- If a message has no identifiable topic, omit it\n"
+        "- Return the original index number with each topic"
+    )
