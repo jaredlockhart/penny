@@ -33,16 +33,13 @@ class ThinkingAgent(Agent):
 
     Context matrix — each mode gets tailored context:
 
-        Mode       | Entities    | Thoughts | Dislikes | Tools       | Steps
-        ---------- | ----------- | -------- | -------- | ----------- | -----
-        Seeded     | anchor=seed | 10       | yes      | search+news | 10
-        Browse News| -           | 10       | yes      | search+news | 10
-        Free Think | -           | -        | -        | search+news | 10
-        Step N     | anchor=mono | 10       | yes      | (kept)      | -
+        Mode       | Thoughts | Dislikes | Tools       | Steps
+        ---------- | -------- | -------- | ----------- | -----
+        Seeded     | 10       | yes      | search+news | 5
+        Browse News| 10       | yes      | search+news | 5
+        Free Think | -        | -        | search+news | 5
 
     All modes include profile (user name) except free think.
-    Step N rebuilds system prompt each step, anchoring entities
-    to accumulated monologue text.
 
     Thinking loop::
 

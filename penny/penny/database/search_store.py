@@ -1,8 +1,8 @@
-"""Search store — logging and extraction tracking for search results."""
+"""Search store — logging for search results."""
 
 import logging
 
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from penny.database.models import SearchLog
 
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class SearchStore:
-    """Manages SearchLog records: creation, lookup, and extraction tracking."""
+    """Manages SearchLog records: creation and logging."""
 
     def __init__(self, engine):
         self.engine = engine
@@ -39,34 +39,3 @@ class SearchStore:
                 logger.debug("Logged search query: %s", query[:50])
         except Exception as e:
             logger.error("Failed to log search: %s", e)
-
-    def get(self, search_log_id: int) -> SearchLog | None:
-        """Get a SearchLog by ID."""
-        with self._session() as session:
-            return session.get(SearchLog, search_log_id)
-
-    def get_unprocessed(self, limit: int) -> list[SearchLog]:
-        """Get unextracted SearchLog entries (oldest first)."""
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(SearchLog)
-                    .where(SearchLog.extracted == False)  # noqa: E712
-                    .order_by(
-                        SearchLog.timestamp.asc(),  # type: ignore[unresolved-attribute]
-                    )
-                    .limit(limit)
-                ).all()
-            )
-
-    def mark_extracted(self, search_log_id: int) -> None:
-        """Mark a SearchLog entry as processed for entity extraction."""
-        try:
-            with self._session() as session:
-                search_log = session.get(SearchLog, search_log_id)
-                if search_log:
-                    search_log.extracted = True
-                    session.add(search_log)
-                    session.commit()
-        except Exception as e:
-            logger.error("Failed to mark search %d as extracted: %s", search_log_id, e)

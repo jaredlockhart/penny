@@ -3,19 +3,11 @@
 from similarity.embeddings import (
     cosine_similarity,
     deserialize_embedding,
-    find_similar,
-    normalize_unicode,
     serialize_embedding,
-    token_containment_ratio,
-    tokenize_entity_name,
 )
 
 __all__ = [
     "cosine_similarity",
     "deserialize_embedding",
-    "find_similar",
-    "normalize_unicode",
     "serialize_embedding",
-    "token_containment_ratio",
-    "tokenize_entity_name",
 ]
