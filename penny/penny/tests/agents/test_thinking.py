@@ -286,9 +286,17 @@ async def test_free_thinking_full_loop(
 
 @pytest.mark.asyncio
 async def test_news_browsing_full_loop(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
 ):
     """News browsing fallback: when no preferences exist, browses news and stores thought."""
+    # Force non-free-thinking path so it hits "no preferences → browse news"
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=1,
