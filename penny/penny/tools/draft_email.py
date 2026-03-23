@@ -1,0 +1,86 @@
+"""Draft email tool — compose and save email drafts."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from penny.tools.base import Tool
+from penny.zoho import ZohoClient
+
+logger = logging.getLogger(__name__)
+
+
+class DraftEmailTool(Tool):
+    """Compose and save an email draft for user review."""
+
+    name = "draft_email"
+    description = (
+        "Compose an email and save it as a draft for the user to review before sending. "
+        "The draft will be saved to the Drafts folder where the user can edit and send it. "
+        "Use this after reading emails to compose responses."
+    )
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "to": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of recipient email addresses",
+            },
+            "subject": {
+                "type": "string",
+                "description": "Email subject line",
+            },
+            "body": {
+                "type": "string",
+                "description": "Email body content (plain text)",
+            },
+            "cc": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of CC recipient email addresses",
+            },
+        },
+        "required": ["to", "subject", "body"],
+    }
+
+    def __init__(self, zoho_client: ZohoClient) -> None:
+        self._client = zoho_client
+
+    async def execute(self, **kwargs: Any) -> str:
+        """Save an email draft and return confirmation."""
+        to_addresses = kwargs.get("to", [])
+        subject = kwargs.get("subject", "")
+        body = kwargs.get("body", "")
+        cc_addresses = kwargs.get("cc")
+
+        if not to_addresses:
+            return "Error: At least one recipient email address is required."
+        if not subject:
+            return "Error: Subject is required."
+        if not body:
+            return "Error: Email body is required."
+
+        try:
+            message_id = await self._client.draft_response(
+                to_addresses=to_addresses,
+                subject=subject,
+                content=body,
+                cc_addresses=cc_addresses,
+            )
+
+            if message_id:
+                recipients = ", ".join(to_addresses)
+                return (
+                    f"Draft saved successfully!\n\n"
+                    f"To: {recipients}\n"
+                    f"Subject: {subject}\n\n"
+                    f"The draft has been saved to your Drafts folder for review before sending."
+                )
+            else:
+                return "Draft was saved but could not confirm the message ID."
+
+        except Exception as e:
+            logger.exception("Failed to save draft")
+            return f"Error saving draft: {e}"

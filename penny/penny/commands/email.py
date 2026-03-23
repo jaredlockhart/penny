@@ -7,7 +7,7 @@ import logging
 from penny.agents.base import Agent
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
-from penny.jmap.client import JmapClient
+from penny.jmap import JmapClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool

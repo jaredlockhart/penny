@@ -35,6 +35,7 @@ from penny.startup import get_restart_message
 from penny.tools import SearchTool, Tool
 from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.news import NewsTool
+from penny.zoho.models import ZohoCredentials
 
 logger = logging.getLogger(__name__)
 
@@ -244,12 +245,24 @@ class Penny:
     def _init_commands(self, config: Config) -> None:
         """Create command registry with GitHub client and message agent factory."""
         github_api = self._init_github_client(config)
+        zoho_credentials = self._get_zoho_credentials(config)
         self.command_registry = create_command_registry(
             message_agent_factory=self._create_chat_agent,
             github_api=github_api,
             image_model_client=self.image_model_client,
             fastmail_api_token=config.fastmail_api_token,
+            zoho_credentials=zoho_credentials,
         )
+
+    def _get_zoho_credentials(self, config: Config) -> ZohoCredentials | None:
+        """Get Zoho credentials if all required values are configured."""
+        if config.zoho_api_id and config.zoho_api_secret and config.zoho_refresh_token:
+            return ZohoCredentials(
+                client_id=config.zoho_api_id,
+                client_secret=config.zoho_api_secret,
+                refresh_token=config.zoho_refresh_token,
+            )
+        return None
 
     def _init_channel(self, config: Config, channel: MessageChannel | None) -> None:
         """Create channel and connect agents that send notifications."""

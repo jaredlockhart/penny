@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import html.parser
 import logging
 from typing import Any
 
 import httpx
 
 from penny.constants import PennyConstants
+from penny.html_utils import strip_html
 from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary, JmapSession
 
 logger = logging.getLogger(__name__)
@@ -19,27 +19,6 @@ JMAP_CAPABILITIES = [
 ]
 
 EMAIL_SEARCH_LIMIT = 10
-
-
-class _HTMLTextExtractor(html.parser.HTMLParser):
-    """Simple HTML tag stripper."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        self._parts.append(data)
-
-    def get_text(self) -> str:
-        return "".join(self._parts)
-
-
-def _strip_html(html_text: str) -> str:
-    """Strip HTML tags and return plain text."""
-    extractor = _HTMLTextExtractor()
-    extractor.feed(html_text)
-    return extractor.get_text()
 
 
 class JmapClient:
@@ -206,7 +185,7 @@ class JmapClient:
                     part_id = part.get("partId")
                     if part_id and part_id in body_values:
                         html_content = body_values[part_id].get("value", "")
-                        text_body += _strip_html(html_content)
+                        text_body += strip_html(html_content)
 
             # Truncate long bodies
             if len(text_body) > self._max_body_length:
