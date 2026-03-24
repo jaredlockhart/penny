@@ -795,9 +795,9 @@ class Agent:
         """## Identity — Penny's voice and personality."""
         return f"## Identity\n{Prompt.PENNY_IDENTITY}"
 
-    def _instructions_section(self) -> str:
+    def _instructions_section(self, override: str | None = None) -> str:
         """## Instructions — agent-specific prompt with tool descriptions."""
-        prompt = self.system_prompt
+        prompt = override or self.system_prompt
         if "{tools}" in prompt:
             prompt = prompt.format(tools=self._build_tool_summary())
         return f"## Instructions\n{prompt}"

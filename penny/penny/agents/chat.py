@@ -94,9 +94,7 @@ class ChatAgent(Agent):
                     self._history_section(user),
                     self._thought_section(user),
                 ),
-                self._instructions_section()
-                if instructions is None
-                else f"## Instructions\n{instructions}",
+                self._instructions_section(instructions),
             ]
             if s
         )
