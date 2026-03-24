@@ -90,7 +90,7 @@ async def test_seeded_thinking_full_loop(
             return mock_ollama._make_tool_call_response(
                 request,
                 "search",
-                {"query": "quantum gravity 2026", "reasoning": "Researching seed topic"},
+                {"queries": ["quantum gravity 2026"], "reasoning": "Researching seed topic"},
             )
         if count == 2:
             # Step 2: text reflecting on search results
@@ -202,7 +202,7 @@ async def test_free_thinking_full_loop(
             return mock_ollama._make_tool_call_response(
                 request,
                 "search",
-                {"query": "interesting science 2026", "reasoning": "Exploring freely"},
+                {"queries": ["interesting science 2026"], "reasoning": "Exploring freely"},
             )
         if count == 2:
             return mock_ollama._make_text_response(

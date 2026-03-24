@@ -15,6 +15,7 @@ from penny.constants import PennyConstants
 from penny.database.models import MessageLog
 from penny.ollama import OllamaClient
 from penny.responses import PennyResponse
+from penny.tools.models import SearchArgs
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -282,13 +283,9 @@ class MessageChannel(ABC):
         for tc in response.tool_calls or []:
             if tc.tool != "search":
                 continue
-            # Prefer single query, fall back to first of queries list
-            query = tc.arguments.get("query")
-            if query:
-                return query
-            queries = tc.arguments.get("queries")
-            if queries:
-                return queries[0]
+            args = SearchArgs.model_validate(tc.arguments)
+            if args.queries:
+                return args.queries[0]
         return None
 
     async def _resolve_image(

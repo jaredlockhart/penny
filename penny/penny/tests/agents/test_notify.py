@@ -278,7 +278,7 @@ def test_extract_search_query_from_search_tool():
     from penny.agents.models import ToolCallRecord
 
     records = [
-        ToolCallRecord(tool="search", arguments={"query": "latest space news"}),
+        ToolCallRecord(tool="search", arguments={"queries": ["latest space news"]}),
     ]
     result = NotifyAgent._extract_search_query(records)
     assert result == "latest space news"
