@@ -478,6 +478,7 @@ class MessageChannel(ABC):
             message.sender,
             message.content,
             parent_id=reacted_msg.id,
+            is_reaction=True,
         )
 
         logger.info(
