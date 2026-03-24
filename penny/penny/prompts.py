@@ -254,8 +254,7 @@ Examples:
     )
 
     REACTION_TOPIC_EXTRACTION_PROMPT = (
-        "Extract a single preference topic (3-10 words) from each numbered message below. "
-        "The user reacted to each message with an emoji, indicating preference.\n\n"
+        "Extract a single topic (3-10 words) from each numbered message below.\n\n"
         "RULES:\n"
         "- Return one topic per message\n"
         "- Make topics fully qualified so they can be understood without context\n"

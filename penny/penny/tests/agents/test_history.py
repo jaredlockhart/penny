@@ -409,7 +409,7 @@ async def test_reaction_extracts_preference_with_deterministic_valence(
         prompt_text = " ".join(m.get("content", "") for m in user_msgs)
 
         # Reaction topic extraction — responds to the reaction pipeline prompt
-        if "extract" in prompt_text.lower() and "preference topic" in prompt_text.lower():
+        if "extract" in prompt_text.lower() and "single topic" in prompt_text.lower():
             result = json.dumps(
                 {
                     "topics": [
@@ -509,7 +509,7 @@ async def test_reaction_without_parent_is_skipped(
         user_msgs = [m for m in messages if m.get("role") == "user"]
         prompt_text = " ".join(m.get("content", "") for m in user_msgs)
 
-        if "extract" in prompt_text.lower() and "preference topic" in prompt_text.lower():
+        if "extract" in prompt_text.lower() and "single topic" in prompt_text.lower():
             reaction_topic_calls += 1
             return mock_ollama._make_text_response(request, json.dumps({"topics": []}))
 
