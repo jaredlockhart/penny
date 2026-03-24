@@ -97,7 +97,8 @@ class ScheduleExecutor(Agent):
         message_agent = self._channel._message_agent
 
         # Run the prompt through the message agent
-        response = await message_agent.run(prompt=schedule.prompt_text)
+        max_steps = int(self.config.runtime.MESSAGE_MAX_STEPS)
+        response = await message_agent.run(prompt=schedule.prompt_text, max_steps=max_steps)
 
         answer = response.answer.strip() if response.answer else None
         if not answer:

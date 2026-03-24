@@ -114,7 +114,9 @@ async def test_email_search_and_answer(mock_jmap_client, email_context):
         result = await cmd.execute("what packages am I expecting", email_context)
 
     assert "packages" in result.text.lower()
-    mock_agent_instance.run.assert_called_once_with("what packages am I expecting")
+    mock_agent_instance.run.assert_called_once_with(
+        "what packages am I expecting", max_steps=email_context.config.email_max_steps
+    )
     mock_agent_instance.close.assert_called_once()
     mock_jmap_client.close.assert_called_once()
 

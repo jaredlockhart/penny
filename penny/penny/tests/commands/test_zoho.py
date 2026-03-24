@@ -115,7 +115,9 @@ async def test_zoho_search_and_answer(mock_zoho_client, zoho_context):
         result = await cmd.execute("what packages am I expecting", zoho_context)
 
     assert "packages" in result.text.lower()
-    mock_agent_instance.run.assert_called_once_with("what packages am I expecting")
+    mock_agent_instance.run.assert_called_once_with(
+        "what packages am I expecting", max_steps=zoho_context.config.email_max_steps
+    )
     mock_agent_instance.close.assert_called_once()
     mock_zoho_client.close.assert_called_once()
 

@@ -30,7 +30,6 @@ async def test_validate_connectivity_success(signal_server, test_config, mock_ol
         tools=[],
         db=db,
         config=test_config,
-        max_steps=1,
     )
 
     channel = SignalChannel(
@@ -82,7 +81,6 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
         tools=[],
         db=db,
         config=config,
-        max_steps=1,
     )
 
     channel = SignalChannel(
@@ -140,7 +138,6 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
         tools=[],
         db=db,
         config=config,
-        max_steps=1,
     )
 
     channel = SignalChannel(
@@ -184,7 +181,6 @@ async def test_send_message_rejects_empty_without_attachments(
         tools=[],
         db=db,
         config=test_config,
-        max_steps=1,
     )
 
     channel = SignalChannel(
@@ -224,7 +220,6 @@ async def test_send_message_allows_empty_text_with_attachments(
         tools=[],
         db=db,
         config=test_config,
-        max_steps=1,
     )
 
     channel = SignalChannel(
@@ -268,7 +263,6 @@ async def test_send_message_retries_on_socket_exception_400(
         tools=[],
         db=db,
         config=test_config,
-        max_steps=1,
     )
 
     channel = SignalChannel(
@@ -321,7 +315,6 @@ async def test_send_message_no_retry_on_non_transient_400(signal_server, test_co
         tools=[],
         db=db,
         config=test_config,
-        max_steps=1,
     )
 
     channel = SignalChannel(
@@ -372,7 +365,6 @@ async def test_send_message_gives_up_after_max_retries(signal_server, test_confi
         tools=[],
         db=db,
         config=test_config,
-        max_steps=1,
     )
 
     channel = SignalChannel(

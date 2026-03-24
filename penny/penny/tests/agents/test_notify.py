@@ -424,7 +424,7 @@ async def test_notify_thought_context_shows_specific_thought(
         penny.db.history.add(
             TEST_SENDER, now, now, PennyConstants.HistoryDuration.DAILY, "space games"
         )
-        mode = ThoughtMode(thoughts[0])
+        mode = ThoughtMode(thoughts[0], penny.config)
         mode.prepare(penny.notify_agent)
         candidate_prompt = mode.build_system_prompt(penny.notify_agent, TEST_SENDER)
         assert "black holes" in candidate_prompt

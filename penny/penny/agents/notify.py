@@ -36,6 +36,7 @@ from penny.tools.models import SearchArgs
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
+    from penny.config import Config
     from penny.tools import Tool
 
 logger = logging.getLogger(__name__)
@@ -77,10 +78,9 @@ class NotificationMode:
         """User prompt sent to the model."""
         raise NotImplementedError
 
-    @property
-    def max_steps(self) -> int | None:
-        """Max agentic loop steps (None = agent default)."""
-        return None
+    def get_max_steps(self) -> int:
+        """Max agentic loop steps. Subclasses must override."""
+        raise NotImplementedError
 
     def get_history(self, agent: NotifyAgent, user: str) -> list[tuple[str, str]] | None:
         """Conversation turns to include (None = no turns)."""
@@ -140,9 +140,8 @@ class CheckinMode(NotificationMode):
     def prompt(self) -> str:
         return Prompt.NOTIFY_CHECKIN
 
-    @property
-    def max_steps(self) -> int | None:
-        return 1
+    def get_max_steps(self) -> int:
+        return PennyConstants.CHECKIN_MAX_STEPS
 
     @property
     def check_disqualified(self) -> bool:
@@ -186,6 +185,9 @@ class NewsMode(NotificationMode):
     def prompt(self) -> str:
         return Prompt.NOTIFY_NEWS
 
+    def get_max_steps(self) -> int:
+        return PennyConstants.NEWS_NOTIFY_MAX_STEPS
+
     @property
     def validate_urls(self) -> bool:
         return True
@@ -199,8 +201,9 @@ class NewsMode(NotificationMode):
 class ThoughtMode(NotificationMode):
     """Thought candidate: profile + thought context, all tools, URL validation."""
 
-    def __init__(self, thought: Thought | None) -> None:
+    def __init__(self, thought: Thought | None, config: Config) -> None:
         self._thought = thought
+        self._config = config
 
     def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
         return agent.get_tools(user)
@@ -222,6 +225,9 @@ class ThoughtMode(NotificationMode):
     @property
     def prompt(self) -> str:
         return Prompt.NOTIFY_PROMPT
+
+    def get_max_steps(self) -> int:
+        return int(self._config.runtime.MESSAGE_MAX_STEPS)
 
     @property
     def validate_urls(self) -> bool:
@@ -264,6 +270,10 @@ class NotifyAgent(Agent):
     """
 
     name: str = "notify"
+
+    def get_max_steps(self) -> int:
+        """Read from config so /config changes take effect immediately."""
+        return int(self.config.runtime.MESSAGE_MAX_STEPS)
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -319,7 +329,7 @@ class NotifyAgent(Agent):
     # ── Check-in gating ───────────────────────────────────────────────
 
     # Check-in requires user activity within this window (seconds)
-    CHECKIN_ACTIVE_WINDOW = 1800  # 30 minutes
+    CHECKIN_ACTIVE_WINDOW = PennyConstants.CHECKIN_ACTIVE_WINDOW
 
     def _should_checkin(self, user: str) -> bool:
         """Check-in if 24h cooldown elapsed AND user was active in last 30m."""
@@ -331,7 +341,7 @@ class NotifyAgent(Agent):
         if last is None:
             return True
         elapsed = (datetime.now(UTC).replace(tzinfo=None) - last).total_seconds()
-        return elapsed >= 86400
+        return elapsed >= PennyConstants.CHECKIN_COOLDOWN_SECONDS
 
     def _user_recently_active(self, user: str) -> bool:
         """User sent a message within the active window."""
@@ -344,7 +354,7 @@ class NotifyAgent(Agent):
     # ── Notification pipeline ─────────────────────────────────────────
 
     # 1-in-3 chance of sending news instead of thought candidates
-    NEWS_CHANCE = 1 / 3
+    NEWS_CHANCE = PennyConstants.NEWS_CHANCE
 
     def _news_cooldown_elapsed(self) -> bool:
         """Check if enough time has passed since the last news notification."""
@@ -372,7 +382,7 @@ class NotifyAgent(Agent):
     # ── Mode execution (shared pipeline) ──────────────────────────────
 
     # Max retries for notification URL validation
-    NOTIFY_URL_RETRIES = 2
+    NOTIFY_URL_RETRIES = PennyConstants.NOTIFY_URL_RETRIES
 
     async def _send_mode(self, user: str, mode: NotificationMode) -> bool:
         """Execute a notification mode: generate candidate, validate, send.
@@ -405,14 +415,15 @@ class NotifyAgent(Agent):
         if mode.validate_urls:
             return await self._run_with_url_validation(
                 prompt=mode.prompt,
+                max_steps=mode.get_max_steps(),
                 system_prompt=system_prompt,
                 extra_source=mode.extra_source(),
             )
         return await self.run(
             prompt=mode.prompt,
+            max_steps=mode.get_max_steps(),
             history=mode.get_history(self, user),
             system_prompt=system_prompt,
-            max_steps=mode.max_steps,
         )
 
     def _to_candidate(
@@ -441,13 +452,16 @@ class NotifyAgent(Agent):
     async def _run_with_url_validation(
         self,
         prompt: str,
+        max_steps: int,
         system_prompt: str,
         extra_source: str = "",
     ) -> ControllerResponse:
         """Run agentic loop, retrying if the response contains hallucinated URLs."""
         response = ControllerResponse(answer="")
         for attempt in range(1 + self.NOTIFY_URL_RETRIES):
-            response = await self.run(prompt=prompt, system_prompt=system_prompt)
+            response = await self.run(
+                prompt=prompt, max_steps=max_steps, system_prompt=system_prompt
+            )
             answer = response.answer.strip() if response.answer else ""
             if not answer:
                 return response
@@ -519,7 +533,7 @@ class NotifyAgent(Agent):
         candidates: list[NotifyCandidate] = []
         thoughts = self._get_top_thoughts(user, n)
         for i, thought in enumerate(thoughts):
-            candidate = await self._execute_mode(user, ThoughtMode(thought))
+            candidate = await self._execute_mode(user, ThoughtMode(thought, self.config))
             if candidate:
                 logger.info(
                     "Candidate thought %d/%d: %s",
@@ -639,7 +653,10 @@ class NotifyAgent(Agent):
                 continue
             novelty = novelty_score(vec, recent_vecs)
             sentiment = compute_sentiment_score(vec, likes, dislikes)
-            score = 0.5 * novelty + 0.5 * sentiment
+            score = (
+                PennyConstants.NOVELTY_WEIGHT * novelty
+                + PennyConstants.SENTIMENT_WEIGHT * sentiment
+            )
             logger.info(
                 "Candidate score: %.3f (novelty=%.3f, sentiment=%.3f) %s",
                 score,

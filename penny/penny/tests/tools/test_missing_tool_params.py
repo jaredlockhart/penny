@@ -59,7 +59,6 @@ class TestMissingToolParams:
             tools=[search_tool],
             db=db,
             config=config,
-            max_steps=3,
         )
 
         # Track messages sent to the model to verify error handling
@@ -78,7 +77,7 @@ class TestMissingToolParams:
         mock_ollama.set_response_handler(handler)
 
         # Agent should not crash - it should handle the error gracefully
-        response = await agent.run("test prompt")
+        response = await agent.run("test prompt", max_steps=3)
 
         # Verify that we got a response (not a crash)
         assert response.answer is not None
@@ -156,7 +155,6 @@ class TestMissingToolParams:
             tools=[fetch_news_tool],
             db=db,
             config=config,
-            max_steps=3,
         )
 
         def handler(request: dict, count: int) -> dict:
@@ -167,7 +165,7 @@ class TestMissingToolParams:
 
         mock_ollama.set_response_handler(handler)
 
-        response = await agent.run("what's in the news?")
+        response = await agent.run("what's in the news?", max_steps=3)
 
         # Should succeed without a validation error round-trip
         assert response.answer == "No news found today."

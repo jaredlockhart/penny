@@ -12,20 +12,12 @@ import random
 
 from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
+from penny.constants import PennyConstants
 from penny.ollama.embeddings import cosine_similarity
 from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
-
-# Probability of a free-thinking cycle (no seed topic — Penny picks her own)
-FREE_THINKING_PROBABILITY = 0.1
-
-# Probability of a news-focused cycle (read the news, pick a story, dig in)
-NEWS_THINKING_PROBABILITY = 0.3
-
-# Minimum word count for a thought to be stored (filters model planning text)
-MIN_THOUGHT_WORDS = 50
 
 
 class ThinkingAgent(Agent):
@@ -54,17 +46,20 @@ class ThinkingAgent(Agent):
     Seed topic sources: positive user preferences.
     """
 
-    THOUGHT_CONTEXT_LIMIT = 10
+    THOUGHT_CONTEXT_LIMIT = PennyConstants.THOUGHT_CONTEXT_LIMIT
 
     name = "inner_monologue"
 
     def __init__(self, **kwargs: object) -> None:
         kwargs["system_prompt"] = Prompt.THINKING_SYSTEM_PROMPT
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self.max_steps = int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
         self._keep_tools_on_final_step = True
         self._seed_topic: str | None = None
         self._seed_pref_id: int | None = None
+
+    def get_max_steps(self) -> int:
+        """Read from config each cycle so /config changes take effect immediately."""
+        return int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
 
     # ── Execution hooks ──────────────────────────────────────────────────
 
@@ -74,11 +69,14 @@ class ThinkingAgent(Agent):
         self._seed_pref_id = None
 
         roll = random.random()
-        if roll < FREE_THINKING_PROBABILITY:
+        if roll < PennyConstants.FREE_THINKING_PROBABILITY:
             logger.info("Free thinking cycle for %s", user)
             return Prompt.THINKING_FREE
 
-        if roll < FREE_THINKING_PROBABILITY + NEWS_THINKING_PROBABILITY:
+        if (
+            roll
+            < PennyConstants.FREE_THINKING_PROBABILITY + PennyConstants.NEWS_THINKING_PROBABILITY
+        ):
             logger.info("News thinking cycle for %s", user)
             return Prompt.THINKING_NEWS
 
@@ -133,7 +131,7 @@ class ThinkingAgent(Agent):
             return None
 
     # Max retries for summary URL validation
-    SUMMARY_URL_RETRIES = 2
+    SUMMARY_URL_RETRIES = PennyConstants.SUMMARY_URL_RETRIES
 
     async def after_run(self, user: str) -> bool:
         """Summarize the search results, dedup against same-seed thoughts, and store."""
@@ -141,7 +139,7 @@ class ThinkingAgent(Agent):
             return False
         combined = "\n\n---\n\n".join(self._tool_result_text)
         report = await self._summarize_with_url_validation(combined)
-        if report and len(report.split()) < MIN_THOUGHT_WORDS:
+        if report and len(report.split()) < PennyConstants.MIN_THOUGHT_WORDS:
             logger.info(
                 "[inner_monologue] report too short (%d words), skipping", len(report.split())
             )
