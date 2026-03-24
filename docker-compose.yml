@@ -1,6 +1,6 @@
 services:
   signal-api:
-    image: bbernhard/signal-cli-rest-api:latest
+    image: bbernhard/signal-cli-rest-api:0.98
     restart: unless-stopped
     ports:
       - "8080:8080"
