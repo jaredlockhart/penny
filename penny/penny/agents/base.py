@@ -115,10 +115,8 @@ def _is_tool_result_failed(result_str: str) -> bool:
     return any(result_str.startswith(prefix) for prefix in _TOOL_FAILURE_PREFIXES)
 
 
-# Truncate tool results in the message history when many preceding tool calls caused
-# context saturation and the model returned empty content on the synthesis step.
-_TOOL_RESULT_TRUNCATION_THRESHOLD = 3  # number of preceding tool calls that triggers truncation
-_TOOL_RESULT_MAX_CHARS = 500  # max characters per tool result message after truncation
+_TOOL_RESULT_TRUNCATION_THRESHOLD = PennyConstants.TOOL_RESULT_TRUNCATION_THRESHOLD
+_TOOL_RESULT_MAX_CHARS = PennyConstants.TOOL_RESULT_TRUNCATION_MAX_CHARS
 
 
 def _build_strong_nudge(messages: list[dict]) -> str:
@@ -174,9 +172,9 @@ class Agent:
 
     _instances: list[Agent] = []
 
-    THOUGHT_CONTEXT_LIMIT = 10
-    PREFERRED_POOL_SIZE = 5
-    MAX_TOOL_RESULT_CHARS = 8000
+    THOUGHT_CONTEXT_LIMIT = PennyConstants.THOUGHT_CONTEXT_LIMIT
+    PREFERRED_POOL_SIZE = PennyConstants.PREFERRED_POOL_SIZE
+    MAX_TOOL_RESULT_CHARS = PennyConstants.MAX_TOOL_RESULT_CHARS
     name: str = "Agent"
 
     def __init__(
@@ -186,7 +184,6 @@ class Agent:
         tools: list[Tool],
         db: Database,
         config: Config,
-        max_steps: int = 5,
         tool_timeout: float = 60.0,
         vision_model_client: OllamaClient | None = None,
         embedding_model_client: OllamaClient | None = None,
@@ -198,7 +195,6 @@ class Agent:
         self.system_prompt = system_prompt
         self.tools = tools
         self.db = db
-        self.max_steps = max_steps
         self.allow_repeat_tools = allow_repeat_tools
 
         self._model_client = model_client
@@ -220,10 +216,9 @@ class Agent:
         Agent._instances.append(self)
 
         logger.info(
-            "Initialized agent: model=%s, tools=%d, max_steps=%d",
+            "Initialized agent: model=%s, tools=%d",
             self._model_client.model,
             len(self.tools),
-            max_steps,
         )
 
     # ── Top-level execution ──────────────────────────────────────────────
@@ -259,7 +254,12 @@ class Agent:
             logger.info("%s starting for %s", self.name, user)
             system_prompt = await self._build_system_prompt(user)
             history = self.get_history(user)
-            await self.run(prompt=prompt, system_prompt=system_prompt, history=history)
+            await self.run(
+                prompt=prompt,
+                max_steps=self.get_max_steps(),
+                system_prompt=system_prompt,
+                history=history,
+            )
             did_work = await self.after_run(user)
             logger.info("%s complete for %s", self.name, user)
             return did_work
@@ -270,6 +270,10 @@ class Agent:
             self._current_user = None
 
     # ── Override hooks ───────────────────────────────────────────────────
+
+    def get_max_steps(self) -> int:
+        """Return max agentic loop steps. Subclasses must override."""
+        raise NotImplementedError(f"{type(self).__name__} must override get_max_steps()")
 
     def get_users(self) -> list[str]:
         """Return users to process. Override to filter."""
@@ -292,16 +296,15 @@ class Agent:
     async def run(
         self,
         prompt: str,
+        max_steps: int,
         history: list[tuple[str, str]] | None = None,
-        max_steps: int | None = None,
         system_prompt: str | None = None,
     ) -> ControllerResponse:
         """Run the agentic loop — prompt in, response out."""
         self._tool_result_text = []
         messages = self._build_messages(prompt, history, system_prompt)
         tools = self._tool_registry.get_ollama_tools()
-        steps = max_steps if max_steps is not None else self.max_steps
-        return await self._run_agentic_loop(messages, tools, steps)
+        return await self._run_agentic_loop(messages, tools, max_steps)
 
     # ── Agentic loop internals ───────────────────────────────────────────
 
@@ -357,7 +360,9 @@ class Agent:
                 # two, abort early rather than letting the model hallucinate from
                 # nothing. A single failure gets one more chance — the model sees
                 # the error and may produce text or try a different query.
-                if len(tool_call_records) >= 2 and all(r.failed for r in tool_call_records):
+                if len(tool_call_records) >= PennyConstants.TOOL_FAILURE_ABORT_THRESHOLD and all(
+                    r.failed for r in tool_call_records
+                ):
                     failed_tools = sorted({r.tool for r in tool_call_records})
                     logger.warning(
                         "All %d tool call(s) failed — aborting: %s",
@@ -478,7 +483,7 @@ class Agent:
 
     async def _call_model_with_xml_retry(self, messages: list[dict], tools: list[dict]):
         """Call the model, retrying if it emits XML markup instead of structured tool calls."""
-        max_xml_retries = 3
+        max_xml_retries = PennyConstants.XML_RETRY_LIMIT
         response = None
         effective_tools = tools if tools else None
 

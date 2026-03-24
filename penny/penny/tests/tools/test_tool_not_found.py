@@ -45,7 +45,6 @@ class TestToolNotFound:
             tools=[search_tool],
             db=db,
             config=config,
-            max_steps=3,
         )
 
         # Track messages sent to the model to verify error handling
@@ -64,7 +63,7 @@ class TestToolNotFound:
         mock_ollama.set_response_handler(handler)
 
         # Agent should not crash - it should handle the error gracefully
-        response = await agent.run("test prompt")
+        response = await agent.run("test prompt", max_steps=3)
 
         # Verify that we got a response (not a crash)
         assert response.answer is not None

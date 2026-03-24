@@ -136,7 +136,6 @@ class Penny:
             tools=[],
             db=db,
             config=self.config,
-            max_steps=int(self.config.runtime.MESSAGE_MAX_STEPS),
             tool_timeout=self.config.tool_timeout,
             vision_model_client=self.vision_model_client,
             embedding_model_client=self.embedding_model_client,
@@ -161,7 +160,6 @@ class Penny:
             tools=[],
             db=self.db,
             config=config,
-            max_steps=int(config.runtime.MESSAGE_MAX_STEPS),
             tool_timeout=config.tool_timeout,
             vision_model_client=self.vision_model_client,
             embedding_model_client=self.embedding_model_client,
@@ -174,7 +172,6 @@ class Penny:
             tools=[],
             db=self.db,
             config=config,
-            max_steps=int(config.runtime.MESSAGE_MAX_STEPS),
             tool_timeout=config.tool_timeout,
             embedding_model_client=self.embedding_model_client,
         )
@@ -187,7 +184,6 @@ class Penny:
             "model_client": self.model_client,
             "tools": [],
             "db": self.db,
-            "max_steps": 1,
             "tool_timeout": config.tool_timeout,
             "config": config,
         }

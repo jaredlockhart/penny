@@ -74,6 +74,9 @@ class HistoryAgent(Agent):
 
     name = "history"
 
+    def get_max_steps(self) -> int:
+        return PennyConstants.HISTORY_MAX_STEPS
+
     def __init__(self, **kwargs: object) -> None:
         kwargs["system_prompt"] = Prompt.SUMMARIZE_TO_BULLETS
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -118,7 +121,9 @@ class HistoryAgent(Agent):
             return False
 
         message_text = self._format_messages(messages)
-        response = await self.run(prompt=message_text, system_prompt=system_prompt)
+        response = await self.run(
+            prompt=message_text, max_steps=self.get_max_steps(), system_prompt=system_prompt
+        )
         topics = response.answer.strip()
         if not topics:
             return False
@@ -155,7 +160,9 @@ class HistoryAgent(Agent):
             return
 
         message_text = self._format_messages(messages)
-        response = await self.run(prompt=message_text, system_prompt=system_prompt)
+        response = await self.run(
+            prompt=message_text, max_steps=self.get_max_steps(), system_prompt=system_prompt
+        )
         topics = response.answer.strip()
         if not topics:
             logger.debug("Model returned empty topics for %s on %s", user, day_start.date())
@@ -176,7 +183,7 @@ class HistoryAgent(Agent):
 
     async def _rollup_completed_weeks(self, user: str, system_prompt: str) -> bool:
         """Summarize completed weeks from daily entries into weekly history entries."""
-        max_weeks = 2
+        max_weeks = PennyConstants.MAX_WEEKLY_ROLLUPS_PER_RUN
         weeks = self._find_unrolled_weeks(user, max_weeks)
         if not weeks:
             return False
@@ -187,7 +194,9 @@ class HistoryAgent(Agent):
             if not input_text:
                 continue
 
-            response = await self.run(prompt=input_text, system_prompt=system_prompt)
+            response = await self.run(
+                prompt=input_text, max_steps=self.get_max_steps(), system_prompt=system_prompt
+            )
             topics = response.answer.strip()
             if not topics:
                 continue

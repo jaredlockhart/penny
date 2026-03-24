@@ -60,12 +60,11 @@ class EmailCommand(Command):
                 tools=tools,
                 db=context.db,
                 config=context.config,
-                max_steps=context.config.email_max_steps,
                 tool_timeout=context.config.tool_timeout,
                 allow_repeat_tools=True,
             )
 
-            response = await agent.run(prompt)
+            response = await agent.run(prompt, max_steps=context.config.email_max_steps)
             return CommandResult(text=response.answer)
 
         except Exception as e:

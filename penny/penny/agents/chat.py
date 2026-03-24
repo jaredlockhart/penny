@@ -10,6 +10,7 @@ import logging
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
+from penny.constants import PennyConstants
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 
@@ -38,6 +39,10 @@ class ChatAgent(Agent):
 
     name: str = "chat"
 
+    def get_max_steps(self) -> int:
+        """Read from config each call so /config changes take effect immediately."""
+        return int(self.config.runtime.MESSAGE_MAX_STEPS)
+
     # ── Message handling ───────────────────────────────────────────────
 
     async def handle(
@@ -64,7 +69,7 @@ class ChatAgent(Agent):
                 return await self.run(
                     prompt=content,
                     history=history,
-                    max_steps=1,
+                    max_steps=PennyConstants.VISION_MAX_STEPS,
                     system_prompt=system_prompt,
                 )
 
@@ -73,6 +78,7 @@ class ChatAgent(Agent):
             system_prompt = await self._build_system_prompt(sender, content)
             return await self.run(
                 prompt=content,
+                max_steps=self.get_max_steps(),
                 history=history,
                 system_prompt=system_prompt,
             )
