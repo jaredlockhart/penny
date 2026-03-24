@@ -605,8 +605,7 @@ class HistoryAgent(Agent):
     def _find_unsummarized_days(self, user: str, max_days: int) -> list[tuple[datetime, datetime]]:
         """Find completed calendar days (UTC) without history entries."""
         duration = PennyConstants.HistoryDuration.DAILY
-        latest = self.db.history.get_latest(user, duration)
-        start = self._resolve_start_date(user, latest)
+        start = self._resolve_start_date(user)
         if start is None:
             return []
 
@@ -621,10 +620,14 @@ class HistoryAgent(Agent):
 
         return days
 
-    def _resolve_start_date(self, user: str, latest: object | None) -> datetime | None:
-        """Determine where to start scanning for un-rolled-up days."""
-        if latest is not None:
-            return getattr(latest, "period_end", None)
+    def _resolve_start_date(self, user: str) -> datetime | None:
+        """Determine where to start scanning for un-rolled-up days.
+
+        Always starts from the first message — the exists() check in the
+        scanning loop skips days that already have entries.  This avoids
+        the edge case where a history reset leaves today as the only entry
+        and period_end is *after* midnight, blocking all backfill.
+        """
         first_msg_time = self.db.messages.get_first_message_time(user)
         if first_msg_time is None:
             return None
