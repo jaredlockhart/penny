@@ -53,42 +53,55 @@ class ChatAgent(Agent):
         self._current_user = sender
         try:
             content, has_images = await self._process_images(content, images)
-            context_text = await self.get_context(sender, content)
             history = self.get_history(sender)
 
             if has_images:
                 logger.info("Handling vision message from %s", sender)
                 self._install_tools([])
+                system_prompt = await self._build_system_prompt(
+                    sender, content, instructions=Prompt.VISION_RESPONSE_PROMPT
+                )
                 return await self.run(
                     prompt=content,
                     history=history,
                     max_steps=1,
-                    system_prompt=Prompt.VISION_RESPONSE_PROMPT,
-                    context=context_text,
+                    system_prompt=system_prompt,
                 )
 
             logger.info("Handling message from %s (conversation mode)", sender)
             self._install_tools(self.get_tools(sender))
+            system_prompt = await self._build_system_prompt(sender, content)
             return await self.run(
                 prompt=content,
                 history=history,
-                context=context_text,
+                system_prompt=system_prompt,
             )
         finally:
             self._current_user = None
 
-    # ── Hooks ─────────────────────────────────────────────────────────────
+    # ── System prompt ──────────────────────────────────────────────────────
 
-    async def get_context(self, user: str, content: str | None = None) -> str:
-        """Full context — profile, history, thought."""
-        sections: list[str | None] = [
-            self._build_profile_context(user, content),
-            self._build_history_context(user),
-            self._build_thought_context(user),
-        ]
-        return "\n\n".join(s for s in sections if s)
+    async def _build_system_prompt(
+        self, user: str, content: str | None = None, instructions: str | None = None
+    ) -> str:
+        """Identity + profile + history + thought + instructions."""
+        return "\n\n".join(
+            s
+            for s in [
+                self._identity_section(),
+                self._context_block(
+                    self._profile_section(user, content),
+                    self._history_section(user),
+                    self._thought_section(user),
+                ),
+                self._instructions_section()
+                if instructions is None
+                else f"## Instructions\n{instructions}",
+            ]
+            if s
+        )
 
-    def _build_thought_context(self, sender: str) -> str | None:
+    def _thought_section(self, sender: str) -> str | None:
         """Build thought context — only thoughts Penny has shared with the user.
 
         Only notified thoughts appear in chat context so the model

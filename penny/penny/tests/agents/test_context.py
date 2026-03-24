@@ -43,7 +43,7 @@ async def test_history_context_formats_dates_and_topics(
             topics="- Quantum physics\n- Machine learning",
         )
 
-        context = penny.chat_agent._build_history_context(TEST_SENDER)
+        context = penny.chat_agent._history_section(TEST_SENDER)
         assert context is not None
         assert "Conversation History" in context
         assert "Mar 1" in context
@@ -68,7 +68,7 @@ async def test_history_context_labels_today(
             topics="- Current events",
         )
 
-        context = penny.chat_agent._build_history_context(TEST_SENDER)
+        context = penny.chat_agent._history_section(TEST_SENDER)
         assert context is not None
         assert "Today" in context
         assert "Current events" in context
@@ -82,7 +82,7 @@ async def test_history_context_none_when_no_entries(
     config = make_config()
 
     async with running_penny(config) as penny:
-        context = penny.chat_agent._build_history_context(TEST_SENDER)
+        context = penny.chat_agent._history_section(TEST_SENDER)
         assert context is None
 
 
@@ -212,7 +212,7 @@ async def test_dislike_context_lists_negative_preferences(
             valence="positive",
         )
 
-        context = penny.chat_agent._build_dislike_context(TEST_SENDER)
+        context = penny.chat_agent._dislike_section(TEST_SENDER)
         assert context is not None
         assert "Country music" in context
         assert "Jazz music" not in context
@@ -233,7 +233,7 @@ async def test_dislike_context_none_when_no_dislikes(
             valence="positive",
         )
 
-        context = penny.chat_agent._build_dislike_context(TEST_SENDER)
+        context = penny.chat_agent._dislike_section(TEST_SENDER)
         assert context is None
 
 
@@ -256,7 +256,7 @@ async def test_dislike_context_deduplicates(
             valence="negative",
         )
 
-        context = penny.chat_agent._build_dislike_context(TEST_SENDER)
+        context = penny.chat_agent._dislike_section(TEST_SENDER)
         assert context is not None
         # Should appear only once despite case-insensitive duplicate
         assert context.count("ountry music") == 1
@@ -279,7 +279,7 @@ async def test_thought_context_scoped_to_seed_preference(
 
         # Scope to preference 1 — should only see the AI thought
         penny.thinking_agent._seed_pref_id = 1
-        context = penny.thinking_agent._build_thought_context(TEST_SENDER)
+        context = penny.thinking_agent._thought_section(TEST_SENDER)
         assert context is not None
         assert "thought about AI" in context
         assert "thought about music" not in context
@@ -293,7 +293,7 @@ async def test_thought_context_none_when_no_thoughts(
     config = make_config()
 
     async with running_penny(config) as penny:
-        context = penny.thinking_agent._build_thought_context(TEST_SENDER)
+        context = penny.thinking_agent._thought_section(TEST_SENDER)
         assert context is None
 
 
@@ -308,7 +308,7 @@ async def test_profile_context_includes_name(
     config = make_config()
 
     async with running_penny(config) as penny:
-        context = penny.chat_agent._build_profile_context(TEST_SENDER, "hello")
+        context = penny.chat_agent._profile_section(TEST_SENDER, "hello")
         assert context is not None
         assert "Test User" in context
 
@@ -321,7 +321,7 @@ async def test_profile_context_none_for_unknown_user(
     config = make_config()
 
     async with running_penny(config) as penny:
-        context = penny.chat_agent._build_profile_context("+1999999999", "hello")
+        context = penny.chat_agent._profile_section("+1999999999", "hello")
         assert context is None
 
 

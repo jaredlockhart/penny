@@ -60,7 +60,6 @@ class ThinkingAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.max_steps = int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
         self._keep_tools_on_final_step = True
-        self._include_identity = False
         self._seed_topic: str | None = None
         self._seed_pref_id: int | None = None
 
@@ -87,22 +86,26 @@ class ThinkingAgent(Agent):
         logger.info("Thinking seed: %s", pref.content)
         return Prompt.THINKING_SEED.format(seed=pref.content)
 
-    async def get_context(self, user: str) -> str:
-        """Slim context — thoughts and dislikes only.
+    async def _build_system_prompt(self, user: str) -> str:
+        """No identity, no profile — just thoughts (if seeded) + dislikes + instructions.
 
-        No identity or profile — thinking never communicates with the user.
-        Seeded cycles get scoped thought context (what was explored for
-        this preference). Free/news cycles get no thought context — injecting
-        previous free thoughts just primes the model to revisit them.
-        Embedding dedup catches true repeats at storage time.
+        Free/news cycles get no thought context — injecting previous free
+        thoughts primes the model to revisit them. Embedding dedup catches
+        true repeats at storage time.
         """
-        sections: list[str | None] = [
-            self._build_thought_context(user) if self._seed_pref_id is not None else None,
-            self._build_dislike_context(user),
-        ]
-        return "\n\n".join(s for s in sections if s)
+        return "\n\n".join(
+            s
+            for s in [
+                self._context_block(
+                    self._thought_section(user) if self._seed_pref_id is not None else None,
+                    self._dislike_section(user),
+                ),
+                self._instructions_section(),
+            ]
+            if s
+        )
 
-    def _build_thought_context(self, sender: str) -> str | None:
+    def _thought_section(self, sender: str) -> str | None:
         """Build thought context scoped to the current preference_id.
 
         Shows what Penny already explored so she avoids repeating herself.

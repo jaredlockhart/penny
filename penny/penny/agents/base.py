@@ -216,7 +216,6 @@ class Agent:
 
         self._tool_executor = ToolExecutor(self._tool_registry, timeout=tool_timeout)
         self._keep_tools_on_final_step = False
-        self._include_identity = True
 
         Agent._instances.append(self)
 
@@ -258,9 +257,9 @@ class Agent:
                 return False
 
             logger.info("%s starting for %s", self.name, user)
-            context = await self.get_context(user)
+            system_prompt = await self._build_system_prompt(user)
             history = self.get_history(user)
-            await self.run(prompt=prompt, context=context, history=history)
+            await self.run(prompt=prompt, system_prompt=system_prompt, history=history)
             did_work = await self.after_run(user)
             logger.info("%s complete for %s", self.name, user)
             return did_work
@@ -280,11 +279,6 @@ class Agent:
         """Build the prompt for the agentic loop. Return None to skip this user."""
         return None
 
-    async def get_context(self, user: str) -> str:
-        """Build context text for the system prompt. Override for custom context."""
-        context, _ = await self._build_context(user)
-        return context
-
     def get_history(self, user: str) -> list[tuple[str, str]] | None:
         """Conversation history for the agentic loop. Override for conversation agents."""
         return None
@@ -301,11 +295,10 @@ class Agent:
         history: list[tuple[str, str]] | None = None,
         max_steps: int | None = None,
         system_prompt: str | None = None,
-        context: str | None = None,
     ) -> ControllerResponse:
         """Run the agentic loop — prompt in, response out."""
         self._tool_result_text = []
-        messages = self._build_messages(prompt, history, system_prompt, context=context)
+        messages = self._build_messages(prompt, history, system_prompt)
         tools = self._tool_registry.get_ollama_tools()
         steps = max_steps if max_steps is not None else self.max_steps
         return await self._run_agentic_loop(messages, tools, steps)
@@ -746,54 +739,24 @@ class Agent:
         prompt: str,
         history: list[tuple[str, str]] | None = None,
         system_prompt: str | None = None,
-        context: str | None = None,
     ) -> list[dict]:
         """Build message list for Ollama chat API.
 
-        Args:
-            prompt: The user message/prompt to respond to
-            history: Optional conversation history as (role, content) tuples
-            system_prompt: Optional system prompt override
-            context: Optional context text appended to system prompt (profile, events, etc.)
-
-        Returns:
-            List of message dicts for Ollama chat API
+        The system_prompt is the full prompt body (identity, context,
+        instructions) built by each agent's _build_system_prompt method.
+        This method only prepends the timestamp.
         """
-        messages = []
-
-        effective_prompt = system_prompt or self.system_prompt
+        effective = system_prompt or self.system_prompt
         now = datetime.now(UTC).strftime("%A, %B %d, %Y at %I:%M %p UTC")
+        system_content = f"Current date and time: {now}\n\n{effective}"
 
-        # Build system prompt: timestamp → identity → context → agent-specific instructions
-        system_parts = [f"Current date and time: {now}"]
-
-        if self._include_identity:
-            system_parts.append("")
-            system_parts.append("## Identity")
-            system_parts.append(Prompt.PENNY_IDENTITY)
-
-        if context:
-            system_parts.append("")
-            system_parts.append("## Context")
-            system_parts.append(context)
-
-        if effective_prompt:
-            if "{tools}" in effective_prompt:
-                effective_prompt = effective_prompt.format(tools=self._build_tool_summary())
-            system_parts.append("")
-            system_parts.append("## Instructions")
-            system_parts.append(effective_prompt)
-
-        system_content = "\n".join(system_parts)
-        messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content).to_dict())
+        messages = [ChatMessage(role=MessageRole.SYSTEM, content=system_content).to_dict()]
 
         if history:
             for role, content in history:
                 messages.append(ChatMessage(role=MessageRole(role), content=content).to_dict())
 
-        user_msg = ChatMessage(role=MessageRole.USER, content=prompt)
-        messages.append(user_msg.to_dict())
-
+        messages.append(ChatMessage(role=MessageRole.USER, content=prompt).to_dict())
         return messages
 
     def _build_tool_summary(self) -> str:
@@ -806,30 +769,49 @@ class Agent:
         lines = [f"- **{t.name}**: {t.description}" for t in tools]
         return "\n".join(lines)
 
-    # ── Context building ─────────────────────────────────────────────────
+    # ── System prompt building (template method pattern) ─────────────────
 
-    async def _build_context(
-        self,
-        user: str,
-        content: str | None = None,
-    ) -> tuple[str, list[tuple[str, str]]]:
-        """Build context text for system prompt and conversation history.
+    async def _build_system_prompt(self, user: str) -> str:
+        """Build the full system prompt body. Override per agent.
 
-        Returns (context_text, conversation) where context_text is appended
-        to the system prompt and conversation is user/assistant turns.
+        Each agent composes its prompt from building blocks below.
+        The timestamp is prepended by _build_messages — don't include it here.
         """
-        sections: list[str | None] = [
-            self._build_profile_context(user, content),
-            self._build_history_context(user),
-            self._build_thought_context(user),
-            self._build_dislike_context(user),
+        sections = [
+            self._identity_section(),
+            self._context_block(
+                self._profile_section(user),
+                self._history_section(user),
+                self._thought_section(user),
+                self._dislike_section(user),
+            ),
+            self._instructions_section(),
         ]
-        context_text = "\n\n".join(s for s in sections if s)
-        conversation = self._build_conversation(user)
-        return context_text, conversation
+        return "\n\n".join(s for s in sections if s)
 
-    def _build_profile_context(self, sender: str, content: str | None) -> str | None:
-        """Build user profile context string and configure search redaction."""
+    # ── Building blocks ───────────────────────────────────────────────────
+
+    def _identity_section(self) -> str:
+        """## Identity — Penny's voice and personality."""
+        return f"## Identity\n{Prompt.PENNY_IDENTITY}"
+
+    def _instructions_section(self) -> str:
+        """## Instructions — agent-specific prompt with tool descriptions."""
+        prompt = self.system_prompt
+        if "{tools}" in prompt:
+            prompt = prompt.format(tools=self._build_tool_summary())
+        return f"## Instructions\n{prompt}"
+
+    @staticmethod
+    def _context_block(*sections: str | None) -> str | None:
+        """Wrap non-None sections under a ## Context header."""
+        parts = [s for s in sections if s]
+        if not parts:
+            return None
+        return "## Context\n" + "\n\n".join(parts)
+
+    def _profile_section(self, sender: str, content: str | None = None) -> str | None:
+        """### User Profile — user name and search redaction config."""
         try:
             user_info = self.db.users.get_info(sender)
             if not user_info:
@@ -846,7 +828,7 @@ class Agent:
         except Exception:
             return None
 
-    def _build_history_context(self, sender: str) -> str | None:
+    def _history_section(self, sender: str) -> str | None:
         """Build conversation history with weekly summaries and daily details.
 
         Format:
@@ -912,7 +894,7 @@ class Agent:
                 result.append(topic)
         return result
 
-    def _build_thought_context(self, sender: str) -> str | None:
+    def _thought_section(self, sender: str) -> str | None:
         """Build recent thinking summary context. Overridden by ChatAgent and ThinkingAgent."""
         try:
             thoughts = self.db.thoughts.get_recent(sender, limit=self.THOUGHT_CONTEXT_LIMIT)
@@ -925,7 +907,7 @@ class Agent:
             logger.warning("Thought context retrieval failed, proceeding without")
             return None
 
-    def _build_dislike_context(self, user: str) -> str | None:
+    def _dislike_section(self, user: str) -> str | None:
         """Build textual list of topics the user dislikes."""
         try:
             prefs = self.db.preferences.get_for_user(user)

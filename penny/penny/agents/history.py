@@ -77,7 +77,6 @@ class HistoryAgent(Agent):
     def __init__(self, **kwargs: object) -> None:
         kwargs["system_prompt"] = Prompt.SUMMARIZE_TO_BULLETS
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self._include_identity = False
 
     async def execute_for_user(self, user: str) -> bool:
         """Summarize today's conversation, extract preferences, backfill days and weeks."""

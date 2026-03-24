@@ -397,7 +397,7 @@ async def test_chat_thought_context_shows_notified_only(
         cat_thought = [t for t in thoughts if "cats" in t.content][0]
         penny.db.thoughts.mark_notified(cat_thought.id)
 
-        context = penny.chat_agent._build_thought_context(TEST_SENDER)
+        context = penny.chat_agent._thought_section(TEST_SENDER)
         if context:
             assert "cats" in context
             assert "dogs" not in context
@@ -415,18 +415,18 @@ async def test_notify_thought_context_shows_specific_thought(
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=1)
 
         penny.notify_agent._pending_thought = thoughts[0]
-        context = penny.notify_agent._build_pending_thought_context()
+        context = penny.notify_agent._pending_thought_section()
         assert "black holes" in context
         assert "Your Latest Thought" in context
 
-        # Candidate context includes thought but excludes conversation history
+        # Candidate prompt includes thought but excludes conversation history
         now = datetime.now(UTC)
         penny.db.history.add(
             TEST_SENDER, now, now, PennyConstants.HistoryDuration.DAILY, "space games"
         )
-        candidate_ctx = penny.notify_agent._build_thought_candidate_context(TEST_SENDER)
-        assert "black holes" in candidate_ctx
-        assert "Conversation History" not in candidate_ctx
+        candidate_prompt = penny.notify_agent._build_thought_candidate_prompt(TEST_SENDER)
+        assert "black holes" in candidate_prompt
+        assert "Conversation History" not in candidate_prompt
 
         penny.notify_agent._pending_thought = None
 

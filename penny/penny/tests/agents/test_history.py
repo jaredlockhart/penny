@@ -69,7 +69,6 @@ async def test_summarize_today_creates_history_entry(
         rest = "\n".join(lines[1:])
         expected = """\
 
-## Instructions
 Summarize the following text as a short bullet list. \
 Each bullet should be 3-8 words describing a distinct topic. \
 Omit greetings, small talk, and meta-conversation. \
@@ -714,7 +713,7 @@ async def test_weekly_rollup_skips_incomplete_week(
 async def test_history_context_includes_weekly_entries(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """_build_history_context includes both weekly and daily entries."""
+    """_history_section includes both weekly and daily entries."""
     config = make_config(history_interval=99999.0)
 
     async with running_penny(config) as penny:
@@ -739,7 +738,7 @@ async def test_history_context_includes_weekly_entries(
             topics="- Morning coffee chat",
         )
 
-        context = penny.chat_agent._build_history_context(TEST_SENDER)
+        context = penny.chat_agent._history_section(TEST_SENDER)
         assert context is not None
         assert "Week of" in context
         assert "AI developments" in context
