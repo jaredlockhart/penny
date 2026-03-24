@@ -87,6 +87,7 @@ async def test_signal_reaction_message(
         reaction = reactions[0]
         assert reaction.content == "👍"
         assert reaction.parent_id == message_id
+        assert reaction.is_reaction is True
 
         # Verify no response was sent to the reaction
         # (only the initial response should exist)
@@ -188,3 +189,4 @@ async def test_signal_reaction_raw_format(
         reaction = reactions[0]
         assert reaction.content == "👍"
         assert reaction.parent_id == message_id
+        assert reaction.is_reaction is True
