@@ -37,7 +37,10 @@ async def test_summarize_today_creates_history_entry(
     """HistoryAgent summarizes today's messages and stores a history entry."""
     config = make_config(history_interval=99999.0)
 
+    requests_seen: list[dict] = []
+
     def handler(request, count):
+        requests_seen.append(request)
         return mock_ollama._make_text_response(request, "- Discussed quantum physics")
 
     mock_ollama.set_response_handler(handler)
@@ -56,6 +59,36 @@ async def test_summarize_today_creates_history_entry(
         )
         assert len(entries) >= 1
         assert "quantum physics" in entries[0].topics
+
+        # Full system prompt structure assertion
+        system_text = [
+            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
+        ][0]
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
+
+## Identity
+You are Penny. You and the user are friends who text regularly. \
+This is mid-conversation — not a fresh chat.
+
+Voice:
+- Reply like you're continuing a text thread. No greetings, no sign-offs.
+- React to what the user actually said before giving information. \
+If they corrected you, own it. If they expressed excitement, match it. \
+If they asked a follow-up, connect it to what came before.
+- Present information naturally but you can still use short formatted blocks \
+(bold names, links) when listing products or facts. \
+Just wrap them in conversational text, not a clinical dump.
+- Finish every message with an emoji.
+
+## Instructions
+Summarize the following text as a short bullet list. \
+Each bullet should be 3-8 words describing a distinct topic. \
+Omit greetings, small talk, and meta-conversation. \
+Return ONLY the bullet list, one topic per line, prefixed with "- "."""
+        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
 
 @pytest.mark.asyncio
