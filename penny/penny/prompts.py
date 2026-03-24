@@ -175,6 +175,12 @@ Examples:
         "Then dig into it — get the full picture on that one thing."
     )
 
+    # News thinking prompt (intentional 20% mode — deep-dive on current events)
+    THINKING_NEWS = (
+        "Start by reading the news. Pick ONE story that catches your eye, "
+        "then dig into it — who's involved, what happened, why it matters."
+    )
+
     # Free-thinking prompt (no seed topic, no past context — just explore)
     THINKING_FREE = (
         "Search for something that catches your attention. "

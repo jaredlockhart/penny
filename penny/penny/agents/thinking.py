@@ -19,7 +19,10 @@ from penny.prompts import Prompt
 logger = logging.getLogger(__name__)
 
 # Probability of a free-thinking cycle (no seed topic — Penny picks her own)
-FREE_THINKING_PROBABILITY = 1 / 3
+FREE_THINKING_PROBABILITY = 0.1
+
+# Probability of a news-focused cycle (read the news, pick a story, dig in)
+NEWS_THINKING_PROBABILITY = 0.3
 
 # Minimum word count for a thought to be stored (filters model planning text)
 MIN_THOUGHT_WORDS = 50
@@ -66,13 +69,18 @@ class ThinkingAgent(Agent):
     # ── Execution hooks ──────────────────────────────────────────────────
 
     async def get_prompt(self, user: str) -> str | None:
-        """Pick a seed topic or let Penny free-think (~1/3 of the time)."""
+        """Pick a thinking mode: 10% free, 20% news, 70% preference-seeded."""
         self._seed_topic = None
         self._seed_pref_id = None
 
-        if random.random() < FREE_THINKING_PROBABILITY:
+        roll = random.random()
+        if roll < FREE_THINKING_PROBABILITY:
             logger.info("Free thinking cycle for %s", user)
             return Prompt.THINKING_FREE
+
+        if roll < FREE_THINKING_PROBABILITY + NEWS_THINKING_PROBABILITY:
+            logger.info("News thinking cycle for %s", user)
+            return Prompt.THINKING_NEWS
 
         threshold = int(self.config.runtime.PREFERENCE_MENTION_THRESHOLD)
         pool = self.db.preferences.get_least_recent_positive(user, mention_threshold=threshold)
