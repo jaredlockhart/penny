@@ -1,8 +1,11 @@
 """Integration tests for the ChatAgent."""
 
+from datetime import datetime
+
 import pytest
 from sqlmodel import select
 
+from penny.constants import PennyConstants
 from penny.database.models import MessageLog, SearchLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -86,6 +89,30 @@ async def test_basic_message_flow(
         # Verify we have a WebSocket connection
         assert len(signal_server._websockets) == 1, "Penny should have connected to WebSocket"
 
+        # Seed full context: weekly history, daily history, notified thought, dislike
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=datetime(2026, 3, 16),
+            period_end=datetime(2026, 3, 23),
+            duration=PennyConstants.HistoryDuration.WEEKLY,
+            topics="- Guitar pedal research\n- Quantum computing news",
+        )
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=datetime(2026, 3, 23),
+            period_end=datetime(2026, 3, 24),
+            duration=PennyConstants.HistoryDuration.DAILY,
+            topics="- Tone King Royalist amp",
+        )
+        thought = penny.db.thoughts.add(TEST_SENDER, "Recent thought about amps")
+        if thought:
+            penny.db.thoughts.mark_notified(thought.id)
+        penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="Country music",
+            valence="negative",
+        )
+
         # Send incoming message
         await signal_server.push_message(
             sender=TEST_SENDER,
@@ -140,6 +167,16 @@ Just wrap them in conversational text, not a clinical dump.
 ## Context
 ### User Profile
 The user's name is Test User.
+
+### Conversation History
+Week of Mar 16:
+- Guitar pedal research
+- Quantum computing news
+Mar 23:
+- Tone King Royalist amp
+
+### Recent Background Thinking
+Recent thought about amps
 
 ## Instructions
 The user is talking to you. You have context injected above — \
