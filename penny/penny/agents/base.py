@@ -216,6 +216,7 @@ class Agent:
 
         self._tool_executor = ToolExecutor(self._tool_registry, timeout=tool_timeout)
         self._keep_tools_on_final_step = False
+        self._include_identity = True
 
         Agent._instances.append(self)
 
@@ -764,10 +765,12 @@ class Agent:
         now = datetime.now(UTC).strftime("%A, %B %d, %Y at %I:%M %p UTC")
 
         # Build system prompt: timestamp → identity → context → agent-specific instructions
-        system_parts = [f"Current date and time: {now}", ""]
+        system_parts = [f"Current date and time: {now}"]
 
-        system_parts.append("## Identity")
-        system_parts.append(Prompt.PENNY_IDENTITY)
+        if self._include_identity:
+            system_parts.append("")
+            system_parts.append("## Identity")
+            system_parts.append(Prompt.PENNY_IDENTITY)
 
         if context:
             system_parts.append("")

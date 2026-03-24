@@ -60,6 +60,7 @@ class ThinkingAgent(Agent):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.max_steps = int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
         self._keep_tools_on_final_step = True
+        self._include_identity = False
         self._seed_topic: str | None = None
         self._seed_pref_id: int | None = None
 
@@ -87,15 +88,15 @@ class ThinkingAgent(Agent):
         return Prompt.THINKING_SEED.format(seed=pref.content)
 
     async def get_context(self, user: str) -> str:
-        """Slim context — profile, thoughts, and dislikes.
+        """Slim context — thoughts and dislikes only.
 
+        No identity or profile — thinking never communicates with the user.
         Seeded cycles get scoped thought context (what was explored for
         this preference). Free/news cycles get no thought context — injecting
         previous free thoughts just primes the model to revisit them.
         Embedding dedup catches true repeats at storage time.
         """
         sections: list[str | None] = [
-            self._build_profile_context(user, None),
             self._build_thought_context(user) if self._seed_pref_id is not None else None,
             self._build_dislike_context(user),
         ]
