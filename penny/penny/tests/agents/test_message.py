@@ -146,6 +146,7 @@ and your own recent thoughts.
 You have tools available:
 - **search**: Search the web for current information. \
 Accepts up to 5 queries per call.
+Only call tools from the list above — do not call any other tool.
 
 Every tool call has a `reasoning` field — use it to think out loud. \
 Explain what you're looking for, what you already know, \

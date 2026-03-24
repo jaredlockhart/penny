@@ -148,6 +148,7 @@ Not a broad survey — one interesting thread, then pull it.
 You have tools available:
 - **search**: Search the web for current information. \
 Accepts up to 1 query per call.
+Only call tools from the list above — do not call any other tool.
 
 Go DEEP, not wide:
 - Search for the topic, then pick the single most interesting result
@@ -278,6 +279,7 @@ Not a broad survey — one interesting thread, then pull it.
 You have tools available:
 - **search**: Search the web for current information. \
 Accepts up to 1 query per call.
+Only call tools from the list above — do not call any other tool.
 
 Go DEEP, not wide:
 - Search for the topic, then pick the single most interesting result

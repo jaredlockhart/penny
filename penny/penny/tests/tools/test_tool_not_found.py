@@ -6,6 +6,7 @@ from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
 from penny.ollama import OllamaClient
+from penny.prompts import Prompt
 from penny.tools.search import SearchTool
 
 
@@ -83,3 +84,66 @@ class TestToolNotFound:
         assert "search" in error_content.lower()  # The actual tool name
 
         await agent.close()
+
+
+class TestSystemPromptToolConstraint:
+    """Test that system prompts include an explicit negative tool constraint."""
+
+    def _make_agent(self, test_db, mock_ollama, system_prompt: str) -> Agent:
+        """Create a minimal Agent for prompt inspection."""
+        db = Database(test_db)
+        db.create_tables()
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            ollama_api_url="http://localhost:11434",
+            ollama_model="test-model",
+            perplexity_api_key=None,
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        search_tool = SearchTool(perplexity_api_key="test-key", db=db)
+        client = OllamaClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        return Agent(
+            system_prompt=system_prompt,
+            model_client=client,
+            tools=[search_tool],
+            db=db,
+            config=config,
+            max_steps=2,
+        )
+
+    def test_conversation_prompt_has_tool_constraint(self, test_db, mock_ollama):
+        """CONVERSATION_PROMPT includes 'do not call any other tool' after tool list."""
+        agent = self._make_agent(test_db, mock_ollama, Prompt.CONVERSATION_PROMPT)
+        section = agent._instructions_section(Prompt.CONVERSATION_PROMPT)
+        assert "only call tools from the list above" in section.lower()
+
+    def test_thinking_prompt_has_tool_constraint(self, test_db, mock_ollama):
+        """THINKING_SYSTEM_PROMPT includes 'do not call any other tool' after tool list."""
+        agent = self._make_agent(test_db, mock_ollama, Prompt.THINKING_SYSTEM_PROMPT)
+        section = agent._instructions_section(Prompt.THINKING_SYSTEM_PROMPT)
+        assert "only call tools from the list above" in section.lower()
+
+    def test_notify_prompt_has_tool_constraint(self, test_db, mock_ollama):
+        """NOTIFY_SYSTEM_PROMPT includes 'do not call any other tool' after tool list."""
+        agent = self._make_agent(test_db, mock_ollama, Prompt.NOTIFY_SYSTEM_PROMPT)
+        section = agent._instructions_section(Prompt.NOTIFY_SYSTEM_PROMPT)
+        assert "only call tools from the list above" in section.lower()
+
+    def test_tool_constraint_appears_after_tool_list(self, test_db, mock_ollama):
+        """The 'do not call' constraint appears after the tool list in the formatted prompt."""
+        agent = self._make_agent(test_db, mock_ollama, Prompt.CONVERSATION_PROMPT)
+        section = agent._instructions_section(Prompt.CONVERSATION_PROMPT)
+        tool_list_pos = section.index("- **search**")
+        constraint_pos = section.index("Only call tools from the list above")
+        assert constraint_pos > tool_list_pos

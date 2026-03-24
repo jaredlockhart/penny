@@ -184,6 +184,7 @@ interesting you've been thinking about or found in the news.
 You have tools available:
 - **search**: Search the web for current information. \
 Accepts up to 5 queries per call.
+Only call tools from the list above — do not call any other tool.
 
 If your context includes 'Your Latest Thought', that contains research \
 you already did. Share what's in it — the thought IS the substance of \
