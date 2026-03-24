@@ -1,8 +1,11 @@
 """Integration tests for the ChatAgent."""
 
+from datetime import datetime
+
 import pytest
 from sqlmodel import select
 
+from penny.constants import PennyConstants
 from penny.database.models import MessageLog, SearchLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -86,6 +89,30 @@ async def test_basic_message_flow(
         # Verify we have a WebSocket connection
         assert len(signal_server._websockets) == 1, "Penny should have connected to WebSocket"
 
+        # Seed full context: weekly history, daily history, notified thought, dislike
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=datetime(2026, 3, 16),
+            period_end=datetime(2026, 3, 23),
+            duration=PennyConstants.HistoryDuration.WEEKLY,
+            topics="- Guitar pedal research\n- Quantum computing news",
+        )
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=datetime(2026, 3, 23),
+            period_end=datetime(2026, 3, 24),
+            duration=PennyConstants.HistoryDuration.DAILY,
+            topics="- Tone King Royalist amp",
+        )
+        thought = penny.db.thoughts.add(TEST_SENDER, "Recent thought about amps")
+        if thought:
+            penny.db.thoughts.mark_notified(thought.id)
+        penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="Country music",
+            valence="negative",
+        )
+
         # Send incoming message
         await signal_server.push_message(
             sender=TEST_SENDER,
@@ -114,12 +141,78 @@ async def test_basic_message_flow(
         tool_messages = [m for m in messages if m.get("role") == "tool"]
         assert len(tool_messages) >= 1, "Second request should include tool result"
 
-        # Context uses markdown headers
-        first_request_msgs = first_request.get("messages", [])
-        system_text = " ".join(
-            m.get("content", "") for m in first_request_msgs if m.get("role") == "system"
-        )
-        assert "reasoning" in system_text.lower(), "Prompt should mention reasoning field"
+        # Full system prompt structure assertion
+        system_text = [
+            m.get("content", "") for m in first_request["messages"] if m.get("role") == "system"
+        ][0]
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
+
+## Identity
+You are Penny. You and the user are friends who text regularly. \
+This is mid-conversation — not a fresh chat.
+
+Voice:
+- Reply like you're continuing a text thread. No greetings, no sign-offs.
+- React to what the user actually said before giving information. \
+If they corrected you, own it. If they expressed excitement, match it. \
+If they asked a follow-up, connect it to what came before.
+- Present information naturally but you can still use short formatted blocks \
+(bold names, links) when listing products or facts. \
+Just wrap them in conversational text, not a clinical dump.
+- Finish every message with an emoji.
+
+## Context
+### User Profile
+The user's name is Test User.
+
+### Conversation History
+Week of Mar 16:
+- Guitar pedal research
+- Quantum computing news
+Mar 23:
+- Tone King Royalist amp
+
+### Recent Background Thinking
+Recent thought about amps
+
+## Instructions
+The user is talking to you. You have context injected above — \
+recent conversation history, relevant knowledge, recent events, \
+and your own recent thoughts.
+
+You have tools available:
+- **search**: Search the web for current information. \
+Accepts up to 5 queries per call.
+
+Every tool call has a `reasoning` field — use it to think out loud. \
+Explain what you're looking for, what you already know, \
+and what you'll do with the result.
+
+Search before replying when the user asks about something you could look up. \
+The only exception is pure greetings with zero topic content ('hey', 'hi') \
+or follow-ups where you already have the information from a previous search.
+
+Every fact, name, and detail in your response must come from your search \
+results or injected context. A short, accurate response is always better \
+than a longer one padded with extra information.
+
+Your search results contain a 'Sources:' section at the bottom with real \
+URLs. When you reference something, use ONLY these source URLs. Copy them \
+exactly — character for character. If a topic has no matching source URL, \
+mention it without a URL.
+
+When the user changes topics, just go with it. \
+If search returns few results, say what you found and offer to dig deeper.
+
+Focus on ONE topic per response. Pick the most relevant \
+thing to the user's message and go deep on that.
+
+Always include specific details (specs, dates, prices) and at least one \
+source URL so the user can follow up."""
+        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
         # Verify typing indicators were sent
         assert len(signal_server.typing_events) >= 1, "Should have sent typing indicator"

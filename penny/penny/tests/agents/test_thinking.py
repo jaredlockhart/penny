@@ -121,27 +121,48 @@ async def test_seeded_thinking_full_loop(
         first_user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
         assert "Quantum gravity experiments" in first_user_msgs[0]["content"]
 
-        # -- Context: profile, previous thoughts, dislikes
-        system_text = " ".join(
+        # -- Full system prompt structure assertion
+        system_text = [
             m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
-        )
-        assert "Test User" in system_text  # profile
-        assert "Previous thought about gravity" in system_text  # scoped thoughts
-        assert "Country music" in system_text  # dislikes
-        assert "inner monologue" in system_text  # identity
+        ][0]
+        # Strip dynamic timestamp line, verify everything else exactly
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
 
-        # -- No raw conversation in context
-        assert not any(
-            "hello penny" in m.get("content", "")
-            for m in requests_seen[0]["messages"]
-            if m.get("role") == "user"
-        )
+## Context
+### Recent Background Thinking
+Previous thought about gravity
 
-        # -- Tools: search available, message_user absent
-        tools = requests_seen[0].get("tools") or []
-        tool_names = [t["function"]["name"] for t in tools]
-        assert "search" in tool_names
-        assert "message_user" not in tool_names
+### Topics to Avoid
+- Country music
+
+## Instructions
+You are thinking to yourself. This is your inner monologue — \
+the user cannot see this.
+
+Your goal is to find ONE specific, concrete thing worth knowing about. \
+Not a broad survey — one interesting thread, then pull it.
+
+You have tools available:
+- **search**: Search the web for current information. \
+Accepts up to 1 query per call.
+
+Go DEEP, not wide:
+- Search for the topic, then pick the single most interesting result
+- Do follow-up searches to learn more about that specific thing
+- Do NOT search for a different subtopic on each step
+- Do NOT repeat the same search query you already ran
+
+When you receive 'dig deeper', that means: learn more about what \
+you already found. More detail on the same thing, not a new thing.
+
+Check your recent thoughts to avoid repeating what you already explored.
+
+All information in your responses must come from your tool results. \
+If nothing interesting comes up, that's fine — quiet cycles are normal."""
+        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
         # -- Tool results flow into subsequent steps
         step2_msgs = requests_seen[1]["messages"]
@@ -152,16 +173,6 @@ async def test_seeded_thinking_full_loop(
         step3_msgs = requests_seen[2]["messages"]
         user_msgs = [m for m in step3_msgs if m.get("role") == "user"]
         assert any(m.get("content") == "dig deeper into what you just found" for m in user_msgs)
-
-        # -- System prompt rebuilt between steps (both have identity)
-        sys1 = " ".join(
-            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
-        )
-        sys3 = " ".join(
-            m.get("content", "") for m in requests_seen[2]["messages"] if m.get("role") == "system"
-        )
-        assert "Penny" in sys1
-        assert "Penny" in sys3
 
         # -- Tools available on final agentic step (not stripped for thinking)
         last_loop_request = requests_seen[2]
@@ -244,14 +255,44 @@ async def test_free_thinking_full_loop(
         first_prompt = first_user_msgs[0]["content"].lower()
         assert "search for something" in first_prompt or "interesting" in first_prompt
 
-        # -- Context: profile, previous free thoughts, dislikes (same as seeded)
-        system_text = " ".join(
+        # -- Full system prompt: no identity, no profile, no free thoughts, just dislikes
+        system_text = [
             m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
-        )
-        assert "Test User" in system_text  # profile
-        assert "Previous free thought about space" in system_text  # free thoughts
-        assert "Country music" in system_text  # dislikes
-        assert "inner monologue" in system_text  # identity
+        ][0]
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
+
+## Context
+### Topics to Avoid
+- Country music
+
+## Instructions
+You are thinking to yourself. This is your inner monologue — \
+the user cannot see this.
+
+Your goal is to find ONE specific, concrete thing worth knowing about. \
+Not a broad survey — one interesting thread, then pull it.
+
+You have tools available:
+- **search**: Search the web for current information. \
+Accepts up to 1 query per call.
+
+Go DEEP, not wide:
+- Search for the topic, then pick the single most interesting result
+- Do follow-up searches to learn more about that specific thing
+- Do NOT search for a different subtopic on each step
+- Do NOT repeat the same search query you already ran
+
+When you receive 'dig deeper', that means: learn more about what \
+you already found. More detail on the same thing, not a new thing.
+
+Check your recent thoughts to avoid repeating what you already explored.
+
+All information in your responses must come from your tool results. \
+If nothing interesting comes up, that's fine — quiet cycles are normal."""
+        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
         # -- Tools: search available, message_user absent
         tools = requests_seen[0].get("tools") or []
@@ -268,16 +309,6 @@ async def test_free_thinking_full_loop(
         step3_msgs = requests_seen[2]["messages"]
         user_msgs = [m for m in step3_msgs if m.get("role") == "user"]
         assert any(m.get("content") == "dig deeper into what you just found" for m in user_msgs)
-
-        # -- System prompt rebuilt between steps
-        sys1 = " ".join(
-            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
-        )
-        sys3 = " ".join(
-            m.get("content", "") for m in requests_seen[2]["messages"] if m.get("role") == "system"
-        )
-        assert "Penny" in sys1
-        assert "Penny" in sys3
 
         # -- Storage: summary stored with preference_id=None
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)

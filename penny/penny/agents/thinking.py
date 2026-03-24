@@ -86,24 +86,30 @@ class ThinkingAgent(Agent):
         logger.info("Thinking seed: %s", pref.content)
         return Prompt.THINKING_SEED.format(seed=pref.content)
 
-    async def get_context(self, user: str) -> str:
-        """Slim context — profile, thoughts, and dislikes.
+    async def _build_system_prompt(self, user: str) -> str:
+        """No identity, no profile — just thoughts (if seeded) + dislikes + instructions.
 
-        All modes (seeded, free, browse news) get the same context shape:
-        profile, recent thoughts scoped to the mode, and dislikes.
+        Free/news cycles get no thought context — injecting previous free
+        thoughts primes the model to revisit them. Embedding dedup catches
+        true repeats at storage time.
         """
-        sections: list[str | None] = [
-            self._build_profile_context(user, None),
-            self._build_thought_context(user),
-            self._build_dislike_context(user),
-        ]
-        return "\n\n".join(s for s in sections if s)
+        return "\n\n".join(
+            s
+            for s in [
+                self._context_block(
+                    self._thought_section(user) if self._seed_pref_id is not None else None,
+                    self._dislike_section(user),
+                ),
+                self._instructions_section(),
+            ]
+            if s
+        )
 
-    def _build_thought_context(self, sender: str) -> str | None:
+    def _thought_section(self, sender: str) -> str | None:
         """Build thought context scoped to the current preference_id.
 
         Shows what Penny already explored so she avoids repeating herself.
-        Works for both seeded (preference_id=<int>) and free (preference_id=None).
+        Only used for seeded cycles (preference_id is not None).
         """
         try:
             thoughts = self.db.thoughts.get_recent_by_preference(
@@ -113,7 +119,7 @@ class ThinkingAgent(Agent):
                 return None
             lines = [t.content for t in thoughts]
             logger.debug("Built thought context (%d thoughts)", len(thoughts))
-            return "## Recent Background Thinking\n" + "\n\n".join(lines)
+            return "### Recent Background Thinking\n" + "\n\n---\n\n".join(lines)
         except Exception:
             logger.warning("Thought context retrieval failed, proceeding without")
             return None

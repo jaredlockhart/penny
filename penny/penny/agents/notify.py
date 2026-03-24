@@ -168,12 +168,12 @@ class NotifyAgent(Agent):
         """Send a check-in message — slim context, no tools, single step."""
         logger.info("Notify check-in for %s", user)
         self._pending_thought = None
-        context = self._build_checkin_context(user)
+        system_prompt = self._build_checkin_prompt(user)
         self._install_tools([])
         response = await self.run(
             prompt=Prompt.NOTIFY_CHECKIN,
             history=self._build_conversation(user),
-            context=context,
+            system_prompt=system_prompt,
             max_steps=1,
         )
         answer = response.answer.strip() if response.answer else None
@@ -188,14 +188,21 @@ class NotifyAgent(Agent):
             ),
         )
 
-    def _build_checkin_context(self, user: str) -> str:
-        """Checkin context: profile + history rollups + last notified thought."""
-        sections: list[str | None] = [
-            self._build_profile_context(user, None),
-            self._build_history_context(user),
-            self._build_notified_thought_context(user),
-        ]
-        return "\n\n".join(s for s in sections if s)
+    def _build_checkin_prompt(self, user: str) -> str:
+        """Checkin: identity + profile + history + last notified thought."""
+        return "\n\n".join(
+            s
+            for s in [
+                self._identity_section(),
+                self._context_block(
+                    self._profile_section(user),
+                    self._history_section(user),
+                    self._notified_thought_section(user),
+                ),
+                self._instructions_section(),
+            ]
+            if s
+        )
 
     def _get_news_tools(self) -> list:
         """News notifications only get the news tool — no search fallback."""
@@ -209,11 +216,11 @@ class NotifyAgent(Agent):
     async def _send_news(self, user: str) -> bool:
         """Send a news message — profile + history only, news tool only."""
         logger.info("Notify news for %s", user)
-        context = self._build_news_context(user)
+        system_prompt = self._build_news_prompt(user)
         self._install_tools(self._get_news_tools())
         response = await self._run_with_url_validation(
             prompt=Prompt.NOTIFY_NEWS,
-            context=context,
+            system_prompt=system_prompt,
         )
         answer = response.answer.strip() if response.answer else None
         if not answer:
@@ -232,13 +239,20 @@ class NotifyAgent(Agent):
             ),
         )
 
-    def _build_news_context(self, user: str) -> str:
-        """News context: profile + history rollups. No entities, thoughts, or conv turns."""
-        sections: list[str | None] = [
-            self._build_profile_context(user, None),
-            self._build_history_context(user),
-        ]
-        return "\n\n".join(s for s in sections if s)
+    def _build_news_prompt(self, user: str) -> str:
+        """News: identity + profile + history."""
+        return "\n\n".join(
+            s
+            for s in [
+                self._identity_section(),
+                self._context_block(
+                    self._profile_section(user),
+                    self._history_section(user),
+                ),
+                self._instructions_section(),
+            ]
+            if s
+        )
 
     @staticmethod
     def _extract_search_query(tool_calls: list[ToolCallRecord]) -> str | None:
@@ -348,12 +362,12 @@ class NotifyAgent(Agent):
         rather than continuing the conversation.
         """
         self._pending_thought = thought
-        context = self._build_thought_candidate_context(user)
         self._install_tools(self.get_tools(user))
+        system_prompt = self._build_thought_candidate_prompt(user)
         extra_source = thought.content if thought else ""
         response = await self._run_with_url_validation(
             prompt=prompt,
-            context=context,
+            system_prompt=system_prompt,
             extra_source=extra_source,
         )
         self._pending_thought = None
@@ -379,13 +393,13 @@ class NotifyAgent(Agent):
     async def _run_with_url_validation(
         self,
         prompt: str,
-        context: str,
+        system_prompt: str,
         extra_source: str = "",
     ) -> ControllerResponse:
         """Run agentic loop, retrying if the response contains hallucinated URLs."""
         response = ControllerResponse(answer="")
         for attempt in range(1 + self.NOTIFY_URL_RETRIES):
-            response = await self.run(prompt=prompt, context=context)
+            response = await self.run(prompt=prompt, system_prompt=system_prompt)
             answer = response.answer.strip() if response.answer else ""
             if not answer:
                 return response
@@ -437,26 +451,33 @@ class NotifyAgent(Agent):
             return True
         return cls._is_refusal(answer)
 
-    def _build_thought_candidate_context(self, user: str) -> str:
-        """Thought candidate context: profile + thought only. No history or conv turns."""
-        sections: list[str | None] = [
-            self._build_profile_context(user, None),
-            self._build_pending_thought_context(),
-        ]
-        return "\n\n".join(s for s in sections if s)
+    def _build_thought_candidate_prompt(self, user: str) -> str:
+        """Thought candidate: identity + profile + pending thought."""
+        return "\n\n".join(
+            s
+            for s in [
+                self._identity_section(),
+                self._context_block(
+                    self._profile_section(user),
+                    self._pending_thought_section(),
+                ),
+                self._instructions_section(),
+            ]
+            if s
+        )
 
-    def _build_pending_thought_context(self) -> str | None:
-        """Build context for the specific thought being shared."""
+    def _pending_thought_section(self) -> str | None:
+        """### Your Latest Thought — the thought being shared."""
         if self._pending_thought is not None:
-            return f"## Your Latest Thought\n{self._pending_thought.content}"
+            return f"### Your Latest Thought\n{self._pending_thought.content}"
         return None
 
-    def _build_notified_thought_context(self, user: str) -> str | None:
-        """Build context from recently notified thoughts (already shared with user)."""
+    def _notified_thought_section(self, user: str) -> str | None:
+        """### Recent Background Thinking — already shared with user."""
         thoughts = self.db.thoughts.get_recent_notified(user, limit=1)
         if not thoughts:
             return None
-        return f"## Recent Background Thinking\n{thoughts[0].content}"
+        return f"### Recent Background Thinking\n{thoughts[0].content}"
 
     # ── Candidate scoring ─────────────────────────────────────────────
 

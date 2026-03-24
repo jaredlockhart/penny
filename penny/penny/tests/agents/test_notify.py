@@ -115,7 +115,10 @@ async def test_send_notify_thought_candidate(
     # Force thought candidate path (not checkin, not news)
     monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
 
+    requests_seen: list[dict] = []
+
     def handler(request, count):
+        requests_seen.append(request)
         return mock_ollama._make_text_response(
             request, "hey, i was just thinking about quantum computing!"
         )
@@ -143,6 +146,58 @@ async def test_send_notify_thought_candidate(
         image_query = mock_serper_image.call_args[0][0]
         assert "quantum computing" in image_query.lower()
         assert response.get("base64_attachments"), "Notification should include an image"
+
+        # Full system prompt structure assertion
+        system_text = [
+            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
+        ][0]
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
+
+## Identity
+You are Penny. You and the user are friends who text regularly. \
+This is mid-conversation — not a fresh chat.
+
+Voice:
+- Reply like you're continuing a text thread. No greetings, no sign-offs.
+- React to what the user actually said before giving information. \
+If they corrected you, own it. If they expressed excitement, match it. \
+If they asked a follow-up, connect it to what came before.
+- Present information naturally but you can still use short formatted blocks \
+(bold names, links) when listing products or facts. \
+Just wrap them in conversational text, not a clinical dump.
+- Finish every message with an emoji.
+
+## Context
+### User Profile
+The user's name is Test User.
+
+### Your Latest Thought
+I've been thinking about quantum computing
+
+## Instructions
+You are reaching out to a friend proactively — sharing something \
+interesting you've been thinking about or found in the news.
+
+You have tools available:
+- **search**: Search the web for current information. \
+Accepts up to 5 queries per call.
+
+If your context includes 'Your Latest Thought', that contains research \
+you already did. Share what's in it — the thought IS the substance of \
+your message. You can search to add a fresh angle or find a link, but \
+avoid re-searching the same topic.
+
+Lead with the interesting thing — jump straight into it like you're \
+picking up a text thread. Focus on ONE topic per message.
+
+Include a follow-up URL so the user can read more about what you tell them. \
+Pull the URL from your thought context or search results.
+
+Every fact and detail in your message must come from your context."""
+        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
 
 @pytest.mark.asyncio
@@ -342,7 +397,7 @@ async def test_chat_thought_context_shows_notified_only(
         cat_thought = [t for t in thoughts if "cats" in t.content][0]
         penny.db.thoughts.mark_notified(cat_thought.id)
 
-        context = penny.chat_agent._build_thought_context(TEST_SENDER)
+        context = penny.chat_agent._thought_section(TEST_SENDER)
         if context:
             assert "cats" in context
             assert "dogs" not in context
@@ -360,18 +415,18 @@ async def test_notify_thought_context_shows_specific_thought(
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=1)
 
         penny.notify_agent._pending_thought = thoughts[0]
-        context = penny.notify_agent._build_pending_thought_context()
+        context = penny.notify_agent._pending_thought_section()
         assert "black holes" in context
         assert "Your Latest Thought" in context
 
-        # Candidate context includes thought but excludes conversation history
+        # Candidate prompt includes thought but excludes conversation history
         now = datetime.now(UTC)
         penny.db.history.add(
             TEST_SENDER, now, now, PennyConstants.HistoryDuration.DAILY, "space games"
         )
-        candidate_ctx = penny.notify_agent._build_thought_candidate_context(TEST_SENDER)
-        assert "black holes" in candidate_ctx
-        assert "Conversation History" not in candidate_ctx
+        candidate_prompt = penny.notify_agent._build_thought_candidate_prompt(TEST_SENDER)
+        assert "black holes" in candidate_prompt
+        assert "Conversation History" not in candidate_prompt
 
         penny.notify_agent._pending_thought = None
 
