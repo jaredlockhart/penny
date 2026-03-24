@@ -117,7 +117,13 @@ async def test_summarize_today_skips_when_already_rolled_up(
 async def test_backfill_summarizes_past_days(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """HistoryAgent backfills completed past days that lack history entries."""
+    """HistoryAgent backfills past days even when today already has an entry.
+
+    Regression: after a history reset, _summarize_today creates today's entry
+    first.  _resolve_start_date used to return today's period_end, which is
+    *after* midnight — so the backfill loop (cursor < midnight_today) found
+    zero days.
+    """
     config = make_config(history_interval=99999.0)
 
     def handler(request, count):
@@ -138,13 +144,22 @@ async def test_backfill_summarizes_past_days(
             two_days_ago,
         )
 
+        # Also add a today message so _summarize_today creates today's entry
+        # before backfill runs — this is the scenario that triggers the bug
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "message from today",
+        )
+
         await penny.history_agent.execute()
 
         entries = penny.db.history.get_recent(
             TEST_SENDER, PennyConstants.HistoryDuration.DAILY, limit=10
         )
-        # Should have at least one backfilled entry
-        assert len(entries) >= 1
+        # Should have today's entry AND the backfilled past day
+        past_entries = [e for e in entries if e.period_start.date() != datetime.now(UTC).date()]
+        assert len(past_entries) >= 1, "Backfill must create entries for past days"
 
 
 @pytest.mark.asyncio
