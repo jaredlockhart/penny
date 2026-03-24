@@ -8,6 +8,7 @@ Test organization:
 """
 
 from datetime import datetime
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -334,12 +335,14 @@ async def test_news_thinking_full_loop(
     running_penny,
     monkeypatch,
 ):
-    """News thinking: intentional 20% mode — reads news, picks a story, digs in."""
-    # Force news thinking path (roll between 0.1 and 0.3)
+    """News thinking: intentional 30% mode — reads news, picks a story, digs in."""
+    # Force news thinking path (roll between 0.1 and 0.4)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.15)
+    monkeypatch.setattr("penny.tools.news.NewsTool.search", AsyncMock(return_value=[]))
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
+        news_api_key="fake-key",
     )
 
     requests_seen: list[dict] = []
@@ -396,6 +399,8 @@ Not a broad survey — one interesting thread, then pull it.
 You have tools available:
 - **search**: Search the web for current information. \
 Accepts up to 1 query per call.
+- **fetch_news**: Search for recent news articles on a topic. \
+Returns headlines, summaries, and URLs.
 
 Go DEEP, not wide:
 - Search for the topic, then pick the single most interesting result
@@ -411,6 +416,12 @@ Check your recent thoughts to avoid repeating what you already explored.
 All information in your responses must come from your tool results. \
 If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
+
+        # -- Tools: both search and fetch_news available
+        tools = requests_seen[0].get("tools") or []
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "search" in tool_names
+        assert "fetch_news" in tool_names
 
         # No preference marked (news thinking has no seed preference)
         pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER)
