@@ -328,12 +328,14 @@ class MessageStore:
     def get_messages_in_range(
         self, sender: str, start: datetime, end: datetime
     ) -> list[MessageLog]:
-        """Get conversation messages within a date range, oldest first.
+        """Get user messages within a date range, oldest first.
 
-        Includes both incoming (from sender) and outgoing (to sender) messages.
+        Returns only incoming messages from the user — outgoing (Penny's
+        responses and proactive notifications) are excluded so history
+        summaries reflect what the user actually talked about.
         """
         with self._session() as session:
-            incoming = list(
+            return list(
                 session.exec(
                     select(MessageLog)
                     .where(
@@ -346,21 +348,6 @@ class MessageStore:
                     .order_by(MessageLog.timestamp)  # type: ignore[unresolved-attribute]
                 ).all()
             )
-            outgoing = list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                        MessageLog.recipient == sender,
-                        MessageLog.timestamp >= start,
-                        MessageLog.timestamp < end,
-                    )
-                    .order_by(MessageLog.timestamp)  # type: ignore[unresolved-attribute]
-                ).all()
-            )
-            all_messages = incoming + outgoing
-            all_messages.sort(key=lambda m: m.timestamp)
-            return all_messages
 
     def get_reactions_in_range(
         self, sender: str, start: datetime, end: datetime

@@ -129,10 +129,10 @@ async def test_backfill_summarizes_past_days(
 
 
 @pytest.mark.asyncio
-async def test_summarize_formats_messages_with_direction(
+async def test_summarize_uses_only_user_messages(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """HistoryAgent formats messages with User/Penny direction labels."""
+    """HistoryAgent summarizes only user messages, not Penny's responses."""
     config = make_config(history_interval=99999.0)
 
     requests_seen: list[dict] = []
@@ -163,8 +163,8 @@ async def test_summarize_formats_messages_with_direction(
         first_msgs = requests_seen[0]["messages"]
         user_msgs = [m for m in first_msgs if m.get("role") == "user"]
         prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-        assert "User:" in prompt_text
-        assert "Penny:" in prompt_text
+        assert "hello there" in prompt_text
+        assert "hey back" not in prompt_text
 
 
 # ── Preference extraction ────────────────────────────────────────────────

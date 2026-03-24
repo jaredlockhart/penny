@@ -611,12 +611,9 @@ class HistoryAgent(Agent):
 
     @staticmethod
     def _format_messages(messages: list) -> str:
-        """Format messages for the summarization prompt."""
+        """Format user messages for the summarization prompt."""
         lines: list[str] = []
         for msg in messages:
             ts = msg.timestamp.strftime("%H:%M")
-            if msg.direction == PennyConstants.MessageDirection.INCOMING:
-                lines.append(f"[{ts}] User: {msg.content}")
-            else:
-                lines.append(f"[{ts}] Penny: {msg.content}")
+            lines.append(f"[{ts}] {msg.content}")
         return "\n".join(lines)
