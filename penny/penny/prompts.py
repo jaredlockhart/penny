@@ -138,26 +138,21 @@ Examples:
         "If nothing interesting comes up, that's fine — quiet cycles are normal."
     )
 
-    # Summarization prompts (used by Agent._summarize_text)
-    SUMMARIZE_TO_PARAGRAPH = (
-        "Summarize the following text in 2-3 sentences. "
-        "Focus on key findings and substance, not process. "
-        "Write in plain prose, no bullet points or formatting. "
-        "If nothing noteworthy, say so briefly."
-    )
-
     THINKING_REPORT_PROMPT = (
-        "Distill the thinking session into a focused summary of the single most "
-        "interesting discovery.\n\n"
-        "Write it as a short, concrete briefing — not a broad survey. Include:\n"
-        "- What specifically was found\n"
-        "- Why it's interesting or relevant to the user\n"
-        "- Any actionable details (where to find it, when it's available, how to try it)\n"
-        "- Reference URLs from the search results so the user can follow up\n\n"
-        "If the session covered multiple topics, pick the ONE with the most "
-        "specific, concrete information. Ignore surface-level findings.\n\n"
-        "Every fact must come from the thinking session above. "
-        "Keep it under 300 words. "
+        "Distill the search results into a detailed briefing about the most "
+        "interesting discovery — the thread that was explored most deeply.\n\n"
+        "Focus on depth, not breadth. If the session started broad and then "
+        "narrowed into a specific topic with follow-up searches, write about "
+        "that specific topic. Ignore the initial broad survey.\n\n"
+        "Write it as a rich, substantive report. Include:\n"
+        "- What specifically was found — names, specs, dates, prices, versions, "
+        "technical details. Be specific, not vague\n"
+        "- Why it's interesting or relevant\n"
+        "- Actionable details (where to find it, when it's available, how to try it)\n"
+        "- Key details from follow-up searches — don't throw away what you dug up\n"
+        "- Reference URLs from the search results\n\n"
+        "Every fact must come from the search results above. "
+        "Keep it under 500 words. "
         "If nothing noteworthy was found, say so briefly."
     )
 

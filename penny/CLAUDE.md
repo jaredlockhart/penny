@@ -198,11 +198,11 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Exponential backoff cooldown between autonomous messages
 
 **ThinkingAgent** (`agents/thinking.py`)
-- Continuous inner monologue loop — Penny's autonomous conscious mind
+- Autonomous research loop — Penny searches for information on topics she's interested in
 - Runs on a PeriodicSchedule
 - Each cycle picks a random seed topic from positive user preferences to focus on
-- Thinks out loud to itself using tools (search, news), accumulates reasoning
-- At the end of each cycle, summarizes the monologue and stores it as a thought via ThoughtStore
+- Searches using tools (search, news), chaining follow-up queries to go deep on one thread
+- At the end of each cycle, the raw search results are summarized into a detailed briefing and stored as a thought via ThoughtStore (single summarization step — no intermediate model synthesis)
 - Stored thought summaries bleed into chat context, giving Penny continuity of inner reasoning
 
 **HistoryAgent** (`agents/history.py`)
