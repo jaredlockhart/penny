@@ -59,6 +59,7 @@ class ThinkingAgent(Agent):
         kwargs["system_prompt"] = Prompt.THINKING_SYSTEM_PROMPT
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.max_steps = int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
+        self._keep_tools_on_final_step = True
         self._seed_topic: str | None = None
         self._seed_pref_id: int | None = None
 

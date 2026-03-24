@@ -163,6 +163,19 @@ async def test_seeded_thinking_full_loop(
         assert "Penny" in sys1
         assert "Penny" in sys3
 
+        # -- Tools available on final agentic step (not stripped for thinking)
+        last_loop_request = requests_seen[2]
+        last_loop_tools = last_loop_request.get("tools") or []
+        assert len(last_loop_tools) > 0, "Final step should keep tools for thinking agent"
+
+        # -- Summary input contains tool results, not model text
+        summary_request = requests_seen[3]
+        summary_user_msg = [m for m in summary_request["messages"] if m.get("role") == "user"][0][
+            "content"
+        ]
+        assert "Mock search results" in summary_user_msg  # raw tool output
+        assert "Found interesting" not in summary_user_msg  # not model text
+
         # -- Storage: summary stored (not raw monologue), with correct preference_id
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
         stored = [t for t in thoughts if t.content != "Previous thought about gravity"]
