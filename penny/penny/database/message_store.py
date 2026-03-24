@@ -561,9 +561,14 @@ class MessageStore:
     def get_latest_message_time_in_range(
         self, sender: str, start: datetime, end: datetime
     ) -> datetime | None:
-        """Get timestamp of the most recent message (incoming or outgoing) in a range."""
+        """Get timestamp of the most recent incoming user message in a range.
+
+        Must match the same filters as get_messages_in_range (incoming,
+        non-reaction) so _already_rolled_up correctly detects when there
+        are no new messages to summarize.
+        """
         with self._session() as session:
-            incoming_ts = session.exec(
+            return session.exec(
                 select(MessageLog.timestamp)
                 .where(
                     MessageLog.sender == sender,
@@ -575,20 +580,6 @@ class MessageStore:
                 .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
                 .limit(1)
             ).first()
-            outgoing_ts = session.exec(
-                select(MessageLog.timestamp)
-                .where(
-                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                    MessageLog.recipient == sender,
-                    MessageLog.timestamp >= start,
-                    MessageLog.timestamp < end,
-                )
-                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
-                .limit(1)
-            ).first()
-            if incoming_ts and outgoing_ts:
-                return max(incoming_ts, outgoing_ts)
-            return incoming_ts or outgoing_ts
 
     def get_first_message_time(self, sender: str) -> datetime | None:
         """Get timestamp of the earliest incoming message from a user."""

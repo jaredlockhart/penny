@@ -70,8 +70,10 @@ async def test_summarize_today_creates_history_entry(
         expected = """\
 
 ## Instructions
-Summarize the following text as a short bullet list. \
-Each bullet should be 3-8 words describing a distinct topic. \
+Summarize what the user said as a short bullet list of topics. \
+Each bullet should be 5-10 words. \
+Keep the user's exact wording for names, brands, and descriptors \
+— do not paraphrase or correct unfamiliar words. \
 Omit greetings, small talk, and meta-conversation. \
 Return ONLY the bullet list, one topic per line, prefixed with "- "."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
@@ -110,7 +112,20 @@ async def test_summarize_today_skips_when_already_rolled_up(
 
         # Second run (no new messages): should skip summarization
         await penny.history_agent.execute()
-        assert len(summarize_calls) == 1  # No additional summarization calls
+        assert len(summarize_calls) == 1
+
+        # Outgoing message (Penny's response/notification) should NOT
+        # trigger re-summarization — only incoming user messages count.
+        # Regression: outgoing timestamps were checked by _already_rolled_up,
+        # causing the same input to be re-summarized on every cycle.
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            penny.config.signal_number,
+            "here's something interesting I found",
+            recipient=TEST_SENDER,
+        )
+        await penny.history_agent.execute()
+        assert len(summarize_calls) == 1  # Still no additional calls
 
 
 @pytest.mark.asyncio
