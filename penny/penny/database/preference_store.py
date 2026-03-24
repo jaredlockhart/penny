@@ -184,12 +184,15 @@ class PreferenceStore:
             return False
 
     def get_for_user_by_valence(self, user: str, valence: str) -> list[Preference]:
-        """Get preferences for a user filtered by valence, newest first."""
+        """Get preferences for a user filtered by valence, most mentioned first."""
         with self._session() as session:
             return list(
                 session.exec(
                     select(Preference)
                     .where(Preference.user == user, Preference.valence == valence)
-                    .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(
+                        Preference.mention_count.desc(),  # type: ignore[unresolved-attribute]
+                        Preference.created_at.desc(),  # type: ignore[unresolved-attribute]
+                    )
                 ).all()
             )
