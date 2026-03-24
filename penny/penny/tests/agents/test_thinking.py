@@ -325,6 +325,99 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
 
 
 @pytest.mark.asyncio
+async def test_news_thinking_full_loop(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """News thinking: intentional 20% mode — reads news, picks a story, digs in."""
+    # Force news thinking path (roll between 0.1 and 0.3)
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.15)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=2,
+    )
+
+    requests_seen: list[dict] = []
+
+    def handler(request, count):
+        requests_seen.append(request)
+        if count == 1:
+            return mock_ollama._make_tool_call_response(
+                request,
+                "search",
+                {"queries": ["top news stories 2026"], "reasoning": "Reading the news"},
+            )
+        if count == 2:
+            return mock_ollama._make_text_response(request, "Found a compelling story.")
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+        _add_dislike(penny)
+
+        await penny.thinking_agent.execute()
+
+        # Should run and produce a thought
+        assert len(requests_seen) > 0
+        thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        assert len(thoughts) == 1
+
+        # Prompt should be the news thinking prompt
+        first_user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
+        assert "news" in first_user_msgs[0]["content"].lower()
+
+        # -- Full system prompt: no identity, no profile, no thoughts, just dislikes
+        system_text = [
+            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
+        ][0]
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
+
+## Context
+### Topics to Avoid
+- Country music
+
+## Instructions
+You are thinking to yourself. This is your inner monologue — \
+the user cannot see this.
+
+Your goal is to find ONE specific, concrete thing worth knowing about. \
+Not a broad survey — one interesting thread, then pull it.
+
+You have tools available:
+- **search**: Search the web for current information. \
+Accepts up to 1 query per call.
+
+Go DEEP, not wide:
+- Search for the topic, then pick the single most interesting result
+- Do follow-up searches to learn more about that specific thing
+- Do NOT search for a different subtopic on each step
+- Do NOT repeat the same search query you already ran
+
+When you receive 'dig deeper', that means: learn more about what \
+you already found. More detail on the same thing, not a new thing.
+
+Check your recent thoughts to avoid repeating what you already explored.
+
+All information in your responses must come from your tool results. \
+If nothing interesting comes up, that's fine — quiet cycles are normal."""
+        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
+
+        # No preference marked (news thinking has no seed preference)
+        pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER)
+        assert all(p.last_thought_at is None for p in pool)
+
+
+@pytest.mark.asyncio
 async def test_news_browsing_full_loop(
     signal_server,
     mock_ollama,
@@ -335,7 +428,7 @@ async def test_news_browsing_full_loop(
     monkeypatch,
 ):
     """News browsing fallback: when no preferences exist, browses news and stores thought."""
-    # Force non-free-thinking path so it hits "no preferences → browse news"
+    # Force seeded path so it hits "no preferences → browse news"
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
