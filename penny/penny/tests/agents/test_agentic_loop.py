@@ -433,6 +433,49 @@ class TestEmptyContentRetry:
         await agent.close()
 
 
+class TestEmptyContentMultiStep:
+    """Test that empty content on consecutive non-final steps continues the loop."""
+
+    @pytest.mark.asyncio
+    async def test_empty_on_two_consecutive_nonfinal_steps_eventually_responds(
+        self, test_db, mock_ollama
+    ):
+        """Model returning empty on steps 0 and 1 (non-final) must not fall back early.
+
+        Regression: empty_retries == 1 after the first nudge caused step 1's empty
+        response to fall straight through to _build_final_response, skipping the
+        remaining steps and returning AGENT_EMPTY_RESPONSE instead of waiting for
+        the model to produce content.
+        """
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=4)
+
+        def handler(request, count):
+            # Steps 0 and 1 return empty; step 2 returns the real answer
+            if count <= 2:
+                return mock_ollama._make_text_response(request, "")
+            return mock_ollama._make_text_response(request, "here's my answer")
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("test question", max_steps=max_steps)
+        assert response.answer == "here's my answer"
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_always_empty_eventually_returns_fallback(self, test_db, mock_ollama):
+        """When every step returns empty, the final step's inline retry exhausts and falls back."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        def handler(request, count):
+            return mock_ollama._make_text_response(request, "")
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("test question", max_steps=max_steps)
+        assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
+
+        await agent.close()
+
+
 class TestEmptyContentAfterToolCalls:
     """Tests for combined empty-content fixes: synthesis prompt, think tag stripping,
     retry counter reset, context truncation, and fallback response."""

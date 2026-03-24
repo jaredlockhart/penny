@@ -417,6 +417,21 @@ class Agent:
                     return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
                 self.on_response(response)
 
+            # Guard: on a non-final step, still-empty content should not fall through to
+            # _build_final_response — remaining iterations exist.  A stronger nudge
+            # (including the original question) is injected before continuing.
+            if not effective_content and not is_final_step:
+                logger.warning(
+                    "Model still empty on step %d/%d — continuing loop with strong nudge",
+                    step + 1,
+                    steps,
+                )
+                messages.append(response.message.to_input_message())
+                messages.append(
+                    {"role": MessageRole.USER, "content": _build_strong_nudge(messages)}
+                )
+                continue
+
             if (
                 refusal_retries == 0
                 and response.content.strip()
