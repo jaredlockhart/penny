@@ -40,18 +40,18 @@ while true; do
     log "New commits on origin/main: ${LAST_REF:0:7} -> ${CURRENT:0:7}"
 
     # Build penny image from origin/main via git archive (never touches working tree)
+    # origin/main:penny archives penny/ contents at root, matching what the Dockerfile expects
     log "Rebuilding and restarting penny..."
     GIT_MSG=$(git log -1 --pretty=%B "$CURRENT" | tr '\n' ' ' | sed 's/ *$//')
-    if git archive origin/main -- penny/ \
+    if git archive origin/main:penny \
         | docker build -t penny:latest \
             --build-arg "GIT_COMMIT=${CURRENT:0:7}" \
             --build-arg "GIT_COMMIT_MESSAGE=$GIT_MSG" \
-            -f penny/Dockerfile - \
+            -f Dockerfile - \
         && $COMPOSE up -d --no-build penny; then
         log "penny rebuilt and restarted"
+        LAST_REF="$CURRENT"
     else
         log "Restart failed, will retry next cycle"
     fi
-
-    LAST_REF="$CURRENT"
 done
