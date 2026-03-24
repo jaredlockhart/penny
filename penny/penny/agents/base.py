@@ -215,6 +215,7 @@ class Agent:
             self._tool_registry.register(tool)
 
         self._tool_executor = ToolExecutor(self._tool_registry, timeout=tool_timeout)
+        self._keep_tools_on_final_step = False
 
         Agent._instances.append(self)
 
@@ -334,8 +335,9 @@ class Agent:
             logger.info("Agent step %d/%d", step + 1, steps)
 
             is_final_step = step == steps - 1
-            step_tools = [] if is_final_step else tools
-            if is_final_step:
+            strip_tools = is_final_step and not self._keep_tools_on_final_step
+            step_tools = [] if strip_tools else tools
+            if strip_tools:
                 logger.debug("Final step — tools removed, model must produce text")
 
             response = await self._call_model_with_xml_retry(messages, step_tools)
@@ -344,10 +346,10 @@ class Agent:
 
             self.on_response(response)
 
-            if response.has_tool_calls and is_final_step:
+            if response.has_tool_calls and strip_tools:
                 logger.warning("Model hallucinated tool calls on final step — ignoring")
 
-            if response.has_tool_calls and not is_final_step:
+            if response.has_tool_calls and not strip_tools:
                 result = await self._process_tool_calls(response, called_tools)
                 messages.extend(result.messages)
                 tool_call_records.extend(result.records)
