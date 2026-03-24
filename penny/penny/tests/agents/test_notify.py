@@ -18,8 +18,6 @@ def _seed_notify(penny):
         user=TEST_SENDER,
         content="quantum computing",
         valence="positive",
-        source_period_start=datetime(2026, 3, 20),
-        source_period_end=datetime(2026, 3, 20),
     )
     penny.db.thoughts.add(
         TEST_SENDER,

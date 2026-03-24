@@ -1,7 +1,5 @@
 """Integration tests for /like, /unlike, /dislike, /undislike commands."""
 
-from datetime import UTC, datetime
-
 import pytest
 
 from penny.constants import PennyConstants
@@ -10,13 +8,10 @@ from penny.tests.conftest import TEST_SENDER
 
 def _add_preference(penny, content: str, valence: str) -> None:
     """Helper to seed a preference directly into the DB."""
-    now = datetime.now(UTC)
     penny.db.preferences.add(
         user=TEST_SENDER,
         content=content,
         valence=valence,
-        source_period_start=now,
-        source_period_end=now,
     )
 
 

@@ -46,8 +46,6 @@ def _seed_thinking(penny):
         user=TEST_SENDER,
         content="Quantum gravity experiments",
         valence="positive",
-        source_period_start=datetime(2026, 3, 3),
-        source_period_end=datetime(2026, 3, 4),
         source=PennyConstants.PreferenceSource.MANUAL,
     )
 
@@ -58,8 +56,6 @@ def _add_dislike(penny):
         user=TEST_SENDER,
         content="Country music",
         valence="negative",
-        source_period_start=datetime(2026, 3, 3),
-        source_period_end=datetime(2026, 3, 4),
     )
 
 
@@ -364,16 +360,12 @@ async def test_preference_rotation_via_last_thought_at(
             user=TEST_SENDER,
             content="astrophysics",
             valence="positive",
-            source_period_start=datetime(2026, 3, 3),
-            source_period_end=datetime(2026, 3, 4),
             source=PennyConstants.PreferenceSource.MANUAL,
         )
         pref_b = penny.db.preferences.add(
             user=TEST_SENDER,
             content="cyberpunk anime",
             valence="positive",
-            source_period_start=datetime(2026, 3, 3),
-            source_period_end=datetime(2026, 3, 4),
             source=PennyConstants.PreferenceSource.MANUAL,
         )
         assert pref_a is not None and pref_b is not None
@@ -426,8 +418,6 @@ async def test_extracted_preference_below_threshold_skipped(
             user=TEST_SENDER,
             content="casual topic",
             valence="positive",
-            source_period_start=datetime(2026, 3, 3),
-            source_period_end=datetime(2026, 3, 4),
             source=PennyConstants.PreferenceSource.EXTRACTED,
             mention_count=1,
         )
@@ -473,8 +463,6 @@ async def test_extracted_preference_at_threshold_used(
             user=TEST_SENDER,
             content="repeated interest topic",
             valence="positive",
-            source_period_start=datetime(2026, 3, 3),
-            source_period_end=datetime(2026, 3, 4),
             source=PennyConstants.PreferenceSource.EXTRACTED,
             mention_count=3,
         )

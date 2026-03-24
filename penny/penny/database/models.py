@@ -139,8 +139,6 @@ class Preference(SQLModel, table=True):
     content: str  # The preference topic (e.g., "dark roast coffee", "cold weather")
     valence: str = Field(index=True)  # PreferenceValence enum value
     embedding: bytes | None = None  # Serialized float32 embedding vector
-    source_period_start: datetime  # Start of source conversation period
-    source_period_end: datetime  # End of source conversation period
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     last_thought_at: datetime | None = None  # When this preference was last used as a thinking seed
     mention_count: int = Field(default=1)  # Times this topic was mentioned in conversation

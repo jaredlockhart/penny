@@ -205,15 +205,11 @@ async def test_dislike_context_lists_negative_preferences(
             user=TEST_SENDER,
             content="Country music",
             valence="negative",
-            source_period_start=datetime(2026, 3, 1),
-            source_period_end=datetime(2026, 3, 2),
         )
         penny.db.preferences.add(
             user=TEST_SENDER,
             content="Jazz music",
             valence="positive",
-            source_period_start=datetime(2026, 3, 1),
-            source_period_end=datetime(2026, 3, 2),
         )
 
         context = penny.chat_agent._build_dislike_context(TEST_SENDER)
@@ -235,8 +231,6 @@ async def test_dislike_context_none_when_no_dislikes(
             user=TEST_SENDER,
             content="Jazz music",
             valence="positive",
-            source_period_start=datetime(2026, 3, 1),
-            source_period_end=datetime(2026, 3, 2),
         )
 
         context = penny.chat_agent._build_dislike_context(TEST_SENDER)
@@ -255,15 +249,11 @@ async def test_dislike_context_deduplicates(
             user=TEST_SENDER,
             content="Country music",
             valence="negative",
-            source_period_start=datetime(2026, 3, 1),
-            source_period_end=datetime(2026, 3, 2),
         )
         penny.db.preferences.add(
             user=TEST_SENDER,
             content="country music",
             valence="negative",
-            source_period_start=datetime(2026, 3, 3),
-            source_period_end=datetime(2026, 3, 4),
         )
 
         context = penny.chat_agent._build_dislike_context(TEST_SENDER)

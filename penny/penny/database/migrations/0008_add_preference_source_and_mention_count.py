@@ -29,9 +29,11 @@ def up(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE preference ADD COLUMN mention_count INTEGER DEFAULT 1")
 
     # Infer source from timestamps: manual prefs have identical start/end
-    conn.execute(
-        "UPDATE preference SET source = 'manual' WHERE source_period_start = source_period_end"
-    )
+    # (columns may not exist if table was created after they were removed from the model)
+    if "source_period_start" in columns:
+        conn.execute(
+            "UPDATE preference SET source = 'manual' WHERE source_period_start = source_period_end"
+        )
 
     # Read configured threshold from runtime_config, fall back to default
     threshold = _get_threshold(conn)

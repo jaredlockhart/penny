@@ -250,8 +250,6 @@ async def test_existing_preference_mention_increments_count(
             user=TEST_SENDER,
             content="dark roast coffee",
             valence="positive",
-            source_period_start=datetime(2026, 3, 1),
-            source_period_end=datetime(2026, 3, 2),
         )
         assert existing is not None
         assert existing.mention_count == 1
@@ -273,50 +271,6 @@ async def test_existing_preference_mention_increments_count(
         all_prefs = penny.db.preferences.get_for_user(TEST_SENDER)
         coffee_prefs = [p for p in all_prefs if "coffee" in p.content.lower()]
         assert len(coffee_prefs) == 1
-
-
-@pytest.mark.asyncio
-async def test_preference_extraction_skips_already_extracted_days(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
-):
-    """HistoryAgent skips preference extraction for days already processed."""
-    config = make_config(history_interval=99999.0)
-
-    def handler(request, count):
-        return mock_ollama._make_text_response(request, "- Topics")
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        # Seed a message from 2 days ago
-        two_days_ago = datetime.now(UTC).replace(
-            hour=12, minute=0, second=0, microsecond=0, tzinfo=None
-        ) - timedelta(days=2)
-        day_start = two_days_ago.replace(hour=0, minute=0, second=0, microsecond=0)
-
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "old message",
-            PennyConstants.MessageDirection.INCOMING,
-            two_days_ago,
-        )
-
-        # Mark preferences as already extracted for that day
-        penny.db.preferences.add(
-            user=TEST_SENDER,
-            content="already extracted",
-            valence="positive",
-            source_period_start=day_start,
-            source_period_end=day_start + timedelta(days=1),
-        )
-
-        await penny.history_agent.execute()
-
-        # Verify no duplicate "already extracted" preference
-        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        already_extracted = [p for p in prefs if p.content == "already extracted"]
-        assert len(already_extracted) == 1
 
 
 @pytest.mark.asyncio
@@ -619,15 +573,11 @@ async def test_known_preferences_context(
                 user=TEST_SENDER,
                 content="Jazz music",
                 valence="positive",
-                source_period_start=datetime(2026, 3, 1),
-                source_period_end=datetime(2026, 3, 2),
             ),
             Preference(
                 user=TEST_SENDER,
                 content="Country music",
                 valence="negative",
-                source_period_start=datetime(2026, 3, 1),
-                source_period_end=datetime(2026, 3, 2),
             ),
         ]
         result = penny.history_agent._build_known_preferences_context(existing)

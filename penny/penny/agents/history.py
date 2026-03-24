@@ -87,7 +87,6 @@ class HistoryAgent(Agent):
         days = self._find_unsummarized_days(user, max_days)
         for day_start, day_end in days:
             await self._summarize_day(user, day_start, day_end)
-            await self._extract_day_preferences(user, day_start, day_end)
             did_work = True
 
         did_work = await self._rollup_completed_weeks(user) or did_work
@@ -244,23 +243,16 @@ class HistoryAgent(Agent):
         if not messages and not reactions:
             return False
 
-        now = datetime.now(UTC).replace(tzinfo=None)
-        start = self._midnight_today()
         processed_ids: list[int] = []
         did_work = False
 
         if messages:
-            did_work = await self._extract_text_preferences(user, messages, start, now)
+            did_work = await self._extract_text_preferences(user, messages)
             if did_work:
                 processed_ids.extend(m.id for m in messages if m.id is not None)
 
         if reactions:
-            reaction_work = await self._extract_reaction_preferences(
-                user,
-                reactions,
-                start,
-                now,
-            )
+            reaction_work = await self._extract_reaction_preferences(user, reactions)
             if reaction_work:
                 processed_ids.extend(r.id for r in reactions if r.id is not None)
                 did_work = True
@@ -269,36 +261,14 @@ class HistoryAgent(Agent):
             self.db.messages.mark_processed(processed_ids)
         return did_work
 
-    async def _extract_text_preferences(
-        self,
-        user: str,
-        messages: list,
-        start: datetime,
-        end: datetime,
-    ) -> bool:
+    async def _extract_text_preferences(self, user: str, messages: list) -> bool:
         """Extract preferences from text messages via two-pass LLM pipeline."""
         conversation = self._format_messages(messages)
         if not conversation:
             return False
-        return await self._extract_preferences_from_content(user, conversation, start, end)
+        return await self._extract_preferences_from_content(user, conversation)
 
-    async def _extract_day_preferences(
-        self, user: str, day_start: datetime, day_end: datetime
-    ) -> None:
-        """Extract preferences for a completed day (skip if already done)."""
-        if self.db.preferences.exists_for_period(user, day_start):
-            return
-        conversation = self._build_conversation_content(user, day_start, day_end)
-        if conversation:
-            await self._extract_preferences_from_content(user, conversation, day_start, day_end)
-
-        reactions = self.db.messages.get_reactions_in_range(user, day_start, day_end)
-        if reactions:
-            await self._extract_reaction_preferences(user, reactions, day_start, day_end)
-
-    async def _extract_preferences_from_content(
-        self, user: str, conversation: str, start: datetime, end: datetime
-    ) -> bool:
+    async def _extract_preferences_from_content(self, user: str, conversation: str) -> bool:
         """Two-pass preference extraction: identify topics, dedup, classify valence."""
         existing = self.db.preferences.get_for_user(user)
 
@@ -322,7 +292,7 @@ class HistoryAgent(Agent):
             return bool(identified.existing)
 
         embedding_lookup = {topic.lower(): emb for topic, emb in survivors}
-        self._store_classified_preferences(user, classified, start, end, embedding_lookup)
+        self._store_classified_preferences(user, classified, embedding_lookup)
         return True
 
     def _bump_existing_mentions(self, mentioned: list[str], existing: list[Preference]) -> set[int]:
@@ -351,21 +321,6 @@ class HistoryAgent(Agent):
         return [t.strip() for t in identified.new if t.strip() and t.strip().lower() not in exclude]
 
     # ── Pass 1: topic identification ─────────────────────────────────────
-
-    def _build_conversation_content(self, user: str, start: datetime, end: datetime) -> str | None:
-        """Build user-only conversation text for preference extraction (backfill path).
-
-        Only includes incoming (user) messages — Penny's responses are excluded
-        so the model doesn't extract Penny's topics as user preferences.
-        Reactions are handled separately via _extract_reaction_preferences.
-        """
-        messages = self.db.messages.get_messages_in_range(user, start, end)
-        user_messages = [
-            m for m in messages if m.direction == PennyConstants.MessageDirection.INCOMING
-        ]
-        if not user_messages:
-            return None
-        return self._format_messages(user_messages)
 
     async def _identify_preference_topics(
         self, conversation: str, existing: list
@@ -506,8 +461,6 @@ class HistoryAgent(Agent):
         self,
         user: str,
         classified: list[ClassifiedPreference],
-        start: datetime,
-        end: datetime,
         embedding_lookup: dict[str, bytes | None],
     ) -> None:
         """Store classified preferences with pre-computed embeddings."""
@@ -518,8 +471,6 @@ class HistoryAgent(Agent):
                 user=user,
                 content=content,
                 valence=pref.valence,
-                source_period_start=start,
-                source_period_end=end,
                 embedding=embedding,
                 source=PennyConstants.PreferenceSource.EXTRACTED,
             )
@@ -527,9 +478,7 @@ class HistoryAgent(Agent):
 
     # ── Reaction preference extraction ──────────────────────────────────
 
-    async def _extract_reaction_preferences(
-        self, user: str, reactions: list, start: datetime, end: datetime
-    ) -> bool:
+    async def _extract_reaction_preferences(self, user: str, reactions: list) -> bool:
         """Extract preferences from emoji reactions (deterministic valence, LLM topics)."""
         items = self._build_reaction_items(reactions)
         if not items:
@@ -539,7 +488,7 @@ class HistoryAgent(Agent):
         if not extracted:
             return False
 
-        return await self._store_reaction_preferences(user, extracted, start, end)
+        return await self._store_reaction_preferences(user, extracted)
 
     def _build_reaction_items(self, reactions: list) -> list[tuple[str, str, int]]:
         """Build (parent_content, valence, index) tuples from recognized reactions."""
@@ -585,11 +534,7 @@ class HistoryAgent(Agent):
         ]
 
     async def _store_reaction_preferences(
-        self,
-        user: str,
-        topic_valence_pairs: list[tuple[str, str]],
-        start: datetime,
-        end: datetime,
+        self, user: str, topic_valence_pairs: list[tuple[str, str]]
     ) -> bool:
         """Dedup reaction topics against existing preferences and store survivors."""
         existing = self.db.preferences.get_for_user(user)
@@ -606,8 +551,6 @@ class HistoryAgent(Agent):
                 user=user,
                 content=topic,
                 valence=valence,
-                source_period_start=start,
-                source_period_end=end,
                 embedding=embedding,
                 source=PennyConstants.PreferenceSource.EXTRACTED,
             )
