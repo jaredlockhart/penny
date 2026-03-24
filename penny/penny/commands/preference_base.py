@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.constants import PennyConstants
@@ -53,13 +51,10 @@ class PreferenceAddCommand(PreferenceBaseCommand):
         return self._add_preference(args, context)
 
     def _add_preference(self, content: str, context: CommandContext) -> CommandResult:
-        now = datetime.now(UTC)
         context.db.preferences.add(
             user=context.user,
             content=content,
             valence=self.valence,
-            source_period_start=now,
-            source_period_end=now,
             source=PennyConstants.PreferenceSource.MANUAL,
         )
         label = self._valence_label()

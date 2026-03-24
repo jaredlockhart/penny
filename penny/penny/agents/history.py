@@ -37,6 +37,22 @@ class IdentifiedPreferenceTopics(BaseModel):
     )
 
 
+class ExtractedTopic(BaseModel):
+    """A topic extracted from a single reaction parent message."""
+
+    index: int = PydanticField(description="The original message index number")
+    content: str = PydanticField(description="The preference topic (3-10 words)")
+
+
+class ExtractedTopics(BaseModel):
+    """Schema for batch topic extraction from reaction parent messages."""
+
+    topics: list[ExtractedTopic] = PydanticField(
+        default_factory=list,
+        description="Topics extracted from the numbered messages",
+    )
+
+
 class ClassifiedPreference(BaseModel):
     """A preference topic with its valence classification."""
 
@@ -71,7 +87,6 @@ class HistoryAgent(Agent):
         days = self._find_unsummarized_days(user, max_days)
         for day_start, day_end in days:
             await self._summarize_day(user, day_start, day_end)
-            await self._extract_day_preferences(user, day_start, day_end)
             did_work = True
 
         did_work = await self._rollup_completed_weeks(user) or did_work
@@ -222,39 +237,38 @@ class HistoryAgent(Agent):
     # ── Preference extraction ─────────────────────────────────────────────
 
     async def _extract_today_preferences(self, user: str) -> bool:
-        """Extract preferences from unprocessed messages only."""
+        """Extract preferences from unprocessed messages and reactions."""
         messages = self.db.messages.get_unprocessed(user, limit=100)
         reactions = self.db.messages.get_user_reactions(user, limit=100)
         if not messages and not reactions:
             return False
 
-        conversation = self._build_unprocessed_content(messages, reactions)
-        if not conversation:
-            return False
+        processed_ids: list[int] = []
+        did_work = False
 
-        now = datetime.now(UTC).replace(tzinfo=None)
-        did_work = await self._extract_preferences_from_content(
-            user, conversation, self._midnight_today(), now
-        )
-        if did_work:
-            message_ids = [m.id for m in messages if m.id is not None]
-            reaction_ids = [r.id for r in reactions if r.id is not None]
-            self.db.messages.mark_processed(message_ids + reaction_ids)
+        if messages:
+            did_work = await self._extract_text_preferences(user, messages)
+            if did_work:
+                processed_ids.extend(m.id for m in messages if m.id is not None)
+
+        if reactions:
+            reaction_work = await self._extract_reaction_preferences(user, reactions)
+            if reaction_work:
+                processed_ids.extend(r.id for r in reactions if r.id is not None)
+                did_work = True
+
+        if processed_ids:
+            self.db.messages.mark_processed(processed_ids)
         return did_work
 
-    async def _extract_day_preferences(
-        self, user: str, day_start: datetime, day_end: datetime
-    ) -> None:
-        """Extract preferences for a completed day (skip if already done)."""
-        if self.db.preferences.exists_for_period(user, day_start):
-            return
-        conversation = self._build_conversation_content(user, day_start, day_end)
-        if conversation:
-            await self._extract_preferences_from_content(user, conversation, day_start, day_end)
+    async def _extract_text_preferences(self, user: str, messages: list) -> bool:
+        """Extract preferences from text messages via two-pass LLM pipeline."""
+        conversation = self._format_messages(messages)
+        if not conversation:
+            return False
+        return await self._extract_preferences_from_content(user, conversation)
 
-    async def _extract_preferences_from_content(
-        self, user: str, conversation: str, start: datetime, end: datetime
-    ) -> bool:
+    async def _extract_preferences_from_content(self, user: str, conversation: str) -> bool:
         """Two-pass preference extraction: identify topics, dedup, classify valence."""
         existing = self.db.preferences.get_for_user(user)
 
@@ -278,7 +292,7 @@ class HistoryAgent(Agent):
             return bool(identified.existing)
 
         embedding_lookup = {topic.lower(): emb for topic, emb in survivors}
-        self._store_classified_preferences(user, classified, start, end, embedding_lookup)
+        self._store_classified_preferences(user, classified, embedding_lookup)
         return True
 
     def _bump_existing_mentions(self, mentioned: list[str], existing: list[Preference]) -> set[int]:
@@ -307,43 +321,6 @@ class HistoryAgent(Agent):
         return [t.strip() for t in identified.new if t.strip() and t.strip().lower() not in exclude]
 
     # ── Pass 1: topic identification ─────────────────────────────────────
-
-    def _build_unprocessed_content(self, messages: list, reactions: list) -> str | None:
-        """Build conversation text from pre-fetched unprocessed messages and reactions."""
-        if not messages and not reactions:
-            return None
-        parts: list[str] = []
-        if messages:
-            parts.append(self._format_messages(messages))
-        if reactions:
-            reaction_text = self._format_reactions(reactions)
-            if reaction_text:
-                parts.append(reaction_text)
-        return "\n\n".join(parts) if parts else None
-
-    def _build_conversation_content(self, user: str, start: datetime, end: datetime) -> str | None:
-        """Build user-only conversation text for preference extraction (backfill path).
-
-        Only includes incoming (user) messages and reactions — Penny's
-        responses are excluded so the model doesn't extract Penny's
-        topics as user preferences.
-        """
-        messages = self.db.messages.get_messages_in_range(user, start, end)
-        reactions = self.db.messages.get_reactions_in_range(user, start, end)
-        user_messages = [
-            m for m in messages if m.direction == PennyConstants.MessageDirection.INCOMING
-        ]
-        if not user_messages and not reactions:
-            return None
-
-        parts: list[str] = []
-        if user_messages:
-            parts.append(self._format_messages(user_messages))
-        if reactions:
-            reaction_text = self._format_reactions(reactions)
-            if reaction_text:
-                parts.append(reaction_text)
-        return "\n\n".join(parts) if parts else None
 
     async def _identify_preference_topics(
         self, conversation: str, existing: list
@@ -484,8 +461,6 @@ class HistoryAgent(Agent):
         self,
         user: str,
         classified: list[ClassifiedPreference],
-        start: datetime,
-        end: datetime,
         embedding_lookup: dict[str, bytes | None],
     ) -> None:
         """Store classified preferences with pre-computed embeddings."""
@@ -496,27 +471,93 @@ class HistoryAgent(Agent):
                 user=user,
                 content=content,
                 valence=pref.valence,
-                source_period_start=start,
-                source_period_end=end,
                 embedding=embedding,
                 source=PennyConstants.PreferenceSource.EXTRACTED,
             )
             logger.info("Preference stored for %s: %s (%s)", user, content[:50], pref.valence)
 
-    # ── Reaction helpers ─────────────────────────────────────────────────
+    # ── Reaction preference extraction ──────────────────────────────────
 
-    def _format_reactions(self, reactions: list) -> str:
-        """Format reactions with parent message context for the prompt."""
-        lines: list[str] = []
+    async def _extract_reaction_preferences(self, user: str, reactions: list) -> bool:
+        """Extract preferences from emoji reactions (deterministic valence, LLM topics)."""
+        items = self._build_reaction_items(reactions)
+        if not items:
+            return False
+
+        extracted = await self._extract_reaction_topics(items)
+        if not extracted:
+            return False
+
+        return await self._store_reaction_preferences(user, extracted)
+
+    def _build_reaction_items(self, reactions: list) -> list[tuple[str, str, int]]:
+        """Build (parent_content, valence, index) tuples from recognized reactions."""
+        items: list[tuple[str, str, int]] = []
         for reaction in reactions:
-            ts = reaction.timestamp.strftime("%H:%M")
             valence = self._classify_reaction_emoji(reaction.content)
             if not valence:
                 continue
             parent = self.db.messages.get_by_id(reaction.parent_id) if reaction.parent_id else None
-            if parent:
-                lines.append(f'[{ts}] User reacted {reaction.content} to: "{parent.content[:200]}"')
-        return "Reactions:\n" + "\n".join(lines) if lines else ""
+            if not parent or not parent.content:
+                continue
+            items.append((parent.content[:200], valence, len(items)))
+        return items
+
+    async def _extract_reaction_topics(
+        self, items: list[tuple[str, str, int]]
+    ) -> list[tuple[str, str]]:
+        """Use LLM to extract topics from reaction parent messages.
+
+        Returns (topic, valence) pairs with valence determined by the emoji.
+        """
+        numbered = "\n".join(f'{i}. "{content}"' for content, _, i in items)
+        prompt = f"{Prompt.REACTION_TOPIC_EXTRACTION_PROMPT}\n\nMessages:\n{numbered}"
+
+        try:
+            response = await self._model_client.generate(
+                prompt=prompt,
+                tools=None,
+                format=ExtractedTopics.model_json_schema(),
+            )
+            if not response.content or not response.content.strip():
+                return []
+            result = ExtractedTopics.model_validate_json(response.content)
+        except Exception as e:
+            logger.error("Reaction topic extraction failed: %s", e)
+            return []
+
+        valence_map = {i: valence for _, valence, i in items}
+        return [
+            (topic.content.strip(), valence_map[topic.index])
+            for topic in result.topics
+            if topic.content.strip() and topic.index in valence_map
+        ]
+
+    async def _store_reaction_preferences(
+        self, user: str, topic_valence_pairs: list[tuple[str, str]]
+    ) -> bool:
+        """Dedup reaction topics against existing preferences and store survivors."""
+        existing = self.db.preferences.get_for_user(user)
+        topics = [t for t, _ in topic_valence_pairs]
+        valence_map = {t.lower(): v for t, v in topic_valence_pairs}
+
+        survivors = await self._dedup_preference_topics(topics, existing)
+        if not survivors:
+            return bool(topic_valence_pairs)
+
+        for topic, embedding in survivors:
+            valence = valence_map.get(topic.lower(), PennyConstants.PreferenceValence.POSITIVE)
+            self.db.preferences.add(
+                user=user,
+                content=topic,
+                valence=valence,
+                embedding=embedding,
+                source=PennyConstants.PreferenceSource.EXTRACTED,
+            )
+            logger.info("Reaction preference stored: '%s' (%s)", topic[:50], valence)
+        return True
+
+    # ── Reaction helpers ─────────────────────────────────────────────────
 
     @staticmethod
     def _classify_reaction_emoji(emoji: str) -> str | None:
