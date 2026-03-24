@@ -23,6 +23,44 @@ class SearchResult(BaseModel):
         return f"SearchResult(text={self.text}, urls={self.urls}, image_base64={image_summary})"
 
 
+class FetchNewsArgs(BaseModel):
+    """Validated arguments for the fetch_news tool."""
+
+    topic: str = "top news"
+
+
+class SearchEmailsArgs(BaseModel):
+    """Validated arguments for the search_emails tool."""
+
+    text: str | None = None
+    from_addr: str | None = None
+    subject: str | None = None
+    after: str | None = None
+    before: str | None = None
+
+
+class ReadEmailsArgs(BaseModel):
+    """Validated arguments for the read_emails tool."""
+
+    email_ids: list[str]
+
+
+class ListEmailsArgs(BaseModel):
+    """Validated arguments for the list_emails tool."""
+
+    folder: str | None = None
+    limit: int = 10
+
+
+class DraftEmailArgs(BaseModel):
+    """Validated arguments for the draft_email tool."""
+
+    to: list[str]
+    subject: str
+    body: str
+    cc: list[str] | None = None
+
+
 class ToolCall(BaseModel):
     """A tool call from the model."""
 

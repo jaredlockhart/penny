@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from penny.agents.notify import NotifyAgent
+from penny.agents.notify import NotifyAgent, ThoughtMode
 from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -424,7 +424,9 @@ async def test_notify_thought_context_shows_specific_thought(
         penny.db.history.add(
             TEST_SENDER, now, now, PennyConstants.HistoryDuration.DAILY, "space games"
         )
-        candidate_prompt = penny.notify_agent._build_thought_candidate_prompt(TEST_SENDER)
+        mode = ThoughtMode(thoughts[0])
+        mode.prepare(penny.notify_agent)
+        candidate_prompt = mode.build_system_prompt(penny.notify_agent, TEST_SENDER)
         assert "black holes" in candidate_prompt
         assert "Conversation History" not in candidate_prompt
 

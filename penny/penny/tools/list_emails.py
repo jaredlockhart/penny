@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from penny.tools.base import Tool
+from penny.tools.models import ListEmailsArgs
 from penny.zoho import ZohoClient
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,9 @@ class ListEmailsTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         """List emails from a folder and return formatted summaries."""
-        folder = kwargs.get("folder")
-        limit = min(kwargs.get("limit", 10), 50)
+        args = ListEmailsArgs(**kwargs)
+        folder = args.folder
+        limit = min(args.limit, 50)
 
         results = await self._client.list_emails(folder_name=folder, limit=limit)
         if not results:

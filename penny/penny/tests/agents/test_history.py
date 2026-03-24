@@ -69,6 +69,7 @@ async def test_summarize_today_creates_history_entry(
         rest = "\n".join(lines[1:])
         expected = """\
 
+## Instructions
 Summarize the following text as a short bullet list. \
 Each bullet should be 3-8 words describing a distinct topic. \
 Omit greetings, small talk, and meta-conversation. \
@@ -665,7 +666,8 @@ async def test_weekly_rollup_creates_entry_from_daily_entries(
         two_weeks_ago_monday = today - timedelta(days=today.weekday() + 14)
         _seed_daily_entries(penny, TEST_SENDER, two_weeks_ago_monday)
 
-        await penny.history_agent._rollup_completed_weeks(TEST_SENDER)
+        system_prompt = await penny.history_agent._build_system_prompt(TEST_SENDER)
+        await penny.history_agent._rollup_completed_weeks(TEST_SENDER, system_prompt)
 
         weekly_entries = penny.db.history.get_recent(
             TEST_SENDER, PennyConstants.HistoryDuration.WEEKLY, limit=10
@@ -701,7 +703,8 @@ async def test_weekly_rollup_skips_incomplete_week(
                 topics=f"- Topic from today's week day {i}",
             )
 
-        await penny.history_agent._rollup_completed_weeks(TEST_SENDER)
+        system_prompt = await penny.history_agent._build_system_prompt(TEST_SENDER)
+        await penny.history_agent._rollup_completed_weeks(TEST_SENDER, system_prompt)
 
         weekly_entries = penny.db.history.get_recent(
             TEST_SENDER, PennyConstants.HistoryDuration.WEEKLY, limit=10

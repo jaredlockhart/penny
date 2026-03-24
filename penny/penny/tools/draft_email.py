@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from penny.tools.base import Tool
+from penny.tools.models import DraftEmailArgs
 from penny.zoho import ZohoClient
 
 logger = logging.getLogger(__name__)
@@ -50,17 +51,11 @@ class DraftEmailTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         """Save an email draft and return confirmation."""
-        to_addresses = kwargs.get("to", [])
-        subject = kwargs.get("subject", "")
-        body = kwargs.get("body", "")
-        cc_addresses = kwargs.get("cc")
-
-        if not to_addresses:
-            return "Error: At least one recipient email address is required."
-        if not subject:
-            return "Error: Subject is required."
-        if not body:
-            return "Error: Email body is required."
+        args = DraftEmailArgs(**kwargs)
+        to_addresses = args.to
+        subject = args.subject
+        body = args.body
+        cc_addresses = args.cc
 
         try:
             message_id = await self._client.draft_response(

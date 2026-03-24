@@ -108,19 +108,16 @@ async def test_schedule_create_requires_timezone(
 @pytest.mark.asyncio
 async def test_schedule_create_and_list(signal_server, test_config, mock_ollama, running_penny):
     """Test creating a schedule and listing it."""
-    # Configure mock Ollama to return schedule parse result
-    mock_ollama.set_response_handler(
-        lambda messages, tools: {
-            "message": {
-                "role": "assistant",
-                "content": (
-                    '{"timing_description": "daily 9am", '
-                    '"prompt_text": "what\'s the news?", '
-                    '"cron_expression": "0 9 * * *"}'
-                ),
-            }
-        }
+    schedule_json = (
+        '{"timing_description": "daily 9am", '
+        '"prompt_text": "what\'s the news?", '
+        '"cron_expression": "0 9 * * *"}'
     )
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(request, schedule_json)
+
+    mock_ollama.set_response_handler(handler)
 
     async with running_penny(test_config) as penny:
         # Create user profile with timezone
@@ -159,19 +156,16 @@ async def test_schedule_create_and_list(signal_server, test_config, mock_ollama,
 @pytest.mark.asyncio
 async def test_schedule_delete(signal_server, test_config, mock_ollama, running_penny):
     """Test deleting a schedule."""
-    # Configure mock Ollama to return schedule parse result
-    mock_ollama.set_response_handler(
-        lambda messages, tools: {
-            "message": {
-                "role": "assistant",
-                "content": (
-                    '{"timing_description": "hourly", '
-                    '"prompt_text": "sports scores", '
-                    '"cron_expression": "0 * * * *"}'
-                ),
-            }
-        }
+    schedule_json = (
+        '{"timing_description": "hourly", '
+        '"prompt_text": "sports scores", '
+        '"cron_expression": "0 * * * *"}'
     )
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(request, schedule_json)
+
+    mock_ollama.set_response_handler(handler)
 
     async with running_penny(test_config) as penny:
         # Create user profile with timezone

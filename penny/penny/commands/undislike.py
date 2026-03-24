@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from penny.commands.preference_base import PreferenceRemoveCommand
-from penny.constants import PennyConstants
+from penny.commands.preference_base import NEGATIVE_CONFIG, PreferenceRemoveCommand
 
 
 class UndislikeCommand(PreferenceRemoveCommand):
@@ -20,4 +19,4 @@ class UndislikeCommand(PreferenceRemoveCommand):
         "• `/undislike`\n"
         "• `/undislike 2`"
     )
-    valence = PennyConstants.PreferenceValence.NEGATIVE
+    valence_config = NEGATIVE_CONFIG

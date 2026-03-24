@@ -98,7 +98,7 @@ penny/
     email.py          — /email: search Fastmail email via JMAP (optional)
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
-    models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult
+    models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult, and per-tool arg models (SearchArgs, FetchNewsArgs, etc.)
     search.py         — SearchTool: Perplexity text search (no images)
     news.py           — NewsTool: TheNewsAPI.com client (optional, requires NEWS_API_KEY)
     fetch_news.py     — FetchNewsTool: tool wrapper for NewsTool (used by chat + thinking)
@@ -194,7 +194,9 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 **NotifyAgent** (`agents/notify.py`)
 - Notification outreach — sends thoughts, news, and check-ins when users are idle
 - Runs on a PeriodicSchedule, separate from ChatAgent
-- Three modes, each builds its own system prompt from building blocks:
+- Three modes, each a `NotificationMode` subclass (`CheckinMode`, `NewsMode`, `ThoughtMode`):
+  - Each mode declares its tools, system prompt composition, user prompt, and image extraction
+  - `_execute_mode()` orchestrates the shared pipeline: prepare → tools → prompt → run → validate → send
   - Thought candidates: identity + profile + pending thought + instructions
   - News: identity + profile + history + instructions
   - Check-in: identity + profile + history + notified thought + instructions
@@ -214,6 +216,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 **HistoryAgent** (`agents/history.py`)
 - Background worker that summarizes user messages into topic summaries and extracts user preferences
 - Only user messages are included — Penny's responses and proactive notifications are excluded
+- No identity, profile, or conversation context — overrides `_build_system_prompt()` to include only instructions
 - Runs on a PeriodicSchedule (highest priority among idle tasks — before notify and thinking)
 - Each cycle per user: (1) summarize today, (2) extract today's preferences, (3) backfill past days, (4) roll up completed weeks
 - Daily summaries: messages midnight-to-now, upserted (rolling update); backfill for completed days without entries

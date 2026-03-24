@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from penny.commands.preference_base import PreferenceAddCommand
-from penny.constants import PennyConstants
+from penny.commands.preference_base import NEGATIVE_CONFIG, PreferenceAddCommand
 
 
 class DislikeCommand(PreferenceAddCommand):
@@ -20,4 +19,4 @@ class DislikeCommand(PreferenceAddCommand):
         "• `/dislike`\n"
         "• `/dislike cold weather`"
     )
-    valence = PennyConstants.PreferenceValence.NEGATIVE
+    valence_config = NEGATIVE_CONFIG
