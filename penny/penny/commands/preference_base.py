@@ -32,7 +32,7 @@ class PreferenceBaseCommand(Command):
     def _list_preferences(self, prefs: list[Preference]) -> CommandResult:
         lines = [self._header(), ""]
         for idx, pref in enumerate(prefs, start=1):
-            lines.append(f"{idx}. {pref.content}")
+            lines.append(f"{idx}. {pref.content} ({pref.mention_count})")
         return CommandResult(text="\n".join(lines))
 
 
@@ -101,5 +101,5 @@ class PreferenceRemoveCommand(PreferenceBaseCommand):
 
         lines = [f"{deleted_msg}\n", PennyResponse.PREF_STILL_REMAINING]
         for idx, pref in enumerate(remaining, start=1):
-            lines.append(f"{idx}. {pref.content}")
+            lines.append(f"{idx}. {pref.content} ({pref.mention_count})")
         return CommandResult(text="\n".join(lines))
