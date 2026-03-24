@@ -3,6 +3,11 @@
 Sends notifications to users when idle: thought candidates,
 news updates, and periodic check-ins. Runs on a schedule via the
 BackgroundScheduler.
+
+Each notification mode (checkin, news, thought) is a NotificationMode
+subclass that declares its tools, prompt, context, and image extraction.
+NotifyAgent orchestrates the shared pipeline: install tools, build prompt,
+run model, validate, extract image, send.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from penny.tools.models import SearchArgs
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
+    from penny.tools import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +50,207 @@ class NotifyCandidate(BaseModel):
     image_prompt: str
 
 
+# ── Notification modes ─────────────────────────────────────────────────
+
+
+class NotificationMode:
+    """Declares what varies per notification mode.
+
+    Each mode specifies its tools, system prompt, user prompt, run
+    parameters, and image-prompt extraction.  The agent orchestrates
+    the shared pipeline around these declarations.
+
+    Subclasses must override: get_tools, build_system_prompt, prompt,
+    and extract_image_prompt.  Other methods have sensible defaults.
+    """
+
+    def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
+        """Tools available during generation."""
+        raise NotImplementedError
+
+    def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
+        """Full system prompt for this mode."""
+        raise NotImplementedError
+
+    @property
+    def prompt(self) -> str:
+        """User prompt sent to the model."""
+        raise NotImplementedError
+
+    @property
+    def max_steps(self) -> int | None:
+        """Max agentic loop steps (None = agent default)."""
+        return None
+
+    def get_history(self, agent: NotifyAgent, user: str) -> list[tuple[str, str]] | None:
+        """Conversation turns to include (None = no turns)."""
+        return None
+
+    @property
+    def validate_urls(self) -> bool:
+        """Whether to retry on hallucinated URLs."""
+        return False
+
+    @property
+    def check_disqualified(self) -> bool:
+        """Whether to reject error fallbacks and model refusals."""
+        return True
+
+    def extra_source(self) -> str:
+        """Additional source text for URL validation."""
+        return ""
+
+    def extract_image_prompt(
+        self, agent: NotifyAgent, response: ControllerResponse, answer: str
+    ) -> str:
+        """Extract an image search query from the response."""
+        raise NotImplementedError
+
+    def prepare(self, agent: NotifyAgent) -> None:
+        """Hook called before generation (e.g., set pending thought)."""
+        pass
+
+    def cleanup(self, agent: NotifyAgent) -> None:
+        """Hook called after generation."""
+        pass
+
+
+class CheckinMode(NotificationMode):
+    """Check-in: slim context, no tools, single step, no validation."""
+
+    def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
+        return []
+
+    def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
+        return "\n\n".join(
+            s
+            for s in [
+                agent._identity_section(),
+                agent._context_block(
+                    agent._profile_section(user),
+                    agent._history_section(user),
+                    agent._notified_thought_section(user),
+                ),
+                agent._instructions_section(),
+            ]
+            if s
+        )
+
+    @property
+    def prompt(self) -> str:
+        return Prompt.NOTIFY_CHECKIN
+
+    @property
+    def max_steps(self) -> int | None:
+        return 1
+
+    @property
+    def check_disqualified(self) -> bool:
+        return False
+
+    def get_history(self, agent: NotifyAgent, user: str) -> list[tuple[str, str]] | None:
+        return agent._build_conversation(user)
+
+    def extract_image_prompt(
+        self, agent: NotifyAgent, response: ControllerResponse, answer: str
+    ) -> str:
+        return str(agent.config.runtime.CHECKIN_IMAGE_PROMPT)
+
+    def prepare(self, agent: NotifyAgent) -> None:
+        agent._pending_thought = None
+
+
+class NewsMode(NotificationMode):
+    """News: profile + history context, news tool only, URL validation."""
+
+    def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
+        if agent._news_tool:
+            return [agent._news_tool]
+        return []
+
+    def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
+        return "\n\n".join(
+            s
+            for s in [
+                agent._identity_section(),
+                agent._context_block(
+                    agent._profile_section(user),
+                    agent._history_section(user),
+                ),
+                agent._instructions_section(),
+            ]
+            if s
+        )
+
+    @property
+    def prompt(self) -> str:
+        return Prompt.NOTIFY_NEWS
+
+    @property
+    def validate_urls(self) -> bool:
+        return True
+
+    def extract_image_prompt(
+        self, agent: NotifyAgent, response: ControllerResponse, answer: str
+    ) -> str:
+        return NotifyAgent._extract_first_headline(answer) or "latest news"
+
+
+class ThoughtMode(NotificationMode):
+    """Thought candidate: profile + thought context, all tools, URL validation."""
+
+    def __init__(self, thought: Thought | None) -> None:
+        self._thought = thought
+
+    def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
+        return agent.get_tools(user)
+
+    def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
+        return "\n\n".join(
+            s
+            for s in [
+                agent._identity_section(),
+                agent._context_block(
+                    agent._profile_section(user),
+                    agent._pending_thought_section(),
+                ),
+                agent._instructions_section(),
+            ]
+            if s
+        )
+
+    @property
+    def prompt(self) -> str:
+        return Prompt.NOTIFY_PROMPT
+
+    @property
+    def validate_urls(self) -> bool:
+        return True
+
+    def extra_source(self) -> str:
+        return self._thought.content if self._thought else ""
+
+    def extract_image_prompt(
+        self, agent: NotifyAgent, response: ControllerResponse, answer: str
+    ) -> str:
+        return NotifyAgent._extract_search_query(response.tool_calls) or ""
+
+    def prepare(self, agent: NotifyAgent) -> None:
+        agent._pending_thought = self._thought
+
+    def cleanup(self, agent: NotifyAgent) -> None:
+        agent._pending_thought = None
+
+
+# ── Agent ──────────────────────────────────────────────────────────────
+
+
 class NotifyAgent(Agent):
     """Notification outreach agent — sends thoughts, news, and check-ins.
+
+    Uses the template method pattern: each NotificationMode declares what
+    varies (tools, prompt, context, image extraction) and _execute_mode()
+    orchestrates the shared pipeline.
 
     Context matrix — each mode gets tailored context:
 
@@ -150,13 +355,13 @@ class NotifyAgent(Agent):
         return elapsed >= self.config.runtime.NEWS_COOLDOWN
 
     async def _send_notification(self, user: str) -> bool:
-        """Check-in if eligible, then coin-flip news, otherwise thought candidates."""
+        """Select mode and execute: check-in, news, or thought candidates."""
         assert self._channel is not None
         try:
             if self._should_checkin(user):
-                return await self._send_checkin(user)
+                return await self._send_mode(user, CheckinMode())
             if random.random() < self.NEWS_CHANCE and self._news_cooldown_elapsed():
-                return await self._send_news(user)
+                return await self._send_mode(user, NewsMode())
             return await self._send_best_candidate(user)
         except Exception:
             logger.exception("Failed to send notification to %s", user)
@@ -164,226 +369,69 @@ class NotifyAgent(Agent):
         finally:
             self._pending_thought = None
 
-    async def _send_checkin(self, user: str) -> bool:
-        """Send a check-in message — slim context, no tools, single step."""
-        logger.info("Notify check-in for %s", user)
-        self._pending_thought = None
-        system_prompt = self._build_checkin_prompt(user)
-        self._install_tools([])
-        response = await self.run(
-            prompt=Prompt.NOTIFY_CHECKIN,
-            history=self._build_conversation(user),
-            system_prompt=system_prompt,
-            max_steps=1,
-        )
-        answer = response.answer.strip() if response.answer else None
-        if not answer:
-            return False
-        return await self._send_candidate(
-            user,
-            NotifyCandidate(
-                answer=answer,
-                attachments=response.attachments or [],
-                image_prompt=str(self.config.runtime.CHECKIN_IMAGE_PROMPT),
-            ),
-        )
-
-    def _build_checkin_prompt(self, user: str) -> str:
-        """Checkin: identity + profile + history + last notified thought."""
-        return "\n\n".join(
-            s
-            for s in [
-                self._identity_section(),
-                self._context_block(
-                    self._profile_section(user),
-                    self._history_section(user),
-                    self._notified_thought_section(user),
-                ),
-                self._instructions_section(),
-            ]
-            if s
-        )
-
-    def _get_news_tools(self) -> list:
-        """News notifications only get the news tool — no search fallback."""
-        if self._news_tool:
-            return [self._news_tool]
-        return []
+    # ── Mode execution (shared pipeline) ──────────────────────────────
 
     # Max retries for notification URL validation
     NOTIFY_URL_RETRIES = 2
 
-    async def _send_news(self, user: str) -> bool:
-        """Send a news message — profile + history only, news tool only."""
-        logger.info("Notify news for %s", user)
-        system_prompt = self._build_news_prompt(user)
-        self._install_tools(self._get_news_tools())
-        response = await self._run_with_url_validation(
-            prompt=Prompt.NOTIFY_NEWS,
-            system_prompt=system_prompt,
-        )
-        answer = response.answer.strip() if response.answer else None
-        if not answer:
-            return False
-        if self._is_tools_unavailable(answer):
-            return await self._send_tools_unavailable(user, answer)
-        if self._is_disqualified(answer):
-            return False
-        image_prompt = self._extract_first_headline(answer) or "latest news"
-        return await self._send_candidate(
-            user,
-            NotifyCandidate(
-                answer=answer,
-                attachments=response.attachments or [],
-                image_prompt=image_prompt,
-            ),
-        )
+    async def _send_mode(self, user: str, mode: NotificationMode) -> bool:
+        """Execute a notification mode: generate candidate, validate, send.
 
-    def _build_news_prompt(self, user: str) -> str:
-        """News: identity + profile + history."""
-        return "\n\n".join(
-            s
-            for s in [
-                self._identity_section(),
-                self._context_block(
-                    self._profile_section(user),
-                    self._history_section(user),
-                ),
-                self._instructions_section(),
-            ]
-            if s
-        )
-
-    @staticmethod
-    def _extract_search_query(tool_calls: list[ToolCallRecord]) -> str | None:
-        """Extract the search query from tool calls for use as image prompt."""
-        for tc in tool_calls:
-            if tc.tool != "search":
-                continue
-            args = SearchArgs.model_validate(tc.arguments)
-            if args.queries:
-                return args.queries[0]
-        return None
-
-    # Matches **bold text** in markdown (first occurrence)
-    _BOLD_PATTERN = re.compile(r"\*\*(.+?)\*\*")
-
-    @classmethod
-    def _extract_first_headline(cls, text: str) -> str | None:
-        """Extract the first bold headline from response text for image search."""
-        match = cls._BOLD_PATTERN.search(text)
-        return match.group(1) if match else None
-
-    # ── Thought candidates ────────────────────────────────────────────
-
-    async def _send_best_candidate(self, user: str) -> bool:
-        """Generate thought candidates, score, send the best."""
-        self._last_tools_unavailable: str | None = None
-        n = int(self.config.runtime.NOTIFY_CANDIDATES)
-        candidates = await self._generate_thought_candidates(user, n)
-        if not candidates:
+        Handles tools-unavailable fallback for single-shot modes (checkin, news).
+        """
+        logger.info("Notify %s for %s", mode.__class__.__name__, user)
+        self._last_tools_unavailable = None
+        candidate = await self._execute_mode(user, mode)
+        if not candidate:
             if self._last_tools_unavailable:
                 return await self._send_tools_unavailable(user, self._last_tools_unavailable)
-            logger.warning("No viable notification candidates for %s", user)
             return False
-        winner = await self._pick_best_candidate(user, candidates)
-        return await self._send_candidate(user, winner)
+        return await self._send_candidate(user, candidate)
 
-    async def _generate_thought_candidates(self, user: str, n: int) -> list[NotifyCandidate]:
-        """Generate N thought candidates ranked by preference affinity."""
-        candidates: list[NotifyCandidate] = []
-        thoughts = self._get_top_thoughts(user, n)
-        for i, thought in enumerate(thoughts):
-            candidate = await self._generate_one_candidate(
-                user, Prompt.NOTIFY_PROMPT, thought=thought
+    async def _execute_mode(self, user: str, mode: NotificationMode) -> NotifyCandidate | None:
+        """Shared pipeline: prepare, tools, prompt, run, validate, candidate."""
+        mode.prepare(self)
+        self._install_tools(mode.get_tools(self, user))
+        system_prompt = mode.build_system_prompt(self, user)
+        response = await self._run_mode(user, mode, system_prompt)
+        candidate = self._to_candidate(mode, response)
+        mode.cleanup(self)
+        return candidate
+
+    async def _run_mode(
+        self, user: str, mode: NotificationMode, system_prompt: str
+    ) -> ControllerResponse:
+        """Run the model — with or without URL validation per mode."""
+        if mode.validate_urls:
+            return await self._run_with_url_validation(
+                prompt=mode.prompt,
+                system_prompt=system_prompt,
+                extra_source=mode.extra_source(),
             )
-            if candidate:
-                logger.info(
-                    "Candidate thought %d/%d: %s", i + 1, len(thoughts), candidate.answer[:60]
-                )
-                candidates.append(candidate)
-        return candidates
-
-    def _get_top_thoughts(self, user: str, n: int) -> list[Thought]:
-        """Select diverse unnotified thoughts: 1 free-thinking + N-1 least-recently-notified prefs.
-
-        Selection algorithm:
-        1. Most recent unnotified free-thinking thought (preference_id IS NULL)
-        2. For each preference with unnotified thoughts, find when it was last
-           notified. Pick the N-1 least-recently-notified preferences, and from
-           each take the most recent unnotified thought.
-        """
-        all_unnotified = self.db.thoughts.get_all_unnotified(user)
-        if not all_unnotified:
-            return []
-
-        result: list[Thought] = []
-
-        # 1. Most recent free-thinking thought
-        free = [t for t in all_unnotified if t.preference_id is None]
-        if free:
-            result.append(free[-1])
-
-        # 2. Group seeded thoughts by preference, find last notified time per pref
-        seeded = [t for t in all_unnotified if t.preference_id is not None]
-        by_pref: dict[int, list[Thought]] = {}
-        for t in seeded:
-            assert t.preference_id is not None
-            by_pref.setdefault(t.preference_id, []).append(t)
-
-        pref_last_notified = self._get_pref_last_notified_times(user, list(by_pref.keys()))
-        ranked = sorted(by_pref.keys(), key=lambda pid: pref_last_notified.get(pid) or "")
-        slots = n - len(result)
-        for pref_id in ranked[:slots]:
-            result.append(by_pref[pref_id][-1])  # most recent unnotified
-
-        return result
-
-    def _get_pref_last_notified_times(self, user: str, preference_ids: list[int]) -> dict[int, str]:
-        """Get the most recent notified_at per preference (for ranking)."""
-        if not preference_ids:
-            return {}
-        all_thoughts = self.db.thoughts.get_recent(user)
-        last_notified: dict[int, str] = {}
-        for t in all_thoughts:
-            if t.preference_id in preference_ids and t.notified_at is not None:
-                ts = str(t.notified_at)
-                if t.preference_id not in last_notified or ts > last_notified[t.preference_id]:
-                    last_notified[t.preference_id] = ts
-        return last_notified
-
-    async def _generate_one_candidate(
-        self, user: str, prompt: str, thought: Thought | None
-    ) -> NotifyCandidate | None:
-        """Generate a single notification candidate via the agentic loop.
-
-        Uses thought-specific context (profile + thought) without
-        conversation turns, so the model focuses on the thought
-        rather than continuing the conversation.
-        """
-        self._pending_thought = thought
-        self._install_tools(self.get_tools(user))
-        system_prompt = self._build_thought_candidate_prompt(user)
-        extra_source = thought.content if thought else ""
-        response = await self._run_with_url_validation(
-            prompt=prompt,
+        return await self.run(
+            prompt=mode.prompt,
+            history=mode.get_history(self, user),
             system_prompt=system_prompt,
-            extra_source=extra_source,
+            max_steps=mode.max_steps,
         )
-        self._pending_thought = None
+
+    def _to_candidate(
+        self, mode: NotificationMode, response: ControllerResponse
+    ) -> NotifyCandidate | None:
+        """Validate response and build a NotifyCandidate."""
         answer = response.answer.strip() if response.answer else None
         if not answer:
             return None
         if self._is_tools_unavailable(answer):
             self._last_tools_unavailable = answer
             return None
-        if self._is_disqualified(answer):
+        if mode.check_disqualified and self._is_disqualified(answer):
             logger.info("Disqualified candidate: %s", answer[:60])
             return None
-        image_prompt = self._extract_search_query(response.tool_calls) or ""
+        image_prompt = mode.extract_image_prompt(self, response, answer)
         return NotifyCandidate(
             answer=answer,
-            thought=thought,
+            thought=self._pending_thought,
             attachments=response.attachments or [],
             image_prompt=image_prompt,
         )
@@ -451,20 +499,86 @@ class NotifyAgent(Agent):
             return True
         return cls._is_refusal(answer)
 
-    def _build_thought_candidate_prompt(self, user: str) -> str:
-        """Thought candidate: identity + profile + pending thought."""
-        return "\n\n".join(
-            s
-            for s in [
-                self._identity_section(),
-                self._context_block(
-                    self._profile_section(user),
-                    self._pending_thought_section(),
-                ),
-                self._instructions_section(),
-            ]
-            if s
-        )
+    # ── Thought candidates ────────────────────────────────────────────
+
+    async def _send_best_candidate(self, user: str) -> bool:
+        """Generate thought candidates, score, send the best."""
+        self._last_tools_unavailable: str | None = None
+        n = int(self.config.runtime.NOTIFY_CANDIDATES)
+        candidates = await self._generate_thought_candidates(user, n)
+        if not candidates:
+            if self._last_tools_unavailable:
+                return await self._send_tools_unavailable(user, self._last_tools_unavailable)
+            logger.warning("No viable notification candidates for %s", user)
+            return False
+        winner = await self._pick_best_candidate(user, candidates)
+        return await self._send_candidate(user, winner)
+
+    async def _generate_thought_candidates(self, user: str, n: int) -> list[NotifyCandidate]:
+        """Generate N thought candidates ranked by preference affinity."""
+        candidates: list[NotifyCandidate] = []
+        thoughts = self._get_top_thoughts(user, n)
+        for i, thought in enumerate(thoughts):
+            candidate = await self._execute_mode(user, ThoughtMode(thought))
+            if candidate:
+                logger.info(
+                    "Candidate thought %d/%d: %s",
+                    i + 1,
+                    len(thoughts),
+                    candidate.answer[:60],
+                )
+                candidates.append(candidate)
+        return candidates
+
+    def _get_top_thoughts(self, user: str, n: int) -> list[Thought]:
+        """Select diverse unnotified thoughts: 1 free-thinking + N-1 least-recently-notified prefs.
+
+        Selection algorithm:
+        1. Most recent unnotified free-thinking thought (preference_id IS NULL)
+        2. For each preference with unnotified thoughts, find when it was last
+           notified. Pick the N-1 least-recently-notified preferences, and from
+           each take the most recent unnotified thought.
+        """
+        all_unnotified = self.db.thoughts.get_all_unnotified(user)
+        if not all_unnotified:
+            return []
+
+        result: list[Thought] = []
+
+        # 1. Most recent free-thinking thought
+        free = [t for t in all_unnotified if t.preference_id is None]
+        if free:
+            result.append(free[-1])
+
+        # 2. Group seeded thoughts by preference, find last notified time per pref
+        seeded = [t for t in all_unnotified if t.preference_id is not None]
+        by_pref: dict[int, list[Thought]] = {}
+        for t in seeded:
+            assert t.preference_id is not None
+            by_pref.setdefault(t.preference_id, []).append(t)
+
+        pref_last_notified = self._get_pref_last_notified_times(user, list(by_pref.keys()))
+        ranked = sorted(by_pref.keys(), key=lambda pid: pref_last_notified.get(pid) or "")
+        slots = n - len(result)
+        for pref_id in ranked[:slots]:
+            result.append(by_pref[pref_id][-1])  # most recent unnotified
+
+        return result
+
+    def _get_pref_last_notified_times(self, user: str, preference_ids: list[int]) -> dict[int, str]:
+        """Get the most recent notified_at per preference (for ranking)."""
+        if not preference_ids:
+            return {}
+        all_thoughts = self.db.thoughts.get_recent(user)
+        last_notified: dict[int, str] = {}
+        for t in all_thoughts:
+            if t.preference_id in preference_ids and t.notified_at is not None:
+                ts = str(t.notified_at)
+                if t.preference_id not in last_notified or ts > last_notified[t.preference_id]:
+                    last_notified[t.preference_id] = ts
+        return last_notified
+
+    # ── Thought context sections ─────────────────────────────────────
 
     def _pending_thought_section(self) -> str | None:
         """### Your Latest Thought — the thought being shared."""
@@ -478,6 +592,28 @@ class NotifyAgent(Agent):
         if not thoughts:
             return None
         return f"### Recent Background Thinking\n{thoughts[0].content}"
+
+    # ── Image prompt extraction ──────────────────────────────────────
+
+    @staticmethod
+    def _extract_search_query(tool_calls: list[ToolCallRecord]) -> str | None:
+        """Extract the search query from tool calls for use as image prompt."""
+        for tc in tool_calls:
+            if tc.tool != "search":
+                continue
+            args = SearchArgs.model_validate(tc.arguments)
+            if args.queries:
+                return args.queries[0]
+        return None
+
+    # Matches **bold text** in markdown (first occurrence)
+    _BOLD_PATTERN = re.compile(r"\*\*(.+?)\*\*")
+
+    @classmethod
+    def _extract_first_headline(cls, text: str) -> str | None:
+        """Extract the first bold headline from response text for image search."""
+        match = cls._BOLD_PATTERN.search(text)
+        return match.group(1) if match else None
 
     # ── Candidate scoring ─────────────────────────────────────────────
 

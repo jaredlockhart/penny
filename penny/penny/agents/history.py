@@ -78,24 +78,34 @@ class HistoryAgent(Agent):
         kwargs["system_prompt"] = Prompt.SUMMARIZE_TO_BULLETS
         super().__init__(**kwargs)  # type: ignore[arg-type]
 
+    async def _build_system_prompt(self, user: str) -> str:
+        """Instructions only — no identity, profile, history, thoughts, or dislikes.
+
+        The history agent summarizes raw user messages and extracts preferences.
+        It doesn't need any conversational context.
+        """
+        return self._instructions_section()
+
     async def execute_for_user(self, user: str) -> bool:
         """Summarize today's conversation, extract preferences, backfill days and weeks."""
-        did_work = await self._summarize_today(user)
+        system_prompt = await self._build_system_prompt(user)
+
+        did_work = await self._summarize_today(user, system_prompt)
         did_work = await self._extract_today_preferences(user) or did_work
 
         max_days = int(self.config.runtime.HISTORY_MAX_DAYS_PER_RUN)
         days = self._find_unsummarized_days(user, max_days)
         for day_start, day_end in days:
-            await self._summarize_day(user, day_start, day_end)
+            await self._summarize_day(user, day_start, day_end, system_prompt)
             did_work = True
 
-        did_work = await self._rollup_completed_weeks(user) or did_work
+        did_work = await self._rollup_completed_weeks(user, system_prompt) or did_work
 
         return did_work
 
     # ── Topic summarization ───────────────────────────────────────────────
 
-    async def _summarize_today(self, user: str) -> bool:
+    async def _summarize_today(self, user: str, system_prompt: str) -> bool:
         """Summarize messages from midnight to now, upserting today's history entry."""
         day_start = self._midnight_today()
         day_end = datetime.now(UTC).replace(tzinfo=None)
@@ -108,7 +118,7 @@ class HistoryAgent(Agent):
             return False
 
         message_text = self._format_messages(messages)
-        response = await self.run(prompt=message_text)
+        response = await self.run(prompt=message_text, system_prompt=system_prompt)
         topics = response.answer.strip()
         if not topics:
             return False
@@ -135,7 +145,9 @@ class HistoryAgent(Agent):
             return True
         return existing.created_at >= latest_msg
 
-    async def _summarize_day(self, user: str, day_start: datetime, day_end: datetime) -> None:
+    async def _summarize_day(
+        self, user: str, day_start: datetime, day_end: datetime, system_prompt: str
+    ) -> None:
         """Get messages for a day and call model to summarize topics."""
         messages = self.db.messages.get_messages_in_range(user, day_start, day_end)
         if not messages:
@@ -143,7 +155,7 @@ class HistoryAgent(Agent):
             return
 
         message_text = self._format_messages(messages)
-        response = await self.run(prompt=message_text)
+        response = await self.run(prompt=message_text, system_prompt=system_prompt)
         topics = response.answer.strip()
         if not topics:
             logger.debug("Model returned empty topics for %s on %s", user, day_start.date())
@@ -162,7 +174,7 @@ class HistoryAgent(Agent):
 
     # ── Weekly rollup ──────────────────────────────────────────────────────
 
-    async def _rollup_completed_weeks(self, user: str) -> bool:
+    async def _rollup_completed_weeks(self, user: str, system_prompt: str) -> bool:
         """Summarize completed weeks from daily entries into weekly history entries."""
         max_weeks = 2
         weeks = self._find_unrolled_weeks(user, max_weeks)
@@ -175,7 +187,7 @@ class HistoryAgent(Agent):
             if not input_text:
                 continue
 
-            response = await self.run(prompt=input_text)
+            response = await self.run(prompt=input_text, system_prompt=system_prompt)
             topics = response.answer.strip()
             if not topics:
                 continue

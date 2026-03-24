@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.constants import PennyConstants
@@ -9,28 +11,37 @@ from penny.database.models import Preference
 from penny.responses import PennyResponse
 
 
+class ValenceConfig(NamedTuple):
+    """All variant-specific values for a preference command."""
+
+    valence: str
+    label: str
+    empty_message: str
+    header: str
+
+
+POSITIVE_CONFIG = ValenceConfig(
+    valence=PennyConstants.PreferenceValence.POSITIVE,
+    label="like",
+    empty_message=PennyResponse.PREF_NO_LIKES,
+    header=PennyResponse.PREF_LIKES_HEADER,
+)
+
+NEGATIVE_CONFIG = ValenceConfig(
+    valence=PennyConstants.PreferenceValence.NEGATIVE,
+    label="dislike",
+    empty_message=PennyResponse.PREF_NO_DISLIKES,
+    header=PennyResponse.PREF_DISLIKES_HEADER,
+)
+
+
 class PreferenceBaseCommand(Command):
     """Shared helpers for preference commands."""
 
-    valence: str  # Set by subclasses
-
-    def _empty_message(self) -> str:
-        if self.valence == PennyConstants.PreferenceValence.POSITIVE:
-            return PennyResponse.PREF_NO_LIKES
-        return PennyResponse.PREF_NO_DISLIKES
-
-    def _header(self) -> str:
-        if self.valence == PennyConstants.PreferenceValence.POSITIVE:
-            return PennyResponse.PREF_LIKES_HEADER
-        return PennyResponse.PREF_DISLIKES_HEADER
-
-    def _valence_label(self) -> str:
-        if self.valence == PennyConstants.PreferenceValence.POSITIVE:
-            return "like"
-        return "dislike"
+    valence_config: ValenceConfig  # Set by subclasses
 
     def _list_preferences(self, prefs: list[Preference]) -> CommandResult:
-        lines = [self._header(), ""]
+        lines = [self.valence_config.header, ""]
         for idx, pref in enumerate(prefs, start=1):
             lines.append(f"{idx}. {pref.content} ({pref.mention_count})")
         return CommandResult(text="\n".join(lines))
@@ -41,11 +52,13 @@ class PreferenceAddCommand(PreferenceBaseCommand):
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         args = args.strip()
-        prefs = context.db.preferences.get_for_user_by_valence(context.user, self.valence)
+        prefs = context.db.preferences.get_for_user_by_valence(
+            context.user, self.valence_config.valence
+        )
 
         if not args:
             if not prefs:
-                return CommandResult(text=self._empty_message())
+                return CommandResult(text=self.valence_config.empty_message)
             return self._list_preferences(prefs)
 
         return self._add_preference(args, context)
@@ -54,11 +67,12 @@ class PreferenceAddCommand(PreferenceBaseCommand):
         context.db.preferences.add(
             user=context.user,
             content=content,
-            valence=self.valence,
+            valence=self.valence_config.valence,
             source=PennyConstants.PreferenceSource.MANUAL,
         )
-        label = self._valence_label()
-        return CommandResult(text=PennyResponse.PREF_ADDED.format(content=content, valence=label))
+        return CommandResult(
+            text=PennyResponse.PREF_ADDED.format(content=content, valence=self.valence_config.label)
+        )
 
 
 class PreferenceRemoveCommand(PreferenceBaseCommand):
@@ -66,10 +80,12 @@ class PreferenceRemoveCommand(PreferenceBaseCommand):
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         args = args.strip()
-        prefs = context.db.preferences.get_for_user_by_valence(context.user, self.valence)
+        prefs = context.db.preferences.get_for_user_by_valence(
+            context.user, self.valence_config.valence
+        )
 
         if not prefs:
-            return CommandResult(text=self._empty_message())
+            return CommandResult(text=self.valence_config.empty_message)
 
         if not args:
             return self._list_preferences(prefs)
@@ -91,7 +107,7 @@ class PreferenceRemoveCommand(PreferenceBaseCommand):
         context.db.preferences.delete(to_delete.id)  # type: ignore[arg-type]
 
         remaining = [p for p in prefs if p.id != to_delete.id]
-        label = self._valence_label()
+        label = self.valence_config.label
         deleted_msg = PennyResponse.PREF_DELETED.format(content=to_delete.content, valence=label)
 
         if not remaining:

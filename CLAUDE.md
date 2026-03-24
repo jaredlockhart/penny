@@ -169,10 +169,11 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - **Pass parameters, don't swap state**: Never temporarily swap instance state (e.g., `self.db`) to change behavior. Pass the dependency as a parameter through the call chain. Refactor interfaces to accept parameters rather than mutating shared state.
 - **Capture static data at build time**: Data that doesn't change during a session (e.g., git commit info) should be captured at Docker build time via build args and environment variables, not parsed at runtime via subprocess calls.
 - **Initialize at startup, not in handlers**: Heavyweight setup (copying databases, creating resources) belongs at startup (entrypoint scripts, Makefile, build steps), not lazily inside message or request handlers.
+- **Template method over conditionals**: When a parent class has multiple modes or variants, define building blocks on the parent and let each variant compose them explicitly — no flags or if/else chains. Examples: agent system prompts (building blocks like `_identity_section()`, `_profile_section()`), notification modes (`NotificationMode` subclasses declare tools/prompt/context), preference commands (`ValenceConfig` NamedTuple).
 
 ## Code Style
 
-- **Pydantic for all structured data**: All structured data (API payloads, config, internal messages) must be brokered through Pydantic models — no raw dicts
+- **Pydantic for all structured data**: All structured data (API payloads, config, internal messages) must be brokered through Pydantic models — no raw dicts. This includes tool call arguments: every `Tool.execute(**kwargs)` must validate through a Pydantic args model (e.g., `SearchArgs(**kwargs)`) as its first line, and return structured Pydantic results where applicable
 - **Constants for string literals**: All string literals must be defined as constants or enums — no magic strings in logic
 - **Prefer f-strings**: Always use f-strings over string concatenation with `+`
 - **Datetime columns for ordering, IDs for joining**: Always use datetime columns (`created_at`, `timestamp`, `learned_at`, etc.) for recency ordering in queries. Never use auto-increment IDs (`id`) to infer chronological order — IDs are for joins and lookups only

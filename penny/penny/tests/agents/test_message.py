@@ -1,4 +1,10 @@
-"""Integration tests for the ChatAgent."""
+"""Integration tests for ChatAgent message handling.
+
+Test organization:
+1. Full integration (happy path) — comprehensive end-to-end message flow
+2. Special success cases — no tool call, privacy redaction, anti-refusal
+3. Error / edge cases — XML leak regression, short response warning, delivery failure
+"""
 
 from datetime import datetime
 
@@ -9,53 +15,7 @@ from penny.constants import PennyConstants
 from penny.database.models import MessageLog, SearchLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "malformed_response",
-    [
-        "<function=search><parameter=query>Canadian wildfires</parameter></function>",
-        '<tools><search>{"query": "unusual instruments"}</search></tools>',
-    ],
-    ids=["function-param-xml", "tools-xml"],
-)
-async def test_xml_tool_call_not_leaked_to_user(
-    malformed_response,
-    signal_server,
-    mock_ollama,
-    test_config,
-    _mock_search,
-    test_user_info,
-    running_penny,
-):
-    """
-    Regression test for #262: malformed tool call leaked to user.
-
-    When a model emits XML-like markup in the content field instead of using
-    structured tool_calls, the agent retries without consuming an agentic loop
-    step, and the clean response reaches the user.
-    """
-    clean_response = "here are some great movies for you!"
-
-    def handler(request, count):
-        if count == 1:
-            return mock_ollama._make_text_response(request, malformed_response)
-        return mock_ollama._make_text_response(request, clean_response)
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(test_config):
-        await signal_server.push_message(
-            sender=TEST_SENDER,
-            content="recommend a movie",
-        )
-
-        response = await signal_server.wait_for_message(timeout=10.0)
-
-        assert mock_ollama._request_count >= 2, (
-            "Agent should have retried when XML markup was in content"
-        )
-        assert response["message"] == clean_response
+# ── 1. Full integration (happy path) ─────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -251,6 +211,9 @@ source URL so the user can follow up."""
         assert response.get("base64_attachments"), "Response should include an image attachment"
 
 
+# ── 2. Special success cases ──────────────────────────────────────────────
+
+
 @pytest.mark.asyncio
 async def test_message_without_tool_call(
     signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
@@ -353,6 +316,86 @@ async def test_name_not_redacted_when_user_says_it(
 
 
 @pytest.mark.asyncio
+async def test_conversation_prompt_includes_antirefusal_instruction(
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+):
+    """
+    Regression test for #775: CONVERSATION_PROMPT must include an explicit instruction
+    to never refuse a request, so the model always provides something useful.
+    """
+    mock_ollama.set_default_flow(
+        search_query="vegan restaurants downtown",
+        final_response="here are some vegan options! 🌱",
+    )
+
+    async with running_penny(test_config):
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="what are the best vegan restaurants?",
+        )
+        await signal_server.wait_for_message(timeout=10.0)
+
+    # Verify the system prompt instructs the model to always provide something useful
+    first_request = mock_ollama.requests[0]
+    messages = first_request.get("messages", [])
+    system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
+    assert "offer to dig deeper" in system_text.lower(), (
+        "CONVERSATION_PROMPT should instruct the model to always offer help"
+    )
+
+
+# ── 3. Error / edge cases ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "malformed_response",
+    [
+        "<function=search><parameter=query>Canadian wildfires</parameter></function>",
+        '<tools><search>{"query": "unusual instruments"}</search></tools>',
+    ],
+    ids=["function-param-xml", "tools-xml"],
+)
+async def test_xml_tool_call_not_leaked_to_user(
+    malformed_response,
+    signal_server,
+    mock_ollama,
+    test_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+):
+    """
+    Regression test for #262: malformed tool call leaked to user.
+
+    When a model emits XML-like markup in the content field instead of using
+    structured tool_calls, the agent retries without consuming an agentic loop
+    step, and the clean response reaches the user.
+    """
+    clean_response = "here are some great movies for you!"
+
+    def handler(request, count):
+        if count == 1:
+            return mock_ollama._make_text_response(request, malformed_response)
+        return mock_ollama._make_text_response(request, clean_response)
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(test_config):
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="recommend a movie",
+        )
+
+        response = await signal_server.wait_for_message(timeout=10.0)
+
+        assert mock_ollama._request_count >= 2, (
+            "Agent should have retried when XML markup was in content"
+        )
+        assert response["message"] == clean_response
+
+
+@pytest.mark.asyncio
 async def test_short_response_logged_as_warning(
     signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny, caplog
 ):
@@ -386,35 +429,6 @@ async def test_short_response_logged_as_warning(
     # Warning was logged for the short response
     short_response_warnings = [r for r in caplog.records if "Short response detected" in r.message]
     assert len(short_response_warnings) >= 1, "Should log a warning for short responses"
-
-
-@pytest.mark.asyncio
-async def test_conversation_prompt_includes_antirefusal_instruction(
-    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
-):
-    """
-    Regression test for #775: CONVERSATION_PROMPT must include an explicit instruction
-    to never refuse a request, so the model always provides something useful.
-    """
-    mock_ollama.set_default_flow(
-        search_query="vegan restaurants downtown",
-        final_response="here are some vegan options! 🌱",
-    )
-
-    async with running_penny(test_config):
-        await signal_server.push_message(
-            sender=TEST_SENDER,
-            content="what are the best vegan restaurants?",
-        )
-        await signal_server.wait_for_message(timeout=10.0)
-
-    # Verify the system prompt instructs the model to always provide something useful
-    first_request = mock_ollama.requests[0]
-    messages = first_request.get("messages", [])
-    system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
-    assert "offer to dig deeper" in system_text.lower(), (
-        "CONVERSATION_PROMPT should instruct the model to always offer help"
-    )
 
 
 @pytest.mark.asyncio

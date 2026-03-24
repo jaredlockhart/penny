@@ -9,6 +9,7 @@ from penny.email.protocol import EmailClient
 from penny.ollama.client import OllamaClient
 from penny.prompts import Prompt
 from penny.tools.base import Tool
+from penny.tools.models import ReadEmailsArgs
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,8 @@ class ReadEmailsTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         """Read emails and summarize relevant content."""
-        email_ids = kwargs["email_ids"]
+        args = ReadEmailsArgs(**kwargs)
+        email_ids = args.email_ids
         if not email_ids:
             return NO_EMAILS_TO_READ
         emails = await self._client.read_emails(email_ids)

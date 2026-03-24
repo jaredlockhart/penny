@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from penny.commands.preference_base import PreferenceAddCommand
-from penny.constants import PennyConstants
+from penny.commands.preference_base import POSITIVE_CONFIG, PreferenceAddCommand
 
 
 class LikeCommand(PreferenceAddCommand):
@@ -20,4 +19,4 @@ class LikeCommand(PreferenceAddCommand):
         "• `/like`\n"
         "• `/like dark roast coffee`"
     )
-    valence = PennyConstants.PreferenceValence.POSITIVE
+    valence_config = POSITIVE_CONFIG

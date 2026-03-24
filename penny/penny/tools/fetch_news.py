@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from penny.tools.base import Tool
+from penny.tools.models import FetchNewsArgs
 
 if TYPE_CHECKING:
     from penny.tools.news import NewsTool
@@ -39,7 +40,8 @@ class FetchNewsTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         """Search for news and format results."""
-        topic: str = kwargs.get("topic", "top news")
+        args = FetchNewsArgs(**kwargs)
+        topic = args.topic
         logger.info("[inner_monologue] fetch_news: %s", topic)
         articles = await self._news_tool.search(query_terms=[topic])
         if not articles:
