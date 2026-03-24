@@ -121,27 +121,65 @@ async def test_seeded_thinking_full_loop(
         first_user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
         assert "Quantum gravity experiments" in first_user_msgs[0]["content"]
 
-        # -- Context: profile, previous thoughts, dislikes
-        system_text = " ".join(
+        # -- Full system prompt structure assertion
+        system_text = [
             m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
-        )
-        assert "Test User" in system_text  # profile
-        assert "Previous thought about gravity" in system_text  # scoped thoughts
-        assert "Country music" in system_text  # dislikes
-        assert "inner monologue" in system_text  # identity
+        ][0]
+        # Strip dynamic timestamp line, verify everything else exactly
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
 
-        # -- No raw conversation in context
-        assert not any(
-            "hello penny" in m.get("content", "")
-            for m in requests_seen[0]["messages"]
-            if m.get("role") == "user"
-        )
+## Identity
+You are Penny. You and the user are friends who text regularly. \
+This is mid-conversation — not a fresh chat.
 
-        # -- Tools: search available, message_user absent
-        tools = requests_seen[0].get("tools") or []
-        tool_names = [t["function"]["name"] for t in tools]
-        assert "search" in tool_names
-        assert "message_user" not in tool_names
+Voice:
+- Reply like you're continuing a text thread. No greetings, no sign-offs.
+- React to what the user actually said before giving information. \
+If they corrected you, own it. If they expressed excitement, match it. \
+If they asked a follow-up, connect it to what came before.
+- Present information naturally but you can still use short formatted blocks \
+(bold names, links) when listing products or facts. \
+Just wrap them in conversational text, not a clinical dump.
+- Finish every message with an emoji.
+
+## Context
+### User Profile
+The user's name is Test User.
+
+### Recent Background Thinking
+Previous thought about gravity
+
+### Topics to Avoid
+- Country music
+
+## Instructions
+You are thinking to yourself. This is your inner monologue — \
+the user cannot see this.
+
+Your goal is to find ONE specific, concrete thing worth knowing about. \
+Not a broad survey — one interesting thread, then pull it.
+
+You have tools available:
+- **search**: Search the web for current information. \
+Accepts up to 1 query per call.
+
+Go DEEP, not wide:
+- Search for the topic, then pick the single most interesting result
+- Do follow-up searches to learn more about that specific thing
+- Do NOT search for a different subtopic on each step
+- Do NOT repeat the same search query you already ran
+
+When you receive 'dig deeper', that means: learn more about what \
+you already found. More detail on the same thing, not a new thing.
+
+Check your recent thoughts to avoid repeating what you already explored.
+
+All information in your responses must come from your tool results. \
+If nothing interesting comes up, that's fine — quiet cycles are normal."""
+        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
         # -- Tool results flow into subsequent steps
         step2_msgs = requests_seen[1]["messages"]
@@ -244,12 +282,12 @@ async def test_free_thinking_full_loop(
         first_prompt = first_user_msgs[0]["content"].lower()
         assert "search for something" in first_prompt or "interesting" in first_prompt
 
-        # -- Context: profile, previous free thoughts, dislikes (same as seeded)
+        # -- Context: profile + dislikes, but NO free thoughts (prevents fixation)
         system_text = " ".join(
             m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
         )
         assert "Test User" in system_text  # profile
-        assert "Previous free thought about space" in system_text  # free thoughts
+        assert "Previous free thought about space" not in system_text  # no priming
         assert "Country music" in system_text  # dislikes
         assert "inner monologue" in system_text  # identity
 

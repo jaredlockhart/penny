@@ -763,19 +763,22 @@ class Agent:
         effective_prompt = system_prompt or self.system_prompt
         now = datetime.now(UTC).strftime("%A, %B %d, %Y at %I:%M %p UTC")
 
-        # Build system prompt: timestamp → identity → context → agent-specific prompt
+        # Build system prompt: timestamp → identity → context → agent-specific instructions
         system_parts = [f"Current date and time: {now}", ""]
 
+        system_parts.append("## Identity")
         system_parts.append(Prompt.PENNY_IDENTITY)
 
         if context:
             system_parts.append("")
+            system_parts.append("## Context")
             system_parts.append(context)
 
         if effective_prompt:
             if "{tools}" in effective_prompt:
                 effective_prompt = effective_prompt.format(tools=self._build_tool_summary())
             system_parts.append("")
+            system_parts.append("## Instructions")
             system_parts.append(effective_prompt)
 
         system_content = "\n".join(system_parts)
@@ -836,7 +839,7 @@ class Agent:
                     self._search_tool.redact_terms = [] if user_said_name else [name]
 
             logger.debug("Built profile context for %s", sender)
-            return f"The user's name is {user_info.name}."
+            return f"### User Profile\nThe user's name is {user_info.name}."
         except Exception:
             return None
 
@@ -859,7 +862,7 @@ class Agent:
                 return None
 
             logger.debug("Built history context")
-            return "## Conversation History\n" + "\n".join(lines)
+            return "### Conversation History\n" + "\n".join(lines)
         except Exception:
             logger.warning("History context retrieval failed, proceeding without")
             return None
@@ -914,7 +917,7 @@ class Agent:
                 return None
             lines = [t.content for t in thoughts]
             logger.debug("Built thought context (%d thoughts)", len(thoughts))
-            return "## Recent Background Thinking\n" + "\n\n".join(lines)
+            return "### Recent Background Thinking\n" + "\n\n---\n\n".join(lines)
         except Exception:
             logger.warning("Thought context retrieval failed, proceeding without")
             return None
@@ -936,7 +939,7 @@ class Agent:
                     seen.add(key)
                     unique.append(text.strip())
             lines = "\n".join(f"- {t}" for t in unique)
-            return f"## Topics to Avoid\n{lines}"
+            return f"### Topics to Avoid\n{lines}"
         except Exception:
             logger.warning("Dislike context retrieval failed, proceeding without")
             return None

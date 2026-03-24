@@ -448,7 +448,7 @@ class NotifyAgent(Agent):
     def _build_pending_thought_context(self) -> str | None:
         """Build context for the specific thought being shared."""
         if self._pending_thought is not None:
-            return f"## Your Latest Thought\n{self._pending_thought.content}"
+            return f"### Your Latest Thought\n{self._pending_thought.content}"
         return None
 
     def _build_notified_thought_context(self, user: str) -> str | None:
@@ -456,7 +456,7 @@ class NotifyAgent(Agent):
         thoughts = self.db.thoughts.get_recent_notified(user, limit=1)
         if not thoughts:
             return None
-        return f"## Recent Background Thinking\n{thoughts[0].content}"
+        return f"### Recent Background Thinking\n{thoughts[0].content}"
 
     # ── Candidate scoring ─────────────────────────────────────────────
 

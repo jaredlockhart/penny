@@ -97,7 +97,7 @@ class ChatAgent(Agent):
         thoughts = self.db.thoughts.get_recent_notified(sender, limit=1)
         if not thoughts:
             return None
-        return f"## Recent Background Thinking\n{thoughts[0].content}"
+        return f"### Recent Background Thinking\n{thoughts[0].content}"
 
     def get_history(self, user: str) -> list[tuple[str, str]] | None:
         """Recent conversation messages for chat continuity."""
