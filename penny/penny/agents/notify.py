@@ -27,6 +27,7 @@ from penny.ollama.similarity import (
 )
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
+from penny.tools.models import SearchArgs
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -243,8 +244,11 @@ class NotifyAgent(Agent):
     def _extract_search_query(tool_calls: list[ToolCallRecord]) -> str | None:
         """Extract the search query from tool calls for use as image prompt."""
         for tc in tool_calls:
-            if tc.tool == "search" and tc.arguments.get("queries"):
-                return tc.arguments["queries"][0]
+            if tc.tool != "search":
+                continue
+            args = SearchArgs.model_validate(tc.arguments)
+            if args.queries:
+                return args.queries[0]
         return None
 
     # Matches **bold text** in markdown (first occurrence)
