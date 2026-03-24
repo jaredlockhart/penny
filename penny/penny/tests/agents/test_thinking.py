@@ -295,7 +295,7 @@ async def test_news_browsing_full_loop(
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
-        inner_monologue_max_steps=1,
+        inner_monologue_max_steps=2,
     )
 
     requests_seen: list[dict] = []
@@ -303,6 +303,13 @@ async def test_news_browsing_full_loop(
     def handler(request, count):
         requests_seen.append(request)
         if count == 1:
+            return mock_ollama._make_tool_call_response(
+                request,
+                "search",
+                {"queries": ["latest news 2026"], "reasoning": "Browsing news"},
+            )
+        if count == 2:
+            # Final step — forced text (ignored, search results summarized in after_run)
             return mock_ollama._make_text_response(request, "Found some news.")
         return mock_ollama._make_text_response(request, MOCK_REPORT)
 
@@ -344,11 +351,19 @@ async def test_preference_rotation_via_last_thought_at(
     monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
     config = make_config(
         inner_monologue_interval=99999.0,
-        inner_monologue_max_steps=1,
+        inner_monologue_max_steps=2,
     )
 
     def handler(request, count):
-        return mock_ollama._make_text_response(request, "ok")
+        if count == 1:
+            return mock_ollama._make_tool_call_response(
+                request,
+                "search",
+                {"queries": ["astrophysics 2026"], "reasoning": "Researching"},
+            )
+        if count == 2:
+            return mock_ollama._make_text_response(request, "ok")
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
 
     mock_ollama.set_response_handler(handler)
 
@@ -530,7 +545,7 @@ async def test_seeded_duplicate_thought_skips_storage(
     monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
     config = make_config(
         inner_monologue_interval=99999.0,
-        inner_monologue_max_steps=1,
+        inner_monologue_max_steps=2,
     )
 
     duplicate_vec = [1.0, 0.0, 0.0]
@@ -541,6 +556,12 @@ async def test_seeded_duplicate_thought_skips_storage(
 
     def handler(request, count):
         if count == 1:
+            return mock_ollama._make_tool_call_response(
+                request,
+                "search",
+                {"queries": ["quantum gravity"], "reasoning": "Researching"},
+            )
+        if count == 2:
             return mock_ollama._make_text_response(request, "Yep, same old stuff.")
         return mock_ollama._make_text_response(
             request, "Confirmed the album still exists, nothing new."
@@ -580,7 +601,7 @@ async def test_free_duplicate_thought_skips_storage(
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
     config = make_config(
         inner_monologue_interval=99999.0,
-        inner_monologue_max_steps=1,
+        inner_monologue_max_steps=2,
     )
 
     duplicate_vec = [1.0, 0.0, 0.0]
@@ -591,6 +612,12 @@ async def test_free_duplicate_thought_skips_storage(
 
     def handler(request, count):
         if count == 1:
+            return mock_ollama._make_tool_call_response(
+                request,
+                "search",
+                {"queries": ["interesting science"], "reasoning": "Exploring"},
+            )
+        if count == 2:
             return mock_ollama._make_text_response(request, "Yep, same old stuff.")
         return mock_ollama._make_text_response(
             request, "Confirmed quantum computers still quantum, nothing new."
@@ -628,7 +655,7 @@ async def test_novel_thought_is_stored(
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
-        inner_monologue_max_steps=1,
+        inner_monologue_max_steps=2,
     )
 
     call_count = 0
@@ -644,6 +671,12 @@ async def test_novel_thought_is_stored(
 
     def handler(request, count):
         if count == 1:
+            return mock_ollama._make_tool_call_response(
+                request,
+                "search",
+                {"queries": ["quantum gravity"], "reasoning": "Researching"},
+            )
+        if count == 2:
             return mock_ollama._make_text_response(request, "Found something new!")
         return mock_ollama._make_text_response(request, MOCK_REPORT)
 

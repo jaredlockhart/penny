@@ -1,8 +1,8 @@
 """ThinkingAgent — Penny's autonomous inner monologue.
 
 Runs on the scheduler after extraction. Each cycle is a continuous
-thinking loop where Penny thinks out loud, uses tools, and accumulates
-reasoning. At the end, the monologue is summarized and stored as a thought.
+thinking loop where Penny searches for information using tools. At the
+end, the raw search results are summarized and stored as a thought.
 """
 
 from __future__ import annotations
@@ -38,14 +38,14 @@ class ThinkingAgent(Agent):
     Thinking loop::
 
         [user]       Think about {seed topic}...
-        [assistant]  <inner monologue text>          <- captured
-        [user]       keep exploring
-        [assistant]  <tool call: search(...)>         <- tool executed
-        [tool]       <search results>
-        [assistant]  <inner monologue reflecting>     <- captured
+        [assistant]  <tool call: search(...)>
+        [tool]       <search results>                <- captured via _tool_result_text
+        [user]       dig deeper
+        [assistant]  <tool call: search(...)>
+        [tool]       <search results>                <- captured
         ...
 
-    Summary step: monologue summarized via THINKING_REPORT_PROMPT,
+    Summary step: raw search results summarized via THINKING_REPORT_PROMPT,
     stored as a thought in db.thoughts.
 
     Seed topic sources: positive user preferences.
@@ -59,7 +59,6 @@ class ThinkingAgent(Agent):
         kwargs["system_prompt"] = Prompt.THINKING_SYSTEM_PROMPT
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.max_steps = int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
-        self._inner_monologue: list[str] = []
         self._seed_topic: str | None = None
         self._seed_pref_id: int | None = None
 
@@ -67,7 +66,6 @@ class ThinkingAgent(Agent):
 
     async def get_prompt(self, user: str) -> str | None:
         """Pick a seed topic or let Penny free-think (~1/3 of the time)."""
-        self._inner_monologue = []
         self._seed_topic = None
         self._seed_pref_id = None
 
@@ -123,10 +121,10 @@ class ThinkingAgent(Agent):
     SUMMARY_URL_RETRIES = 2
 
     async def after_run(self, user: str) -> bool:
-        """Summarize the monologue, dedup against same-seed thoughts, and store."""
-        if not self._inner_monologue:
+        """Summarize the search results, dedup against same-seed thoughts, and store."""
+        if not self._tool_result_text:
             return False
-        combined = "\n\n---\n\n".join(self._inner_monologue)
+        combined = "\n\n---\n\n".join(self._tool_result_text)
         report = await self._summarize_with_url_validation(combined)
         if report and len(report.split()) < MIN_THOUGHT_WORDS:
             logger.info(
@@ -213,45 +211,19 @@ class ThinkingAgent(Agent):
 
     # ── Loop hooks ─────────────────────────────────────────────────────────
 
-    def on_response(self, response) -> None:
-        """Capture text content from every response (even tool-call ones)."""
-        content = response.content.strip()
-        if content:
-            self._inner_monologue.append(content)
-
     async def handle_text_step(
         self, response, messages: list[dict], step: int, is_final: bool
     ) -> bool:
         """Inject 'keep exploring' continuation to drive the thinking loop.
 
-        On the final step, return True to prevent the base agent from injecting
-        a 'provide your final answer' synthesis nudge — on_response already
-        captured the text, and after_run handles summarization via
-        THINKING_REPORT_PROMPT.
+        On the final step, return True to prevent the base agent from
+        treating the text as the final answer — after_run handles
+        summarization of the raw search results via THINKING_REPORT_PROMPT.
         """
         if is_final:
             return True
         content = response.content.strip()
         messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=content).to_dict())
-        await self._rebuild_system_prompt(messages)
         nudge = "dig deeper into what you just found"
         messages.append(ChatMessage(role=MessageRole.USER, content=nudge).to_dict())
         return True
-
-    async def _rebuild_system_prompt(self, messages: list[dict]) -> None:
-        """Rebuild system prompt with entities anchored to accumulated monologue."""
-        assert self._current_user is not None
-        anchor = "\n".join(self._inner_monologue)
-        sections: list[str | None] = [
-            self._build_profile_context(self._current_user, anchor),
-            self._build_thought_context(self._current_user),
-            self._build_dislike_context(self._current_user),
-        ]
-        context_text = "\n\n".join(s for s in sections if s)
-        fresh = self._build_messages(
-            prompt="",
-            history=None,
-            system_prompt=Prompt.THINKING_SYSTEM_PROMPT,
-            context=context_text,
-        )
-        messages[0] = fresh[0]
