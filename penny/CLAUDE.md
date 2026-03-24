@@ -167,11 +167,13 @@ pyproject.toml        — Dependencies and project metadata
 
 ### Agent Base Class (`agents/base.py`)
 The base `Agent` class implements the core agentic loop:
-- Builds message context with system prompt and history
 - Calls Ollama with available tools
 - Executes tool calls via `ToolExecutor` with parameter validation
 - Handles duplicate tool call prevention
 - Appends source URLs to responses when model omits them
+
+**System prompt building (template method pattern):**
+Each agent overrides `_build_system_prompt(user)` to compose its prompt from reusable building blocks on the base class: `_identity_section()`, `_profile_section()`, `_history_section()`, `_thought_section()`, `_dislike_section()`, `_instructions_section()`, `_context_block()`. No flags or conditionals — each agent explicitly declares what goes in its prompt. Tests assert on the exact full system prompt string to catch structural drift.
 
 ### Shared Ollama Client Instances
 
@@ -186,27 +188,32 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 
 **ChatAgent** (`agents/chat.py`)
 - Handles incoming user messages with tools (search, news)
-- Context: profile + history + notified thoughts + conversation turns
+- Prompt: identity + profile + history + notified thoughts + conversation instructions
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the Ollama
 
 **NotifyAgent** (`agents/notify.py`)
 - Notification outreach — sends thoughts, news, and check-ins when users are idle
 - Runs on a PeriodicSchedule, separate from ChatAgent
-- Three modes: thought candidates (ranked by preference affinity), news updates, periodic check-ins
-- Each mode builds its own tailored context (no shared state with ChatAgent)
+- Three modes, each builds its own system prompt from building blocks:
+  - Thought candidates: identity + profile + pending thought + instructions
+  - News: identity + profile + history + instructions
+  - Check-in: identity + profile + history + notified thought + instructions
 - Candidate scoring: novelty (avoid repeating recent messages) + sentiment (preference alignment)
 - Exponential backoff cooldown between autonomous messages
 
 **ThinkingAgent** (`agents/thinking.py`)
 - Autonomous research loop — Penny searches for information on topics she's interested in
+- No identity or profile — thinking never communicates with the user
 - Runs on a PeriodicSchedule
 - Each cycle picks a random seed topic from positive user preferences to focus on
-- Searches using tools (search, news), chaining follow-up queries to go deep on one thread
-- At the end of each cycle, the raw search results are summarized into a detailed briefing and stored as a thought via ThoughtStore (single summarization step — no intermediate model synthesis)
+- Seeded cycles get scoped thought context; free/news cycles get NO thought context (prevents fixation — the model reads its own previous thoughts and re-searches them)
+- Tools stay available on final step (`_keep_tools_on_final_step = True`) — no forced text synthesis
+- At the end of each cycle, the raw search results (from `_tool_result_text`) are summarized into a detailed briefing and stored as a thought via ThoughtStore (single summarization step)
 - Stored thought summaries bleed into chat context, giving Penny continuity of inner reasoning
 
 **HistoryAgent** (`agents/history.py`)
-- Background worker that compacts conversations into topic summaries and extracts user preferences
+- Background worker that summarizes user messages into topic summaries and extracts user preferences
+- Only user messages are included — Penny's responses and proactive notifications are excluded
 - Runs on a PeriodicSchedule (highest priority among idle tasks — before notify and thinking)
 - Each cycle per user: (1) summarize today, (2) extract today's preferences, (3) backfill past days, (4) roll up completed weeks
 - Daily summaries: messages midnight-to-now, upserted (rolling update); backfill for completed days without entries
