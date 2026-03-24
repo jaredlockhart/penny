@@ -157,8 +157,10 @@ Examples:
     )
 
     SUMMARIZE_TO_BULLETS = (
-        "Summarize the following text as a short bullet list. "
-        "Each bullet should be 3-8 words describing a distinct topic. "
+        "Summarize what the user said as a short bullet list of topics. "
+        "Each bullet should be 5-10 words. "
+        "Keep the user's exact wording for names, brands, and descriptors "
+        "— do not paraphrase or correct unfamiliar words. "
         "Omit greetings, small talk, and meta-conversation. "
         'Return ONLY the bullet list, one topic per line, prefixed with "- ".'
     )
