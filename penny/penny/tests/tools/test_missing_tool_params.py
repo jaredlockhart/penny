@@ -16,12 +16,14 @@ class TestMissingToolParams:
     """Test handling of tool calls with missing required parameters."""
 
     @pytest.mark.asyncio
-    async def test_search_tool_missing_query_raises_keyerror(self):
-        """SearchTool.execute raises KeyError when 'query' parameter is missing."""
+    async def test_search_tool_missing_queries_raises_validation_error(self):
+        """SearchTool.execute raises ValidationError when 'queries' parameter is missing."""
+        from pydantic import ValidationError
+
         tool = SearchTool(perplexity_api_key="test-key")
 
         # Call execute with empty kwargs (missing required 'queries' parameter)
-        with pytest.raises(KeyError, match="query"):
+        with pytest.raises(ValidationError, match="queries"):
             await tool.execute()
 
     @pytest.mark.asyncio
@@ -91,7 +93,7 @@ class TestMissingToolParams:
         # The error should mention the tool execution error and missing key
         error_content = tool_messages[0]["content"]
         assert "error" in error_content.lower()
-        assert "query" in error_content.lower()
+        assert "queries" in error_content.lower()
 
         await agent.close()
 

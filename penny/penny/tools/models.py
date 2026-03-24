@@ -5,6 +5,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class SearchArgs(BaseModel):
+    """Validated arguments for the search tool."""
+
+    queries: list[str]
+
+
 class SearchResult(BaseModel):
     """Result from a search tool containing text and optional image."""
 

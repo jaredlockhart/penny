@@ -14,7 +14,7 @@ from perplexity.types.output_item import MessageOutputItem, SearchResultsOutputI
 from penny.constants import PennyConstants
 from penny.responses import PennyResponse
 from penny.tools.base import Tool
-from penny.tools.models import SearchResult
+from penny.tools.models import SearchArgs, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -23,27 +23,6 @@ class SearchTool(Tool):
     """Search tool: runs one or more Perplexity text searches in parallel."""
 
     name = "search"
-    description = (
-        "Search the web for current information. Accepts up to 5 queries "
-        "to search in parallel — use this to gather information on several "
-        "aspects of a topic at once instead of searching one at a time."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "queries": {
-                "type": "array",
-                "items": {"type": "string"},
-                "maxItems": 5,
-                "description": "One or more search queries to run in parallel (max 5)",
-            },
-            "query": {
-                "type": "string",
-                "description": "Single search query (use queries for multiple)",
-            },
-        },
-        "required": [],
-    }
 
     MAX_QUERIES = 5
 
@@ -60,6 +39,23 @@ class SearchTool(Tool):
         self.redact_terms: list[str] = []
         self.default_trigger = default_trigger
         self._max_queries = max_queries or self.MAX_QUERIES
+        n = self._max_queries
+        self.description = (
+            f"Search the web for current information. Accepts up to {n} "
+            f"{'query' if n == 1 else 'queries'} per call."
+        )
+        self.parameters = {
+            "type": "object",
+            "properties": {
+                "queries": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": n,
+                    "description": f"Search queries (max {n})",
+                },
+            },
+            "required": ["queries"],
+        }
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
@@ -83,8 +79,8 @@ class SearchTool(Tool):
         Accepts optional kwargs beyond the tool schema (not exposed to the model):
             trigger: SearchTrigger value for log_search (default: user_message)
         """
-        queries: list[str] = kwargs.get("queries") or [kwargs["query"]]
-        queries = queries[: self._max_queries]
+        args = SearchArgs(**kwargs)
+        queries = args.queries[: self._max_queries]
         trigger: str = kwargs.get("trigger", self.default_trigger)
 
         tasks = [self._execute_single_query(q, trigger) for q in queries]

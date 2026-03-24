@@ -282,10 +282,6 @@ class MessageChannel(ABC):
         for tc in response.tool_calls or []:
             if tc.tool != "search":
                 continue
-            # Prefer single query, fall back to first of queries list
-            query = tc.arguments.get("query")
-            if query:
-                return query
             queries = tc.arguments.get("queries")
             if queries:
                 return queries[0]
