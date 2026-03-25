@@ -220,11 +220,11 @@ class HistoryAgent(Agent):
         daily = PennyConstants.HistoryDuration.DAILY
         weekly = PennyConstants.HistoryDuration.WEEKLY
 
-        earliest_daily = self.db.history.get_recent(user, daily, limit=1)
+        earliest_daily = self.db.history.get_earliest(user, daily)
         if not earliest_daily:
             return []
 
-        first_start = earliest_daily[0].period_start
+        first_start = earliest_daily.period_start
         first_monday = first_start - timedelta(days=first_start.weekday())
         first_monday = first_monday.replace(hour=0, minute=0, second=0, microsecond=0)
 
