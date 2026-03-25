@@ -194,7 +194,7 @@ class SearchTool(Tool):
             for u, c in url_counts.items()
             if not any(domain in u for domain in PennyConstants.URL_BLOCKLIST_DOMAINS)
         }
-        return sorted(filtered, key=filtered.get, reverse=True)[:5]  # type: ignore[arg-type]
+        return sorted(filtered, key=lambda u: filtered[u], reverse=True)[:5]
 
     def _log_search(
         self,
