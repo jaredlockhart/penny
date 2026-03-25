@@ -388,8 +388,21 @@ def _make_candidate(answer: str) -> NotifyCandidate:
     return NotifyCandidate(answer=answer, image_prompt="")
 
 
+class _MockRuntime:
+    NOVELTY_WEIGHT = 0.5
+    SENTIMENT_WEIGHT = 0.5
+
+
+class _MockConfig:
+    runtime = _MockRuntime()
+
+
+class _MockAgent:
+    config = _MockConfig()
+
+
 def _build_select_best():
-    """Return a callable _select_best without needing a full NotifyAgent."""
+    """Return a callable _select_best with a mock config for weights."""
     return NotifyAgent._select_best
 
 
@@ -398,19 +411,24 @@ def test_select_best_sentiment_wins_after_normalization():
 
     Before normalization, novelty's larger absolute range would always dominate.
     After min-max normalization both dimensions contribute equally per their weights.
+    With equal 50/50 weights and a middle candidate, the one with higher normalized
+    sentiment wins because it scores better on its dominant dimension.
     """
     select_best = _build_select_best()
     free = _make_candidate("novel free thought about deep sea creatures")
     seeded = _make_candidate("seeded thought about guitar pedals")
+    middle = _make_candidate("middle ground topic")
 
-    # Mimic production pattern: free has high novelty but low sentiment,
-    # seeded has lower novelty but much higher sentiment.
+    # free: norm_novelty=1.0, norm_sentiment=0.0 → 0.50
+    # seeded: norm_novelty=0.0, norm_sentiment=1.0 → 0.50
+    # middle: norm_novelty=0.4, norm_sentiment=0.75 → 0.575 (winner)
     raw_scores = [
         (free, 0.65, 0.00),  # high novelty, zero sentiment
         (seeded, 0.40, 0.08),  # lower novelty, high sentiment
+        (middle, 0.50, 0.06),  # moderate both — best combined
     ]
-    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
-    assert winner is seeded
+    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
+    assert winner is middle
 
 
 def test_select_best_novelty_wins_when_sentiment_is_equal():
@@ -423,7 +441,7 @@ def test_select_best_novelty_wins_when_sentiment_is_equal():
         (a, 0.70, 0.05),
         (b, 0.30, 0.05),
     ]
-    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
+    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
     assert winner is a
 
 
@@ -437,7 +455,7 @@ def test_select_best_equal_scores_picks_first():
         (a, 0.50, 0.05),
         (b, 0.50, 0.05),
     ]
-    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
+    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
     assert winner is a
 
 
@@ -452,16 +470,16 @@ def test_select_best_three_candidates_balanced():
     high_sentiment = _make_candidate("very aligned")
     middle = _make_candidate("balanced")
 
-    # high_novelty: novelty=1.0 norm, sentiment=0.0 norm → 0.4*1 + 0.6*0 = 0.40
-    # high_sentiment: novelty=0.0 norm, sentiment=1.0 norm → 0.4*0 + 0.6*1 = 0.60
-    # middle: novelty=0.5 norm, sentiment=0.5 norm → 0.4*0.5 + 0.6*0.5 = 0.50
+    # high_novelty: novelty=1.0, sentiment=0.0 → 0.5*1 + 0.5*0 = 0.50
+    # high_sentiment: novelty=0.0, sentiment=1.0 → 0.5*0 + 0.5*1 = 0.50
+    # middle: novelty=0.6, sentiment=0.75 → 0.5*0.6 + 0.5*0.75 = 0.675 (winner)
     raw_scores = [
         (high_novelty, 0.70, -0.02),
         (high_sentiment, 0.30, 0.10),
-        (middle, 0.50, 0.04),
+        (middle, 0.54, 0.07),
     ]
-    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
-    assert winner is high_sentiment
+    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
+    assert winner is middle
 
 
 def test_select_best_single_candidate():
@@ -470,7 +488,7 @@ def test_select_best_single_candidate():
     only = _make_candidate("only candidate")
 
     raw_scores = [(only, 0.45, 0.03)]
-    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
+    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
     assert winner is only
 
 

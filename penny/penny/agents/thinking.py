@@ -64,6 +64,15 @@ class ThinkingAgent(Agent):
 
     # ── Execution hooks ──────────────────────────────────────────────────
 
+    async def execute_for_user(self, user: str) -> bool:
+        """Check unnotified cap before running. Returns True to reset the schedule timer."""
+        max_unnotified = int(self.config.runtime.MAX_UNNOTIFIED_THOUGHTS)
+        total = self.db.thoughts.count_unnotified(user)
+        if total >= max_unnotified:
+            logger.info("Skipping thinking: %d unnotified thoughts (max %d)", total, max_unnotified)
+            return True
+        return await super().execute_for_user(user)
+
     async def get_prompt(self, user: str) -> str | None:
         """Pick thinking mode based on unnotified thought distribution.
 
@@ -71,15 +80,10 @@ class ThinkingAgent(Agent):
         probabilities and picks whichever type is underrepresented.
         Falls back to random when there are no unnotified thoughts yet.
         """
-        max_unnotified = int(self.config.runtime.MAX_UNNOTIFIED_THOUGHTS)
-        total = self.db.thoughts.count_unnotified(user)
-        if total >= max_unnotified:
-            logger.info("Skipping thinking: %d unnotified thoughts (max %d)", total, max_unnotified)
-            return None
-
         self._seed_topic = None
         self._seed_pref_id = None
 
+        total = self.db.thoughts.count_unnotified(user)
         if self._should_think_free(user, total):
             return self._pick_free_prompt(user)
         return self._pick_seeded_prompt(user)
