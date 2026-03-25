@@ -730,8 +730,12 @@ async def test_thinking_skips_when_too_many_unnotified(
         for i in range(3):
             penny.db.thoughts.add(TEST_SENDER, f"unnotified thought {i}")
 
+        # execute returns True (skipped but signals "I ran" to reset timer)
+        initial_count = len(penny.db.thoughts.get_all_unnotified(TEST_SENDER))
         result = await penny.thinking_agent.execute()
-        assert result is False
+        assert result is True
+        # No new thoughts were added (skipped, not executed)
+        assert len(penny.db.thoughts.get_all_unnotified(TEST_SENDER)) == initial_count
 
         # Notifying one thought should allow thinking to proceed again
         thought = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
