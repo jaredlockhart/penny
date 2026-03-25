@@ -118,8 +118,6 @@ class PennyConstants:
     THOUGHT_TOPIC_COOLDOWN_SECONDS = 86400
     NEWS_CHANCE = 1 / 3
     NOTIFY_URL_RETRIES = 2
-    NOVELTY_WEIGHT = 0.4
-    SENTIMENT_WEIGHT = 0.6
 
     # History constants
     MAX_WEEKLY_ROLLUPS_PER_RUN = 2
