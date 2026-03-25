@@ -64,6 +64,19 @@ class HistoryStore:
                 .limit(1)
             ).first()
 
+    def get_earliest(self, user: str, duration: str) -> ConversationHistory | None:
+        """Get the oldest entry of a given duration for a user."""
+        with self._session() as session:
+            return session.exec(
+                select(ConversationHistory)
+                .where(
+                    ConversationHistory.user == user,
+                    ConversationHistory.duration == duration,
+                )
+                .order_by(ConversationHistory.period_start.asc())
+                .limit(1)
+            ).first()
+
     def get_recent(self, user: str, duration: str, limit: int = 14) -> list[ConversationHistory]:
         """Get recent entries for context injection, oldest first."""
         with self._session() as session:
