@@ -178,6 +178,56 @@ async def test_backfill_summarizes_past_days(
 
 
 @pytest.mark.asyncio
+async def test_backfill_skips_empty_days_without_consuming_budget(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Days with no messages must not consume max_days budget.
+
+    Regression: _find_unsummarized_days returned empty days (no history entry,
+    no messages) which counted toward max_days, preventing the scanner from
+    reaching days that actually had messages to summarize.
+    """
+    config = make_config(history_interval=99999.0, history_max_days_per_run=1)
+
+    def handler(request, count):
+        return mock_ollama._make_text_response(request, "- Historical topics")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Day with messages: 4 days ago
+        four_days_ago = datetime.now(UTC).replace(
+            hour=12, minute=0, second=0, microsecond=0, tzinfo=None
+        ) - timedelta(days=4)
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "message from four days ago",
+            PennyConstants.MessageDirection.INCOMING,
+            four_days_ago,
+        )
+        # Days 3 and 2 ago have NO messages — these are the empty gaps
+        # Today message so _summarize_today runs first
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "message from today",
+        )
+
+        # With max_days=1 and old bug, the first empty day would consume the
+        # budget and the 4-days-ago message would never get backfilled
+        await penny.history_agent.execute()
+
+        entries = penny.db.history.get_recent(
+            TEST_SENDER, PennyConstants.HistoryDuration.DAILY, limit=10
+        )
+        past_entries = [e for e in entries if e.period_start.date() != datetime.now(UTC).date()]
+        assert len(past_entries) >= 1, (
+            "Backfill must reach past days even when empty days exist in between"
+        )
+
+
+@pytest.mark.asyncio
 async def test_summarize_uses_only_user_messages(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):

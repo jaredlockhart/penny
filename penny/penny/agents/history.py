@@ -603,7 +603,7 @@ class HistoryAgent(Agent):
             return None
 
     def _find_unsummarized_days(self, user: str, max_days: int) -> list[tuple[datetime, datetime]]:
-        """Find completed calendar days (UTC) without history entries."""
+        """Find completed calendar days (UTC) without history entries that have messages."""
         duration = PennyConstants.HistoryDuration.DAILY
         start = self._resolve_start_date(user)
         if start is None:
@@ -615,7 +615,9 @@ class HistoryAgent(Agent):
         while cursor < yesterday_end and len(days) < max_days:
             day_end = cursor + timedelta(days=1)
             if not self.db.history.exists(user, cursor, duration):
-                days.append((cursor, day_end))
+                has_messages = bool(self.db.messages.get_messages_in_range(user, cursor, day_end))
+                if has_messages:
+                    days.append((cursor, day_end))
             cursor = day_end
 
         return days
