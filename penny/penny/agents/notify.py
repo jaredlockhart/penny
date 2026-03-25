@@ -708,10 +708,9 @@ class NotifyAgent(Agent):
         for candidate, novelty, sentiment in raw_scores:
             norm_novelty = (novelty - n_min) / n_range if n_range else 0.5
             norm_sentiment = (sentiment - s_min) / s_range if s_range else 0.5
-            score = (
-                PennyConstants.NOVELTY_WEIGHT * norm_novelty
-                + PennyConstants.SENTIMENT_WEIGHT * norm_sentiment
-            )
+            novelty_weight = float(self.config.runtime.NOVELTY_WEIGHT)
+            sentiment_weight = float(self.config.runtime.SENTIMENT_WEIGHT)
+            score = novelty_weight * norm_novelty + sentiment_weight * norm_sentiment
             logger.info(
                 "Candidate score: %.3f (novelty=%.3f, sentiment=%.3f) %s",
                 score,
