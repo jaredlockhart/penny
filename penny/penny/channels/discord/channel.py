@@ -72,8 +72,12 @@ class DiscordChannel(MessageChannel):
         self._setup_events()
 
         logger.info("Initialized Discord channel for channel_id=%s", channel_id)
-        logger.debug("[DIAG] Discord intents configured: message_content=%s, messages=%s, guilds=%s",
-                    intents.message_content, intents.messages, intents.guilds)
+        logger.debug(
+            "[DIAG] Discord intents configured: message_content=%s, messages=%s, guilds=%s",
+            intents.message_content,
+            intents.messages,
+            intents.guilds,
+        )
 
     @property
     def sender_id(self) -> str:
@@ -221,9 +225,11 @@ class DiscordChannel(MessageChannel):
         # If validate_connectivity was called, client is already running
         if not self._ready.is_set():
             logger.info("Starting Discord client...")
-            logger.debug("[DIAG] Token length: %d chars (first 10: %s...)",
-                        len(self._token),
-                        self._token[:10] if len(self._token) > 10 else self._token)
+            logger.debug(
+                "[DIAG] Token length: %d chars (first 10: %s...)",
+                len(self._token),
+                self._token[:10] if len(self._token) > 10 else self._token,
+            )
             asyncio.create_task(self._start_client_with_error_handling())
 
             # Wait for the client to be ready
@@ -233,8 +239,7 @@ class DiscordChannel(MessageChannel):
             logger.info("Discord client already connected, skipping startup")
 
         logger.info("Discord client is ready, channel_id=%s", self.channel_id)
-        logger.info("Target channel resolved: %s",
-                    self._channel.name if self._channel else "NONE")
+        logger.info("Target channel resolved: %s", self._channel.name if self._channel else "NONE")
 
         # Keep running until shutdown
         while self._running:
@@ -340,8 +345,11 @@ class DiscordChannel(MessageChannel):
             return
 
         logger.info("Starting Discord client for connectivity validation...")
-        logger.debug("[DIAG] Token length: %d chars (first 10: %s...)",
-                    len(self._token), self._token[:10] if len(self._token) > 10 else self._token)
+        logger.debug(
+            "[DIAG] Token length: %d chars (first 10: %s...)",
+            len(self._token),
+            self._token[:10] if len(self._token) > 10 else self._token,
+        )
 
         # Start the client in the background
         asyncio.create_task(self._start_client_with_error_handling())
