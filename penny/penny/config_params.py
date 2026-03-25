@@ -239,6 +239,15 @@ ConfigParam(
     group=GROUP_INNER_MONOLOGUE,
 )
 
+ConfigParam(
+    key="MAX_UNNOTIFIED_THOUGHTS",
+    description="Max unnotified thoughts before thinking agent pauses",
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
+    group=GROUP_INNER_MONOLOGUE,
+)
+
 
 # ── History ──────────────────────────────────────────────────────────────────
 

@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from penny.constants import PennyConstants
+from penny.prompts import Prompt
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -74,7 +75,9 @@ async def test_seeded_thinking_full_loop(
     monkeypatch,
 ):
     """Seeded thinking: full multi-step loop with tools, context, dedup, and storage."""
-    # Force seeded path, deterministic choice
+    # Force seeded path: 0% free/news → always seeded
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
     config = make_config(
@@ -212,7 +215,9 @@ async def test_free_thinking_full_loop(
     monkeypatch,
 ):
     """Free thinking: identical loop to seeded — context, tools, dedup, storage."""
-    # Force free-thinking path
+    # Force free-thinking path: 100% free → always free
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 1.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -243,8 +248,11 @@ async def test_free_thinking_full_loop(
         _seed_thinking(penny)
         _add_dislike(penny)
 
-        # Pre-seed a free thought (preference_id=None) for context
+        # Pre-seed thoughts: one free + one seeded so free is underrepresented
+        # relative to FREE_THINKING_PROBABILITY=1.0 (actual 50% < target 100%)
+        pref = penny.db.preferences.get_least_recent_positive(TEST_SENDER)[0]
         penny.db.thoughts.add(TEST_SENDER, "Previous free thought about space", preference_id=None)
+        penny.db.thoughts.add(TEST_SENDER, "Previous seeded thought", preference_id=pref.id)
 
         await penny.thinking_agent.execute()
 
@@ -313,7 +321,8 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
 
         # -- Storage: summary stored with preference_id=None
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
-        stored = [t for t in thoughts if t.content != "Previous free thought about space"]
+        pre_seeded = {"Previous free thought about space", "Previous seeded thought"}
+        stored = [t for t in thoughts if t.content not in pre_seeded]
         assert len(stored) == 1
         assert "Research report" in stored[0].content
         assert stored[0].preference_id is None
@@ -335,12 +344,13 @@ async def test_news_thinking_full_loop(
     running_penny,
     monkeypatch,
 ):
-    """News thinking: intentional 30% mode — reads news, picks a story, digs in."""
-    # Ensure news mode is reachable regardless of current constant values
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.1)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.3)
-    # Force news thinking path (roll between 0.1 and 0.4)
-    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.15)
+    """News thinking: intentional news mode — reads news, picks a story, digs in."""
+    # Force news path: 0% pure-free, 100% news → _pick_free_prompt always picks news
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 1.0)
+    # random.random used for: (1) empty-pool fallback in _should_think_free,
+    # (2) news/free coin flip in _pick_free_prompt — 0.0 < 1.0 → news wins
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
     monkeypatch.setattr("penny.tools.news.NewsTool.search", AsyncMock(return_value=[]))
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -443,6 +453,8 @@ async def test_news_browsing_full_loop(
 ):
     """News browsing fallback: when no preferences exist, browses news and stores thought."""
     # Force seeded path so it hits "no preferences → browse news"
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -498,6 +510,8 @@ async def test_preference_rotation_via_last_thought_at(
     monkeypatch,
 ):
     """After thinking about a preference, it rotates to the back of the pool."""
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
     config = make_config(
@@ -561,6 +575,8 @@ async def test_extracted_preference_below_threshold_skipped(
     monkeypatch,
 ):
     """Extracted preferences below mention threshold are not used as seeds."""
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -606,6 +622,8 @@ async def test_extracted_preference_at_threshold_used(
     monkeypatch,
 ):
     """Extracted preferences at/above mention threshold ARE used as seeds."""
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -655,6 +673,75 @@ async def test_scheduler_runs_history_before_thinking(
         assert history_idx < thinking_idx
 
 
+@pytest.mark.asyncio
+async def test_distribution_steers_toward_underrepresented_type(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """When free thoughts are underrepresented, thinking picks free; vice versa."""
+    # Target: 50% free, 50% seeded
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.5)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
+    config = make_config(inner_monologue_interval=99999.0)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+        pref = penny.db.preferences.get_least_recent_positive(TEST_SENDER)[0]
+
+        # All seeded, 0 free → free is underrepresented → should pick free
+        for i in range(3):
+            penny.db.thoughts.add(TEST_SENDER, f"seeded {i}", preference_id=pref.id)
+        prompt = await penny.thinking_agent.get_prompt(TEST_SENDER)
+        assert prompt is not None
+        assert prompt == Prompt.THINKING_FREE
+
+        # Reset: all free, 0 seeded → seeded is underrepresented → should pick seeded
+        for t in penny.db.thoughts.get_all_unnotified(TEST_SENDER):
+            penny.db.thoughts.mark_notified(t.id)
+        for i in range(3):
+            penny.db.thoughts.add(TEST_SENDER, f"free {i}")
+        penny.thinking_agent._seed_topic = None
+        penny.thinking_agent._seed_pref_id = None
+        prompt = await penny.thinking_agent.get_prompt(TEST_SENDER)
+        assert prompt is not None
+        assert prompt != Prompt.THINKING_FREE
+
+
+@pytest.mark.asyncio
+async def test_thinking_skips_when_too_many_unnotified(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Thinking agent skips cycle when unnotified thoughts reach the cap."""
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        max_unnotified_thoughts=3,
+    )
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+
+        # Add thoughts up to the cap
+        for i in range(3):
+            penny.db.thoughts.add(TEST_SENDER, f"unnotified thought {i}")
+
+        result = await penny.thinking_agent.execute()
+        assert result is False
+
+        # Notifying one thought should allow thinking to proceed again
+        thought = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
+        penny.db.thoughts.mark_notified(thought.id)
+        assert penny.db.thoughts.count_unnotified(TEST_SENDER) == 2
+
+        # Now thinking should generate a prompt (not skip)
+        prompt = await penny.thinking_agent.get_prompt(TEST_SENDER)
+        assert prompt is not None
+
+
 # ── 3. Error / edge cases ────────────────────────────────────────────────
 
 
@@ -692,6 +779,8 @@ async def test_seeded_duplicate_thought_skips_storage(
     monkeypatch,
 ):
     """Seeded: when a new thought is too similar to existing, it is not stored."""
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
     config = make_config(
@@ -749,6 +838,8 @@ async def test_free_duplicate_thought_skips_storage(
     monkeypatch,
 ):
     """Free: when a new thought is too similar to existing free thought, it is not stored."""
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 1.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -803,6 +894,8 @@ async def test_novel_thought_is_stored(
     monkeypatch,
 ):
     """When a new thought is sufficiently different from existing ones, it is stored."""
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,

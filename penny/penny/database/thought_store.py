@@ -3,7 +3,7 @@
 import logging
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from penny.database.models import Thought
 
@@ -97,6 +97,32 @@ class ThoughtStore:
                     .order_by(Thought.created_at.asc())
                 ).all()
             )
+
+    def count_unnotified(self, user: str) -> int:
+        """Count un-notified thoughts for a user."""
+        with self._session() as session:
+            result = session.exec(
+                select(func.count())
+                .select_from(Thought)
+                .where(
+                    Thought.user == user,
+                    Thought.notified_at == None,  # noqa: E711
+                )
+            ).one()
+            return result
+
+    def count_unnotified_free(self, user: str) -> int:
+        """Count un-notified free thoughts (preference_id IS NULL)."""
+        with self._session() as session:
+            return session.exec(
+                select(func.count())
+                .select_from(Thought)
+                .where(
+                    Thought.user == user,
+                    Thought.notified_at == None,  # noqa: E711
+                    Thought.preference_id == None,  # noqa: E711
+                )
+            ).one()
 
     def get_recent_notified(self, user: str, limit: int = 1) -> list[Thought]:
         """Get most recently notified thoughts, newest first."""
