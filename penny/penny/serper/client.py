@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 SERPER_IMAGES_URL = "https://google.serper.dev/images"
 BLOCKED_IMAGE_DOMAINS = frozenset({"tiktok.com", "instagram.com", "facebook.com"})
+_SITE_EXCLUSIONS = " ".join(f"-site:{d}" for d in BLOCKED_IMAGE_DOMAINS)
 ALLOWED_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
 ALLOWED_IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 _EXT_TO_MIME: dict[str, str] = {
@@ -67,7 +68,7 @@ async def _fetch_results(
     """Call the Serper image search API."""
     resp = await client.post(
         SERPER_IMAGES_URL,
-        json={"q": query, "num": max_results},
+        json={"q": f"{query} {_SITE_EXCLUSIONS}", "num": max_results},
         headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
     )
     resp.raise_for_status()
