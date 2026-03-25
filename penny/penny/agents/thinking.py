@@ -90,9 +90,9 @@ class ThinkingAgent(Agent):
         Free and news both produce preference_id=NULL thoughts, so the
         target free ratio is FREE + NEWS combined.
         """
-        target_free = (
-            PennyConstants.FREE_THINKING_PROBABILITY + PennyConstants.NEWS_THINKING_PROBABILITY
-        )
+        free_prob = float(self.config.runtime.FREE_THINKING_PROBABILITY)
+        news_prob = float(self.config.runtime.NEWS_THINKING_PROBABILITY)
+        target_free = free_prob + news_prob
         if total_unnotified == 0:
             return random.random() < target_free
         free_count = self.db.thoughts.count_unnotified_free(user)
@@ -101,8 +101,8 @@ class ThinkingAgent(Agent):
 
     def _pick_free_prompt(self, user: str) -> str:
         """Pick between free thinking and news based on their relative weights."""
-        free_weight = PennyConstants.FREE_THINKING_PROBABILITY
-        news_weight = PennyConstants.NEWS_THINKING_PROBABILITY
+        free_weight = float(self.config.runtime.FREE_THINKING_PROBABILITY)
+        news_weight = float(self.config.runtime.NEWS_THINKING_PROBABILITY)
         total = free_weight + news_weight
         if total > 0 and random.random() < news_weight / total:
             logger.info("News thinking cycle for %s", user)

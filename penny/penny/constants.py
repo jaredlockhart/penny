@@ -109,8 +109,6 @@ class PennyConstants:
     PREFERRED_POOL_SIZE = 5
 
     # Thinking constants
-    FREE_THINKING_PROBABILITY = 0.2
-    NEWS_THINKING_PROBABILITY = 0.0
     MIN_THOUGHT_WORDS = 50
     SUMMARY_URL_RETRIES = 2
 

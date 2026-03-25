@@ -76,13 +76,13 @@ async def test_seeded_thinking_full_loop(
 ):
     """Seeded thinking: full multi-step loop with tools, context, dedup, and storage."""
     # Force seeded path: 0% free/news → always seeded
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=3,
+        free_thinking_probability=0.0,
+        news_thinking_probability=0.0,
     )
 
     requests_seen: list[dict] = []
@@ -216,12 +216,12 @@ async def test_free_thinking_full_loop(
 ):
     """Free thinking: identical loop to seeded — context, tools, dedup, storage."""
     # Force free-thinking path: 100% free → always free
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 1.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=3,
+        free_thinking_probability=1.0,
+        news_thinking_probability=0.0,
     )
 
     requests_seen: list[dict] = []
@@ -346,8 +346,6 @@ async def test_news_thinking_full_loop(
 ):
     """News thinking: intentional news mode — reads news, picks a story, digs in."""
     # Force news path: 0% pure-free, 100% news → _pick_free_prompt always picks news
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 1.0)
     # random.random used for: (1) empty-pool fallback in _should_think_free,
     # (2) news/free coin flip in _pick_free_prompt — 0.0 < 1.0 → news wins
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
@@ -356,6 +354,8 @@ async def test_news_thinking_full_loop(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
         news_api_key="fake-key",
+        free_thinking_probability=0.0,
+        news_thinking_probability=1.0,
     )
 
     requests_seen: list[dict] = []
@@ -453,12 +453,12 @@ async def test_news_browsing_full_loop(
 ):
     """News browsing fallback: when no preferences exist, browses news and stores thought."""
     # Force seeded path so it hits "no preferences → browse news"
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
+        free_thinking_probability=0.0,
+        news_thinking_probability=0.0,
     )
 
     requests_seen: list[dict] = []
@@ -510,13 +510,13 @@ async def test_preference_rotation_via_last_thought_at(
     monkeypatch,
 ):
     """After thinking about a preference, it rotates to the back of the pool."""
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
+        free_thinking_probability=0.0,
+        news_thinking_probability=0.0,
     )
 
     def handler(request, count):
@@ -575,12 +575,12 @@ async def test_extracted_preference_below_threshold_skipped(
     monkeypatch,
 ):
     """Extracted preferences below mention threshold are not used as seeds."""
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=1,
+        free_thinking_probability=0.0,
+        news_thinking_probability=0.0,
     )
 
     requests_seen: list[dict] = []
@@ -622,12 +622,12 @@ async def test_extracted_preference_at_threshold_used(
     monkeypatch,
 ):
     """Extracted preferences at/above mention threshold ARE used as seeds."""
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=1,
+        free_thinking_probability=0.0,
+        news_thinking_probability=0.0,
     )
 
     requests_seen: list[dict] = []
@@ -681,13 +681,14 @@ async def test_distribution_steers_toward_underrepresented_type(
     _mock_search,
     test_user_info,
     running_penny,
-    monkeypatch,
 ):
     """When free thoughts are underrepresented, thinking picks free; vice versa."""
     # Target: 50% free, 50% seeded
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.5)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
-    config = make_config(inner_monologue_interval=99999.0)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        free_thinking_probability=0.5,
+        news_thinking_probability=0.0,
+    )
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -779,13 +780,13 @@ async def test_seeded_duplicate_thought_skips_storage(
     monkeypatch,
 ):
     """Seeded: when a new thought is too similar to existing, it is not stored."""
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
+        free_thinking_probability=0.0,
+        news_thinking_probability=0.0,
     )
 
     duplicate_vec = [1.0, 0.0, 0.0]
@@ -838,12 +839,12 @@ async def test_free_duplicate_thought_skips_storage(
     monkeypatch,
 ):
     """Free: when a new thought is too similar to existing free thought, it is not stored."""
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 1.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
+        free_thinking_probability=1.0,
+        news_thinking_probability=0.0,
     )
 
     duplicate_vec = [1.0, 0.0, 0.0]
@@ -894,12 +895,12 @@ async def test_novel_thought_is_stored(
     monkeypatch,
 ):
     """When a new thought is sufficiently different from existing ones, it is stored."""
-    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.0)
-    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.0)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
+        free_thinking_probability=0.0,
+        news_thinking_probability=0.0,
     )
 
     call_count = 0
