@@ -65,7 +65,7 @@ class ZohoCommand(Command):
                 SearchEmailsTool(zoho_client),
                 ListEmailsTool(zoho_client),
                 ListFoldersTool(zoho_client),
-                ReadEmailsTool(zoho_client, context.model_client, prompt),
+                ReadEmailsTool(zoho_client),
                 DraftEmailTool(zoho_client),
             ]
 
