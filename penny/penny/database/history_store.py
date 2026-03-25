@@ -60,7 +60,7 @@ class HistoryStore:
                     ConversationHistory.user == user,
                     ConversationHistory.duration == duration,
                 )
-                .order_by(ConversationHistory.period_start.desc())  # type: ignore[unresolved-attribute]
+                .order_by(ConversationHistory.period_start.desc())
                 .limit(1)
             ).first()
 
@@ -74,7 +74,7 @@ class HistoryStore:
                         ConversationHistory.user == user,
                         ConversationHistory.duration == duration,
                     )
-                    .order_by(ConversationHistory.period_start.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(ConversationHistory.period_start.desc())
                     .limit(limit)
                 ).all()
             )
@@ -133,7 +133,7 @@ class HistoryStore:
                         ConversationHistory.period_start >= start,
                         ConversationHistory.period_start < end,
                     )
-                    .order_by(ConversationHistory.period_start.asc())  # type: ignore[unresolved-attribute]
+                    .order_by(ConversationHistory.period_start.asc())
                 ).all()
             )
             return entries

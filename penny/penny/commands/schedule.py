@@ -53,7 +53,7 @@ class ScheduleCommand(Command):
         with Session(context.db.engine) as session:
             schedules = list(
                 session.exec(
-                    select(Schedule).where(Schedule.user_id == context.user).order_by(Schedule.id)  # type: ignore[arg-type]
+                    select(Schedule).where(Schedule.user_id == context.user).order_by(Schedule.id)  # ty: ignore[invalid-argument-type]
                 )
             )
 

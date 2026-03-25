@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import random
+from typing import Any
 
 from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
@@ -50,9 +51,9 @@ class ThinkingAgent(Agent):
 
     name = "inner_monologue"
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         kwargs["system_prompt"] = Prompt.THINKING_SYSTEM_PROMPT
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super().__init__(**kwargs)
         self._keep_tools_on_final_step = True
         self._seed_topic: str | None = None
         self._seed_pref_id: int | None = None

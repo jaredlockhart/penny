@@ -185,7 +185,7 @@ class MessageStore:
                     MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
                     MessageLog.content.startswith(content),
                 )
-                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .order_by(MessageLog.timestamp.desc())
             ).first()
 
     # --- Thread context ---
@@ -234,9 +234,7 @@ class MessageStore:
     def get_conversation_leaves(self) -> list[MessageLog]:
         """Get outgoing leaf messages eligible for spontaneous continuation."""
         with self._session() as session:
-            has_child = select(MessageLog.parent_id).where(
-                MessageLog.parent_id.isnot(None)  # type: ignore[unresolved-attribute]
-            )
+            has_child = select(MessageLog.parent_id).where(MessageLog.parent_id.isnot(None))
             incoming_ids = select(MessageLog.id).where(
                 MessageLog.direction == PennyConstants.MessageDirection.INCOMING
             )
@@ -245,10 +243,10 @@ class MessageStore:
                     select(MessageLog)
                     .where(
                         MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                        MessageLog.id.notin_(has_child),  # type: ignore[unresolved-attribute]
-                        MessageLog.parent_id.in_(incoming_ids),  # type: ignore[unresolved-attribute]
+                        MessageLog.id.notin_(has_child),
+                        MessageLog.parent_id.in_(incoming_ids),
                     )
-                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp.desc())
                 ).all()
             )
 
@@ -262,7 +260,7 @@ class MessageStore:
                         MessageLog.sender == sender,
                         MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
                     )
-                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp.desc())
                     .limit(limit)
                 ).all()
             )
@@ -289,7 +287,7 @@ class MessageStore:
                     MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
                     MessageLog.is_reaction == False,  # noqa: E712
                 )
-                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .order_by(MessageLog.timestamp.desc())
                 .limit(limit)
             ).all()
         )
@@ -303,7 +301,7 @@ class MessageStore:
             session.exec(
                 select(MessageLog).where(
                     MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                    MessageLog.parent_id.in_(incoming_ids),  # type: ignore[unresolved-attribute]
+                    MessageLog.parent_id.in_(incoming_ids),
                 )
             ).all()
         )
@@ -320,7 +318,7 @@ class MessageStore:
                     MessageLog.parent_id == None,  # noqa: E711
                     MessageLog.recipient == recipient,
                 )
-                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .order_by(MessageLog.timestamp.desc())
                 .limit(limit)
             ).all()
         )
@@ -345,7 +343,7 @@ class MessageStore:
                         MessageLog.timestamp >= start,
                         MessageLog.timestamp < end,
                     )
-                    .order_by(MessageLog.timestamp)  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp)  # ty: ignore[invalid-argument-type]
                 ).all()
             )
 
@@ -364,7 +362,7 @@ class MessageStore:
                         MessageLog.timestamp >= start,
                         MessageLog.timestamp < end,
                     )
-                    .order_by(MessageLog.timestamp)  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp)  # ty: ignore[invalid-argument-type]
                 ).all()
             )
 
@@ -382,7 +380,7 @@ class MessageStore:
                         MessageLog.is_reaction == False,  # noqa: E712
                         MessageLog.timestamp >= since,
                     )
-                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp.desc())
                     .limit(limit)
                 ).all()
             )
@@ -396,7 +394,7 @@ class MessageStore:
                         MessageLog.recipient == sender,
                         MessageLog.timestamp >= since,
                     )
-                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp.desc())
                     .limit(limit)
                 ).all()
             )
@@ -416,7 +414,7 @@ class MessageStore:
                         MessageLog.is_reaction == False,  # noqa: E712
                         MessageLog.processed == False,  # noqa: E712
                     )
-                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp.desc())
                     .limit(limit)
                 ).all()
             )
@@ -433,7 +431,7 @@ class MessageStore:
                         MessageLog.is_reaction == True,  # noqa: E712
                         MessageLog.processed == False,  # noqa: E712
                     )
-                    .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(MessageLog.timestamp.desc())
                     .limit(limit)
                 ).all()
             )
@@ -468,11 +466,9 @@ class MessageStore:
         with self._session() as session:
             from sqlalchemy import func
 
-            has_child = select(MessageLog.parent_id).where(
-                MessageLog.parent_id.isnot(None)  # type: ignore[unresolved-attribute]
-            )
+            has_child = select(MessageLog.parent_id).where(MessageLog.parent_id.isnot(None))
             return session.exec(
-                select(func.count()).select_from(MessageLog).where(MessageLog.id.notin_(has_child))  # type: ignore[unresolved-attribute]
+                select(func.count()).select_from(MessageLog).where(MessageLog.id.notin_(has_child))
             ).one()
 
     def get_latest_incoming_time(self, sender: str) -> datetime | None:
@@ -485,7 +481,7 @@ class MessageStore:
                     MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
                     MessageLog.is_reaction == False,  # noqa: E712
                 )
-                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .order_by(MessageLog.timestamp.desc())
                 .limit(1)
             ).first()
 
@@ -499,7 +495,7 @@ class MessageStore:
                     MessageLog.parent_id == None,  # noqa: E711
                     MessageLog.recipient == recipient,
                 )
-                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .order_by(MessageLog.timestamp.desc())
                 .limit(1)
             ).first()
 
@@ -533,10 +529,10 @@ class MessageStore:
             return session.exec(
                 select(PromptLog.timestamp)
                 .where(
-                    PromptLog.messages.contains(prompt_text),  # type: ignore[unresolved-attribute]
+                    PromptLog.messages.contains(prompt_text),
                     PromptLog.timestamp >= cutoff,
                 )
-                .order_by(PromptLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .order_by(PromptLog.timestamp.desc())
                 .limit(1)
             ).first()
 
@@ -553,7 +549,7 @@ class MessageStore:
                     MessageLog.recipient == recipient,
                     MessageLog.timestamp >= cutoff,
                 )
-                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .order_by(MessageLog.timestamp.desc())
                 .limit(limit)
             ).all()
             return [m for m in messages if m]
@@ -577,7 +573,7 @@ class MessageStore:
                     MessageLog.timestamp >= start,
                     MessageLog.timestamp < end,
                 )
-                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .order_by(MessageLog.timestamp.desc())
                 .limit(1)
             ).first()
 
@@ -591,6 +587,6 @@ class MessageStore:
                     MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
                     MessageLog.is_reaction == False,  # noqa: E712
                 )
-                .order_by(MessageLog.timestamp)  # type: ignore[unresolved-attribute]
+                .order_by(MessageLog.timestamp)  # ty: ignore[invalid-argument-type]
                 .limit(1)
             ).first()
