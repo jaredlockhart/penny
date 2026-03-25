@@ -732,7 +732,11 @@ def _seed_daily_entries(penny, user, monday):
 async def test_weekly_rollup_creates_entry_from_daily_entries(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """Weekly rollup summarizes a completed week's daily entries into a weekly entry."""
+    """Weekly rollup summarizes a completed week's daily entries into a weekly entry.
+
+    Seeds both a completed past week AND current-week entries to ensure
+    the scan starts from the earliest entry, not the most recent.
+    """
     config = make_config(history_interval=99999.0)
 
     def handler(request, count):
@@ -741,10 +745,18 @@ async def test_weekly_rollup_creates_entry_from_daily_entries(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Seed daily entries for a completed week (2+ weeks ago to ensure it's complete)
         today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
         two_weeks_ago_monday = today - timedelta(days=today.weekday() + 14)
         _seed_daily_entries(penny, TEST_SENDER, two_weeks_ago_monday)
+
+        # Also seed a current-week entry — the scan must still find the past week
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=today,
+            period_end=today + timedelta(hours=12),
+            duration=PennyConstants.HistoryDuration.DAILY,
+            topics="- Current week topic",
+        )
 
         system_prompt = await penny.history_agent._build_system_prompt(TEST_SENDER)
         await penny.history_agent._rollup_completed_weeks(TEST_SENDER, system_prompt)
