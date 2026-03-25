@@ -463,7 +463,7 @@ class TestEmptyContentAfterToolCalls:
 
     @pytest.mark.asyncio
     async def test_generic_prompt_without_tool_calls(self, test_db, mock_ollama):
-        """Without tool calls, empty-content retry uses generic prompt."""
+        """Without tool calls, empty-content retry includes the original question."""
         agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=1)
 
         def handler(request, count):
@@ -477,7 +477,7 @@ class TestEmptyContentAfterToolCalls:
 
         retry_messages = mock_ollama.requests[1]["messages"]
         last_user = next(m for m in reversed(retry_messages) if m["role"] == "user")
-        assert last_user["content"] == "Please provide your response."
+        assert "test question" in last_user["content"]
 
         await agent.close()
 
@@ -501,6 +501,30 @@ class TestEmptyContentAfterToolCalls:
         response = await agent.run("test question", max_steps=max_steps)
         assert response.answer == "here's the answer"
         assert len(mock_ollama.requests) == 3
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_think_only_no_tool_calls_includes_question_in_nudge(self, test_db, mock_ollama):
+        """Think-only response with no tool calls: retry nudge includes the original question."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+
+        def handler(request, count):
+            if count == 1:
+                # Thinking-only response with no tool calls
+                return mock_ollama._make_text_response(
+                    request, "<think>Reasoning without responding...</think>"
+                )
+            return mock_ollama._make_text_response(request, "here's the answer")
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("what is the weather today?", max_steps=max_steps)
+        assert response.answer == "here's the answer"
+
+        # The retry nudge should include the original question
+        retry_messages = mock_ollama.requests[1]["messages"]
+        last_user = next(m for m in reversed(retry_messages) if m["role"] == "user")
+        assert "what is the weather today?" in last_user["content"]
 
         await agent.close()
 
