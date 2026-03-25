@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 class ScheduleExecutor(Agent):
     """Agent that executes user-created scheduled tasks."""
 
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._channel: MessageChannel | None = None
 
     @property

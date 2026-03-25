@@ -499,14 +499,16 @@ class MessageChannel(ABC):
         self, message: IncomingMessage, command_name: str, command_args: str
     ) -> None:
         """Execute a known command with typing indicator and send the result."""
-        command = self._command_registry.get(command_name)  # type: ignore[union-attr]
+        assert self._command_registry is not None
+        command = self._command_registry.get(command_name)
         typing_task = asyncio.create_task(self._typing_loop(message.sender))
         try:
             context = self._command_context
             context.user = message.sender
             context.message = message
 
-            result = await command.execute(command_args, context)  # type: ignore[union-attr]
+            assert command is not None
+            result = await command.execute(command_args, context)
             response = result.text
 
             prepared = self.prepare_outgoing(response) if response else ""

@@ -131,7 +131,8 @@ class OllamaClient:
                     await asyncio.sleep(self.retry_delay)
 
         logger.error("Ollama chat failed after %d attempts: %s", self.max_retries, last_error)
-        raise last_error  # type: ignore[misc]
+        assert last_error is not None
+        raise last_error
 
     async def generate(
         self, prompt: str, tools: list[dict] | None = None, format: dict | str | None = None
@@ -219,7 +220,8 @@ class OllamaClient:
         logger.error(
             "Ollama image generation failed after %d attempts: %s", self.max_retries, last_error
         )
-        raise last_error  # type: ignore[misc]
+        assert last_error is not None
+        raise last_error
 
     async def embed(self, text: str | list[str]) -> list[list[float]]:
         """
@@ -266,7 +268,8 @@ class OllamaClient:
                     await asyncio.sleep(self.retry_delay)
 
         logger.error("Ollama embed failed after %d attempts: %s", self.max_retries, last_error)
-        raise last_error  # type: ignore[misc]
+        assert last_error is not None
+        raise last_error
 
     async def list_models(self) -> list[str]:
         """

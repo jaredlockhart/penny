@@ -79,7 +79,7 @@ class UserStore:
                     MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
                     MessageLog.timestamp <= timestamp + buffer,
                 )
-                .order_by(MessageLog.timestamp.desc())  # type: ignore[unresolved-attribute]
+                .order_by(MessageLog.timestamp.desc())
                 .limit(1)
             ).first()
 

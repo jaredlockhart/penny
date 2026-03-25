@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
@@ -77,9 +78,9 @@ class HistoryAgent(Agent):
     def get_max_steps(self) -> int:
         return PennyConstants.HISTORY_MAX_STEPS
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         kwargs["system_prompt"] = Prompt.SUMMARIZE_TO_BULLETS
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super().__init__(**kwargs)
 
     async def _build_system_prompt(self, user: str) -> str:
         """Instructions only — no identity, profile, history, thoughts, or dislikes.
@@ -433,8 +434,9 @@ class HistoryAgent(Agent):
             if matched.id in already_bumped:
                 logger.debug("Skipping already-bumped preference: '%s'", matched.content[:50])
                 return
-            self.db.preferences.increment_mention_count(matched.id)  # type: ignore[arg-type]
-            already_bumped.add(matched.id)  # type: ignore[arg-type]
+            assert matched.id is not None
+            self.db.preferences.increment_mention_count(matched.id)
+            already_bumped.add(matched.id)
             logger.info(
                 "Preference '%s' mention count incremented (matches '%s')",
                 topic[:50],

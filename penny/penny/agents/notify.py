@@ -16,7 +16,7 @@ import logging
 import random
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
@@ -275,8 +275,8 @@ class NotifyAgent(Agent):
         """Read from config so /config changes take effect immediately."""
         return int(self.config.runtime.MESSAGE_MAX_STEPS)
 
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._boot_time = datetime.now(UTC).replace(tzinfo=None)
         self._channel: MessageChannel | None = None
         self._pending_thought: Thought | None = None

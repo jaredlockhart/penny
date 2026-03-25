@@ -543,10 +543,10 @@ async def test_reaction_extracts_preference_with_deterministic_valence(
         # Get the outgoing message IDs to use as parent_id for reactions
         with penny.db.get_session() as session:
             hiking_msg = session.exec(
-                select(MessageLog).where(MessageLog.content.contains("hiking"))  # type: ignore[union-attr]
+                select(MessageLog).where(MessageLog.content.contains("hiking"))
             ).first()
             kale_msg = session.exec(
-                select(MessageLog).where(MessageLog.content.contains("kale"))  # type: ignore[union-attr]
+                select(MessageLog).where(MessageLog.content.contains("kale"))
             ).first()
         assert hiking_msg and kale_msg
         hiking_msg_id = hiking_msg.id

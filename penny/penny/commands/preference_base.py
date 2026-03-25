@@ -104,7 +104,8 @@ class PreferenceRemoveCommand(PreferenceBaseCommand):
             )
 
         to_delete = prefs[position - 1]
-        context.db.preferences.delete(to_delete.id)  # type: ignore[arg-type]
+        assert to_delete.id is not None
+        context.db.preferences.delete(to_delete.id)
 
         remaining = [p for p in prefs if p.id != to_delete.id]
         label = self.valence_config.label

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import Any
 
 import pytest
 
@@ -51,7 +52,7 @@ class _AlwaysRunSchedule(Schedule):
     """Schedule that always fires (idle-independent)."""
 
     def __init__(self, agent: _SlowAgent | _SimpleAgent) -> None:
-        self.agent = agent  # type: ignore[assignment]
+        self.agent: Any = agent
         self._completed = False
 
     def should_run(self, is_idle: bool) -> bool:
@@ -65,7 +66,7 @@ class _AlwaysEligibleSchedule(Schedule):
     """Schedule that is always eligible (never marks complete internally)."""
 
     def __init__(self, agent: _SimpleAgent) -> None:
-        self.agent = agent  # type: ignore[assignment]
+        self.agent: Any = agent
         self.mark_complete_count = 0
 
     def should_run(self, is_idle: bool) -> bool:
@@ -234,7 +235,7 @@ async def test_scheduler_mark_complete_only_on_work():
 async def test_no_work_agent_stays_eligible_without_interval_wait():
     """An agent that returns False stays eligible on the next tick (no interval penalty)."""
     agent = _SimpleAgent("idle_agent", return_value=False)
-    schedule = PeriodicSchedule(agent=agent, interval=0.5)  # type: ignore[arg-type]
+    schedule = PeriodicSchedule(agent=agent, interval=0.5)  # ty: ignore[invalid-argument-type]
 
     scheduler = BackgroundScheduler(
         schedules=[schedule],

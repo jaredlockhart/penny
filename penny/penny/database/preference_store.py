@@ -76,7 +76,7 @@ class PreferenceStore:
                 session.exec(
                     select(Preference)
                     .where(Preference.user == user)
-                    .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(Preference.created_at.desc())
                     .limit(limit)
                 ).all()
             )
@@ -152,7 +152,7 @@ class PreferenceStore:
                 session.exec(
                     select(Preference)
                     .where(Preference.embedding == None)  # noqa: E711
-                    .order_by(Preference.created_at.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(Preference.created_at.desc())
                     .limit(limit)
                 ).all()
             )
@@ -191,8 +191,8 @@ class PreferenceStore:
                     select(Preference)
                     .where(Preference.user == user, Preference.valence == valence)
                     .order_by(
-                        Preference.mention_count.desc(),  # type: ignore[unresolved-attribute]
-                        Preference.created_at.desc(),  # type: ignore[unresolved-attribute]
+                        Preference.mention_count.desc(),
+                        Preference.created_at.desc(),
                     )
                 ).all()
             )

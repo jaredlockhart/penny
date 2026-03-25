@@ -45,7 +45,7 @@ class ThoughtStore:
                 session.exec(
                     select(Thought)
                     .where(Thought.user == user)
-                    .order_by(Thought.created_at.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(Thought.created_at.desc())
                     .limit(limit)
                 ).all()
             )
@@ -63,7 +63,7 @@ class ThoughtStore:
             query = (
                 select(Thought)
                 .where(Thought.user == user, Thought.preference_id == preference_id)  # noqa: E711
-                .order_by(Thought.created_at.desc())  # type: ignore[unresolved-attribute]
+                .order_by(Thought.created_at.desc())
             )
             if limit is not None:
                 query = query.limit(limit)
@@ -80,7 +80,7 @@ class ThoughtStore:
                     Thought.user == user,
                     Thought.notified_at == None,  # noqa: E711
                 )
-                .order_by(Thought.created_at.asc())  # type: ignore[unresolved-attribute]
+                .order_by(Thought.created_at.asc())
                 .limit(1)
             ).first()
 
@@ -94,7 +94,7 @@ class ThoughtStore:
                         Thought.user == user,
                         Thought.notified_at == None,  # noqa: E711
                     )
-                    .order_by(Thought.created_at.asc())  # type: ignore[unresolved-attribute]
+                    .order_by(Thought.created_at.asc())
                 ).all()
             )
 
@@ -108,7 +108,7 @@ class ThoughtStore:
                         Thought.user == user,
                         Thought.notified_at != None,  # noqa: E711
                     )
-                    .order_by(Thought.notified_at.desc())  # type: ignore[unresolved-attribute]
+                    .order_by(Thought.notified_at.desc())
                     .limit(limit)
                 ).all()
             )

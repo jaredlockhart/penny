@@ -153,13 +153,12 @@ class SearchTool(Tool):
     @staticmethod
     def _is_quota_error(e: perplexity.AuthenticationError) -> bool:
         """Return True if the AuthenticationError is a quota-exceeded error."""
-        body = e.body
-        if not isinstance(body, dict):
+        if not isinstance(e.body, dict):
             return False
-        error = body.get("error")  # type: ignore[call-overload]
+        error = e.body.get("error")  # ty: ignore[invalid-argument-type]
         if not isinstance(error, dict):
             return False
-        return error.get("type") == "insufficient_quota"  # type: ignore[call-overload]
+        return error.get("type") == "insufficient_quota"  # ty: ignore[invalid-argument-type]
 
     async def _call_perplexity(self, query: str):
         """Call Perplexity API."""
