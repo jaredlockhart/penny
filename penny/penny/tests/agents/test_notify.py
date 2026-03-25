@@ -1,10 +1,12 @@
 """Integration tests for NotifyAgent."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
 
 import pytest
 
-from penny.agents.notify import NotifyAgent, ThoughtMode
+from penny.agents.notify import NotifyAgent, NotifyCandidate, ThoughtMode
 from penny.constants import PennyConstants
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -377,6 +379,168 @@ def test_novelty_score_low_when_identical():
     recent = [[1.0, 0.0, 0.0]]
     score = novelty_score(vec, recent)
     assert score < 0.01  # Nearly zero
+
+
+# ── Candidate scoring (normalization) ──────────────────────────────────
+
+
+def _make_candidate(answer: str) -> NotifyCandidate:
+    return NotifyCandidate(answer=answer, image_prompt="")
+
+
+def _build_select_best():
+    """Return a callable _select_best without needing a full NotifyAgent."""
+    return NotifyAgent._select_best
+
+
+def test_select_best_sentiment_wins_after_normalization():
+    """High-sentiment candidate beats high-novelty when sentiment is properly scaled.
+
+    Before normalization, novelty's larger absolute range would always dominate.
+    After min-max normalization both dimensions contribute equally per their weights.
+    """
+    select_best = _build_select_best()
+    free = _make_candidate("novel free thought about deep sea creatures")
+    seeded = _make_candidate("seeded thought about guitar pedals")
+
+    # Mimic production pattern: free has high novelty but low sentiment,
+    # seeded has lower novelty but much higher sentiment.
+    raw_scores = [
+        (free, 0.65, 0.00),  # high novelty, zero sentiment
+        (seeded, 0.40, 0.08),  # lower novelty, high sentiment
+    ]
+    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
+    assert winner is seeded
+
+
+def test_select_best_novelty_wins_when_sentiment_is_equal():
+    """When sentiment is identical, the most novel candidate wins."""
+    select_best = _build_select_best()
+    a = _make_candidate("novel topic")
+    b = _make_candidate("stale topic")
+
+    raw_scores = [
+        (a, 0.70, 0.05),
+        (b, 0.30, 0.05),
+    ]
+    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
+    assert winner is a
+
+
+def test_select_best_equal_scores_picks_first():
+    """When all candidates score identically, the first one is returned."""
+    select_best = _build_select_best()
+    a = _make_candidate("first")
+    b = _make_candidate("second")
+
+    raw_scores = [
+        (a, 0.50, 0.05),
+        (b, 0.50, 0.05),
+    ]
+    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
+    assert winner is a
+
+
+def test_select_best_three_candidates_balanced():
+    """With three candidates, normalization spreads scores across [0,1].
+
+    Candidate with best combined normalized score wins, not the one
+    with the highest raw novelty.
+    """
+    select_best = _build_select_best()
+    high_novelty = _make_candidate("very novel")
+    high_sentiment = _make_candidate("very aligned")
+    middle = _make_candidate("balanced")
+
+    # high_novelty: novelty=1.0 norm, sentiment=0.0 norm → 0.4*1 + 0.6*0 = 0.40
+    # high_sentiment: novelty=0.0 norm, sentiment=1.0 norm → 0.4*0 + 0.6*1 = 0.60
+    # middle: novelty=0.5 norm, sentiment=0.5 norm → 0.4*0.5 + 0.6*0.5 = 0.50
+    raw_scores = [
+        (high_novelty, 0.70, -0.02),
+        (high_sentiment, 0.30, 0.10),
+        (middle, 0.50, 0.04),
+    ]
+    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
+    assert winner is high_sentiment
+
+
+def test_select_best_single_candidate():
+    """Single candidate gets score 0.5 for both dimensions (no range)."""
+    select_best = _build_select_best()
+    only = _make_candidate("only candidate")
+
+    raw_scores = [(only, 0.45, 0.03)]
+    winner = select_best(None, raw_scores)  # type: ignore[arg-type]
+    assert winner is only
+
+
+# ── Topic cooldown ──────────────────────────────────────────────────────
+
+
+def test_topic_on_cooldown_within_window():
+    """Topic notified 1 hour ago is on cooldown (within 24h)."""
+    now = datetime(2026, 3, 25, 12, 0, 0)
+    last: dict[int | None, datetime] = {5: datetime(2026, 3, 25, 11, 0, 0)}
+    assert NotifyAgent._topic_on_cooldown(5, last, now, 86400) is True
+
+
+def test_topic_on_cooldown_outside_window():
+    """Topic notified 25 hours ago is off cooldown."""
+    now = datetime(2026, 3, 25, 12, 0, 0)
+    last: dict[int | None, datetime] = {5: datetime(2026, 3, 24, 11, 0, 0)}
+    assert NotifyAgent._topic_on_cooldown(5, last, now, 86400) is False
+
+
+def test_topic_on_cooldown_never_notified():
+    """Topic never notified is not on cooldown."""
+    now = datetime(2026, 3, 25, 12, 0, 0)
+    last: dict[int | None, datetime] = {}
+    assert NotifyAgent._topic_on_cooldown(5, last, now, 86400) is False
+
+
+def test_topic_on_cooldown_free_thought():
+    """Free thought (preference_id=None) cooldown works the same as seeded."""
+    now = datetime(2026, 3, 25, 12, 0, 0)
+    last: dict[int | None, datetime] = {None: datetime(2026, 3, 25, 11, 0, 0)}
+    assert NotifyAgent._topic_on_cooldown(None, last, now, 86400) is True
+
+
+@pytest.mark.asyncio
+async def test_get_top_thoughts_skips_recently_notified_topics(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Topics notified in the last 24h are excluded from candidate selection."""
+    config = make_config(notify_candidates=5)
+
+    async with running_penny(config) as penny:
+        # Create two preferences
+        pref_a = penny.db.preferences.add(
+            user=TEST_SENDER, content="guitar pedals", valence="positive"
+        )
+        pref_b = penny.db.preferences.add(user=TEST_SENDER, content="prog rock", valence="positive")
+
+        # Add unnotified thoughts for both + a free thought
+        penny.db.thoughts.add(TEST_SENDER, "free thought about science")
+        penny.db.thoughts.add(TEST_SENDER, "pedal thought", preference_id=pref_a.id)
+        penny.db.thoughts.add(TEST_SENDER, "prog thought", preference_id=pref_b.id)
+
+        # Mark an older thought for pref_a as recently notified (simulates prior cycle)
+        old_thought = penny.db.thoughts.add(
+            TEST_SENDER, "old pedal thought", preference_id=pref_a.id
+        )
+        penny.db.thoughts.mark_notified(old_thought.id)
+
+        # Also mark a free thought as recently notified
+        old_free = penny.db.thoughts.add(TEST_SENDER, "old free thought")
+        penny.db.thoughts.mark_notified(old_free.id)
+
+        # Get candidates — pref_a and free should be on cooldown
+        top = penny.notify_agent._get_top_thoughts(TEST_SENDER, 5)
+        pref_ids = [t.preference_id for t in top]
+
+        assert pref_b.id in pref_ids, "pref_b should be included (never notified)"
+        assert pref_a.id not in pref_ids, "pref_a should be excluded (recently notified)"
+        assert None not in pref_ids, "free thought should be excluded (recently notified)"
 
 
 # ── Thought context variants ────────────────────────────────────────────
