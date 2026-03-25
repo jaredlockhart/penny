@@ -336,6 +336,9 @@ async def test_news_thinking_full_loop(
     monkeypatch,
 ):
     """News thinking: intentional 30% mode — reads news, picks a story, digs in."""
+    # Ensure news mode is reachable regardless of current constant values
+    monkeypatch.setattr(PennyConstants, "FREE_THINKING_PROBABILITY", 0.1)
+    monkeypatch.setattr(PennyConstants, "NEWS_THINKING_PROBABILITY", 0.3)
     # Force news thinking path (roll between 0.1 and 0.4)
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.15)
     monkeypatch.setattr("penny.tools.news.NewsTool.search", AsyncMock(return_value=[]))
