@@ -545,52 +545,76 @@ class NotifyAgent(Agent):
         return candidates
 
     def _get_top_thoughts(self, user: str, n: int) -> list[Thought]:
-        """Select diverse unnotified thoughts: 1 free-thinking + N-1 least-recently-notified prefs.
+        """Select diverse unnotified thoughts with per-topic 24h cooldown.
 
         Selection algorithm:
-        1. Most recent unnotified free-thinking thought (preference_id IS NULL)
-        2. For each preference with unnotified thoughts, find when it was last
-           notified. Pick the N-1 least-recently-notified preferences, and from
-           each take the most recent unnotified thought.
+        1. Most recent unnotified free-thinking thought (preference_id IS NULL),
+           only if no free thought was notified in the last 24h.
+        2. For each preference with unnotified thoughts, skip if that preference
+           was notified in the last 24h. From the remaining, pick the N-1
+           least-recently-notified preferences, taking the most recent unnotified
+           thought from each.
         """
         all_unnotified = self.db.thoughts.get_all_unnotified(user)
         if not all_unnotified:
             return []
 
+        last_notified = self._get_topic_last_notified_times(user, all_unnotified)
+        cutoff = datetime.now(UTC).replace(tzinfo=None)
+        cooldown = PennyConstants.THOUGHT_TOPIC_COOLDOWN_SECONDS
         result: list[Thought] = []
 
-        # 1. Most recent free-thinking thought
+        # 1. Most recent free-thinking thought (if not on cooldown)
         free = [t for t in all_unnotified if t.preference_id is None]
-        if free:
+        if free and not self._topic_on_cooldown(None, last_notified, cutoff, cooldown):
             result.append(free[-1])
 
-        # 2. Group seeded thoughts by preference, find last notified time per pref
+        # 2. Group seeded thoughts by preference, filter by cooldown
         seeded = [t for t in all_unnotified if t.preference_id is not None]
         by_pref: dict[int, list[Thought]] = {}
         for t in seeded:
             assert t.preference_id is not None
             by_pref.setdefault(t.preference_id, []).append(t)
 
-        pref_last_notified = self._get_pref_last_notified_times(user, list(by_pref.keys()))
-        ranked = sorted(by_pref.keys(), key=lambda pid: pref_last_notified.get(pid) or "")
+        eligible = {
+            pid: thoughts
+            for pid, thoughts in by_pref.items()
+            if not self._topic_on_cooldown(pid, last_notified, cutoff, cooldown)
+        }
+        ranked = sorted(eligible.keys(), key=lambda pid: last_notified.get(pid) or "")
         slots = n - len(result)
         for pref_id in ranked[:slots]:
-            result.append(by_pref[pref_id][-1])  # most recent unnotified
+            result.append(eligible[pref_id][-1])  # most recent unnotified
 
         return result
 
-    def _get_pref_last_notified_times(self, user: str, preference_ids: list[int]) -> dict[int, str]:
-        """Get the most recent notified_at per preference (for ranking)."""
-        if not preference_ids:
-            return {}
+    def _get_topic_last_notified_times(
+        self, user: str, unnotified: list[Thought]
+    ) -> dict[int | None, datetime]:
+        """Get the most recent notified_at per topic (preference_id or None for free)."""
+        pref_ids = {t.preference_id for t in unnotified}
         all_thoughts = self.db.thoughts.get_recent(user)
-        last_notified: dict[int, str] = {}
+        last_notified: dict[int | None, datetime] = {}
         for t in all_thoughts:
-            if t.preference_id in preference_ids and t.notified_at is not None:
-                ts = str(t.notified_at)
+            if t.preference_id in pref_ids and t.notified_at is not None:
+                ts = t.notified_at
                 if t.preference_id not in last_notified or ts > last_notified[t.preference_id]:
                     last_notified[t.preference_id] = ts
         return last_notified
+
+    @staticmethod
+    def _topic_on_cooldown(
+        topic_id: int | None,
+        last_notified: dict[int | None, datetime],
+        cutoff: datetime,
+        cooldown_seconds: float,
+    ) -> bool:
+        """Check if a topic (preference_id or None) was notified within cooldown."""
+        last = last_notified.get(topic_id)
+        if last is None:
+            return False
+        elapsed = (cutoff - last).total_seconds()
+        return elapsed < cooldown_seconds
 
     # ── Thought context sections ─────────────────────────────────────
 
@@ -644,31 +668,62 @@ class NotifyAgent(Agent):
             PennyConstants.PreferenceValence.POSITIVE,
             PennyConstants.PreferenceValence.NEGATIVE,
         )
-        best: NotifyCandidate | None = None
-        best_score = float("-inf")
+        raw_scores = await self._compute_raw_scores(candidates, recent_vecs, likes, dislikes)
+        if not raw_scores:
+            return candidates[0]
+        return self._select_best(raw_scores)
 
+    async def _compute_raw_scores(
+        self,
+        candidates: list[NotifyCandidate],
+        recent_vecs: list[list[float]],
+        likes: list[list[float]],
+        dislikes: list[list[float]],
+    ) -> list[tuple[NotifyCandidate, float, float]]:
+        """Compute raw novelty and sentiment for each candidate."""
+        results: list[tuple[NotifyCandidate, float, float]] = []
         for candidate in candidates:
             vec = await embed_text(self._embedding_model_client, candidate.answer)
             if vec is None:
                 continue
             novelty = novelty_score(vec, recent_vecs)
             sentiment = compute_sentiment_score(vec, likes, dislikes)
+            results.append((candidate, novelty, sentiment))
+        return results
+
+    def _select_best(
+        self,
+        raw_scores: list[tuple[NotifyCandidate, float, float]],
+    ) -> NotifyCandidate:
+        """Normalize novelty and sentiment to [0,1], apply weights, pick best."""
+        novelties = [n for _, n, _ in raw_scores]
+        sentiments = [s for _, _, s in raw_scores]
+        n_min, n_max = min(novelties), max(novelties)
+        s_min, s_max = min(sentiments), max(sentiments)
+        n_range = n_max - n_min
+        s_range = s_max - s_min
+
+        best: NotifyCandidate | None = None
+        best_score = float("-inf")
+        for candidate, novelty, sentiment in raw_scores:
+            norm_novelty = (novelty - n_min) / n_range if n_range else 0.5
+            norm_sentiment = (sentiment - s_min) / s_range if s_range else 0.5
             score = (
-                PennyConstants.NOVELTY_WEIGHT * novelty
-                + PennyConstants.SENTIMENT_WEIGHT * sentiment
+                PennyConstants.NOVELTY_WEIGHT * norm_novelty
+                + PennyConstants.SENTIMENT_WEIGHT * norm_sentiment
             )
             logger.info(
                 "Candidate score: %.3f (novelty=%.3f, sentiment=%.3f) %s",
                 score,
-                novelty,
-                sentiment,
+                norm_novelty,
+                norm_sentiment,
                 candidate.answer[:60],
             )
             if score > best_score:
                 best_score = score
                 best = candidate
-
-        return best if best is not None else candidates[0]
+        assert best is not None
+        return best
 
     async def _embed_recent_messages(self, user: str) -> list[list[float]]:
         """Embed recent outgoing messages for novelty comparison."""

@@ -239,6 +239,33 @@ ConfigParam(
     group=GROUP_INNER_MONOLOGUE,
 )
 
+ConfigParam(
+    key="MAX_UNNOTIFIED_THOUGHTS",
+    description="Max unnotified thoughts before thinking agent pauses",
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
+    group=GROUP_INNER_MONOLOGUE,
+)
+
+ConfigParam(
+    key="FREE_THINKING_PROBABILITY",
+    description="Target ratio of free-exploration thoughts (0-1, remainder after news is seeded)",
+    type=float,
+    default=0.2,
+    validator=_validate_unit_float,
+    group=GROUP_INNER_MONOLOGUE,
+)
+
+ConfigParam(
+    key="NEWS_THINKING_PROBABILITY",
+    description="Target ratio of news-browsing thoughts (0-1, remainder after free is seeded)",
+    type=float,
+    default=0.0,
+    validator=_validate_unit_float,
+    group=GROUP_INNER_MONOLOGUE,
+)
+
 
 # ── History ──────────────────────────────────────────────────────────────────
 
