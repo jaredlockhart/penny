@@ -139,11 +139,21 @@ Examples:
     )
 
     THINKING_REPORT_PROMPT = (
-        "Distill the search results into a detailed briefing about the most "
-        "interesting discovery — the thread that was explored most deeply.\n\n"
+        "Distill the search results into a report about something new you "
+        "learned — a specific discovery worth sharing.\n\n"
         "Focus on depth, not breadth. If the session started broad and then "
         "narrowed into a specific topic with follow-up searches, write about "
         "that specific topic. Ignore the initial broad survey.\n\n"
+        "This report will be shared as a new finding. Frame it as 'here is "
+        "something interesting I learned' — NOT as a correction, debunking, "
+        "or clarification. Never use framing like 'it turns out', 'contrary "
+        "to what you might think', 'actually', 'not X but Y', or 'myth vs "
+        "reality'. The reader has no prior assumption to correct. If the "
+        "search results contradict each other, just report the most accurate "
+        "conclusion directly as a standalone fact.\n\n"
+        "If the search found that something doesn't exist or isn't real, "
+        "that is not an interesting discovery — say nothing noteworthy was "
+        "found.\n\n"
         "Write it as a rich, substantive report. Include:\n"
         "- What specifically was found — names, specs, dates, prices, versions, "
         "technical details. Be specific, not vague\n"
