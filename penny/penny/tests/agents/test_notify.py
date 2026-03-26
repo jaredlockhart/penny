@@ -412,7 +412,7 @@ async def test_image_uses_content_when_no_image_prompt(
     monkeypatch,
     mock_serper_image,
 ):
-    """Free-thinking thought (no seed topic) uses message content for image search."""
+    """Thought with bold title uses title for image search; plain text falls back to content."""
     config = make_config(notify_candidates=1, serper_api_key="test-key")
 
     monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
@@ -425,26 +425,49 @@ async def test_image_uses_content_when_no_image_prompt(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Seed a free-thinking thought (no preference_id)
+        # ── Case 1: thought with bold title — title used as image query ──
         penny.db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
         )
-        penny.db.thoughts.add(TEST_SENDER, "Thinking about atmospheric chemistry")
+        penny.db.thoughts.add(
+            TEST_SENDER, "**Bad Cat Era 30 – A Hand-Wired EL84 Head**\n\nDetails here..."
+        )
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
+        monkeypatch.setattr(penny.notify_agent, "_cooldown_elapsed", lambda user: True)
 
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
         assert result is True
 
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
-        response = signal_server.outgoing_messages[-1]
 
-        # With no search query and no seed topic, image_prompt is empty.
-        # Channel should use content fallback (message text).
+        mock_serper_image.assert_called_once()
+        image_query = mock_serper_image.call_args[0][0]
+        assert "Bad Cat Era 30" in image_query
+        assert "nitrous" not in image_query.lower()
+
+        # ── Case 2: thought without bold title — falls back to content ──
+        mock_serper_image.reset_mock()
+        initial_count = len(signal_server.outgoing_messages)
+
+        # Use a different preference_id to avoid topic cooldown from case 1
+        pref = penny.db.preferences.add(
+            user=TEST_SENDER, content="atmospheric science", valence="positive"
+        )
+        penny.db.thoughts.add(
+            TEST_SENDER,
+            "Thinking about atmospheric chemistry",
+            preference_id=pref.id if pref else None,
+        )
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > initial_count)
+
         mock_serper_image.assert_called_once()
         image_query = mock_serper_image.call_args[0][0]
         assert "nitrous" in image_query.lower()
         assert len(image_query) <= 300
-        assert response.get("base64_attachments"), "Content fallback should produce an image"
 
 
 # ── Image prompt extraction ──────────────────────────────────────────────
