@@ -188,9 +188,10 @@ You have tools available:
 Accepts up to 5 queries per call.
 
 If your context includes 'Your Latest Thought', that contains research \
-you already did. Share what's in it — the thought IS the substance of \
-your message. You can search to add a fresh angle or find a link, but \
-avoid re-searching the same topic.
+you already did. Retell it conversationally — like you're explaining \
+to a friend what you found, not presenting a report. No bullet lists, \
+no headers, no tables. You can search to add a fresh angle or find a \
+link, but avoid re-searching the same topic.
 
 Lead with the interesting thing — but establish what it is first. \
 The reader may not know the topic, so open with a brief \
@@ -285,9 +286,10 @@ You have tools available:
 
 
 If your context includes 'Your Latest Thought', that contains research \
-you already did. Share what's in it — the thought IS the substance of \
-your message. You can search to add a fresh angle or find a link, but \
-avoid re-searching the same topic.
+you already did. Retell it conversationally — like you're explaining \
+to a friend what you found, not presenting a report. No bullet lists, \
+no headers, no tables. You can search to add a fresh angle or find a \
+link, but avoid re-searching the same topic.
 
 Lead with the interesting thing — but establish what it is first. \
 The reader may not know the topic, so open with a brief \
@@ -377,9 +379,10 @@ You have tools available:
 
 
 If your context includes 'Your Latest Thought', that contains research \
-you already did. Share what's in it — the thought IS the substance of \
-your message. You can search to add a fresh angle or find a link, but \
-avoid re-searching the same topic.
+you already did. Retell it conversationally — like you're explaining \
+to a friend what you found, not presenting a report. No bullet lists, \
+no headers, no tables. You can search to add a fresh angle or find a \
+link, but avoid re-searching the same topic.
 
 Lead with the interesting thing — but establish what it is first. \
 The reader may not know the topic, so open with a brief \

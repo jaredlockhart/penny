@@ -6,7 +6,20 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from penny.database.models import UserInfo
-from penny.tests.conftest import TEST_SENDER
+from penny.tests.conftest import TEST_SENDER, wait_until
+
+
+def _has_message(server, text: str) -> bool:
+    """Check if any outgoing message contains text."""
+    return any(text in msg.get("message", "") for msg in server.outgoing_messages)
+
+
+def _find_message(server, text: str) -> dict:
+    """Find the first outgoing message containing text. Must exist."""
+    for msg in server.outgoing_messages:
+        if text in msg.get("message", ""):
+            return msg
+    raise AssertionError(f"No message containing {text!r}")
 
 
 def _is_schedule_due(cron_expression: str, now: datetime) -> bool:
@@ -80,10 +93,9 @@ async def test_schedule_list_empty(signal_server, test_config, mock_ollama, runn
         await signal_server.push_message(sender=TEST_SENDER, content="/schedule")
 
         # Wait for response
-        response = await signal_server.wait_for_message(timeout=5.0)
-
-        # Should show empty message
-        assert "You don't have any scheduled tasks yet" in response["message"]
+        await wait_until(
+            lambda: _has_message(signal_server, "You don't have any scheduled tasks yet")
+        )
 
 
 @pytest.mark.asyncio
@@ -97,11 +109,10 @@ async def test_schedule_create_requires_timezone(
             sender=TEST_SENDER, content="/schedule daily 9am what's the news?"
         )
 
-        # Wait for response
-        response = await signal_server.wait_for_message(timeout=5.0)
-
         # Should prompt for timezone
-        assert "I need to know your timezone first" in response["message"]
+        await wait_until(lambda: _has_message(signal_server, "I need to know your timezone first"))
+        response = _find_message(signal_server, "I need to know your timezone first")
+        assert response is not None
         assert "Send me your location" in response["message"]
 
 
@@ -137,20 +148,14 @@ async def test_schedule_create_and_list(signal_server, test_config, mock_ollama,
             sender=TEST_SENDER, content="/schedule daily 9am what's the news?"
         )
 
-        # Wait for response
-        response = await signal_server.wait_for_message(timeout=5.0)
-
         # Should confirm creation
-        assert "Added daily 9am: what's the news?" in response["message"]
+        await wait_until(lambda: _has_message(signal_server, "Added daily 9am: what's the news?"))
 
         # List schedules
         await signal_server.push_message(sender=TEST_SENDER, content="/schedule")
 
-        # Wait for response
-        response = await signal_server.wait_for_message(timeout=5.0)
-
         # Should list the schedule
-        assert "1. **daily 9am**: what's the news?" in response["message"]
+        await wait_until(lambda: _has_message(signal_server, "1. **daily 9am**: what's the news?"))
 
 
 @pytest.mark.asyncio
@@ -185,17 +190,15 @@ async def test_schedule_delete(signal_server, test_config, mock_ollama, running_
             sender=TEST_SENDER, content="/schedule hourly sports scores"
         )
 
-        # Wait for response
-        response = await signal_server.wait_for_message(timeout=5.0)
-        assert "Added hourly: sports scores" in response["message"]
+        await wait_until(lambda: _has_message(signal_server, "Added hourly: sports scores"))
 
         # Delete schedule
         await signal_server.push_message(sender=TEST_SENDER, content="/unschedule 1")
 
-        # Wait for response
-        response = await signal_server.wait_for_message(timeout=5.0)
-
         # Should confirm deletion
+        await wait_until(lambda: _has_message(signal_server, "Deleted"))
+        response = _find_message(signal_server, "Deleted")
+        assert response is not None
         assert "Deleted 'hourly sports scores'" in response["message"]
         assert "No more scheduled tasks" in response["message"]
 
@@ -221,8 +224,7 @@ async def test_schedule_delete_invalid_index(
         # Try to delete non-existent schedule
         await signal_server.push_message(sender=TEST_SENDER, content="/unschedule 99")
 
-        # Wait for response
-        response = await signal_server.wait_for_message(timeout=5.0)
-
         # Should show empty message (no schedules to delete)
-        assert "You don't have any scheduled tasks yet" in response["message"]
+        await wait_until(
+            lambda: _has_message(signal_server, "You don't have any scheduled tasks yet")
+        )
