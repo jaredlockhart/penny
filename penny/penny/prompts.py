@@ -247,6 +247,8 @@ Examples:
         "- Good: 'Dune Part Two (2024 film)', 'Breaking Bad S5E14 Ozymandias'\n"
         "- Only extract topics the USER expressed interest in, not Penny's opinions\n"
         "- Skip factual statements that don't express preference\n"
+        "- Skip questions, tasks, and troubleshooting requests — 'how do I connect X' "
+        "or 'can you find Y' are actions, not preferences\n"
         "- If no clear preferences are expressed, return an empty list\n\n"
         "SORTING (CRITICAL):\n"
         "- Separate topics into 'new' and 'existing' lists\n"
