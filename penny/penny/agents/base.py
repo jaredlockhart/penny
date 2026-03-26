@@ -836,6 +836,9 @@ class Agent:
     def _history_section(self, sender: str) -> str | None:
         """Build conversation history with weekly summaries and daily details.
 
+        Weekly rollups replace their constituent daily entries to avoid
+        duplication. Only daily entries outside any weekly range are shown.
+
         Format:
             Week of Mar 3:
             - weekly theme 1
@@ -846,8 +849,9 @@ class Agent:
         """
         try:
             lines: list[str] = []
-            lines.extend(self._format_weekly_entries(sender))
-            lines.extend(self._format_daily_entries(sender))
+            weekly_entries = self._get_weekly_entries(sender)
+            lines.extend(self._format_weekly_entries(weekly_entries))
+            lines.extend(self._format_daily_entries(sender, weekly_entries))
             if not lines:
                 return None
 
@@ -857,12 +861,15 @@ class Agent:
             logger.warning("History context retrieval failed, proceeding without")
             return None
 
-    def _format_weekly_entries(self, sender: str) -> list[str]:
-        """Format weekly history entries with 'Week of' date labels."""
+    def _get_weekly_entries(self, sender: str) -> list:
+        """Fetch weekly history entries."""
         weekly_limit = int(self.config.runtime.WEEKLY_CONTEXT_LIMIT)
-        entries = self.db.history.get_recent(
+        return self.db.history.get_recent(
             sender, PennyConstants.HistoryDuration.WEEKLY, limit=weekly_limit
         )
+
+    def _format_weekly_entries(self, entries: list) -> list[str]:
+        """Format weekly history entries with 'Week of' date labels."""
         lines: list[str] = []
         for entry in entries:
             date_label = f"Week of {entry.period_start.strftime('%b %-d')}"
@@ -872,15 +879,18 @@ class Agent:
                 lines.extend(f"- {t}" for t in topics)
         return lines
 
-    def _format_daily_entries(self, sender: str) -> list[str]:
-        """Format daily history entries with date labels."""
+    def _format_daily_entries(self, sender: str, weekly_entries: list) -> list[str]:
+        """Format daily history entries, skipping days covered by a weekly rollup."""
         daily_limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
         entries = self.db.history.get_recent(
             sender, PennyConstants.HistoryDuration.DAILY, limit=daily_limit
         )
         today = self._midnight_today()
+        weekly_ranges = [(w.period_start, w.period_end) for w in weekly_entries]
         lines: list[str] = []
         for entry in entries:
+            if self._covered_by_weekly(entry.period_start, weekly_ranges):
+                continue
             is_today = entry.period_start == today
             date_label = "Today" if is_today else entry.period_start.strftime("%b %-d")
             topics = self._extract_topic_lines(entry.topics)
@@ -888,6 +898,11 @@ class Agent:
                 lines.append(f"{date_label}:")
                 lines.extend(f"- {t}" for t in topics)
         return lines
+
+    @staticmethod
+    def _covered_by_weekly(day_start, weekly_ranges: list[tuple]) -> bool:
+        """Check if a daily entry falls within a completed weekly rollup."""
+        return any(week_start <= day_start < week_end for week_start, week_end in weekly_ranges)
 
     @staticmethod
     def _extract_topic_lines(topics: str) -> list[str]:
