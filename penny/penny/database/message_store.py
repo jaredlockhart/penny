@@ -573,6 +573,21 @@ class MessageStore:
         except Exception as e:
             logger.error("Failed to update message %d embedding: %s", message_id, e)
 
+    def get_outgoing_without_embeddings(self, limit: int = 50) -> list[MessageLog]:
+        """Get outgoing messages that don't have embeddings yet, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                        MessageLog.embedding == None,  # noqa: E711
+                    )
+                    .order_by(MessageLog.timestamp.desc())
+                    .limit(limit)
+                ).all()
+            )
+
     def get_latest_message_time_in_range(
         self, sender: str, start: datetime, end: datetime
     ) -> datetime | None:

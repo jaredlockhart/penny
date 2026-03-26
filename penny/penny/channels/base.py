@@ -274,8 +274,25 @@ class MessageChannel(ABC):
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
             self._db.messages.set_external_id(message_id, str(external_id))
+        # Cache embedding for novelty scoring
+        if message_id:
+            await self._embed_message(message_id, prepared)
         logger.info("Sent response to %s (%d chars)", recipient, len(content))
         return message_id if external_id is not None else None
+
+    async def _embed_message(self, message_id: int, content: str) -> None:
+        """Compute and cache embedding for an outgoing message."""
+        if not self._embedding_model_client:
+            return
+        try:
+            from penny.ollama.embeddings import serialize_embedding
+            from penny.ollama.similarity import embed_text
+
+            vec = await embed_text(self._embedding_model_client, content)
+            if vec is not None:
+                self._db.messages.update_embedding(message_id, serialize_embedding(vec))
+        except Exception:
+            logger.debug("Failed to embed message %d", message_id)
 
     @staticmethod
     def _extract_image_prompt(response) -> str | None:

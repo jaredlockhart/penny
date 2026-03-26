@@ -353,12 +353,14 @@ class Penny:
         batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
         total_prefs = await self._backfill_preference_embeddings(batch_limit)
         total_thoughts = await self._backfill_thought_embeddings(batch_limit)
-        total = total_prefs + total_thoughts
+        total_messages = await self._backfill_message_embeddings(batch_limit)
+        total = total_prefs + total_thoughts + total_messages
         if total:
             logger.info(
-                "Startup embedding backfill complete: %d preferences, %d thoughts",
+                "Startup embedding backfill complete: %d preferences, %d thoughts, %d messages",
                 total_prefs,
                 total_thoughts,
+                total_messages,
             )
 
     async def _backfill_thought_embeddings(self, batch_limit: int) -> int:
@@ -379,6 +381,26 @@ class Penny:
                 total += len(thoughts)
             except Exception as e:
                 logger.warning("Startup embedding backfill failed for thoughts: %s", e)
+                break
+        return total
+
+    async def _backfill_message_embeddings(self, batch_limit: int) -> int:
+        """Backfill outgoing messages with missing embeddings. Returns count embedded."""
+        assert self.embedding_model_client is not None
+        total = 0
+        while True:
+            messages = self.db.messages.get_outgoing_without_embeddings(limit=batch_limit)
+            if not messages:
+                break
+            try:
+                texts = [m.content for m in messages]
+                vecs = await self.embedding_model_client.embed(texts)
+                for msg, vec in zip(messages, vecs, strict=True):
+                    assert msg.id is not None
+                    self.db.messages.update_embedding(msg.id, serialize_embedding(vec))
+                total += len(messages)
+            except Exception as e:
+                logger.warning("Startup embedding backfill failed for messages: %s", e)
                 break
         return total
 
