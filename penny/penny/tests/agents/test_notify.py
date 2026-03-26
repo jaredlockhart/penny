@@ -193,7 +193,8 @@ to a friend what you found, not presenting a report. No bullet lists, \
 no headers, no tables. You can search to add a fresh angle or find a \
 link, but avoid re-searching the same topic.
 
-Lead with the interesting thing — but establish what it is first. \
+Start with a casual greeting, then lead with the interesting thing — \
+but establish what it is first. \
 The reader may not know the topic, so open with a brief \
 identifying phrase that says what the thing IS — its category or \
 role (e.g., 'Kokoroko — they're a London Afrobeat band', \
@@ -291,7 +292,8 @@ to a friend what you found, not presenting a report. No bullet lists, \
 no headers, no tables. You can search to add a fresh angle or find a \
 link, but avoid re-searching the same topic.
 
-Lead with the interesting thing — but establish what it is first. \
+Start with a casual greeting, then lead with the interesting thing — \
+but establish what it is first. \
 The reader may not know the topic, so open with a brief \
 identifying phrase that says what the thing IS — its category or \
 role (e.g., 'Kokoroko — they're a London Afrobeat band', \
@@ -384,7 +386,8 @@ to a friend what you found, not presenting a report. No bullet lists, \
 no headers, no tables. You can search to add a fresh angle or find a \
 link, but avoid re-searching the same topic.
 
-Lead with the interesting thing — but establish what it is first. \
+Start with a casual greeting, then lead with the interesting thing — \
+but establish what it is first. \
 The reader may not know the topic, so open with a brief \
 identifying phrase that says what the thing IS — its category or \
 role (e.g., 'Kokoroko — they're a London Afrobeat band', \

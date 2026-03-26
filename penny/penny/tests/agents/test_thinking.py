@@ -146,8 +146,10 @@ Previous thought about gravity
 You are thinking to yourself. This is your inner monologue — \
 the user cannot see this.
 
-Your goal is to find ONE specific, concrete thing worth knowing about. \
-Not a broad survey — one interesting thread, then pull it.
+Your goal is to find ONE specific, concrete thing worth knowing about — \
+something the user would enjoy hearing about. Look for new releases, \
+creative work, technical deep-dives, or discoveries. Avoid \
+troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
 - **search**: Search the web for current information. \
@@ -281,8 +283,10 @@ async def test_free_thinking_full_loop(
 You are thinking to yourself. This is your inner monologue — \
 the user cannot see this.
 
-Your goal is to find ONE specific, concrete thing worth knowing about. \
-Not a broad survey — one interesting thread, then pull it.
+Your goal is to find ONE specific, concrete thing worth knowing about — \
+something the user would enjoy hearing about. Look for new releases, \
+creative work, technical deep-dives, or discoveries. Avoid \
+troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
 - **search**: Search the web for current information. \
@@ -406,8 +410,10 @@ async def test_news_thinking_full_loop(
 You are thinking to yourself. This is your inner monologue — \
 the user cannot see this.
 
-Your goal is to find ONE specific, concrete thing worth knowing about. \
-Not a broad survey — one interesting thread, then pull it.
+Your goal is to find ONE specific, concrete thing worth knowing about — \
+something the user would enjoy hearing about. Look for new releases, \
+creative work, technical deep-dives, or discoveries. Avoid \
+troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
 - **search**: Search the web for current information. \
