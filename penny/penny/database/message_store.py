@@ -540,19 +540,38 @@ class MessageStore:
         self, recipient: str, hours: int = 24, limit: int = 20
     ) -> list[str]:
         """Get content of recent outgoing messages for novelty scoring."""
+        return [m.content for m in self.get_recent_outgoing(recipient, hours, limit)]
+
+    def get_recent_outgoing(
+        self, recipient: str, hours: int = 24, limit: int = 20
+    ) -> list[MessageLog]:
+        """Get recent outgoing messages for novelty scoring (with embeddings)."""
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
         with self._session() as session:
-            messages = session.exec(
-                select(MessageLog.content)
-                .where(
-                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                    MessageLog.recipient == recipient,
-                    MessageLog.timestamp >= cutoff,
-                )
-                .order_by(MessageLog.timestamp.desc())
-                .limit(limit)
-            ).all()
-            return [m for m in messages if m]
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                        MessageLog.recipient == recipient,
+                        MessageLog.timestamp >= cutoff,
+                    )
+                    .order_by(MessageLog.timestamp.desc())
+                    .limit(limit)
+                ).all()
+            )
+
+    def update_embedding(self, message_id: int, embedding: bytes) -> None:
+        """Update the embedding for a message."""
+        try:
+            with self._session() as session:
+                msg = session.get(MessageLog, message_id)
+                if msg:
+                    msg.embedding = embedding
+                    session.add(msg)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update message %d embedding: %s", message_id, e)
 
     def get_latest_message_time_in_range(
         self, sender: str, start: datetime, end: datetime

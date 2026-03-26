@@ -24,6 +24,7 @@ from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse, ToolCallRecord
 from penny.constants import PennyConstants
 from penny.database.models import Thought
+from penny.ollama.embeddings import deserialize_embedding, serialize_embedding
 from penny.ollama.similarity import (
     compute_sentiment_score,
     embed_text,
@@ -763,15 +764,20 @@ class NotifyAgent(Agent):
         return best
 
     async def _embed_recent_messages(self, user: str) -> list[list[float]]:
-        """Embed recent outgoing messages for novelty comparison."""
+        """Get embeddings of recent outgoing messages, using cached values when available."""
         if not self._embedding_model_client:
             return []
-        contents = self.db.messages.get_recent_outgoing_content(user)
+        messages = self.db.messages.get_recent_outgoing(user)
         vecs: list[list[float]] = []
-        for content in contents:
-            vec = await embed_text(self._embedding_model_client, content)
-            if vec is not None:
-                vecs.append(vec)
+        for msg in messages:
+            if msg.embedding:
+                vecs.append(deserialize_embedding(msg.embedding))
+            else:
+                vec = await embed_text(self._embedding_model_client, msg.content)
+                if vec is not None:
+                    vecs.append(vec)
+                    if msg.id is not None:
+                        self.db.messages.update_embedding(msg.id, serialize_embedding(vec))
         return vecs
 
     # ── Send ──────────────────────────────────────────────────────────
