@@ -239,7 +239,12 @@ class ThoughtMode(NotificationMode):
     def extract_image_prompt(
         self, agent: NotifyAgent, response: ControllerResponse, answer: str
     ) -> str:
-        return NotifyAgent._extract_search_query(response.tool_calls) or ""
+        from_tools = NotifyAgent._extract_search_query(response.tool_calls)
+        if from_tools:
+            return from_tools
+        if self._thought:
+            return NotifyAgent._extract_first_headline(self._thought.content) or ""
+        return ""
 
     def prepare(self, agent: NotifyAgent) -> None:
         agent._pending_thought = self._thought
