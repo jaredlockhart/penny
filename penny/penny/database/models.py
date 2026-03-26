@@ -55,6 +55,7 @@ class MessageLog(SQLModel, table=True):
     thought_id: int | None = Field(
         default=None, foreign_key="thought.id", index=True
     )  # FK to thought that triggered this notification
+    embedding: bytes | None = None  # Serialized float32 embedding vector
 
 
 class UserInfo(SQLModel, table=True):
@@ -129,6 +130,7 @@ class Thought(SQLModel, table=True):
     preference_id: int | None = Field(default=None, foreign_key="preference.id", index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     notified_at: datetime | None = None  # When this thought was shared with the user
+    embedding: bytes | None = None  # Serialized float32 embedding vector
 
 
 class Preference(SQLModel, table=True):

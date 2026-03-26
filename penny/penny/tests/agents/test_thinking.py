@@ -83,6 +83,7 @@ async def test_seeded_thinking_full_loop(
         inner_monologue_max_steps=3,
         free_thinking_probability=0.0,
         news_thinking_probability=0.0,
+        ollama_embedding_model="test-embedding",
     )
 
     requests_seen: list[dict] = []
@@ -200,6 +201,7 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert "Research report" in stored[0].content
         assert stored[0].preference_id == 1
         assert "Found interesting" not in stored[0].content  # raw monologue not stored
+        assert stored[0].embedding is not None, "Thought should have cached embedding"
 
         # -- Preference marked as thought-about
         pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER)
