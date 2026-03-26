@@ -14,7 +14,7 @@ from typing import Any
 from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
 from penny.constants import PennyConstants
-from penny.ollama.embeddings import cosine_similarity
+from penny.ollama.embeddings import cosine_similarity, deserialize_embedding, serialize_embedding
 from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 
@@ -181,7 +181,10 @@ class ThinkingAgent(Agent):
             )
             report = ""
         if report and not await self._is_duplicate_thought(user, report):
-            self.db.thoughts.add(user, report, preference_id=self._seed_pref_id)
+            embedding = await self._embed_and_serialize(report)
+            self.db.thoughts.add(
+                user, report, preference_id=self._seed_pref_id, embedding=embedding
+            )
             logger.info(
                 "[inner_monologue] stored thought (seed=%s): %s",
                 self._seed_topic or "free",
@@ -233,6 +236,13 @@ class ThinkingAgent(Agent):
         logger.warning("[inner_monologue] exhausted URL validation retries, using last attempt")
         return report
 
+    async def _embed_and_serialize(self, text: str) -> bytes | None:
+        """Embed text and serialize to bytes for storage."""
+        vec = await embed_text(self._embedding_model_client, text)
+        if vec is None:
+            return None
+        return serialize_embedding(vec)
+
     async def _is_duplicate_thought(self, user: str, report: str) -> bool:
         """Check if report is too similar to a same-scope thought via embedding similarity."""
         if not self._embedding_model_client:
@@ -243,7 +253,7 @@ class ThinkingAgent(Agent):
             return False
         recent = self.db.thoughts.get_recent_by_preference(user, self._seed_pref_id)
         for thought in recent:
-            thought_vec = await embed_text(self._embedding_model_client, thought.content)
+            thought_vec = self._get_thought_embedding(thought)
             if thought_vec is None:
                 continue
             sim = cosine_similarity(report_vec, thought_vec)
@@ -257,6 +267,13 @@ class ThinkingAgent(Agent):
                 )
                 return True
         return False
+
+    @staticmethod
+    def _get_thought_embedding(thought) -> list[float] | None:
+        """Get embedding from a thought, using cached value if available."""
+        if thought.embedding:
+            return deserialize_embedding(thought.embedding)
+        return None
 
     # ── Loop hooks ─────────────────────────────────────────────────────────
 

@@ -19,7 +19,13 @@ class ThoughtStore:
     def _session(self) -> Session:
         return Session(self.engine)
 
-    def add(self, user: str, content: str, preference_id: int | None = None) -> Thought | None:
+    def add(
+        self,
+        user: str,
+        content: str,
+        preference_id: int | None = None,
+        embedding: bytes | None = None,
+    ) -> Thought | None:
         """Append a thought to the log. Returns the created Thought or None."""
         try:
             with self._session() as session:
@@ -27,6 +33,7 @@ class ThoughtStore:
                     user=user,
                     content=content,
                     preference_id=preference_id,
+                    embedding=embedding,
                     created_at=datetime.now(UTC),
                 )
                 session.add(thought)
@@ -151,6 +158,30 @@ class ThoughtStore:
                     logger.debug("Marked thought %d as notified", thought_id)
         except Exception as e:
             logger.error("Failed to mark thought %d as notified: %s", thought_id, e)
+
+    def update_embedding(self, thought_id: int, embedding: bytes) -> None:
+        """Update the embedding for a thought."""
+        try:
+            with self._session() as session:
+                thought = session.get(Thought, thought_id)
+                if thought:
+                    thought.embedding = embedding
+                    session.add(thought)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update thought %d embedding: %s", thought_id, e)
+
+    def get_without_embeddings(self, limit: int = 50) -> list[Thought]:
+        """Get thoughts that don't have embeddings yet, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Thought)
+                    .where(Thought.embedding == None)  # noqa: E711
+                    .order_by(Thought.created_at.desc())
+                    .limit(limit)
+                ).all()
+            )
 
     def count(self, user: str) -> int:
         """Count total thoughts for a user."""
