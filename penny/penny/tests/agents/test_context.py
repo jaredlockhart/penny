@@ -75,6 +75,47 @@ async def test_history_context_labels_today(
 
 
 @pytest.mark.asyncio
+async def test_history_context_skips_daily_covered_by_weekly(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Daily entries within a weekly rollup range are excluded from context."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        # Weekly rollup covering Mar 9-16
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=datetime(2026, 3, 9),
+            period_end=datetime(2026, 3, 16),
+            duration=PennyConstants.HistoryDuration.WEEKLY,
+            topics="- Weekly guitar topics\n- Weekly pedal topics",
+        )
+        # Daily entry INSIDE the weekly range — should be excluded
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=datetime(2026, 3, 10),
+            period_end=datetime(2026, 3, 11),
+            duration=PennyConstants.HistoryDuration.DAILY,
+            topics="- Daily guitar detail",
+        )
+        # Daily entry OUTSIDE the weekly range — should be included
+        penny.db.history.add(
+            user=TEST_SENDER,
+            period_start=datetime(2026, 3, 17),
+            period_end=datetime(2026, 3, 18),
+            duration=PennyConstants.HistoryDuration.DAILY,
+            topics="- Amp shopping",
+        )
+
+        context = penny.chat_agent._history_section(TEST_SENDER)
+        assert context is not None
+        assert "Weekly guitar topics" in context
+        assert "Weekly pedal topics" in context
+        assert "Amp shopping" in context
+        assert "Daily guitar detail" not in context
+
+
+@pytest.mark.asyncio
 async def test_history_context_none_when_no_entries(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
