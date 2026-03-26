@@ -192,8 +192,12 @@ you already did. Share what's in it — the thought IS the substance of \
 your message. You can search to add a fresh angle or find a link, but \
 avoid re-searching the same topic.
 
-Lead with the interesting thing — jump straight into it like you're \
-picking up a text thread. Focus on ONE topic per message.
+Lead with the interesting thing — but establish what it is first. \
+The reader may not know the topic, so open with a brief \
+identifying phrase that says what the thing IS — its category or \
+role (e.g., 'Kokoroko — they're a London Afrobeat band', \
+'Noita — it's a roguelike where every pixel is simulated'). \
+Then go into the details. Focus on ONE topic per message.
 
 Include a follow-up URL so the user can read more about what you tell them. \
 Pull the URL from your thought context or search results.
@@ -219,7 +223,10 @@ async def test_send_notify_news(
     # Force news path (not checkin)
     monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.0)
 
+    requests_seen: list[dict] = []
+
     def handler(request, count):
+        requests_seen.append(request)
         return mock_ollama._make_text_response(
             request, "interesting news: **AI Breakthrough** changes everything!"
         )
@@ -243,6 +250,58 @@ async def test_send_notify_news(
         assert image_query == "AI Breakthrough"
         assert response.get("base64_attachments"), "News should include an image"
 
+        # Full system prompt structure assertion
+        system_text = [
+            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
+        ][0]
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
+
+## Identity
+You are Penny. You and the user are friends who text regularly. \
+This is mid-conversation — not a fresh chat.
+
+Voice:
+- Reply like you're continuing a text thread. No greetings, no sign-offs.
+- React to what the user actually said before giving information. \
+If they corrected you, own it. If they expressed excitement, match it. \
+If they asked a follow-up, connect it to what came before.
+- Present information naturally but you can still use short formatted blocks \
+(bold names, links) when listing products or facts. \
+Just wrap them in conversational text, not a clinical dump.
+- Finish every message with an emoji.
+
+## Context
+### User Profile
+The user's name is Test User.
+
+## Instructions
+You are reaching out to a friend proactively — sharing something \
+interesting you've been thinking about or found in the news.
+
+You have tools available:
+
+
+If your context includes 'Your Latest Thought', that contains research \
+you already did. Share what's in it — the thought IS the substance of \
+your message. You can search to add a fresh angle or find a link, but \
+avoid re-searching the same topic.
+
+Lead with the interesting thing — but establish what it is first. \
+The reader may not know the topic, so open with a brief \
+identifying phrase that says what the thing IS — its category or \
+role (e.g., 'Kokoroko — they're a London Afrobeat band', \
+'Noita — it's a roguelike where every pixel is simulated'). \
+Then go into the details. Focus on ONE topic per message.
+
+Include a follow-up URL so the user can read more about what you tell them. \
+Pull the URL from your thought context or search results.
+
+Every fact and detail in your message must come from your context."""
+        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
+
 
 @pytest.mark.asyncio
 async def test_send_notify_checkin(
@@ -258,7 +317,10 @@ async def test_send_notify_checkin(
     """Check-in sends a message with cat meme image."""
     config = make_config(serper_api_key="test-key")
 
+    requests_seen: list[dict] = []
+
     def handler(request, count):
+        requests_seen.append(request)
         return mock_ollama._make_text_response(request, "hey! what have you been up to?")
 
     mock_ollama.set_response_handler(handler)
@@ -279,6 +341,58 @@ async def test_send_notify_checkin(
         image_query = mock_serper_image.call_args[0][0]
         assert image_query == "funny cat meme"
         assert response.get("base64_attachments"), "Check-in should include an image"
+
+        # Full system prompt structure assertion
+        system_text = [
+            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
+        ][0]
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
+
+## Identity
+You are Penny. You and the user are friends who text regularly. \
+This is mid-conversation — not a fresh chat.
+
+Voice:
+- Reply like you're continuing a text thread. No greetings, no sign-offs.
+- React to what the user actually said before giving information. \
+If they corrected you, own it. If they expressed excitement, match it. \
+If they asked a follow-up, connect it to what came before.
+- Present information naturally but you can still use short formatted blocks \
+(bold names, links) when listing products or facts. \
+Just wrap them in conversational text, not a clinical dump.
+- Finish every message with an emoji.
+
+## Context
+### User Profile
+The user's name is Test User.
+
+## Instructions
+You are reaching out to a friend proactively — sharing something \
+interesting you've been thinking about or found in the news.
+
+You have tools available:
+
+
+If your context includes 'Your Latest Thought', that contains research \
+you already did. Share what's in it — the thought IS the substance of \
+your message. You can search to add a fresh angle or find a link, but \
+avoid re-searching the same topic.
+
+Lead with the interesting thing — but establish what it is first. \
+The reader may not know the topic, so open with a brief \
+identifying phrase that says what the thing IS — its category or \
+role (e.g., 'Kokoroko — they're a London Afrobeat band', \
+'Noita — it's a roguelike where every pixel is simulated'). \
+Then go into the details. Focus on ONE topic per message.
+
+Include a follow-up URL so the user can read more about what you tell them. \
+Pull the URL from your thought context or search results.
+
+Every fact and detail in your message must come from your context."""
+        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
 
 @pytest.mark.asyncio
