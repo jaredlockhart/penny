@@ -186,7 +186,7 @@ class ThinkingAgent(Agent):
         if report and not await self._is_duplicate_thought(user, report):
             title, content = self._parse_title(report)
             content_embedding = await self._embed_and_serialize(content)
-            title_embedding = await self._embed_and_serialize(title) if title else None
+            title_embedding = await self._embed_and_serialize(title.lower()) if title else None
             self.db.thoughts.add(
                 user,
                 content,
@@ -273,7 +273,7 @@ class ThinkingAgent(Agent):
         if not title:
             return False
         title_vec = (
-            await embed_text(self._embedding_model_client, title)
+            await embed_text(self._embedding_model_client, title.lower())
             if self._embedding_model_client
             else None
         )
@@ -284,7 +284,7 @@ class ThinkingAgent(Agent):
             title,
             title_vec,
             existing_items,
-            DedupStrategy.TCR_OR_EMBEDDING,
+            DedupStrategy.TCR_AND_EMBEDDING,
             embedding_threshold=self.config.runtime.THOUGHT_DEDUP_EMBEDDING_THRESHOLD,
             tcr_threshold=self.config.runtime.THOUGHT_DEDUP_TCR_THRESHOLD,
         )
