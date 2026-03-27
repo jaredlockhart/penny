@@ -198,6 +198,68 @@ Every fact and detail in your message must come from your context."""
 
 
 @pytest.mark.asyncio
+async def test_multiple_candidates_scored_by_embedding(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+    mock_serper_image,
+):
+    """Multiple thoughts scored by cached embedding; only winner
+    goes through the model and gets sent."""
+    config = make_config(
+        notify_candidates=3,
+        serper_api_key="test-key",
+        ollama_embedding_model="test-embedding",
+    )
+
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
+
+    mock_ollama.set_response_handler(
+        lambda request, count: mock_ollama._make_text_response(request, "here's something cool!")
+    )
+
+    async with running_penny(config) as penny:
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "hello",
+        )
+
+        # 3 thoughts from different preferences, each with embedding
+        for topic in ["guitar pedals", "prog rock", "space news"]:
+            pref = penny.db.preferences.add(
+                user=TEST_SENDER,
+                content=topic,
+                valence="positive",
+            )
+            penny.db.thoughts.add(
+                TEST_SENDER,
+                f"Finding about {topic}",
+                preference_id=pref.id if pref else None,
+                embedding=b"\x00" * (768 * 4),
+            )
+
+        monkeypatch.setattr(
+            penny.notify_agent,
+            "_should_checkin",
+            lambda user: False,
+        )
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+
+        # Winner was notified, other 2 remain unnotified
+        unnotified = penny.db.thoughts.get_all_unnotified(TEST_SENDER)
+        assert len(unnotified) == 2
+
+
+@pytest.mark.asyncio
 async def test_send_notify_news(
     signal_server,
     mock_ollama,
