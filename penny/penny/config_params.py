@@ -232,9 +232,9 @@ ConfigParam(
 
 ConfigParam(
     key="THOUGHT_DEDUP_EMBEDDING_THRESHOLD",
-    description="Embedding similarity threshold for thought deduplication (0-1)",
+    description="Embedding similarity threshold for thought title deduplication (0-1)",
     type=float,
-    default=0.80,
+    default=0.60,
     validator=_validate_unit_float,
     group=GROUP_INNER_MONOLOGUE,
 )
