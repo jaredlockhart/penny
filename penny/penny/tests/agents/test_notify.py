@@ -249,14 +249,36 @@ async def test_multiple_candidates_scored_by_embedding(
             lambda user: False,
         )
 
+        # Reset counters before the notify flow
+        mock_ollama.requests.clear()
+        mock_ollama.embed_requests.clear()
+
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
         assert result is True
 
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
 
-        # Winner was notified, other 2 remain unnotified
+        # -- Only 1 Ollama chat call (the winner), not 3
+        assert len(mock_ollama.requests) == 1
+
+        # -- 1 embed call: the outgoing message (at send time), not during scoring
+        assert len(mock_ollama.embed_requests) == 1
+
+        # -- Image search was called for the winner
+        mock_serper_image.assert_called_once()
+
+        # -- Notification was sent via Signal
+        msg = signal_server.outgoing_messages[-1]
+        assert msg["message"]
+
+        # -- Winner was notified, other 2 remain unnotified
         unnotified = penny.db.thoughts.get_all_unnotified(TEST_SENDER)
         assert len(unnotified) == 2
+
+        # -- The notified thought is marked in the DB
+        all_thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        notified = [t for t in all_thoughts if t.notified_at is not None]
+        assert len(notified) == 1
 
 
 @pytest.mark.asyncio
