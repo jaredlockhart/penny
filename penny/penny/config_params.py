@@ -240,6 +240,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="THOUGHT_DEDUP_TCR_THRESHOLD",
+    description="Token containment ratio threshold for thought title deduplication",
+    type=float,
+    default=0.6,
+    validator=_validate_unit_float,
+    group=GROUP_INNER_MONOLOGUE,
+)
+
+ConfigParam(
     key="MAX_UNNOTIFIED_THOUGHTS",
     description="Max unnotified thoughts before thinking agent pauses",
     type=int,
