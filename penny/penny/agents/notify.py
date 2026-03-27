@@ -27,7 +27,6 @@ from penny.database.models import Thought
 from penny.ollama.embeddings import deserialize_embedding
 from penny.ollama.similarity import (
     compute_sentiment_score,
-    embed_text,
     load_preference_vectors,
     novelty_score,
 )
@@ -244,9 +243,7 @@ class ThoughtMode(NotificationMode):
         if from_tools:
             return from_tools
         if self._thought:
-            headline = NotifyAgent._extract_first_headline(self._thought.content)
-            if headline:
-                return NotifyAgent._clean_thought_title(headline)
+            return self._thought.content[:300]
         return ""
 
     def prepare(self, agent: NotifyAgent) -> None:
@@ -524,33 +521,20 @@ class NotifyAgent(Agent):
     # ── Thought candidates ────────────────────────────────────────────
 
     async def _send_best_candidate(self, user: str) -> bool:
-        """Generate thought candidates, score, send the best."""
+        """Score thoughts by embedding, then generate and send the best."""
         self._last_tools_unavailable: str | None = None
         n = int(self.config.runtime.NOTIFY_CANDIDATES)
-        candidates = await self._generate_thought_candidates(user, n)
-        if not candidates:
-            if self._last_tools_unavailable:
-                return await self._send_tools_unavailable(user, self._last_tools_unavailable)
+        thoughts = self._get_top_thoughts(user, n)
+        if not thoughts:
             logger.warning("No viable notification candidates for %s", user)
             return False
-        winner = await self._pick_best_candidate(user, candidates)
-        return await self._send_candidate(user, winner)
-
-    async def _generate_thought_candidates(self, user: str, n: int) -> list[NotifyCandidate]:
-        """Generate N thought candidates ranked by preference affinity."""
-        candidates: list[NotifyCandidate] = []
-        thoughts = self._get_top_thoughts(user, n)
-        for i, thought in enumerate(thoughts):
-            candidate = await self._execute_mode(user, ThoughtMode(thought, self.config))
-            if candidate:
-                logger.info(
-                    "Candidate thought %d/%d: %s",
-                    i + 1,
-                    len(thoughts),
-                    candidate.answer[:60],
-                )
-                candidates.append(candidate)
-        return candidates
+        winner = await self._pick_best_thought(user, thoughts)
+        candidate = await self._execute_mode(user, ThoughtMode(winner, self.config))
+        if not candidate:
+            if self._last_tools_unavailable:
+                return await self._send_tools_unavailable(user, self._last_tools_unavailable)
+            return False
+        return await self._send_candidate(user, candidate)
 
     def _get_top_thoughts(self, user: str, n: int) -> list[Thought]:
         """Select diverse unnotified thoughts with per-topic 24h cooldown.
@@ -661,45 +645,12 @@ class NotifyAgent(Agent):
         match = cls._BOLD_PATTERN.search(text)
         return match.group(1) if match else None
 
-    # Prefixes the model adds that aren't useful for image search
-    _TITLE_STRIP_PREFIXES = (
-        "here is something interesting i learned about ",
-        "here is something interesting i learned",
-        "detailed briefing: ",
-        "discovery brief: ",
-        "briefing: ",
-        "research report: ",
-        "deep-dive report: ",
-    )
-
-    @classmethod
-    def _is_generic_title(cls, title: str) -> bool:
-        """Check if a thought title is too generic for image search."""
-        cleaned = cls._clean_thought_title(title)
-        return not cleaned
-
-    @classmethod
-    def _clean_thought_title(cls, title: str) -> str:
-        """Strip generic prefixes from thought title for image search."""
-        normalized = title.strip()
-        lower = normalized.lower()
-        for prefix in cls._TITLE_STRIP_PREFIXES:
-            if lower.startswith(prefix):
-                normalized = normalized[len(prefix) :].strip()
-                break
-        # Reject if nothing meaningful remains
-        if not normalized or normalized.lower() == "title":
-            return ""
-        return normalized
-
     # ── Candidate scoring ─────────────────────────────────────────────
 
-    async def _pick_best_candidate(
-        self, user: str, candidates: list[NotifyCandidate]
-    ) -> NotifyCandidate:
-        """Score candidates on novelty + sentiment and return the best."""
-        if len(candidates) == 1 or not self._embedding_model_client:
-            return candidates[0]
+    async def _pick_best_thought(self, user: str, thoughts: list[Thought]) -> Thought:
+        """Score thoughts on novelty + sentiment using cached embeddings."""
+        if len(thoughts) == 1 or not self._embedding_model_client:
+            return thoughts[0]
 
         recent_vecs = await self._embed_recent_messages(user)
         likes, dislikes = load_preference_vectors(
@@ -707,33 +658,33 @@ class NotifyAgent(Agent):
             PennyConstants.PreferenceValence.POSITIVE,
             PennyConstants.PreferenceValence.NEGATIVE,
         )
-        raw_scores = await self._compute_raw_scores(candidates, recent_vecs, likes, dislikes)
+        raw_scores = self._score_thoughts(thoughts, recent_vecs, likes, dislikes)
         if not raw_scores:
-            return candidates[0]
+            return thoughts[0]
         return self._select_best(raw_scores)
 
-    async def _compute_raw_scores(
-        self,
-        candidates: list[NotifyCandidate],
+    @staticmethod
+    def _score_thoughts(
+        thoughts: list[Thought],
         recent_vecs: list[list[float]],
         likes: list[list[float]],
         dislikes: list[list[float]],
-    ) -> list[tuple[NotifyCandidate, float, float]]:
-        """Compute raw novelty and sentiment for each candidate."""
-        results: list[tuple[NotifyCandidate, float, float]] = []
-        for candidate in candidates:
-            vec = await embed_text(self._embedding_model_client, candidate.answer)
-            if vec is None:
+    ) -> list[tuple[Thought, float, float]]:
+        """Score thoughts using cached embeddings. Skips thoughts without embeddings."""
+        results: list[tuple[Thought, float, float]] = []
+        for thought in thoughts:
+            if not thought.embedding:
                 continue
-            novelty = novelty_score(vec, recent_vecs)
-            sentiment = compute_sentiment_score(vec, likes, dislikes)
-            results.append((candidate, novelty, sentiment))
+            vec = deserialize_embedding(thought.embedding)
+            nov = novelty_score(vec, recent_vecs)
+            sent = compute_sentiment_score(vec, likes, dislikes)
+            results.append((thought, nov, sent))
         return results
 
     def _select_best(
         self,
-        raw_scores: list[tuple[NotifyCandidate, float, float]],
-    ) -> NotifyCandidate:
+        raw_scores: list[tuple],
+    ):
         """Normalize novelty and sentiment to [0,1], apply weights, pick best."""
         novelties = [n for _, n, _ in raw_scores]
         sentiments = [s for _, _, s in raw_scores]
@@ -755,7 +706,7 @@ class NotifyAgent(Agent):
                 score,
                 norm_novelty,
                 norm_sentiment,
-                candidate.answer[:60],
+                (getattr(candidate, "content", "") or getattr(candidate, "answer", ""))[:60],
             )
             if score > best_score:
                 best_score = score
