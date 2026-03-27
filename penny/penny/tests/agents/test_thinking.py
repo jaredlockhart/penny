@@ -28,7 +28,8 @@ MOCK_REPORT = (
     "improved training techniques, and expanded deployment across industries. Key findings "
     "show significant progress in reasoning capabilities, multimodal understanding, and "
     "efficient inference. Several major organizations announced new initiatives in open "
-    "source AI development and safety research during the past quarter."
+    "source AI development and safety research during the past quarter.\n\n"
+    "Topic: AI model architecture advances 2026"
 )
 
 
@@ -202,6 +203,8 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert stored[0].preference_id == 1
         assert "Found interesting" not in stored[0].content  # raw monologue not stored
         assert stored[0].embedding is not None, "Thought should have cached embedding"
+        assert stored[0].title == "AI model architecture advances 2026"
+        assert "Topic:" not in stored[0].content, "Topic line should be stripped"
 
         # -- Preference marked as thought-about
         pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER)

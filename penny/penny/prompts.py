@@ -165,7 +165,10 @@ Examples:
         "summarize it away. Include at least one reference URL from the "
         "search results so the reader can follow up.\n\n"
         "Every fact must come from the search results above. "
-        "Keep it under 300 words. Finish with an emoji. "
+        "Keep it under 300 words. Finish with an emoji.\n\n"
+        "On the very last line, write 'Topic: ' followed by a short name "
+        "for the main subject (e.g., 'Topic: Tubesteader Beekeeper pedal'). "
+        "This line is for internal use and will be stripped before sending.\n\n"
         "If nothing noteworthy was found, say so briefly."
     )
 

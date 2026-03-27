@@ -130,7 +130,8 @@ class Thought(SQLModel, table=True):
     preference_id: int | None = Field(default=None, foreign_key="preference.id", index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     notified_at: datetime | None = None  # When this thought was shared with the user
-    embedding: bytes | None = None  # Serialized float32 embedding vector
+    embedding: bytes | None = None  # Serialized float32 embedding vector (of title)
+    title: str | None = None  # Short topic name for dedup and image search
 
 
 class Preference(SQLModel, table=True):
