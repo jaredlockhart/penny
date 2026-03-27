@@ -243,7 +243,7 @@ class ThoughtMode(NotificationMode):
         if from_tools:
             return from_tools
         if self._thought:
-            return self._thought.content[:300]
+            return self._thought.title or self._thought.content[:300]
         return ""
 
     def prepare(self, agent: NotifyAgent) -> None:

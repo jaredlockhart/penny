@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from typing import Any
+
+from similarity.dedup import DedupStrategy, is_embedding_duplicate
 
 from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
 from penny.constants import PennyConstants
-from penny.ollama.embeddings import cosine_similarity, deserialize_embedding, serialize_embedding
+from penny.ollama.embeddings import serialize_embedding
 from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 
@@ -181,14 +184,22 @@ class ThinkingAgent(Agent):
             )
             report = ""
         if report and not await self._is_duplicate_thought(user, report):
-            embedding = await self._embed_and_serialize(report)
+            title, content = self._parse_title(report)
+            content_embedding = await self._embed_and_serialize(content)
+            title_embedding = await self._embed_and_serialize(title) if title else None
             self.db.thoughts.add(
-                user, report, preference_id=self._seed_pref_id, embedding=embedding
+                user,
+                content,
+                preference_id=self._seed_pref_id,
+                embedding=content_embedding,
+                title=title,
+                title_embedding=title_embedding,
             )
             logger.info(
-                "[inner_monologue] stored thought (seed=%s): %s",
+                "[inner_monologue] stored thought (seed=%s, title=%s): %s",
                 self._seed_topic or "free",
-                report[:200],
+                title or "none",
+                content[:200],
             )
         elif report:
             logger.info(
@@ -243,37 +254,50 @@ class ThinkingAgent(Agent):
             return None
         return serialize_embedding(vec)
 
-    async def _is_duplicate_thought(self, user: str, report: str) -> bool:
-        """Check if report is too similar to a same-scope thought via embedding similarity."""
-        if not self._embedding_model_client:
-            return False
-        threshold = float(self.config.runtime.THOUGHT_DEDUP_EMBEDDING_THRESHOLD)
-        report_vec = await embed_text(self._embedding_model_client, report)
-        if report_vec is None:
-            return False
-        recent = self.db.thoughts.get_recent_by_preference(user, self._seed_pref_id)
-        for thought in recent:
-            thought_vec = self._get_thought_embedding(thought)
-            if thought_vec is None:
-                continue
-            sim = cosine_similarity(report_vec, thought_vec)
-            if sim >= threshold:
-                logger.info(
-                    "[inner_monologue] sim=%.3f >= %.2f vs thought #%s (pref #%s)",
-                    sim,
-                    threshold,
-                    thought.id,
-                    self._seed_pref_id,
-                )
-                return True
-        return False
+    # Pattern to match "Topic: <title>" on the last line
+    _TOPIC_LINE_PATTERN = re.compile(r"\n?Topic:\s*(.+?)\s*$")
 
-    @staticmethod
-    def _get_thought_embedding(thought) -> list[float] | None:
-        """Get embedding from a thought, using cached value if available."""
-        if thought.embedding:
-            return deserialize_embedding(thought.embedding)
-        return None
+    @classmethod
+    def _parse_title(cls, report: str) -> tuple[str | None, str]:
+        """Extract 'Topic: ...' from the last line, return (title, content)."""
+        match = cls._TOPIC_LINE_PATTERN.search(report)
+        if not match:
+            return None, report
+        title = match.group(1).strip()
+        content = report[: match.start()].rstrip()
+        return title, content
+
+    async def _is_duplicate_thought(self, user: str, report: str) -> bool:
+        """Check if report title duplicates any existing thought title."""
+        title, _ = self._parse_title(report)
+        if not title:
+            return False
+        title_vec = (
+            await embed_text(self._embedding_model_client, title)
+            if self._embedding_model_client
+            else None
+        )
+        existing_items: list[tuple[str, bytes | None]] = [
+            (t.title, t.title_embedding) for t in self.db.thoughts.get_recent(user) if t.title
+        ]
+        match_idx = is_embedding_duplicate(
+            title,
+            title_vec,
+            existing_items,
+            DedupStrategy.TCR_OR_EMBEDDING,
+            embedding_threshold=self.config.runtime.THOUGHT_DEDUP_EMBEDDING_THRESHOLD,
+            tcr_threshold=self.config.runtime.THOUGHT_DEDUP_TCR_THRESHOLD,
+        )
+        if match_idx is not None:
+            matched_title = existing_items[match_idx][0]
+            logger.info(
+                "[inner_monologue] duplicate title %r matches %r (pref #%s)",
+                title,
+                matched_title,
+                self._seed_pref_id,
+            )
+            return True
+        return False
 
     # ── Loop hooks ─────────────────────────────────────────────────────────
 
