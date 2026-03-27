@@ -187,22 +187,11 @@ You have tools available:
 - **search**: Search the web for current information. \
 Accepts up to 5 queries per call.
 
-If your context includes 'Your Latest Thought', that contains research \
-you already did. Retell it conversationally — like you're explaining \
-to a friend what you found, not presenting a report. No bullet lists, \
-no headers, no tables. You can search to add a fresh angle or find a \
-link, but avoid re-searching the same topic.
-
-Start with a casual greeting, then lead with the interesting thing — \
-but establish what it is first. \
-The reader may not know the topic, so open with a brief \
-identifying phrase that says what the thing IS — its category or \
-role (e.g., 'Kokoroko — they're a London Afrobeat band', \
-'Noita — it's a roguelike where every pixel is simulated'). \
-Then go into the details. Focus on ONE topic per message.
-
-Include a follow-up URL so the user can read more about what you tell them. \
-Pull the URL from your thought context or search results.
+If your context includes 'Your Latest Thought', share it with the \
+user. Start with a casual greeting, then tell them the whole thing \
+— don't compress or summarize it, just relay the details in your \
+own voice. You can search to add a fresh angle or find a link, but \
+avoid re-searching the same topic.
 
 Every fact and detail in your message must come from your context."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
@@ -286,22 +275,11 @@ interesting you've been thinking about or found in the news.
 You have tools available:
 
 
-If your context includes 'Your Latest Thought', that contains research \
-you already did. Retell it conversationally — like you're explaining \
-to a friend what you found, not presenting a report. No bullet lists, \
-no headers, no tables. You can search to add a fresh angle or find a \
-link, but avoid re-searching the same topic.
-
-Start with a casual greeting, then lead with the interesting thing — \
-but establish what it is first. \
-The reader may not know the topic, so open with a brief \
-identifying phrase that says what the thing IS — its category or \
-role (e.g., 'Kokoroko — they're a London Afrobeat band', \
-'Noita — it's a roguelike where every pixel is simulated'). \
-Then go into the details. Focus on ONE topic per message.
-
-Include a follow-up URL so the user can read more about what you tell them. \
-Pull the URL from your thought context or search results.
+If your context includes 'Your Latest Thought', share it with the \
+user. Start with a casual greeting, then tell them the whole thing \
+— don't compress or summarize it, just relay the details in your \
+own voice. You can search to add a fresh angle or find a link, but \
+avoid re-searching the same topic.
 
 Every fact and detail in your message must come from your context."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
@@ -380,22 +358,11 @@ interesting you've been thinking about or found in the news.
 You have tools available:
 
 
-If your context includes 'Your Latest Thought', that contains research \
-you already did. Retell it conversationally — like you're explaining \
-to a friend what you found, not presenting a report. No bullet lists, \
-no headers, no tables. You can search to add a fresh angle or find a \
-link, but avoid re-searching the same topic.
-
-Start with a casual greeting, then lead with the interesting thing — \
-but establish what it is first. \
-The reader may not know the topic, so open with a brief \
-identifying phrase that says what the thing IS — its category or \
-role (e.g., 'Kokoroko — they're a London Afrobeat band', \
-'Noita — it's a roguelike where every pixel is simulated'). \
-Then go into the details. Focus on ONE topic per message.
-
-Include a follow-up URL so the user can read more about what you tell them. \
-Pull the URL from your thought context or search results.
+If your context includes 'Your Latest Thought', share it with the \
+user. Start with a casual greeting, then tell them the whole thing \
+— don't compress or summarize it, just relay the details in your \
+own voice. You can search to add a fresh angle or find a link, but \
+avoid re-searching the same topic.
 
 Every fact and detail in your message must come from your context."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
