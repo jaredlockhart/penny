@@ -453,7 +453,7 @@ Every fact and detail in your message must come from your context."""
 
 
 @pytest.mark.asyncio
-async def test_image_uses_content_when_no_image_prompt(
+async def test_image_uses_thought_content_for_search(
     signal_server,
     mock_ollama,
     make_config,
@@ -476,12 +476,12 @@ async def test_image_uses_content_when_no_image_prompt(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # ── Case 1: thought with bold title — title used as image query ──
         penny.db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
         )
         penny.db.thoughts.add(
-            TEST_SENDER, "**Bad Cat Era 30 – A Hand-Wired EL84 Head**\n\nDetails here..."
+            TEST_SENDER,
+            "Hey! I just found the Bad Cat Era 30, a hand-wired EL84 head.",
         )
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
         monkeypatch.setattr(penny.notify_agent, "_cooldown_elapsed", lambda user: True)
@@ -491,33 +491,10 @@ async def test_image_uses_content_when_no_image_prompt(
 
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
 
+        # Image search uses first N chars of thought content
         mock_serper_image.assert_called_once()
         image_query = mock_serper_image.call_args[0][0]
         assert "Bad Cat Era 30" in image_query
-        assert "nitrous" not in image_query.lower()
-
-        # ── Case 2: thought without bold title — falls back to content ──
-        mock_serper_image.reset_mock()
-        initial_count = len(signal_server.outgoing_messages)
-
-        # Use a different preference_id to avoid topic cooldown from case 1
-        pref = penny.db.preferences.add(
-            user=TEST_SENDER, content="atmospheric science", valence="positive"
-        )
-        penny.db.thoughts.add(
-            TEST_SENDER,
-            "Thinking about atmospheric chemistry",
-            preference_id=pref.id if pref else None,
-        )
-
-        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
-        assert result is True
-
-        await wait_until(lambda: len(signal_server.outgoing_messages) > initial_count)
-
-        mock_serper_image.assert_called_once()
-        image_query = mock_serper_image.call_args[0][0]
-        assert "nitrous" in image_query.lower()
         assert len(image_query) <= 300
 
 

@@ -243,9 +243,7 @@ class ThoughtMode(NotificationMode):
         if from_tools:
             return from_tools
         if self._thought:
-            headline = NotifyAgent._extract_first_headline(self._thought.content)
-            if headline:
-                return NotifyAgent._clean_thought_title(headline)
+            return self._thought.content[:300]
         return ""
 
     def prepare(self, agent: NotifyAgent) -> None:
@@ -646,37 +644,6 @@ class NotifyAgent(Agent):
         """Extract the first bold headline from response text for image search."""
         match = cls._BOLD_PATTERN.search(text)
         return match.group(1) if match else None
-
-    # Prefixes the model adds that aren't useful for image search
-    _TITLE_STRIP_PREFIXES = (
-        "here is something interesting i learned about ",
-        "here is something interesting i learned",
-        "detailed briefing: ",
-        "discovery brief: ",
-        "briefing: ",
-        "research report: ",
-        "deep-dive report: ",
-    )
-
-    @classmethod
-    def _is_generic_title(cls, title: str) -> bool:
-        """Check if a thought title is too generic for image search."""
-        cleaned = cls._clean_thought_title(title)
-        return not cleaned
-
-    @classmethod
-    def _clean_thought_title(cls, title: str) -> str:
-        """Strip generic prefixes from thought title for image search."""
-        normalized = title.strip()
-        lower = normalized.lower()
-        for prefix in cls._TITLE_STRIP_PREFIXES:
-            if lower.startswith(prefix):
-                normalized = normalized[len(prefix) :].strip()
-                break
-        # Reject if nothing meaningful remains
-        if not normalized or normalized.lower() == "title":
-            return ""
-        return normalized
 
     # ── Candidate scoring ─────────────────────────────────────────────
 
