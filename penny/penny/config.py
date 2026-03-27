@@ -100,6 +100,9 @@ def _collect_env_vars(channel_type: str) -> dict:
         "zoho_api_secret": os.getenv("ZOHO_API_SECRET"),
         "zoho_refresh_token": os.getenv("ZOHO_REFRESH_TOKEN"),
         "news_api_key": os.getenv("NEWS_API_KEY"),
+        "browser_enabled": os.getenv("BROWSER_ENABLED", "").lower() in ("1", "true", "yes"),
+        "browser_host": os.getenv("BROWSER_HOST", "localhost"),
+        "browser_port": int(os.getenv("BROWSER_PORT", "9090")),
     }
 
 
@@ -177,6 +180,11 @@ class Config:
 
     # News API configuration (optional, enables news search tool for agents)
     news_api_key: str | None = None
+
+    # Browser extension server (runs alongside primary channel)
+    browser_enabled: bool = False
+    browser_host: str = "localhost"
+    browser_port: int = 9090
 
     # Runtime-configurable params (DB override → env override → default)
     runtime: RuntimeParams = field(default_factory=RuntimeParams)

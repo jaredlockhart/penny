@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "dev": "web-ext run --firefox=/Applications/Firefox.app/Contents/MacOS/firefox --firefox-profile=default-release --keep-profile-changes --source-dir=."
+  },
+  "devDependencies": {
+    "web-ext": "^8.4.0"
+  }
+}

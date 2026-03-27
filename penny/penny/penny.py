@@ -52,6 +52,7 @@ class Penny:
         self._init_agents(config)
         self._init_commands(config)
         self._init_channel(config, channel)
+        self._init_browser_server(config)
         self._init_scheduler(config)
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -271,6 +272,19 @@ class Penny:
         self.schedule_executor.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
 
+    def _init_browser_server(self, config: Config) -> None:
+        """Start browser extension WebSocket server if enabled."""
+        if not config.browser_enabled:
+            self._browser_server = None
+            return
+        from penny.channels.browser import BrowserServer
+
+        self._browser_server = BrowserServer(
+            host=config.browser_host,
+            port=config.browser_port,
+        )
+        logger.info("Browser extension server enabled on port %d", config.browser_port)
+
     def _init_scheduler(self, config: Config) -> None:
         """Create background scheduler with prioritized schedules."""
         schedules: list[Schedule] = [
@@ -447,10 +461,10 @@ class Penny:
         await self._prompt_for_missing_profiles()
 
         try:
-            await asyncio.gather(
-                self.channel.listen(),
-                self.scheduler.run(),
-            )
+            tasks = [self.channel.listen(), self.scheduler.run()]
+            if self._browser_server:
+                tasks.append(self._browser_server.start())
+            await asyncio.gather(*tasks)
         finally:
             await self.shutdown()
 
@@ -507,6 +521,8 @@ class Penny:
         logger.info("Shutting down agent...")
         self.scheduler.stop()
         await self.channel.close()
+        if self._browser_server:
+            await self._browser_server.close()
         await Agent.close_all()
         await self.model_client.close()
         if self.vision_model_client:
