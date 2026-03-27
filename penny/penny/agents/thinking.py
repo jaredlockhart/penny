@@ -185,13 +185,15 @@ class ThinkingAgent(Agent):
             report = ""
         if report and not await self._is_duplicate_thought(user, report):
             title, content = self._parse_title(report)
-            embedding = await self._embed_and_serialize(title) if title else None
+            content_embedding = await self._embed_and_serialize(content)
+            title_embedding = await self._embed_and_serialize(title) if title else None
             self.db.thoughts.add(
                 user,
                 content,
                 preference_id=self._seed_pref_id,
-                embedding=embedding,
+                embedding=content_embedding,
                 title=title,
+                title_embedding=title_embedding,
             )
             logger.info(
                 "[inner_monologue] stored thought (seed=%s, title=%s): %s",
@@ -276,7 +278,7 @@ class ThinkingAgent(Agent):
             else None
         )
         existing_items: list[tuple[str, bytes | None]] = [
-            (t.title, t.embedding) for t in self.db.thoughts.get_recent(user) if t.title
+            (t.title, t.title_embedding) for t in self.db.thoughts.get_recent(user) if t.title
         ]
         match_idx = is_embedding_duplicate(
             title,

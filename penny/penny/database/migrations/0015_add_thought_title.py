@@ -1,4 +1,4 @@
-"""Add title column to thought table for dedup and image search."""
+"""Add title and title_embedding columns to thought table."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import sqlite3
 
 
 def up(conn: sqlite3.Connection) -> None:
-    """Add title column to thought table."""
+    """Add title and title_embedding columns to thought table."""
     tables = [
         row[0]
         for row in conn.execute(
@@ -19,4 +19,6 @@ def up(conn: sqlite3.Connection) -> None:
     columns = [row[1] for row in conn.execute("PRAGMA table_info(thought)").fetchall()]
     if "title" not in columns:
         conn.execute("ALTER TABLE thought ADD COLUMN title TEXT")
+    if "title_embedding" not in columns:
+        conn.execute("ALTER TABLE thought ADD COLUMN title_embedding BLOB")
     conn.commit()
