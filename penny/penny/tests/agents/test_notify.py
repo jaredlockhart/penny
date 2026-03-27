@@ -198,6 +198,90 @@ Every fact and detail in your message must come from your context."""
 
 
 @pytest.mark.asyncio
+async def test_multiple_candidates_scored_by_embedding(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+    mock_serper_image,
+):
+    """Multiple thoughts scored by cached embedding; only winner
+    goes through the model and gets sent."""
+    config = make_config(
+        notify_candidates=3,
+        serper_api_key="test-key",
+        ollama_embedding_model="test-embedding",
+    )
+
+    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
+
+    mock_ollama.set_response_handler(
+        lambda request, count: mock_ollama._make_text_response(request, "here's something cool!")
+    )
+
+    async with running_penny(config) as penny:
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "hello",
+        )
+
+        # 3 thoughts from different preferences, each with embedding
+        for topic in ["guitar pedals", "prog rock", "space news"]:
+            pref = penny.db.preferences.add(
+                user=TEST_SENDER,
+                content=topic,
+                valence="positive",
+            )
+            penny.db.thoughts.add(
+                TEST_SENDER,
+                f"Finding about {topic}",
+                preference_id=pref.id if pref else None,
+                embedding=b"\x00" * (768 * 4),
+            )
+
+        monkeypatch.setattr(
+            penny.notify_agent,
+            "_should_checkin",
+            lambda user: False,
+        )
+
+        # Reset counters before the notify flow
+        mock_ollama.requests.clear()
+        mock_ollama.embed_requests.clear()
+
+        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+
+        # -- Only 1 Ollama chat call (the winner), not 3
+        assert len(mock_ollama.requests) == 1
+
+        # -- 1 embed call: the outgoing message (at send time), not during scoring
+        assert len(mock_ollama.embed_requests) == 1
+
+        # -- Image search was called for the winner
+        mock_serper_image.assert_called_once()
+
+        # -- Notification was sent via Signal
+        msg = signal_server.outgoing_messages[-1]
+        assert msg["message"]
+
+        # -- Winner was notified, other 2 remain unnotified
+        unnotified = penny.db.thoughts.get_all_unnotified(TEST_SENDER)
+        assert len(unnotified) == 2
+
+        # -- The notified thought is marked in the DB
+        all_thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        notified = [t for t in all_thoughts if t.notified_at is not None]
+        assert len(notified) == 1
+
+
+@pytest.mark.asyncio
 async def test_send_notify_news(
     signal_server,
     mock_ollama,
@@ -369,7 +453,7 @@ Every fact and detail in your message must come from your context."""
 
 
 @pytest.mark.asyncio
-async def test_image_uses_content_when_no_image_prompt(
+async def test_image_uses_thought_content_for_search(
     signal_server,
     mock_ollama,
     make_config,
@@ -392,12 +476,12 @@ async def test_image_uses_content_when_no_image_prompt(
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # ── Case 1: thought with bold title — title used as image query ──
         penny.db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
         )
         penny.db.thoughts.add(
-            TEST_SENDER, "**Bad Cat Era 30 – A Hand-Wired EL84 Head**\n\nDetails here..."
+            TEST_SENDER,
+            "Hey! I just found the Bad Cat Era 30, a hand-wired EL84 head.",
         )
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
         monkeypatch.setattr(penny.notify_agent, "_cooldown_elapsed", lambda user: True)
@@ -407,33 +491,10 @@ async def test_image_uses_content_when_no_image_prompt(
 
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
 
+        # Image search uses first N chars of thought content
         mock_serper_image.assert_called_once()
         image_query = mock_serper_image.call_args[0][0]
         assert "Bad Cat Era 30" in image_query
-        assert "nitrous" not in image_query.lower()
-
-        # ── Case 2: thought without bold title — falls back to content ──
-        mock_serper_image.reset_mock()
-        initial_count = len(signal_server.outgoing_messages)
-
-        # Use a different preference_id to avoid topic cooldown from case 1
-        pref = penny.db.preferences.add(
-            user=TEST_SENDER, content="atmospheric science", valence="positive"
-        )
-        penny.db.thoughts.add(
-            TEST_SENDER,
-            "Thinking about atmospheric chemistry",
-            preference_id=pref.id if pref else None,
-        )
-
-        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
-        assert result is True
-
-        await wait_until(lambda: len(signal_server.outgoing_messages) > initial_count)
-
-        mock_serper_image.assert_called_once()
-        image_query = mock_serper_image.call_args[0][0]
-        assert "nitrous" in image_query.lower()
         assert len(image_query) <= 300
 
 
