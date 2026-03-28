@@ -148,10 +148,13 @@ function updatePageContextBar(
     return;
   }
 
+  const urlChanged = bar.dataset.url !== url;
   titleEl.textContent = title;
   faviconEl.src = favicon || "";
   bar.dataset.url = url;
-  toggle.checked = true;
+  if (urlChanged) {
+    toggle.checked = true;
+  }
   bar.classList.remove("hidden");
 }
 
