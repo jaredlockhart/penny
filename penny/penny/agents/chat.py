@@ -10,6 +10,7 @@ import logging
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
+from penny.channels.base import PageContext
 from penny.constants import PennyConstants
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -50,7 +51,7 @@ class ChatAgent(Agent):
         content: str,
         sender: str,
         images: list[str] | None = None,
-        page_context: dict | None = None,
+        page_context: PageContext | None = None,
     ) -> ControllerResponse:
         """Handle an incoming message — summary method.
 
@@ -103,15 +104,14 @@ class ChatAgent(Agent):
         return messages
 
     @staticmethod
-    def _inject_page_context(messages: list[dict], page_context: dict) -> None:
+    def _inject_page_context(messages: list[dict], page_context: PageContext) -> None:
         """Inject a synthetic browse_url tool call + result after the user prompt."""
-        title = page_context.get("title", "")
-        url = page_context.get("url", "")
-        text = page_context.get("text", "")
-        if not text:
+        if not page_context.text:
             return
 
-        page_content = f"Title: {title}\nURL: {url}\n\n{text}"
+        page_content = (
+            f"Title: {page_context.title}\nURL: {page_context.url}\n\n{page_context.text}"
+        )
 
         # Assistant "called" browse_url for the current page
         messages.append(
@@ -122,7 +122,7 @@ class ChatAgent(Agent):
                     {
                         "function": {
                             "name": "browse_url",
-                            "arguments": {"url": url},
+                            "arguments": {"url": page_context.url},
                         },
                     }
                 ],
@@ -163,14 +163,10 @@ class ChatAgent(Agent):
 
     def _page_hint_section(self) -> str | None:
         """Minimal hint about what page the user is currently viewing."""
-        ctx = self._pending_page_context
-        if not ctx:
+        context = self._pending_page_context
+        if not context or not context.url:
             return None
-        title = ctx.get("title", "")
-        url = ctx.get("url", "")
-        if not url:
-            return None
-        return f"### Current Browser Page\n{title}\n{url}"
+        return f"### Current Browser Page\n{context.title}\n{context.url}"
 
     def _thought_section(self, sender: str) -> str | None:
         """Build thought context — only thoughts Penny has shared with the user.

@@ -26,6 +26,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class PageContext(BaseModel):
+    """The page the user is currently viewing in the browser."""
+
+    title: str = ""
+    url: str = ""
+    text: str = ""
+
+
 class IncomingMessage(BaseModel):
     """A message received from any channel."""
 
@@ -38,7 +46,7 @@ class IncomingMessage(BaseModel):
     is_reaction: bool = False  # True if this is a reaction message
     reacted_to_external_id: str | None = None  # External ID of message being reacted to
     images: list[str] = Field(default_factory=list)  # Base64-encoded image data
-    page_context: dict | None = None  # Current page the user is viewing (browser only)
+    page_context: PageContext | None = None  # Current page the user is viewing (browser only)
 
 
 class MessageChannel(ABC):

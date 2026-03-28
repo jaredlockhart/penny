@@ -263,7 +263,7 @@ class BrowserChannel(MessageChannel):
 
         envelope: dict = {"browser_sender": device_label, "content": msg.content}
         if msg.page_context:
-            envelope["page_context"] = msg.page_context.model_dump()
+            envelope["page_context"] = msg.page_context
         asyncio.create_task(self.handle_message(envelope))
         return device_label
 

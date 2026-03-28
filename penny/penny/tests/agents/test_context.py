@@ -394,12 +394,13 @@ def test_compute_sentiment_score_no_preferences():
 def test_page_context_injected_as_synthetic_tool_call():
     """Page context is injected as a browse_url tool call + result in messages."""
     from penny.agents.chat import ChatAgent
+    from penny.channels.base import PageContext
 
-    page_context = {
-        "title": "Example Product Page",
-        "url": "https://example.com/product",
-        "text": "This is a great product that costs $49.99",
-    }
+    page_context = PageContext(
+        title="Example Product Page",
+        url="https://example.com/product",
+        text="This is a great product that costs $49.99",
+    )
     messages: list[dict] = [
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "what is this page?"},
@@ -421,22 +422,23 @@ def test_page_context_injected_as_synthetic_tool_call():
 
 
 def test_page_context_not_injected_when_empty():
-    """No injection when page context is None or has no text."""
+    """No injection when page context has no text."""
     from penny.agents.chat import ChatAgent
+    from penny.channels.base import PageContext
 
     messages: list[dict] = [{"role": "user", "content": "hi"}]
-    ChatAgent._inject_page_context(messages, {"title": "T", "url": "U", "text": ""})
+    ChatAgent._inject_page_context(messages, PageContext(title="T", url="U", text=""))
     assert len(messages) == 1  # unchanged
 
 
 def test_page_hint_in_system_prompt():
     """System prompt includes a minimal page hint with title and URL."""
     from penny.agents.chat import ChatAgent
+    from penny.channels.base import PageContext
 
-    ctx = {"title": "Cool Article", "url": "https://example.com/article", "text": "content"}
-    # _page_hint_section uses self._pending_page_context
+    context = PageContext(title="Cool Article", url="https://example.com/article", text="content")
     agent = ChatAgent.__new__(ChatAgent)
-    agent._pending_page_context = ctx
+    agent._pending_page_context = context
     hint = agent._page_hint_section()
     assert hint is not None
     assert "Cool Article" in hint
