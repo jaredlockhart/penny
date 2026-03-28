@@ -26,50 +26,119 @@ The extension does NOT replace the current Penny architecture. It extends it.
      │               │     │                      │
      │ Chat (phone,  │     │ Chat (sidebar)       │
      │  laptop, etc) │     │ Browser tools        │
-     │               │     │ History reading       │
-     └───────────────┘     │ Feed page            │
+     │               │     │ Active tab context   │
+     └───────────────┘     │ History reading       │
+                           │ Feed page            │
                            └──────────────────────┘
 ```
 
 - **Penny server** stays where it is: model, store, thinking loop, scheduler, all on the Mac
 - **Signal channel** stays as-is: talk to Penny from any device
 - **Browser channel** is additive: a Firefox extension that connects via WebSocket, providing chat + browser capabilities
-- **Multiple browsers** can connect: PC (always-on), MacBook (intermittent), etc. Each is a channel instance with a liveness state
+- **Multiple browsers** can connect: PC (always-on), MacBook (intermittent), etc. Each is a device in the device table with a user-chosen label
+- **Shared history**: all messages appear in the same conversation history regardless of channel — ask on Signal, follow up on browser, full continuity
+
+## Multi-Channel Architecture (implemented)
+
+Penny uses a ChannelManager that implements the MessageChannel interface as a routing proxy. All agents, scheduler, and commands interact with the manager — they don't know which channel they're talking to.
+
+- **Device table**: each connection point (Signal phone, browser instance) is a device with a unique identifier and label
+- **Single-user model**: Penny is a personal assistant for one person. All devices map to the same user via `UserInfo`. Background agents use `get_primary_sender()` from UserInfo, not sender strings from MessageLog
+- **Reply routing**: `message.sender` (device identifier) routes replies to the correct channel. `_resolve_user_sender()` maps any device to the canonical user identity for DB lookups
+- **Device registration**: Signal device seeded at startup. Browser devices auto-register on first message. Sidebar prompts for a device label on first open
 
 ## What the Extension Adds
 
 The browser gives Penny capabilities she can't have through APIs alone:
 
-- **Direct web browsing**: open pages, read full DOM, follow links, parse structured data
+- **Direct web browsing**: open pages in hidden tabs with full rendering engine + user session, extract content with Defuddle
+- **Active tab context**: automatically extract the page the user is currently viewing and inject it into the chat context so the user can ask questions about any page
 - **YouTube/video discovery**: see thumbnails, durations, view counts, comments, transcripts
 - **Price tracking**: revisit URLs and detect changes (price drops, back-in-stock)
-- **Rich media extraction**: preview images, Open Graph data, JSON-LD structured data
+- **Rich media extraction**: og:image, Open Graph data, JSON-LD structured data
 - **Browsing history as preferences**: passive preference extraction from what the user actually does, not just what they say
-- **Contextual awareness**: see what the user is currently browsing, offer relevant information
 - **Social/forum monitoring**: check Reddit threads, forums, Discord channels for interesting discussions
 - **Feed page**: a browsable web page of Penny's discoveries, richer than Signal text notifications
 
-## Extension Components
+## Extension Components (implemented)
 
-The extension itself is thin — no model, no database, no scheduler:
+```
+browser/
+  src/
+    protocol.ts           — Typed WebSocket + runtime messaging protocol
+    background/
+      background.ts       — Owns WebSocket, tool dispatch, tab tracking, permissions
+      permissions.ts      — Domain allowlist management + user prompts
+      tools/
+        browse_url.ts     — Hidden tab + content extraction handler
+    sidebar/
+      sidebar.ts          — Chat UI, page context toggle, message rendering
+    content/
+      extract_text.ts     — Defuddle-based page extraction (bundled via esbuild)
+  sidebar/
+    sidebar.html          — Chat UI markup
+    sidebar.css           — Light/dark theme via CSS custom properties
+  manifest.json           — Permissions: storage, tabs, <all_urls>
+  tsconfig.json           — Strict TypeScript, ES2020 target
+  build-content.mjs       — esbuild wrapper for content script bundling
+  package.json            — TypeScript, esbuild, web-ext, concurrently, defuddle
+```
 
-1. **Sidebar panel**: chat UI, WebSocket connection to Penny server
-2. **Background script**: watches browsing history, manages browser tool API, handles liveness
-3. **Content scripts**: read/interact with pages on demand (domain-gated)
-4. **Feed page**: renders thoughts/discoveries from the server as a browsable feed
+### Background script
+Owns the single WebSocket connection to the Penny server. Persists across sidebar open/close. Handles:
+- Chat message relay between sidebar and server
+- Tool request dispatch (receives `tool_request` from server, executes, sends `tool_response`)
+- Active tab tracking (extracts page content on tab switch/load)
+- Domain permission checking and user prompts
+- Connection state management and reconnection
+
+### Sidebar
+Pure UI layer — no direct WebSocket connection. Communicates with background via `browser.runtime` messaging. Features:
+- Chat with message persistence in `browser.storage.local` (200 message cap)
+- Device registration on first open
+- Page context toggle showing current page title + favicon with checkbox
+- Permission dialog for domain access requests
+- HTML rendering of Penny's responses (markdown → HTML conversion server-side)
+- Flush image rendering with og:image page headers on contextual responses
+- Connection status indicator (green dot / orange spinner)
+- Smart scrolling (short messages anchor at bottom, long messages show top first, re-scroll on image load)
+
+### Content script
+Extracts visible text from web pages using a tiered approach:
+1. **Defuddle** (primary) — smart content extraction that strips nav, sidebars, boilerplate
+2. **CSS heuristics** (fallback) — targets `<article>`, `<main>`, `[role="main"]`
+3. **TreeWalker** (last resort) — all visible text nodes, skipping nav/aside/footer
+Also extracts og:image metadata. Bundled with esbuild as an IIFE (content scripts can't use ES module imports).
 
 ## Browser Tools
 
-New tools exposed to Penny's agent loop when a browser channel is connected:
+### Implemented
 
-- `browse_url` — open a page, return sanitized text content
+- **`browse_url`** — opens a URL in a hidden tab with full web engine + user session. Content extracted via Defuddle content script. Server summarizes in a sandboxed model call before the agent sees it. Domain-gated with user permission prompts.
+
+### Active tab context (implemented, not a tool)
+The background script continuously extracts visible text from the active tab using Defuddle. When the user sends a message with the "Include page content" toggle checked, the page content is attached to the message. The server injects it as a synthetic `browse_url` tool call + result in the message history, so the model sees a pre-completed tool exchange and answers from it directly. A minimal hint (title + URL) in the system prompt disambiguates "this page" references.
+
+### Planned
+
 - `search_web` — use the browser's default search engine, return results
 - `search_youtube` — search YouTube, return video metadata (title, duration, views, channel, thumbnail)
 - `get_history` — read recent browsing history (filtered, domain + title only)
 - `screenshot_page` — capture current page for vision model
-- `get_current_tab` — what the user is looking at right now
+- `get_current_tab` — what the user is looking at right now (partially implemented via active tab context)
 
-The thinking agent can choose browser tools when a browser is connected, falling back to Perplexity when it's not. Purely additive.
+The thinking agent uses browser tools autonomously when a browser is connected, falling back to Perplexity when it's not. Tools are registered dynamically via `set_browser_tools_provider()` — available only when a browser has an active connection.
+
+## Tool Request Protocol (implemented)
+
+RPC over WebSocket with correlation IDs:
+
+1. Server sends `tool_request` with `request_id`, `tool` name, and `arguments`
+2. Background script receives, checks domain permissions, executes tool
+3. Background sends `tool_response` with matching `request_id` and `result` or `error`
+4. Server resolves the asyncio Future and returns result to the agent loop
+
+The `BrowserChannel` maintains `_pending_requests: dict[str, asyncio.Future]` for in-flight requests. Timeout after 30 seconds. Pending futures rejected on disconnect.
 
 ## Skills
 
@@ -96,39 +165,36 @@ Security is the foundational design constraint, not a feature added later.
 2. **Collect, store, and expose nothing first**: only incrementally add data access as needed
 3. **If Penny has no access to sensitive data, there's nothing to exfiltrate**
 
-### Prompt Injection Defense
+### Prompt Injection Defense (implemented)
 
 The primary threat: malicious web pages embedding instructions in content that Penny reads. Attack vectors include hidden text (CSS `display:none`, white-on-white), HTML comments, meta tags, YouTube descriptions/comments, forum posts, product descriptions.
 
 **Three-layer defense:**
 
-1. **Pre-sanitization**: content scripts extract visible text only, strip hidden content, HTML comments, invisible elements before anything reaches the model
+1. **Pre-sanitization**: Defuddle extracts main content only, stripping nav/sidebar/footer/hidden elements. The TreeWalker fallback skips elements with `display:none`, `visibility:hidden`, `opacity:0`, and `aria-hidden="true"`.
 
-2. **Sandboxed summarization**: raw sanitized web content goes to a **constrained model call** — system prompt is just "Summarize this page content." No tools, no user profile, no preferences, no history, no browsing context. Even if injected instructions survive sanitization, there's nothing to exfiltrate and no tools to act with.
+2. **Sandboxed summarization**: raw page content from `browse_url` goes to a constrained model call — system prompt is "Summarize this web page content." No tools, no user profile, no preferences, no history, no browsing context. Even if injected instructions survive extraction, there's nothing to exfiltrate and no tools to act with.
 
 3. **Summary is the only bridge**: Penny's real agent context (with tools, preferences, sensitive data) only sees the clean summary output from the sandboxed step. Untrusted content never shares a context window with sensitive data or tool access.
 
-### HTML Sanitization
+**Note**: Active tab context (when user includes page content with a message) bypasses the sandboxed summarization since the user explicitly chose to share it. The content still goes through Defuddle extraction which strips hidden/malicious elements.
 
-Use [ammonia](https://github.com/rust-ammonia/ammonia) (Rust) for sanitizing raw HTML before it reaches the model. Options:
-- **In extension context**: compile ammonia to WASM via wasm-bindgen, use directly in the content/background script
-- **In server context**: use [nh3](https://github.com/messense/nh3) (Python bindings to ammonia) if sanitization happens server-side
-
-Ammonia strips dangerous elements/attributes while preserving safe content structure — purpose-built for this use case.
-
-### Domain Allowlist
+### Domain Allowlist (implemented)
 
 - No domains accessible by default
-- User explicitly grants access per domain
-- Allowlist maps directly to available skills
-- Doubles as privacy control: "Penny can read guitar forums and YouTube, but not my email or banking"
+- User explicitly grants or denies access per domain via sidebar permission dialog
+- Decisions stored in `browser.storage.local` for future calls
+- Parent domain matching (allowing `example.com` also allows `www.example.com`)
+- Three states: allowed, blocked, unknown (unknown triggers prompt)
+- Management UI deferred (currently via browser dev tools)
 
 ### Data Policies
 
 - Browsing history sent to server: domain + page title only, no full URLs with query params
 - Filter out sensitive categories (health, finance, adult) before sending
-- Communication over localhost or encrypted WebSocket only
-- Model never sees raw untrusted web content — always extracted, sanitized, summarized first
+- Communication over localhost WebSocket only
+- Model never sees raw untrusted web content via `browse_url` — always extracted, sanitized, summarized first
+- Active tab context uses Defuddle extraction (user-initiated sharing)
 - Penny never relays verbatim web page text through Signal — always summarized/rephrased
 - Never pass raw cookies or session tokens to the server
 
@@ -137,16 +203,16 @@ Ammonia strips dangerous elements/attributes while preserving safe content struc
 - Browser tools gated by domain allowlist
 - Model output cannot drive navigation directly without gating
 - Tool invocations rate-limited to prevent uncontrolled spidering
-- Active tab scraping only on explicit user request — passive history reading is fine
+- Active tab context only sent when user explicitly checks the toggle
 
 ## Multi-Browser Continuity
 
-- Each browser instance connects as a channel with a unique identifier
-- Firefox Sync provides identity continuity across machines (same Firefox Account)
-- Persistent store lives on the Penny server — all browsers share it
-- Liveness tracking: Penny knows which browsers are up and can choose which to use
+- Each browser instance connects as a device with a user-chosen label (e.g., "firefox macbook 16")
+- Device table tracks all connected endpoints with channel type, identifier, and label
+- Persistent store lives on the Penny server — all browsers share it via the same user identity
 - Always-on PC browser can do background research while laptop is closed
 - Signal provides fallback communication when no browser is connected
+- Thinking agent uses `browse_url` autonomously on any connected browser
 
 ## Feed Model vs Notification Model
 
@@ -158,18 +224,36 @@ The extension enables a shift from interruption-based notifications (Signal) to 
 
 ## Technology
 
-- **Extension**: TypeScript, WebExtensions API, Firefox-specific privileged APIs where needed
-- **Communication**: WebSocket between extension and Penny server
-- **Server**: existing Python/Docker architecture, unchanged
+- **Extension**: TypeScript (strict), esbuild for content script bundling, web-ext for development
+- **Content extraction**: Defuddle (by Obsidian creator, zero-dep core bundle) with CSS heuristic and TreeWalker fallbacks
+- **Communication**: WebSocket between background script and Penny server, `browser.runtime` messaging between sidebar and background
+- **Protocol**: Typed discriminated unions for all messages (TypeScript `type + const` pattern mirrors Python Pydantic models)
+- **Server**: existing Python/Docker architecture with ChannelManager routing proxy
 - **Model**: Ollama on server (20B), not constrained by browser ML engine limitations
-- **Storage**: server SQLite, not browser storage (no IndexedDB limits)
+- **Storage**: server SQLite for persistent data, `browser.storage.local` for device label, chat history, domain allowlist
+- **Theming**: CSS custom properties with `prefers-color-scheme` media query for automatic light/dark
 
 ## Incremental Build Path
 
-1. Minimal Firefox extension: sidebar chat panel + WebSocket to Penny server (proves channel concept)
-2. Add `browse_url` tool: extension can fetch and sanitize a page on demand
+1. ~~Minimal Firefox extension: sidebar chat panel + WebSocket to Penny server~~ **Done**
+2. ~~Add `browse_url` tool: extension can fetch and sanitize a page on demand~~ **Done**
 3. Add `search_web` tool: use browser's search engine
 4. Browsing history reader: passive preference extraction
 5. Feed page: render thoughts as a browsable page
 6. YouTube skill: first domain-specific skill
 7. Additional skills: Reddit, Amazon, forums, etc.
+
+### Additional implementations (not in original plan)
+- Multi-channel architecture (ChannelManager, device table, single-user identity)
+- Active tab context injection (Defuddle extraction + synthetic tool call)
+- Page context toggle with og:image headers on responses
+- TypeScript with typed protocol (discriminated unions, const objects)
+- Background script owns WebSocket (sidebar uses runtime messaging)
+- Domain permission dialog flow
+- Chat history persistence (browser.storage.local, 200 message cap)
+- HTML formatting pipeline (markdown → HTML with code, links, tables-to-bullets)
+- Flush image rendering with smart scrolling
+- Light/dark theme support
+- `/draw` command working in browser (base64 data URI rendering)
+- Reconnection indicator with spinner
+- `web-ext` dev setup with auto-reload
