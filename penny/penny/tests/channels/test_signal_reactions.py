@@ -29,7 +29,7 @@ async def test_signal_reaction_message(
     config = make_config(idle_seconds=0.5)
     setup_ollama_flow(
         search_query="test query",
-        message_response="here's a cool fact! 🌟",
+        message_response="here's a cool fact you might not have known about this! 🌟",
         background_response="glad you liked that, here's more! 🎉",
     )
 

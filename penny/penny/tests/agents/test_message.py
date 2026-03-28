@@ -42,7 +42,7 @@ async def test_basic_message_flow(
     # Configure Ollama to return search tool call, then final response
     mock_ollama.set_default_flow(
         search_query="test search query",
-        final_response="here's what i found about your question! 🌟",
+        final_response="here's what i found about your question — looks like clear skies ahead! 🌟",
     )
 
     async with running_penny(config) as penny:
@@ -224,7 +224,9 @@ async def test_message_without_tool_call(
 
     # Configure Ollama to return direct response (no tool call)
     def direct_response(request, count):
-        return mock_ollama._make_text_response(request, "just a simple response! 🌟")
+        return mock_ollama._make_text_response(
+            request, "just a simple response, no need to search for this one! 🌟"
+        )
 
     mock_ollama.set_response_handler(direct_response)
 
@@ -434,6 +436,49 @@ async def test_short_response_logged_as_warning(
 
 
 @pytest.mark.asyncio
+async def test_short_non_refusal_response_retried(
+    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny, caplog
+):
+    """
+    Regression test for #887: short non-refusal responses should be retried.
+
+    When the model returns a very short response (< 10 words) that is not a refusal,
+    the agent should nudge the model once to produce a fuller answer.
+    """
+    import logging
+
+    short_response = "Please click the link."
+    full_response = (
+        "To reset your password, go to the login page and click Forgot Password. "
+        "Enter your email address and follow the instructions sent to your inbox."
+    )
+
+    call_count = [0]
+
+    def handler(request, count):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return mock_ollama._make_text_response(request, short_response)
+        return mock_ollama._make_text_response(request, full_response)
+
+    mock_ollama.set_response_handler(handler)
+
+    with caplog.at_level(logging.WARNING, logger="penny.agents.base"):
+        async with running_penny(test_config):
+            await signal_server.push_message(
+                sender=TEST_SENDER,
+                content="How do I reset my password?",
+            )
+            response = await signal_server.wait_for_message(timeout=10.0)
+
+    # The fuller response is delivered after retry
+    assert response["message"] == full_response
+    # Short response warning was logged
+    short_warnings = [r for r in caplog.records if "Short response" in r.message]
+    assert len(short_warnings) >= 1, "Should log a warning for short responses"
+
+
+@pytest.mark.asyncio
 async def test_delivery_failure_sends_notice(
     signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
 ):
@@ -445,7 +490,7 @@ async def test_delivery_failure_sends_notice(
     """
     mock_ollama.set_default_flow(
         search_query="test query",
-        final_response="my answer to your question",
+        final_response="my answer to your question, hope that helps you out today!",
     )
 
     # test_config uses ollama_max_retries=1, so SignalChannel makes 2 total send

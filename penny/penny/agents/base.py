@@ -327,6 +327,7 @@ class Agent:
         tool_call_records: list[ToolCallRecord] = []
         empty_retries: int = 0
         refusal_retries: int = 0
+        short_response_retries: int = 0
 
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
@@ -446,6 +447,37 @@ class Agent:
                     return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
                 self.on_response(response)
 
+            content_stripped = response.content.strip()
+            if (
+                short_response_retries == 0
+                and self._should_retry_short_response()
+                and content_stripped
+                and not self._is_refusal(content_stripped)
+                and len(content_stripped.split()) < 10
+            ):
+                short_response_retries += 1
+                word_count = len(content_stripped.split())
+                logger.warning(
+                    "Short response (word_count=%d) on step %d/%d; requesting fuller response",
+                    word_count,
+                    step + 1,
+                    steps,
+                )
+                messages.append(response.message.to_input_message())
+                messages.append(
+                    {
+                        "role": MessageRole.USER,
+                        "content": "Please provide a more complete and helpful response.",
+                    }
+                )
+                if not is_final_step:
+                    continue
+                # On the final step, retry directly
+                response = await self._call_model_with_xml_retry(messages, step_tools)
+                if response is None:
+                    return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
+                self.on_response(response)
+
             return self._build_final_response(response, source_urls, attachments, tool_call_records)
 
         logger.warning("Max steps reached without final answer")
@@ -458,6 +490,14 @@ class Agent:
 
         Override to capture content from all responses (e.g. inner monologue).
         """
+
+    def _should_retry_short_response(self) -> bool:
+        """Return True to retry responses shorter than 10 words with a nudge.
+
+        Base returns False. Override in agents that send responses directly to users
+        (e.g. ChatAgent) where short responses are a quality signal worth retrying.
+        """
+        return False
 
     async def handle_text_step(
         self, response, messages: list[dict], step: int, is_final: bool
