@@ -109,6 +109,11 @@ class TestBrowserPrepareOutgoing:
         assert '<a href="https://example.com"' in result
         assert "click</a>" in result
 
+    def test_markdown_link_no_nested_anchor(self, tmp_path):
+        # Markdown links must not produce nested <a> tags (bare URL regex must skip href values)
+        result = self._channel(tmp_path).prepare_outgoing("[click](https://example.com)")
+        assert result.count("<a ") == 1
+
     def test_bare_url(self, tmp_path):
         result = self._channel(tmp_path).prepare_outgoing("visit https://example.com today")
         assert '<a href="https://example.com"' in result
