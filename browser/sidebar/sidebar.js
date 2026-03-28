@@ -61,7 +61,7 @@ function showChat() {
   });
   inputEl.addEventListener("input", autoResize);
 
-  setStatus(false);
+  setStatus("disconnected");
   connect();
 }
 
@@ -70,15 +70,19 @@ function showChat() {
 function addMessage(text, sender) {
   const div = document.createElement("div");
   div.className = `message ${sender}`;
-  div.textContent = text;
+  if (sender === "penny") {
+    div.innerHTML = text;
+  } else {
+    div.textContent = text;
+  }
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function setStatus(connected) {
-  statusEl.textContent = connected ? "connected" : "disconnected";
-  statusEl.className = connected ? "connected" : "disconnected";
-  if (sendBtn) sendBtn.disabled = !connected;
+function setStatus(state) {
+  statusEl.textContent = state;
+  statusEl.className = state;
+  if (sendBtn) sendBtn.disabled = state !== "connected";
 }
 
 function setTyping(active) {
@@ -118,7 +122,7 @@ function connect() {
     const data = JSON.parse(event.data);
 
     if (data.type === "status" && data.connected) {
-      setStatus(true);
+      setStatus("connected");
     } else if (data.type === "message") {
       setTyping(false);
       addMessage(data.content, "penny");
@@ -128,7 +132,7 @@ function connect() {
   });
 
   ws.addEventListener("close", () => {
-    setStatus(false);
+    setStatus("reconnecting");
     setTyping(false);
     scheduleReconnect();
   });

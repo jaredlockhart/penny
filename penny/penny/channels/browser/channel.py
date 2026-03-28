@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import json
 import logging
+import re
 from typing import TYPE_CHECKING
 
 import websockets
@@ -134,8 +136,19 @@ class BrowserChannel(MessageChannel):
         if not ws:
             logger.warning("No browser connection for device: %s", recipient)
             return None
-        await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_MESSAGE, content=message))
+        content = self._prepend_images(message, attachments)
+        await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_MESSAGE, content=content))
         return 1
+
+    @staticmethod
+    def _prepend_images(message: str, attachments: list[str] | None) -> str:
+        """Prepend image URLs as <img> tags before the message HTML."""
+        if not attachments:
+            return message
+        images = "".join(
+            f'<img src="{url}" alt="image"><br>' for url in attachments if url.startswith("http")
+        )
+        return f"{images}{message}" if images else message
 
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """Send a typing indicator to a browser client."""
@@ -144,6 +157,96 @@ class BrowserChannel(MessageChannel):
             return False
         await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=typing))
         return True
+
+    # --- Image handling ---
+
+    async def _resolve_image(
+        self, image_prompt: str, attachments: list[str] | None
+    ) -> list[str] | None:
+        """Search for an image URL and inline it as an <img> tag (no base64 download)."""
+        from penny.serper.client import search_image_url
+
+        serper_key = self._config.serper_api_key if self._config else None
+        url = await search_image_url(
+            image_prompt,
+            api_key=serper_key,
+            max_results=int(self._config.runtime.IMAGE_MAX_RESULTS) if self._config else 5,
+            timeout=self._config.runtime.IMAGE_DOWNLOAD_TIMEOUT if self._config else 10.0,
+        )
+        if url:
+            return (attachments or []) + [url]
+        return attachments
+
+    # --- Markdown to HTML formatting ---
+
+    # Regex pattern for markdown tables: header | separator | data rows
+    _TABLE_PATTERN = re.compile(
+        r"^(\|[^\n]+\|)\n"  # Header row
+        r"(\|[-:\s|]+\|)\n"  # Separator row
+        r"((?:\|[^\n]+\|\n?)+)",  # Data rows (one or more)
+        re.MULTILINE,
+    )
+
+    def prepare_outgoing(self, text: str) -> str:
+        """Convert markdown to HTML for the browser sidebar."""
+        text = self._table_to_bullets(text)
+        text = html.escape(text)
+        text = self._convert_markdown_to_html(text)
+        text = self._collapse_blank_lines(text)
+        return text.strip()
+
+    @classmethod
+    def _table_to_bullets(cls, text: str) -> str:
+        """Convert markdown tables to bullet points (same as Signal)."""
+
+        def convert_table(match: re.Match[str]) -> str:
+            header_line, _, data_block = match.groups()
+            headers = [c.strip() for c in header_line.strip("|").split("|")]
+            result = []
+            for line in data_block.strip().split("\n"):
+                cells = [c.strip() for c in line.strip("|").split("|")]
+                if cells and cells[0]:
+                    title = cells[0].strip("*").strip()
+                    result.append(f"**{title}**")
+                    result.extend(
+                        f"  \u2022 **{h}**: {c}"
+                        for h, c in zip(headers[1:], cells[1:], strict=False)
+                        if c
+                    )
+                    result.append("")
+            return "\n".join(result)
+
+        return cls._TABLE_PATTERN.sub(convert_table, text)
+
+    @staticmethod
+    def _convert_markdown_to_html(text: str) -> str:
+        """Convert markdown formatting to HTML tags (text is already escaped)."""
+        # Fenced code blocks → <pre><code>
+        text = re.sub(r"```([\s\S]*?)```", r"<pre><code>\1</code></pre>", text)
+        # Inline code → <code>
+        text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+        # Bold → <strong>
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+        # Italic → <em>
+        text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
+        # Strikethrough → <s>
+        text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
+        # Headings → <strong> (no size difference in sidebar)
+        text = re.sub(r"^#{1,6}\s+(.+)$", r"<strong>\1</strong>", text, flags=re.MULTILINE)
+        # Horizontal rules
+        text = re.sub(r"^-{3,}\s*$", "<hr>", text, flags=re.MULTILINE)
+        # Markdown links → <a>
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2" target="_blank">\1</a>', text)
+        # Bare URLs → <a>
+        text = re.sub(r"(https?://[^\s<>&]+)", r'<a href="\1" target="_blank">\1</a>', text)
+        # Newlines → <br>
+        text = text.replace("\n", "<br>")
+        return text
+
+    @staticmethod
+    def _collapse_blank_lines(text: str) -> str:
+        """Collapse multiple consecutive <br> tags."""
+        return re.sub(r"(<br>){3,}", "<br><br>", text)
 
     async def close(self) -> None:
         """Shut down the WebSocket server."""

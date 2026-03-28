@@ -276,8 +276,9 @@ class Agent:
         raise NotImplementedError(f"{type(self).__name__} must override get_max_steps()")
 
     def get_users(self) -> list[str]:
-        """Return users to process. Override to filter."""
-        return self.db.users.get_all_senders()
+        """Return the single user to process (Penny is single-user)."""
+        primary = self.db.users.get_primary_sender()
+        return [primary] if primary else []
 
     async def get_prompt(self, user: str) -> str | None:
         """Build the prompt for the agentic loop. Return None to skip this user."""

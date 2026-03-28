@@ -50,6 +50,28 @@ body {
   color: #6bff6b;
 }
 
+#status.reconnecting {
+  background: #3a3020;
+  color: #ffb86b;
+}
+
+#status.reconnecting::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #ffb86b;
+  border-top-color: transparent;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 #messages {
   flex: 1;
   overflow-y: auto;
@@ -127,6 +149,52 @@ body {
   color: #888;
   font-style: italic;
   padding: 4px 12px;
+}
+
+/* Penny message HTML formatting */
+.message.penny a {
+  color: #c0a0ff;
+  text-decoration: underline;
+}
+
+.message.penny a:hover {
+  color: #d0b0ff;
+}
+
+.message.penny code {
+  background: #1a1a2e;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+.message.penny pre {
+  background: #1a1a2e;
+  padding: 8px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 4px 0;
+}
+
+.message.penny pre code {
+  background: none;
+  padding: 0;
+}
+
+.message.penny hr {
+  border: none;
+  border-top: 1px solid #3a3a6a;
+  margin: 8px 0;
+}
+
+.message.penny strong {
+  color: #f0e0ff;
+}
+
+.message.penny img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin-top: 6px;
 }
 
 .hidden {

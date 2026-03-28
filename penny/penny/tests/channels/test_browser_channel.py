@@ -70,3 +70,89 @@ class TestBrowserAutoRegistration:
         all_devices = db.devices.get_all()
         browser_devices = [d for d in all_devices if d.identifier == "firefox-macbook-16"]
         assert len(browser_devices) == 1
+
+
+class TestBrowserPrepareOutgoing:
+    """prepare_outgoing converts markdown to HTML."""
+
+    def _channel(self, tmp_path):
+        db = _make_db(tmp_path)
+        return BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+    def test_bold(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("**hello**")
+        assert "<strong>hello</strong>" in result
+
+    def test_italic(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("*hello*")
+        assert "<em>hello</em>" in result
+
+    def test_strikethrough(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("~~deleted~~")
+        assert "<s>deleted</s>" in result
+
+    def test_inline_code(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("use `pip install`")
+        assert "<code>pip install</code>" in result
+
+    def test_fenced_code_block(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("```\nprint('hi')\n```")
+        assert "<pre><code>" in result
+        assert "print" in result
+
+    def test_heading_becomes_strong(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("## Section Title")
+        assert "<strong>Section Title</strong>" in result
+
+    def test_markdown_link(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("[click](https://example.com)")
+        assert '<a href="https://example.com"' in result
+        assert "click</a>" in result
+
+    def test_bare_url(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("visit https://example.com today")
+        assert '<a href="https://example.com"' in result
+
+    def test_html_escaped(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("use <script>alert('xss')</script>")
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result
+
+    def test_table_to_bullets(self, tmp_path):
+        table = "| Model | Price |\n|-------|-------|\n| Foo   | $100  |\n| Bar   | $200  |"
+        result = self._channel(tmp_path).prepare_outgoing(table)
+        assert "<strong>Foo</strong>" in result
+        assert "$100" in result
+        assert "<strong>Bar</strong>" in result
+        assert "|" not in result
+
+    def test_newlines_to_br(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("line one\nline two")
+        assert "<br>" in result
+
+    def test_collapses_excessive_breaks(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("a\n\n\n\n\nb")
+        assert "<br><br><br>" not in result
+
+
+class TestBrowserImageHandling:
+    """_prepend_images puts image URLs before the message content."""
+
+    def test_prepends_image_url(self):
+        result = BrowserChannel._prepend_images("hello", ["https://example.com/img.jpg"])
+        assert result.startswith('<img src="https://example.com/img.jpg"')
+        assert result.endswith("hello")
+
+    def test_skips_non_http(self):
+        result = BrowserChannel._prepend_images("hello", ["data:image/png;base64,abc"])
+        assert result == "hello"
+
+    def test_no_attachments(self):
+        assert BrowserChannel._prepend_images("hello", None) == "hello"
+        assert BrowserChannel._prepend_images("hello", []) == "hello"
+
+    def test_multiple_images(self):
+        urls = ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+        result = BrowserChannel._prepend_images("text", urls)
+        assert result.count("<img") == 2
+        assert result.endswith("text")

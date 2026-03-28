@@ -97,6 +97,46 @@ async def _download_first_valid(
     return None
 
 
+async def search_image_url(
+    query: str,
+    api_key: str | None = None,
+    *,
+    max_results: int,
+    timeout: float,
+) -> str | None:
+    """Search for an image via Serper and return the URL (no download).
+
+    Returns the first valid image URL or None. Used by the browser channel
+    which can render URLs directly via <img> tags.
+    """
+    if not api_key:
+        return None
+
+    logger.info("Image URL search query: %s", query[:120])
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            response = await _fetch_results(client, query, api_key, max_results)
+            if not response.images:
+                logger.info("Image URL search returned no results")
+                return None
+            for result in response.images:
+                if not result.imageUrl:
+                    continue
+                domain = urlparse(result.imageUrl).hostname or ""
+                if any(blocked in domain for blocked in BLOCKED_IMAGE_DOMAINS):
+                    continue
+                ext = _parse_extension(result.imageUrl)
+                if ext and ext not in ALLOWED_IMAGE_EXTENSIONS:
+                    continue
+                logger.info("Image URL search found: %s", result.imageUrl[:120])
+                return result.imageUrl
+            logger.info("Image URL search: no valid results")
+            return None
+    except Exception as e:
+        logger.warning("Image URL search failed: %s", e)
+        return None
+
+
 def _parse_extension(url: str) -> str:
     """Extract file extension from URL, handling paths like /image.jpg/revision/latest/."""
     path = urlparse(url).path.lower()
