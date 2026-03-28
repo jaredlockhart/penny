@@ -31,6 +31,7 @@ from penny.channels.browser.models import (
     BrowserToolResponse,
 )
 from penny.constants import ChannelType, PennyConstants
+from penny.serper.client import search_image_url
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -237,12 +238,8 @@ class BrowserChannel(MessageChannel):
         pref_ids = {t.preference_id for t in thoughts if t.preference_id is not None}
         if not pref_ids:
             return {}
-        result: dict[int | None, str] = {}
-        for pref_id in pref_ids:
-            pref = self._db.preferences.get_by_id(pref_id)
-            if pref:
-                result[pref_id] = pref.content
-        return result
+        prefs = self._db.preferences.get_by_ids(pref_ids)
+        return {p.id: p.content for p in prefs}
 
     async def _handle_chat_message(
         self, ws: ServerConnection, data: dict, device_label: str | None
@@ -369,8 +366,6 @@ class BrowserChannel(MessageChannel):
         self, image_prompt: str, attachments: list[str] | None
     ) -> list[str] | None:
         """Search for an image URL and inline it as an <img> tag (no base64 download)."""
-        from penny.serper.client import search_image_url
-
         serper_key = self._config.serper_api_key if self._config else None
         url = await search_image_url(
             image_prompt,

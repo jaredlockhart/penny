@@ -20,6 +20,7 @@ from penny.constants import PennyConstants
 from penny.ollama.embeddings import serialize_embedding
 from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
+from penny.serper.client import search_image_url
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +217,6 @@ class ThinkingAgent(Agent):
     async def _search_thought_image(self, title: str) -> str | None:
         """Search for an image URL to accompany a thought."""
         try:
-            from penny.serper.client import search_image_url
-
             api_key = self.config.serper_api_key if self.config else None
             return await search_image_url(title, api_key=api_key, max_results=3, timeout=5.0)
         except Exception:

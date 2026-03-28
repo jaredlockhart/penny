@@ -15,9 +15,11 @@ from penny.agents import (
     ThinkingAgent,
 )
 from penny.channels import MessageChannel, create_channel_manager
+from penny.channels.browser import BrowserChannel
+from penny.channels.manager import ChannelManager
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
-from penny.constants import PennyConstants
+from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
@@ -31,8 +33,10 @@ from penny.scheduler import (
     Schedule,
 )
 from penny.scheduler.schedule_runner import ScheduleExecutor
+from penny.serper.client import search_image_url
 from penny.startup import get_restart_message
 from penny.tools import SearchTool, Tool
+from penny.tools.browse_url import BrowseUrlTool
 from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.news import NewsTool
 from penny.zoho.models import ZohoCredentials
@@ -217,8 +221,6 @@ class Penny:
             from github_api.api import GitHubAPI
             from github_api.auth import GitHubAuth
 
-            from penny.constants import PennyConstants
-
             key_path = Path(config.github_app_private_key_path)
             if not key_path.is_absolute():
                 key_path = Path.cwd() / key_path
@@ -274,11 +276,6 @@ class Penny:
 
     def _wire_browser_tools(self) -> None:
         """Connect browser tools to agents when a browser channel is available."""
-        from penny.channels.browser import BrowserChannel
-        from penny.channels.manager import ChannelManager
-        from penny.constants import ChannelType
-        from penny.tools.browse_url import BrowseUrlTool
-
         if not isinstance(self.channel, ChannelManager):
             return
         browser_ch = self.channel.get_channel(ChannelType.BROWSER)
@@ -456,7 +453,6 @@ class Penny:
         """Backfill image URLs for thoughts that don't have one yet."""
         if not self.config.serper_api_key:
             return
-        from penny.serper.client import search_image_url
 
         batch_size = 50
         total = 0
