@@ -269,6 +269,7 @@ class Penny:
             message_agent=self.chat_agent,
             db=self.db,
             command_registry=self.command_registry,
+            model_client=self.model_client,
         )
         self.schedule_executor.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
@@ -285,12 +286,7 @@ class Penny:
         def provider() -> list:
             if not browser_ch.has_tool_connection:
                 return []
-            return [
-                BrowseUrlTool(
-                    request_fn=browser_ch.send_tool_request,
-                    model_client=self.model_client,
-                )
-            ]
+            return [BrowseUrlTool(request_fn=browser_ch.send_tool_request)]
 
         self.chat_agent.set_browser_tools_provider(provider)
         self.thinking_agent.set_browser_tools_provider(provider)

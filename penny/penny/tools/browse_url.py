@@ -4,27 +4,20 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from penny.tools.base import Tool
 from penny.tools.models import BrowseUrlArgs
 
-if TYPE_CHECKING:
-    from penny.ollama.client import OllamaClient
-
 logger = logging.getLogger(__name__)
-
-SUMMARIZE_SYSTEM_PROMPT = (
-    "Summarize the following web page content. "
-    "Include key facts, names, dates, prices, and details. "
-    "Output only the summary — no commentary about the task."
-)
-
-MAX_RAW_CHARS = 50_000
 
 
 class BrowseUrlTool(Tool):
-    """Open a web page in the browser and return a summary of its content."""
+    """Open a web page in the browser and return its content.
+
+    Content is already sanitized and summarized by the BrowserChannel
+    before it reaches this tool — no raw web content enters the agent context.
+    """
 
     name = "browse_url"
     description = (
@@ -43,41 +36,16 @@ class BrowseUrlTool(Tool):
         "required": ["url"],
     }
 
-    def __init__(
-        self,
-        request_fn: Callable[[str, dict], Awaitable[str]],
-        model_client: OllamaClient,
-    ):
+    def __init__(self, request_fn: Callable[[str, dict], Awaitable[str]]):
         self._request_fn = request_fn
-        self._model_client = model_client
 
     async def execute(self, **kwargs: Any) -> str:
-        """Fetch the page via the browser, then summarize in a sandboxed model call."""
+        """Fetch the page via the browser. Content arrives pre-summarized."""
         args = BrowseUrlArgs(**kwargs)
         logger.info("browse_url: requesting %s", args.url)
 
-        raw_text = await self._request_fn("browse_url", {"url": args.url})
-        if not raw_text.strip():
+        result = await self._request_fn("browse_url", {"url": args.url})
+        if not result.strip():
             return f"Page at {args.url} returned no content."
 
-        summary = await self._sandboxed_summarize(raw_text, args.url)
-        return summary
-
-    async def _sandboxed_summarize(self, raw_text: str, url: str) -> str:
-        """Summarize raw page content in a constrained model call.
-
-        No tools, no user context, no preferences — just summarization.
-        Raw untrusted content never enters the agent's main context.
-        """
-        truncated = raw_text[:MAX_RAW_CHARS]
-        response = await self._model_client.chat(
-            messages=[
-                {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT},
-                {"role": "user", "content": f"URL: {url}\n\n{truncated}"},
-            ],
-        )
-        content = response.message.content if response.message else ""
-        logger.info(
-            "browse_url: summarized %s (%d chars → %d chars)", url, len(truncated), len(content)
-        )
-        return content.strip()
+        return result

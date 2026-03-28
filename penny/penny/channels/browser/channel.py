@@ -15,7 +15,7 @@ import websockets
 from pydantic import BaseModel
 from websockets.asyncio.server import Server, ServerConnection
 
-from penny.channels.base import IncomingMessage, MessageChannel
+from penny.channels.base import IncomingMessage, MessageChannel, PageContext
 from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_MESSAGE,
     BROWSER_MSG_TYPE_THOUGHT_REACTION,
@@ -38,10 +38,21 @@ if TYPE_CHECKING:
     from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.database.models import MessageLog
+    from penny.ollama import OllamaClient
 
 logger = logging.getLogger(__name__)
 
 TOOL_REQUEST_TIMEOUT = 30.0
+MAX_RAW_CHARS = 100_000
+
+SANITIZE_SYSTEM_PROMPT = (
+    "Rewrite the following web page content as a comprehensive, detailed summary. "
+    "Include all key facts, names, dates, prices, specs, quotes, and details. "
+    "Preserve the structure — use headings, lists, and paragraphs as appropriate. "
+    "Preserve all URLs exactly as they appear — copy them character for character. "
+    "Do not omit information. Do not add commentary or opinions. "
+    "Output only the rewritten content."
+)
 
 
 def _attachment_to_src(attachment: str) -> str | None:
@@ -66,10 +77,12 @@ class BrowserChannel(MessageChannel):
         message_agent: ChatAgent,
         db: Database,
         command_registry: CommandRegistry | None = None,
+        model_client: OllamaClient | None = None,
     ):
         super().__init__(message_agent=message_agent, db=db, command_registry=command_registry)
         self._host = host
         self._port = port
+        self._sanitize_client = model_client
         self._server: Server | None = None
         self._connections: dict[str, ServerConnection] = {}
         self._pending_requests: dict[str, asyncio.Future[str]] = {}
@@ -259,15 +272,26 @@ class BrowserChannel(MessageChannel):
         self._auto_register_device(device_label)
 
         envelope: dict = {"browser_sender": device_label, "content": msg.content}
-        if msg.page_context:
-            envelope["page_context"] = msg.page_context
+        if msg.page_context and msg.page_context.text:
+            sanitized_text = await self._sanitize_page_content(
+                msg.page_context.text, msg.page_context.url
+            )
+            envelope["page_context"] = PageContext(
+                title=msg.page_context.title,
+                url=msg.page_context.url,
+                text=sanitized_text,
+            )
         asyncio.create_task(self.handle_message(envelope))
         return device_label
 
     # --- Tool requests ---
 
     async def send_tool_request(self, tool: str, arguments: dict) -> str:
-        """Send a tool request to a connected browser and await the response."""
+        """Send a tool request to a connected browser and await the sanitized response.
+
+        All web content returned by browser tools is sanitized through a
+        sandboxed model call before reaching the agent context.
+        """
         ws = self._get_tool_connection()
         if ws is None:
             raise RuntimeError("No browser connected for tool execution")
@@ -284,7 +308,9 @@ class BrowserChannel(MessageChannel):
         await self._send_ws(ws, request)
 
         try:
-            return await asyncio.wait_for(future, timeout=TOOL_REQUEST_TIMEOUT)
+            raw_result = await asyncio.wait_for(future, timeout=TOOL_REQUEST_TIMEOUT)
+            url = arguments.get("url", "") if tool == "browse_url" else ""
+            return await self._sanitize_page_content(raw_result, url)
         except TimeoutError as e:
             raise TimeoutError(
                 f"Browser tool '{tool}' timed out after {TOOL_REQUEST_TIMEOUT}s"
@@ -299,6 +325,31 @@ class BrowserChannel(MessageChannel):
         return None
 
     # --- Device registration ---
+
+    async def _sanitize_page_content(self, text: str, url: str) -> str:
+        """Summarize raw page content in a sandboxed model call.
+
+        All web content passes through this before entering the agent context.
+        No tools, no user context, no preferences — just rewriting.
+        """
+        if not self._sanitize_client or not text.strip():
+            return text
+        truncated = text[:MAX_RAW_CHARS]
+        try:
+            response = await self._sanitize_client.chat(
+                messages=[
+                    {"role": "system", "content": SANITIZE_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"URL: {url}\n\n{truncated}"},
+                ],
+            )
+            result = response.message.content if response.message else ""
+            logger.info(
+                "Sanitized page content: %s (%d → %d chars)", url, len(truncated), len(result)
+            )
+            return result.strip() or text
+        except Exception:
+            logger.warning("Page content sanitization failed for %s, using raw", url)
+            return text
 
     def _auto_register_device(self, device_label: str) -> None:
         """Register the browser device if not already known."""

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from penny.agents import ChatAgent
     from penny.commands import CommandRegistry
     from penny.database import Database
+    from penny.ollama import OllamaClient
 
 # Channel type constants (aliases for backward compat)
 CHANNEL_TYPE_SIGNAL = ChannelType.SIGNAL
@@ -27,6 +28,7 @@ def create_channel_manager(
     message_agent: ChatAgent,
     db: Database,
     command_registry: CommandRegistry | None = None,
+    model_client: OllamaClient | None = None,
 ) -> ChannelManager:
     """Create a ChannelManager with all configured channels registered."""
     manager = ChannelManager(
@@ -38,7 +40,9 @@ def create_channel_manager(
     _register_primary_channel(config, message_agent, db, command_registry, manager)
 
     if config.browser_enabled:
-        _register_browser_channel(config, message_agent, db, command_registry, manager)
+        _register_browser_channel(
+            config, message_agent, db, command_registry, manager, model_client
+        )
 
     return manager
 
@@ -87,6 +91,7 @@ def _register_browser_channel(
     db: Database,
     command_registry: CommandRegistry | None,
     manager: ChannelManager,
+    model_client: OllamaClient | None = None,
 ) -> None:
     """Create and register the browser channel if enabled."""
     from penny.channels.browser import BrowserChannel
@@ -97,6 +102,7 @@ def _register_browser_channel(
         message_agent=message_agent,
         db=db,
         command_registry=command_registry,
+        model_client=model_client,
     )
     manager.register_channel(ChannelType.BROWSER, channel)
 
