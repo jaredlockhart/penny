@@ -2,7 +2,9 @@
 
 ## What Is Penny
 
-Penny is a local-first AI agent that communicates via Signal or Discord. Users send messages, Penny searches the web via Perplexity, reasons using Ollama (local LLM), and replies in a casual, relaxed style. It runs in Docker with host networking.
+Penny is a local-first AI agent that communicates via Signal, Discord, or a Firefox browser extension. Users send messages, Penny searches the web via Perplexity, reasons using Ollama (local LLM), and replies in a casual, relaxed style. It runs in Docker with host networking.
+
+Penny is single-user — a personal assistant deployed locally for one person. Multiple devices (Signal phone, browser instances) connect as different devices of the same user, sharing a single conversation history.
 
 Penny also has an autonomous development team (`penny-team/`) — Claude CLI agents that process GitHub Issues on a schedule, handling requirements, architecture, and implementation.
 
@@ -54,6 +56,20 @@ github_api/                     — Shared GitHub API client (GraphQL + REST)
 similarity/                     — Shared similarity primitives (penny + penny-team)
   embeddings.py                 — Pure math: cosine similarity, TCR, serialization
   dedup.py                      — Dedup strategies (TCR + embedding)
+browser/                        — Firefox browser extension
+  src/                          — TypeScript source
+    protocol.ts                 — Typed WebSocket + runtime messaging protocol
+    background/                 — WebSocket owner, tool dispatch, tab tracking
+    sidebar/                    — Chat UI, page context toggle
+    feed/                       — Thought card grid, reactions, modal
+    content/                    — Defuddle-based page extraction (esbuild bundled)
+  sidebar/                      — Sidebar HTML + CSS
+  feed/                         — Feed page HTML + CSS
+  icons/                        — Extension icons (rendered from SVG)
+  manifest.json                 — WebExtensions manifest
+  tsconfig.json                 — Strict TypeScript config
+  build-content.mjs             — esbuild wrapper for content script
+  package.json                  — Dependencies: defuddle, fontawesome, esbuild, web-ext
 Makefile                        — Dev commands (make up, make check, make prod)
 docker-compose.yml              — signal-api + penny + team services
 docker-compose.override.yml     — Dev source volume overrides
@@ -63,7 +79,10 @@ scripts/
   workflows/
     check.yml                   — CI: runs make check on push/PR to main
   CODEOWNERS                    — Trusted maintainers (used by penny-team filtering)
-docs/                           — Design documents (historical)
+docs/                           — Design documents
+  browser-extension-architecture.md — Browser extension architecture & design
+  channel-manager-plan.md       — Multi-channel implementation plan
+  browser-tools-plan.md         — Browser tools implementation plan
 data/                           — Runtime data (gitignored)
   penny/                        — Penny runtime data
     penny.db                    — Production database
@@ -94,7 +113,20 @@ make fix              # Format + autofix lint issues (penny + penny-team)
 make typecheck        # Type check with ty (penny + penny-team)
 make migrate-test     # Test database migrations against a copy of prod DB
 make migrate-validate # Check for duplicate migration number prefixes
+make signal-avatar    # Set Penny's Signal profile picture from penny.png
 ```
+
+### Browser Extension Development
+
+```bash
+cd browser
+npm install            # Install dependencies
+npm run build          # Build TypeScript + bundle content script
+npm run dev            # Build, watch, and launch Firefox with auto-reload
+npm run ext            # Launch Firefox with web-ext (no build/watch)
+```
+
+`npm run dev` uses `web-ext` with `--firefox-profile=default-release --keep-profile-changes` to run in the user's real Firefox profile. The background script owns the WebSocket connection; the sidebar communicates via `browser.runtime` messaging.
 
 On the host, dev tool commands run via `docker compose run --rm` in a temporary container (penny service for `penny/`, team service for `penny-team/`). Inside agent containers (where `LOCAL=1` is set), the same `make` targets run tools directly — no Docker-in-Docker needed.
 
@@ -118,6 +150,11 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 **Discord** (required if using Discord):
 - `DISCORD_BOT_TOKEN`: Bot token from Discord Developer Portal
 - `DISCORD_CHANNEL_ID`: Channel ID to listen to and send messages in
+
+**Browser Extension** (optional):
+- `BROWSER_ENABLED`: "true" to enable browser channel (default: false)
+- `BROWSER_HOST`: WebSocket bind address (default: "localhost", use "0.0.0.0" in Docker)
+- `BROWSER_PORT`: WebSocket port (default: 9090, must be exposed in docker-compose)
 
 **Ollama**:
 - `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
