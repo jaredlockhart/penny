@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine
 
+from penny.database.device_store import DeviceStore
 from penny.database.history_store import HistoryStore
 from penny.database.message_store import MessageStore
 from penny.database.preference_store import PreferenceStore
@@ -19,6 +20,7 @@ class Database:
     """Database facade — provides access to domain-specific stores.
 
     Stores:
+        devices: Device registration and lookup
         history: Conversation topic summaries for long-term context
         messages: Message/prompt/command logging, threading, queries
         preferences: User preference CRUD and dedup
@@ -32,6 +34,7 @@ class Database:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(f"sqlite:///{db_path}")
 
+        self.devices = DeviceStore(self.engine)
         self.history = HistoryStore(self.engine)
         self.messages = MessageStore(self.engine)
         self.preferences = PreferenceStore(self.engine)

@@ -14,10 +14,12 @@ from penny.agents import (
     NotifyAgent,
     ThinkingAgent,
 )
-from penny.channels import MessageChannel, create_channel
+from penny.channels import MessageChannel, create_channel_manager
+from penny.channels.browser import BrowserChannel
+from penny.channels.manager import ChannelManager
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
-from penny.constants import PennyConstants
+from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.ollama.client import OllamaClient
@@ -31,8 +33,10 @@ from penny.scheduler import (
     Schedule,
 )
 from penny.scheduler.schedule_runner import ScheduleExecutor
+from penny.serper.client import search_image_url
 from penny.startup import get_restart_message
 from penny.tools import SearchTool, Tool
+from penny.tools.browse_url import BrowseUrlTool
 from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.news import NewsTool
 from penny.zoho.models import ZohoCredentials
@@ -217,8 +221,6 @@ class Penny:
             from github_api.api import GitHubAPI
             from github_api.auth import GitHubAuth
 
-            from penny.constants import PennyConstants
-
             key_path = Path(config.github_app_private_key_path)
             if not key_path.is_absolute():
                 key_path = Path.cwd() / key_path
@@ -261,15 +263,33 @@ class Penny:
         return None
 
     def _init_channel(self, config: Config, channel: MessageChannel | None) -> None:
-        """Create channel and connect agents that send notifications."""
-        self.channel = channel or create_channel(
+        """Create channel manager and connect agents that send notifications."""
+        self.channel = channel or create_channel_manager(
             config=config,
             message_agent=self.chat_agent,
             db=self.db,
             command_registry=self.command_registry,
+            model_client=self.model_client,
         )
         self.schedule_executor.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
+        self._wire_browser_tools()
+
+    def _wire_browser_tools(self) -> None:
+        """Connect browser tools to agents when a browser channel is available."""
+        if not isinstance(self.channel, ChannelManager):
+            return
+        browser_ch = self.channel.get_channel(ChannelType.BROWSER)
+        if not isinstance(browser_ch, BrowserChannel):
+            return
+
+        def provider() -> list:
+            if not browser_ch.has_tool_connection:
+                return []
+            return [BrowseUrlTool(request_fn=browser_ch.send_tool_request)]
+
+        self.chat_agent.set_browser_tools_provider(provider)
+        self.thinking_agent.set_browser_tools_provider(provider)
 
     def _init_scheduler(self, config: Config) -> None:
         """Create background scheduler with prioritized schedules."""
@@ -425,6 +445,36 @@ class Penny:
                 break
         return total
 
+    async def _backfill_thought_images(self) -> None:
+        """Backfill image URLs for thoughts that don't have one yet."""
+        if not self.config.serper_api_key:
+            return
+
+        batch_size = 50
+        total = 0
+        while True:
+            thoughts = self.db.thoughts.get_without_images(limit=batch_size)
+            if not thoughts:
+                break
+            tasks = [
+                search_image_url(
+                    t.title or "",
+                    api_key=self.config.serper_api_key,
+                    max_results=3,
+                    timeout=5.0,
+                )
+                for t in thoughts
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for thought, result in zip(thoughts, results, strict=True):
+                if thought.id is None:
+                    continue
+                url = result if isinstance(result, str) else ""
+                self.db.thoughts.update_image_url(thought.id, url or "")
+            total += len(thoughts)
+        if total:
+            logger.info("Startup image backfill: %d thoughts", total)
+
     async def run(self) -> None:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
@@ -435,13 +485,14 @@ class Penny:
         if self.config.ollama_image_model:
             logger.info("Ollama model: %s (image generation)", self.config.ollama_image_model)
 
-        # Validate channel connectivity before starting (if implemented)
+        # Validate channel connectivity before starting
         validate_fn = getattr(self.channel, "validate_connectivity", None)
         if validate_fn and callable(validate_fn):
             await validate_fn()
 
         await self._validate_optional_models()
         await self._backfill_all_embeddings()
+        await self._backfill_thought_images()
 
         await self._send_startup_announcement()
         await self._prompt_for_missing_profiles()
@@ -455,50 +506,40 @@ class Penny:
             await self.shutdown()
 
     async def _send_startup_announcement(self) -> None:
-        """Send a startup announcement to all known recipients."""
+        """Send a startup announcement to the user's default device."""
         try:
-            senders = self.db.users.get_all_senders()
-            if not senders:
-                logger.info("No recipients found for startup announcement")
+            sender = self.db.users.get_primary_sender()
+            if not sender:
+                logger.info("No user profile found for startup announcement")
                 return
 
-            # Generate restart message
-            restart_msg = await get_restart_message(self.model_client)
+            # Only announce if the user has chatted before (not a fresh profile)
+            if not self.db.messages.get_latest_incoming_time(sender):
+                logger.info("No message history yet, skipping startup announcement")
+                return
 
-            # Combine wave with restart message
+            restart_msg = await get_restart_message(self.model_client)
             announcement = f"👋 {restart_msg}"
 
-            logger.info("Sending startup announcement to %d recipient(s)", len(senders))
-            for sender in senders:
-                try:
-                    await self.channel.send_status_message(sender, announcement)
-                except Exception as e:
-                    logger.warning("Failed to send startup announcement to %s: %s", sender, e)
+            logger.info("Sending startup announcement to %s", sender)
+            await self.channel.send_status_message(sender, announcement)
         except Exception as e:
             logger.warning("Failed to send startup announcement: %s", e)
 
     async def _prompt_for_missing_profiles(self) -> None:
-        """Prompt users who don't have a profile set up yet."""
+        """Prompt the user if they don't have a profile set up yet (single-user)."""
         try:
-            senders = self.db.users.get_all_senders()
-            if not senders:
-                logger.info("No recipients to check for missing profiles")
-                return
+            if self.db.users.get_primary_sender():
+                return  # Profile exists, nothing to do
 
+            # No profile — send prompt to any known sender from message history
+            senders = self.db.users.get_all_senders()
             for sender in senders:
                 try:
-                    user_info = self.db.users.get_info(sender)
-                    if not user_info:
-                        logger.info("User %s has no profile, sending prompt", sender)
-                        try:
-                            await self.channel.send_status_message(
-                                sender, PennyResponse.PROFILE_REQUIRED
-                            )
-                        except Exception as e:
-                            logger.warning("Failed to send profile prompt to %s: %s", sender, e)
-                except Exception:
-                    # Silently skip if userinfo table doesn't exist yet
-                    pass
+                    logger.info("User %s has no profile, sending prompt", sender)
+                    await self.channel.send_status_message(sender, PennyResponse.PROFILE_REQUIRED)
+                except Exception as e:
+                    logger.warning("Failed to send profile prompt to %s: %s", sender, e)
         except Exception as e:
             logger.warning("Failed to send profile prompts: %s", e)
 

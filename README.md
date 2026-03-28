@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="penny.svg" alt="Penny" width="128">
+</p>
+
 # Penny
 **Your private, personalized internet companion.**
 <br>
@@ -10,6 +14,7 @@
 ![Ollama](https://img.shields.io/badge/Ollama-local%20LLM-blueviolet)
 ![Signal](https://img.shields.io/badge/Signal-messaging-3a76f0)
 ![Discord](https://img.shields.io/badge/Discord-bot-5865f2)
+![Firefox](https://img.shields.io/badge/Firefox-extension-ff7139)
 
 <p align="center">
   <img src="penny1.png" alt="Penny screenshot 1" width="220">
@@ -23,6 +28,8 @@ Ask Penny anything and she'll search the web and text you back, always with sour
 
 But she's not just a question-answering bot. She pays attention. She remembers your conversations, learns what you're into, and starts sharing things she thinks you'd like on her own. She follows up on old topics when she finds something new. She gets to know you over time and her responses get more personal because of it.
 
+Penny communicates via Signal, Discord, or a Firefox browser extension — all channels share the same conversation history. The browser extension gives her direct access to the web: she can browse pages with the full rendering engine and your session, see what you're currently looking at, and present her discoveries as a browsable feed of thought cards.
+
 Penny is a feed only for you. Private, personal, and local.
 
 ## How It Works
@@ -31,7 +38,7 @@ Penny is a feed only for you. Private, personal, and local.
 
 When you send Penny a message, she always searches the web before responding — she never makes things up from model knowledge. A local LLM (via [Ollama](https://ollama.com)) reads the search results and writes a response in her own voice: casual, calm, with sources.
 
-Penny talks to you over [Signal](https://signal.org) or [Discord](https://discord.com) — the same apps you already use to message people. Quote-reply to continue a thread; she'll walk the conversation history for context.
+Penny talks to you over [Signal](https://signal.org), [Discord](https://discord.com), or a [Firefox sidebar extension](docs/browser-extension-architecture.md) — the same apps you already use. All channels share conversation history: ask on Signal, follow up in the browser. Quote-reply to continue a thread; she'll walk the conversation history for context.
 
 ### Preferences
 
@@ -135,6 +142,24 @@ User-created scheduled tasks (via `/schedule`) run on their own timer regardless
 
 23 parameters are tunable at runtime via `/config` — scheduling intervals, notification backoff, preference dedup thresholds, inner monologue settings, and more. Values follow a three-tier lookup: database override → environment variable → default. Changes take effect immediately without restart.
 
+## Browser Extension
+
+The Firefox extension adds a visual, interactive layer on top of Penny's existing architecture:
+
+- **Sidebar chat** — same conversation as Signal/Discord, with HTML-formatted responses, images, and clickable links
+- **Active tab context** — Penny can see the page you're currently viewing (via [Defuddle](https://github.com/kepano/defuddle) content extraction). Toggle "Include page content" to ask questions about any page
+- **Browser tools** — `browse_url` opens pages in hidden tabs with the full web engine and your session. Domain access requires explicit permission via a sidebar dialog
+- **Thoughts feed** — a browsable card grid of Penny's discoveries, with images, seed topic bylines, and a modal viewer. Thumbs up/down reactions feed directly into the preference extraction pipeline
+- **Multi-device** — each browser registers as a device (e.g., "firefox macbook 16"). All devices share the same user identity and conversation history
+
+```bash
+cd browser
+npm install
+npm run dev    # Build, watch, and launch Firefox with auto-reload
+```
+
+See [docs/browser-extension-architecture.md](docs/browser-extension-architecture.md) for the full architecture and security model.
+
 ## Setup & Running
 
 ### Prerequisites
@@ -169,6 +194,7 @@ make fmt              # Format with ruff
 make fix              # Format + autofix lint issues
 make typecheck        # Type check with ty
 make token            # Generate GitHub App installation token for gh CLI
+make signal-avatar    # Set Penny's Signal profile picture
 make migrate-test     # Test database migrations against a copy of prod DB
 ```
 
@@ -192,6 +218,11 @@ SIGNAL_API_URL="http://localhost:8080"
 # Discord Configuration (required for Discord)
 DISCORD_BOT_TOKEN="your-bot-token"
 DISCORD_CHANNEL_ID="your-channel-id"
+
+# Browser Extension (optional)
+BROWSER_ENABLED=true
+BROWSER_HOST="0.0.0.0"                    # Use 0.0.0.0 in Docker
+BROWSER_PORT=9090
 
 # Ollama Configuration
 OLLAMA_API_URL="http://host.docker.internal:11434"

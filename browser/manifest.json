@@ -1,0 +1,40 @@
+{
+  "manifest_version": 2,
+  "name": "Penny",
+  "version": "0.1.0",
+  "description": "Penny browser channel — chat sidebar and browser tools",
+
+  "permissions": [
+    "storage",
+    "tabs",
+    "<all_urls>"
+  ],
+
+  "sidebar_action": {
+    "default_title": "Penny",
+    "default_panel": "sidebar/sidebar.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png"
+    }
+  },
+
+  "background": {
+    "scripts": ["dist/background/background.js"],
+    "type": "module"
+  },
+
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png"
+  },
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "penny@localhost",
+      "strict_min_version": "115.0"
+    }
+  }
+}

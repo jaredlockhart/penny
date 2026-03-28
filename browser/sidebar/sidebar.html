@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+  <div id="app">
+    <div id="register" class="hidden">
+      <p>Give this browser a name so Penny knows which device you're on.</p>
+      <input id="device-label" type="text" placeholder="e.g. firefox macbook 16">
+      <button id="register-btn">Register</button>
+    </div>
+
+    <div id="chat" class="hidden">
+      <div id="nav-bar">
+        <img src="../penny.svg" alt="Penny" class="nav-icon">
+        <button id="nav-chat" class="nav-btn active">Chat</button>
+        <button id="nav-thoughts" class="nav-btn">Thoughts <span id="nav-thoughts-count"></span></button>
+      </div>
+      <div id="messages-wrapper">
+        <div id="messages"></div>
+        <span id="status" class="disconnected"></span>
+      </div>
+      <div id="permission-dialog" class="hidden">
+        <p>Penny wants to browse <strong id="permission-domain"></strong></p>
+        <p class="permission-url" id="permission-url"></p>
+        <div class="permission-actions">
+          <button id="permission-allow">Allow</button>
+          <button id="permission-deny" class="deny">Deny</button>
+        </div>
+      </div>
+      <div id="page-context-bar" class="hidden">
+        <div id="page-context-header">
+          <img id="page-context-favicon" src="" alt="">
+          <span id="page-context-title"></span>
+        </div>
+        <label id="page-context-label">
+          <input type="checkbox" id="page-context-toggle" checked>
+          Include page content with message
+        </label>
+      </div>
+      <div id="input-area">
+        <textarea id="input" placeholder="Message Penny..." rows="1"></textarea>
+        <button id="send">Send</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="../dist/sidebar/sidebar.js"></script>
+</body>
+</html>

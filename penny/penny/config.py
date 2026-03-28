@@ -94,12 +94,15 @@ def _collect_env_vars(channel_type: str) -> dict:
         "log_file": os.getenv("LOG_FILE"),
         "log_max_bytes": int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024))),
         "log_backup_count": int(os.getenv("LOG_BACKUP_COUNT", "5")),
-        "tool_timeout": float(os.getenv("TOOL_TIMEOUT", "60.0")),
+        "tool_timeout": float(os.getenv("TOOL_TIMEOUT", "120.0")),
         "fastmail_api_token": os.getenv("FASTMAIL_API_TOKEN"),
         "zoho_api_id": os.getenv("ZOHO_API_ID"),
         "zoho_api_secret": os.getenv("ZOHO_API_SECRET"),
         "zoho_refresh_token": os.getenv("ZOHO_REFRESH_TOKEN"),
         "news_api_key": os.getenv("NEWS_API_KEY"),
+        "browser_enabled": os.getenv("BROWSER_ENABLED", "").lower() in ("1", "true", "yes"),
+        "browser_host": os.getenv("BROWSER_HOST", "localhost"),
+        "browser_port": int(os.getenv("BROWSER_PORT", "9090")),
     }
 
 
@@ -161,7 +164,7 @@ class Config:
     ollama_retry_delay: float = 0.5
 
     # Tool execution timeout (seconds)
-    tool_timeout: float = 60.0
+    tool_timeout: float = 120.0
 
     # Scheduler tick interval (seconds)
     scheduler_tick_interval: float = 1.0
@@ -177,6 +180,11 @@ class Config:
 
     # News API configuration (optional, enables news search tool for agents)
     news_api_key: str | None = None
+
+    # Browser extension server (runs alongside primary channel)
+    browser_enabled: bool = False
+    browser_host: str = "localhost"
+    browser_port: int = 9090
 
     # Runtime-configurable params (DB override → env override → default)
     runtime: RuntimeParams = field(default_factory=RuntimeParams)

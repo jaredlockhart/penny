@@ -4,6 +4,14 @@ from enum import StrEnum
 from pathlib import Path
 
 
+class ChannelType(StrEnum):
+    """Communication channel types."""
+
+    SIGNAL = "signal"
+    DISCORD = "discord"
+    BROWSER = "browser"
+
+
 class PennyConstants:
     """All constants for the Penny agent."""
 
@@ -121,3 +129,7 @@ class PennyConstants:
 
     # History constants
     MAX_WEEKLY_ROLLUPS_PER_RUN = 2
+
+    # Browser channel constants
+    TOOL_REQUEST_TIMEOUT = 60.0
+    MAX_PAGE_CONTENT_CHARS = 100_000

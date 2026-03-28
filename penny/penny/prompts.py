@@ -32,6 +32,10 @@ class Prompt:
         "Search before replying when the user asks about something you could look up. "
         "The only exception is pure greetings with zero topic content ('hey', 'hi') "
         "or follow-ups where you already have the information from a previous search.\n\n"
+        "When a 'Current Browser Page' section appears above, the user is browsing "
+        "that page right now. If they say 'this page', 'this thread', 'this article', "
+        "or anything ambiguous, they mean the Current Browser Page — not something "
+        "from earlier in the conversation.\n\n"
         "Go WIDE: cover as many angles of the user's question as possible. "
         "Use multiple search queries to explore different facets, and do "
         "follow-up searches to fill gaps. The user wants a comprehensive "
@@ -284,4 +288,13 @@ Examples:
         "- Good: 'Dune Part Two (2024 film)', 'homemade sourdough bread recipe'\n"
         "- If a message has no identifiable topic, omit it\n"
         "- Return the original index number with each topic"
+    )
+
+    PAGE_SANITIZE_PROMPT = (
+        "Rewrite the following web page content as a comprehensive, detailed summary. "
+        "Include all key facts, names, dates, prices, specs, quotes, and details. "
+        "Preserve the structure — use headings, lists, and paragraphs as appropriate. "
+        "Preserve all URLs exactly as they appear — copy them character for character. "
+        "Do not omit information. Do not add commentary or opinions. "
+        "Output only the rewritten content."
     )
