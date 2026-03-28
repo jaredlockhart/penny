@@ -6,8 +6,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from penny.agents.notify import NotifyAgent, NotifyCandidate, ThoughtMode
+from penny.agents.notify import NotifyAgent, ThoughtMode
 from penny.constants import PennyConstants
+from penny.database.models import Thought
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
@@ -552,114 +553,38 @@ def test_novelty_score_low_when_identical():
     assert score < 0.01  # Nearly zero
 
 
-# ── Candidate scoring (normalization) ──────────────────────────────────
+# ── Candidate scoring (novelty) ─────────────────────────────────────────
 
 
-def _make_candidate(answer: str) -> NotifyCandidate:
-    return NotifyCandidate(answer=answer, image_prompt="")
+def _make_thought(content: str) -> Thought:
+    t = Thought(user="test", content=content)
+    t.id = id(content)
+    return t
 
 
-class _MockRuntime:
-    NOVELTY_WEIGHT = 0.5
-    SENTIMENT_WEIGHT = 0.5
-
-
-class _MockConfig:
-    runtime = _MockRuntime()
-
-
-class _MockAgent:
-    config = _MockConfig()
-
-
-def _build_select_best():
-    """Return a callable _select_best with a mock config for weights."""
-    return NotifyAgent._select_best
-
-
-def test_select_best_sentiment_wins_after_normalization():
-    """High-sentiment candidate beats high-novelty when sentiment is properly scaled.
-
-    Before normalization, novelty's larger absolute range would always dominate.
-    After min-max normalization both dimensions contribute equally per their weights.
-    With equal 50/50 weights and a middle candidate, the one with higher normalized
-    sentiment wins because it scores better on its dominant dimension.
-    """
-    select_best = _build_select_best()
-    free = _make_candidate("novel free thought about deep sea creatures")
-    seeded = _make_candidate("seeded thought about guitar pedals")
-    middle = _make_candidate("middle ground topic")
-
-    # free: norm_novelty=1.0, norm_sentiment=0.0 → 0.50
-    # seeded: norm_novelty=0.0, norm_sentiment=1.0 → 0.50
-    # middle: norm_novelty=0.4, norm_sentiment=0.75 → 0.575 (winner)
-    raw_scores = [
-        (free, 0.65, 0.00),  # high novelty, zero sentiment
-        (seeded, 0.40, 0.08),  # lower novelty, high sentiment
-        (middle, 0.50, 0.06),  # moderate both — best combined
-    ]
-    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
-    assert winner is middle
-
-
-def test_select_best_novelty_wins_when_sentiment_is_equal():
-    """When sentiment is identical, the most novel candidate wins."""
-    select_best = _build_select_best()
-    a = _make_candidate("novel topic")
-    b = _make_candidate("stale topic")
-
-    raw_scores = [
-        (a, 0.70, 0.05),
-        (b, 0.30, 0.05),
-    ]
-    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
+def test_select_most_novel_picks_highest():
+    """Most novel thought wins."""
+    a = _make_thought("novel topic")
+    b = _make_thought("stale topic")
+    scored = [(a, 0.70), (b, 0.30)]
+    winner = NotifyAgent._select_most_novel(scored)
     assert winner is a
 
 
-def test_select_best_equal_scores_picks_first():
-    """When all candidates score identically, the first one is returned."""
-    select_best = _build_select_best()
-    a = _make_candidate("first")
-    b = _make_candidate("second")
-
-    raw_scores = [
-        (a, 0.50, 0.05),
-        (b, 0.50, 0.05),
-    ]
-    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
+def test_select_most_novel_equal_scores_picks_first():
+    """When novelty scores are identical, the first candidate wins."""
+    a = _make_thought("first")
+    b = _make_thought("second")
+    scored = [(a, 0.50), (b, 0.50)]
+    winner = NotifyAgent._select_most_novel(scored)
     assert winner is a
 
 
-def test_select_best_three_candidates_balanced():
-    """With three candidates, normalization spreads scores across [0,1].
-
-    Candidate with best combined normalized score wins, not the one
-    with the highest raw novelty.
-    """
-    select_best = _build_select_best()
-    high_novelty = _make_candidate("very novel")
-    high_sentiment = _make_candidate("very aligned")
-    middle = _make_candidate("balanced")
-
-    # high_novelty: novelty=1.0, sentiment=0.0 → 0.5*1 + 0.5*0 = 0.50
-    # high_sentiment: novelty=0.0, sentiment=1.0 → 0.5*0 + 0.5*1 = 0.50
-    # middle: novelty=0.6, sentiment=0.75 → 0.5*0.6 + 0.5*0.75 = 0.675 (winner)
-    raw_scores = [
-        (high_novelty, 0.70, -0.02),
-        (high_sentiment, 0.30, 0.10),
-        (middle, 0.54, 0.07),
-    ]
-    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
-    assert winner is middle
-
-
-def test_select_best_single_candidate():
-    """Single candidate gets score 0.5 for both dimensions (no range)."""
-    select_best = _build_select_best()
-    only = _make_candidate("only candidate")
-
-    raw_scores = [(only, 0.45, 0.03)]
-    winner = select_best(_MockAgent(), raw_scores)  # type: ignore[arg-type]
+def test_select_most_novel_single_candidate():
+    """Single candidate is always returned."""
+    only = _make_thought("only candidate")
+    scored = [(only, 0.45)]
+    winner = NotifyAgent._select_most_novel(scored)
     assert winner is only
 
 

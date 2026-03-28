@@ -643,6 +643,61 @@ async def test_reaction_without_parent_is_skipped(
 
 
 @pytest.mark.asyncio
+async def test_thought_reaction_sets_valence_not_preference(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Reactions to thought notification messages set valence on the thought, not preferences."""
+    config = make_config(history_interval=99999.0)
+
+    def handler(request, count):
+        messages = request.get("messages", [])
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
+        if "User:" in prompt_text:
+            return mock_ollama._make_text_response(request, "- No topics")
+        return mock_ollama._make_text_response(request, "- Topics")
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Store a thought, then log a notification message linked to it
+        thought = penny.db.thoughts.add(TEST_SENDER, "Interesting content about guitar amps")
+        assert thought is not None
+        notif_id = penny.db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            TEST_SENDER,
+            thought.content[:200],
+            recipient=TEST_SENDER,
+            thought_id=thought.id,
+        )
+        # React to the notification (thumbs up)
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "\U0001f44d",
+            PennyConstants.MessageDirection.INCOMING,
+            datetime.now(UTC).replace(tzinfo=None),
+            is_reaction=True,
+            parent_id=notif_id,
+        )
+
+        await penny.history_agent.execute()
+
+        # Valence should be stored on the thought
+        updated = penny.db.thoughts.get_by_id(thought.id)
+        assert updated is not None
+        assert updated.valence == 1, f"Expected valence=1, got {updated.valence}"
+
+        # No preference should have been created from this reaction
+        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
+        assert len(prefs) == 0, f"Expected no preferences, got {prefs}"
+
+        # Reaction should be marked processed
+        reactions = penny.db.messages.get_user_reactions(TEST_SENDER, limit=100)
+        assert len(reactions) == 0
+
+
+@pytest.mark.asyncio
 async def test_reaction_emoji_classification(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):

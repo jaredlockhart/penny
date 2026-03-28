@@ -323,3 +323,48 @@ class TestBrowserPreferenceHandlers:
         )
 
         assert ws.sent == []
+
+
+class TestBrowserThoughtReaction:
+    """_handle_thought_reaction stores valence on thought and marks it notified."""
+
+    USER = "testuser"
+
+    def _setup(self, tmp_path, monkeypatch):
+        db = _make_db(tmp_path)
+        monkeypatch.setattr(db.users, "get_primary_sender", lambda: self.USER)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        thought = db.thoughts.add(self.USER, "Some fascinating thought content")
+        assert thought is not None
+        return channel, db, thought
+
+    def test_positive_emoji_sets_valence_and_marks_notified(self, tmp_path, monkeypatch):
+        channel, db, thought = self._setup(tmp_path, monkeypatch)
+        channel._handle_thought_reaction({"thought_id": thought.id, "emoji": "👍"})
+
+        updated = db.thoughts.get_by_id(thought.id)
+        assert updated.valence == 1
+        assert updated.notified_at is not None
+
+    def test_negative_emoji_sets_valence_and_marks_notified(self, tmp_path, monkeypatch):
+        channel, db, thought = self._setup(tmp_path, monkeypatch)
+        channel._handle_thought_reaction({"thought_id": thought.id, "emoji": "👎"})
+
+        updated = db.thoughts.get_by_id(thought.id)
+        assert updated.valence == -1
+        assert updated.notified_at is not None
+
+    def test_unknown_emoji_no_valence_set(self, tmp_path, monkeypatch):
+        channel, db, thought = self._setup(tmp_path, monkeypatch)
+        channel._handle_thought_reaction({"thought_id": thought.id, "emoji": "🐱"})
+
+        updated = db.thoughts.get_by_id(thought.id)
+        assert updated.valence is None
+        assert updated.notified_at is not None  # still marked notified
+
+    def test_no_synthetic_messages_created(self, tmp_path, monkeypatch):
+        channel, db, thought = self._setup(tmp_path, monkeypatch)
+        channel._handle_thought_reaction({"thought_id": thought.id, "emoji": "👍"})
+
+        reactions = db.messages.get_user_reactions(self.USER, limit=100)
+        assert reactions == []

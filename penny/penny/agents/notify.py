@@ -25,11 +25,7 @@ from penny.agents.models import ControllerResponse, ToolCallRecord
 from penny.constants import PennyConstants
 from penny.database.models import Thought
 from penny.ollama.embeddings import deserialize_embedding
-from penny.ollama.similarity import (
-    compute_sentiment_score,
-    load_preference_vectors,
-    novelty_score,
-)
+from penny.ollama.similarity import novelty_score
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.models import SearchArgs
@@ -648,70 +644,44 @@ class NotifyAgent(Agent):
     # ── Candidate scoring ─────────────────────────────────────────────
 
     async def _pick_best_thought(self, user: str, thoughts: list[Thought]) -> Thought:
-        """Score thoughts on novelty + sentiment using cached embeddings."""
+        """Score thoughts by novelty against recent messages. Pick most novel."""
         if len(thoughts) == 1 or not self._embedding_model_client:
             return thoughts[0]
 
         recent_vecs = await self._embed_recent_messages(user)
-        likes, dislikes = load_preference_vectors(
-            self.db.preferences.get_with_embeddings(user),
-            PennyConstants.PreferenceValence.POSITIVE,
-            PennyConstants.PreferenceValence.NEGATIVE,
-        )
-        raw_scores = self._score_thoughts(thoughts, recent_vecs, likes, dislikes)
-        if not raw_scores:
+        scored = self._score_thoughts_novelty(thoughts, recent_vecs)
+        if not scored:
             return thoughts[0]
-        return self._select_best(raw_scores)
+        return self._select_most_novel(scored)
 
     @staticmethod
-    def _score_thoughts(
+    def _score_thoughts_novelty(
         thoughts: list[Thought],
         recent_vecs: list[list[float]],
-        likes: list[list[float]],
-        dislikes: list[list[float]],
-    ) -> list[tuple[Thought, float, float]]:
-        """Score thoughts using cached embeddings. Skips thoughts without embeddings."""
-        results: list[tuple[Thought, float, float]] = []
+    ) -> list[tuple[Thought, float]]:
+        """Score thoughts by novelty. Skips thoughts without embeddings."""
+        results: list[tuple[Thought, float]] = []
         for thought in thoughts:
             if not thought.embedding:
                 continue
             vec = deserialize_embedding(thought.embedding)
             nov = novelty_score(vec, recent_vecs)
-            sent = compute_sentiment_score(vec, likes, dislikes)
-            results.append((thought, nov, sent))
+            results.append((thought, nov))
         return results
 
-    def _select_best(
-        self,
-        raw_scores: list[tuple],
-    ):
-        """Normalize novelty and sentiment to [0,1], apply weights, pick best."""
-        novelties = [n for _, n, _ in raw_scores]
-        sentiments = [s for _, _, s in raw_scores]
-        n_min, n_max = min(novelties), max(novelties)
-        s_min, s_max = min(sentiments), max(sentiments)
-        n_range = n_max - n_min
-        s_range = s_max - s_min
-
-        best: NotifyCandidate | None = None
-        best_score = float("-inf")
-        for candidate, novelty, sentiment in raw_scores:
-            norm_novelty = (novelty - n_min) / n_range if n_range else 0.5
-            norm_sentiment = (sentiment - s_min) / s_range if s_range else 0.5
-            novelty_weight = float(self.config.runtime.NOVELTY_WEIGHT)
-            sentiment_weight = float(self.config.runtime.SENTIMENT_WEIGHT)
-            score = novelty_weight * norm_novelty + sentiment_weight * norm_sentiment
+    @staticmethod
+    def _select_most_novel(scored: list[tuple[Thought, float]]) -> Thought:
+        """Pick the thought with the highest novelty score."""
+        best, best_score = scored[0]
+        for candidate, score in scored[1:]:
             logger.info(
-                "Candidate score: %.3f (novelty=%.3f, sentiment=%.3f) %s",
+                "Candidate novelty: %.3f — %s",
                 score,
-                norm_novelty,
-                norm_sentiment,
-                (getattr(candidate, "content", "") or getattr(candidate, "answer", ""))[:60],
+                (candidate.content or "")[:60],
             )
             if score > best_score:
                 best_score = score
                 best = candidate
-        assert best is not None
         return best
 
     async def _embed_recent_messages(self, user: str) -> list[list[float]]:

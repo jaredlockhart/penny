@@ -502,20 +502,36 @@ class HistoryAgent(Agent):
     # ── Reaction preference extraction ──────────────────────────────────
 
     async def _extract_reaction_preferences(self, user: str, reactions: list) -> bool:
-        """Extract preferences from emoji reactions (deterministic valence, LLM topics)."""
-        items = self._build_reaction_items(reactions)
+        """Extract preferences from emoji reactions (deterministic valence, LLM topics).
+
+        Thought reactions are processed immediately (valence stored, marked processed).
+        Regular reactions go through LLM topic extraction.
+        """
+        items, thought_ids = self._build_reaction_items(reactions)
+        did_work = False
+        if thought_ids:
+            self.db.messages.mark_processed(thought_ids)
+            did_work = True
         if not items:
-            return False
+            return did_work
 
         extracted = await self._extract_reaction_topics(items)
         if not extracted:
-            return False
+            return did_work
 
-        return await self._store_reaction_preferences(user, extracted)
+        return await self._store_reaction_preferences(user, extracted) or did_work
 
-    def _build_reaction_items(self, reactions: list) -> list[tuple[str, str, int]]:
-        """Build (parent_content, valence, index) tuples from recognized reactions."""
+    def _build_reaction_items(
+        self, reactions: list
+    ) -> tuple[list[tuple[str, str, int]], list[int]]:
+        """Build (parent_content, valence, index) tuples from recognized reactions.
+
+        Reactions to thought notification messages are routed to thought valence
+        storage and their IDs returned separately for immediate marking as processed.
+        Regular reactions are returned as items for LLM extraction.
+        """
         items: list[tuple[str, str, int]] = []
+        thought_ids: list[int] = []
         for reaction in reactions:
             valence = self._classify_reaction_emoji(reaction.content)
             if not valence:
@@ -523,8 +539,14 @@ class HistoryAgent(Agent):
             parent = self.db.messages.get_by_id(reaction.parent_id) if reaction.parent_id else None
             if not parent or not parent.content:
                 continue
+            if parent.thought_id is not None:
+                int_valence = 1 if valence == PennyConstants.PreferenceValence.POSITIVE else -1
+                self.db.thoughts.set_valence(parent.thought_id, int_valence)
+                if reaction.id is not None:
+                    thought_ids.append(reaction.id)
+                continue
             items.append((parent.content[:200], valence, len(items)))
-        return items
+        return items, thought_ids
 
     async def _extract_reaction_topics(
         self, items: list[tuple[str, str, int]]
