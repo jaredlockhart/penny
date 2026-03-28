@@ -38,6 +38,7 @@ class IncomingMessage(BaseModel):
     is_reaction: bool = False  # True if this is a reaction message
     reacted_to_external_id: str | None = None  # External ID of message being reacted to
     images: list[str] = Field(default_factory=list)  # Base64-encoded image data
+    page_context: dict | None = None  # Current page the user is viewing (browser only)
 
 
 class MessageChannel(ABC):
@@ -463,6 +464,7 @@ class MessageChannel(ABC):
                 content=message.content,
                 sender=user_sender,
                 images=message.images or None,
+                page_context=message.page_context,
             )
 
             incoming_id = self._db.messages.log_message(

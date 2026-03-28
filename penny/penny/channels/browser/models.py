@@ -15,12 +15,21 @@ BROWSER_RESP_TYPE_STATUS = "status"
 BROWSER_RESP_TYPE_TOOL_REQUEST = "tool_request"
 
 
+class PageContext(BaseModel):
+    """The page the user is currently viewing in the browser."""
+
+    title: str = ""
+    url: str = ""
+    text: str = ""
+
+
 class BrowserIncoming(BaseModel):
     """A chat message received from the browser extension."""
 
     type: str
     content: str = ""
     sender: str = "browser-user"
+    page_context: PageContext | None = None
 
 
 class BrowserToolResponse(BaseModel):

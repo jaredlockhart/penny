@@ -1,6 +1,6 @@
 /**
  * Background script — owns the WebSocket connection to Penny server.
- * Handles tool requests from the server and permission prompts.
+ * Handles tool requests, permission prompts, and active tab tracking.
  * The sidebar communicates with this script via browser.runtime messaging.
  */
 
@@ -8,6 +8,8 @@ import {
   type ConnectionState,
   ConnectionState as CS,
   DomainPermission as DP,
+  MAX_PAGE_CONTEXT_CHARS,
+  type PageContext,
   RECONNECT_DELAY_MS,
   type RuntimeMessage,
   RuntimeMessageType,
@@ -30,6 +32,10 @@ let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let deviceLabel: string | null = null;
 let connectionState: ConnectionState = CS.Disconnected;
+let currentPageContext: PageContext | null = null;
+
+// URLs we should never try to extract from
+const SKIP_URL_PREFIXES = ["about:", "moz-extension:", "chrome:", "data:", "file:"];
 
 // --- Lifecycle ---
 
@@ -39,10 +45,14 @@ async function init(): Promise<void> {
 
   browser.runtime.onMessage.addListener(handleRuntimeMessage);
   browser.storage.onChanged.addListener(handleStorageChange);
+  browser.tabs.onActivated.addListener(handleTabActivated);
+  browser.tabs.onUpdated.addListener(handleTabUpdated);
 
   if (deviceLabel) {
     connect();
   }
+
+  extractFromActiveTab();
 }
 
 function handleStorageChange(
@@ -56,13 +66,57 @@ function handleStorageChange(
   }
 }
 
+// --- Active tab tracking ---
+
+function handleTabActivated(): void {
+  extractFromActiveTab();
+}
+
+function handleTabUpdated(
+  _tabId: number,
+  changeInfo: browser.tabs._OnUpdatedChangeInfo,
+): void {
+  if (changeInfo.status === "complete") {
+    extractFromActiveTab();
+  }
+}
+
+async function extractFromActiveTab(): Promise<void> {
+  try {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs[0];
+    if (!tab?.id || !tab.url || SKIP_URL_PREFIXES.some((p) => tab.url!.startsWith(p))) {
+      currentPageContext = null;
+      return;
+    }
+
+    const results = await browser.tabs.executeScript(tab.id, {
+      file: "/dist/content/extract_text.js",
+      runAt: "document_idle",
+    });
+
+    if (results?.[0]) {
+      const data = results[0] as { title: string; url: string; text: string };
+      currentPageContext = {
+        title: data.title,
+        url: data.url,
+        text: data.text.slice(0, MAX_PAGE_CONTEXT_CHARS),
+      };
+    } else {
+      currentPageContext = null;
+    }
+  } catch {
+    // Content script injection can fail (e.g., privileged pages)
+    currentPageContext = null;
+  }
+}
+
 // --- Runtime messaging (sidebar ↔ background) ---
 
 function handleRuntimeMessage(message: RuntimeMessage): void {
   if (message.type === RuntimeMessageType.SendChat) {
     sendChatToServer(message.content);
   }
-  // PermissionResponse is handled directly in permissions.ts listener
 }
 
 function broadcastToSidebar(message: RuntimeMessage): void {
@@ -124,7 +178,15 @@ function scheduleReconnect(): void {
 
 function sendChatToServer(content: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN || !deviceLabel) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.Message, content, sender: deviceLabel }));
+  const payload: Record<string, unknown> = {
+    type: WsOutgoingType.Message,
+    content,
+    sender: deviceLabel,
+  };
+  if (currentPageContext) {
+    payload.page_context = currentPageContext;
+  }
+  ws.send(JSON.stringify(payload));
 }
 
 function sendToolResponse(requestId: string, result?: string, error?: string): void {

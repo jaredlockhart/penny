@@ -27,6 +27,7 @@ export interface WsOutgoingMessage {
   type: typeof WsOutgoingType.Message;
   content: string;
   sender: string;
+  page_context?: PageContext;
 }
 
 export interface WsOutgoingToolResponse {
@@ -152,6 +153,16 @@ export const DomainPermission = {
 
 /** Map of domain → permission stored in browser.storage.local */
 export type DomainAllowlist = Record<string, DomainPermission>;
+
+// --- Page context ---
+
+export interface PageContext {
+  title: string;
+  url: string;
+  text: string;
+}
+
+export const MAX_PAGE_CONTEXT_CHARS = 5_000;
 
 // --- Tool constants ---
 

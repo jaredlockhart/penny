@@ -174,7 +174,9 @@ class BrowserChannel(MessageChannel):
         self._connections[device_label] = ws
         self._auto_register_device(device_label)
 
-        envelope = {"browser_sender": device_label, "content": msg.content}
+        envelope: dict = {"browser_sender": device_label, "content": msg.content}
+        if msg.page_context:
+            envelope["page_context"] = msg.page_context.model_dump()
         asyncio.create_task(self.handle_message(envelope))
         return device_label
 
@@ -235,6 +237,7 @@ class BrowserChannel(MessageChannel):
             content=content,
             channel_type=ChannelType.BROWSER,
             device_identifier=sender,
+            page_context=raw_data.get("page_context"),
         )
 
     async def send_message(

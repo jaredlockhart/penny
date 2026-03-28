@@ -50,6 +50,7 @@ class ChatAgent(Agent):
         content: str,
         sender: str,
         images: list[str] | None = None,
+        page_context: dict | None = None,
     ) -> ControllerResponse:
         """Handle an incoming message — summary method.
 
@@ -75,7 +76,9 @@ class ChatAgent(Agent):
 
             logger.info("Handling message from %s (conversation mode)", sender)
             self._install_tools(self.get_tools(sender))
-            system_prompt = await self._build_system_prompt(sender, content)
+            system_prompt = await self._build_system_prompt(
+                sender, content, page_context=page_context
+            )
             return await self.run(
                 prompt=content,
                 max_steps=self.get_max_steps(),
@@ -88,9 +91,13 @@ class ChatAgent(Agent):
     # ── System prompt ──────────────────────────────────────────────────────
 
     async def _build_system_prompt(
-        self, user: str, content: str | None = None, instructions: str | None = None
+        self,
+        user: str,
+        content: str | None = None,
+        instructions: str | None = None,
+        page_context: dict | None = None,
     ) -> str:
-        """Identity + profile + history + thought + instructions."""
+        """Identity + profile + history + thought + page context + instructions."""
         return "\n\n".join(
             s
             for s in [
@@ -99,11 +106,24 @@ class ChatAgent(Agent):
                     self._profile_section(user, content),
                     self._history_section(user),
                     self._thought_section(user),
+                    self._page_context_section(page_context),
                 ),
                 self._instructions_section(instructions),
             ]
             if s
         )
+
+    @staticmethod
+    def _page_context_section(page_context: dict | None) -> str | None:
+        """Build context section for the page the user is currently viewing."""
+        if not page_context:
+            return None
+        title = page_context.get("title", "")
+        url = page_context.get("url", "")
+        text = page_context.get("text", "")
+        if not text:
+            return None
+        return f"### Current Browser Page\n{title}\n{url}\n\n{text}"
 
     def _thought_section(self, sender: str) -> str | None:
         """Build thought context — only thoughts Penny has shared with the user.
