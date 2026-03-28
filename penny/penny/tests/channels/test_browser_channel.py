@@ -211,7 +211,7 @@ class TestBrowseUrlToolConnectionError:
         async def disconnected_fn(tool: str, args: dict) -> str:
             raise ConnectionError("Browser disconnected")
 
-        tool = BrowseUrlTool(request_fn=disconnected_fn, model_client=MagicMock())
+        tool = BrowseUrlTool(request_fn=disconnected_fn)
         result = await tool.execute(url="https://example.com")
 
         assert "not connected" in result
