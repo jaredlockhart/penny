@@ -94,7 +94,7 @@ def _collect_env_vars(channel_type: str) -> dict:
         "log_file": os.getenv("LOG_FILE"),
         "log_max_bytes": int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024))),
         "log_backup_count": int(os.getenv("LOG_BACKUP_COUNT", "5")),
-        "tool_timeout": float(os.getenv("TOOL_TIMEOUT", "60.0")),
+        "tool_timeout": float(os.getenv("TOOL_TIMEOUT", "120.0")),
         "fastmail_api_token": os.getenv("FASTMAIL_API_TOKEN"),
         "zoho_api_id": os.getenv("ZOHO_API_ID"),
         "zoho_api_secret": os.getenv("ZOHO_API_SECRET"),
@@ -164,7 +164,7 @@ class Config:
     ollama_retry_delay: float = 0.5
 
     # Tool execution timeout (seconds)
-    tool_timeout: float = 60.0
+    tool_timeout: float = 120.0
 
     # Scheduler tick interval (seconds)
     scheduler_tick_interval: float = 1.0
