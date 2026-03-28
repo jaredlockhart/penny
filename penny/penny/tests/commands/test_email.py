@@ -114,9 +114,7 @@ async def test_email_search_and_answer(mock_jmap_client, email_context):
         result = await cmd.execute("what packages am I expecting", email_context)
 
     assert "packages" in result.text.lower()
-    mock_agent_instance.run.assert_called_once_with(
-        "what packages am I expecting", max_steps=email_context.config.email_max_steps
-    )
+    mock_agent_instance.run.assert_called_once_with("what packages am I expecting")
     mock_agent_instance.close.assert_called_once()
     mock_jmap_client.close.assert_called_once()
 
@@ -184,50 +182,25 @@ async def test_email_jmap_client_created_with_token(email_context):
 
 
 @pytest.mark.asyncio
-async def test_read_emails_tool_summarizes_content():
-    """Test that ReadEmailsTool runs fetched emails through Ollama summarization."""
+async def test_read_emails_tool_returns_content():
+    """Test that ReadEmailsTool returns email content directly."""
     mock_jmap = AsyncMock()
     mock_jmap.read_emails.return_value = [SAMPLE_DETAIL]
 
-    mock_ollama = AsyncMock()
-    mock_ollama.chat.return_value = MagicMock(
-        content="Amazon shipped order #123-456, arriving Feb 12."
-    )
-
-    tool = ReadEmailsTool(mock_jmap, mock_ollama, "what packages am I expecting")
-    result = await tool.execute(email_ids=["M001"])
-
-    assert result == "Amazon shipped order #123-456, arriving Feb 12."
-    mock_jmap.read_emails.assert_called_once_with(["M001"])
-    mock_ollama.chat.assert_called_once()
-    prompt = mock_ollama.chat.call_args[0][0][0]["content"]
-    assert "what packages am I expecting" in prompt
-
-
-@pytest.mark.asyncio
-async def test_read_emails_tool_falls_back_on_empty_summary():
-    """Test that ReadEmailsTool returns raw content if Ollama returns empty."""
-    mock_jmap = AsyncMock()
-    mock_jmap.read_emails.return_value = [SAMPLE_DETAIL]
-
-    mock_ollama = AsyncMock()
-    mock_ollama.chat.return_value = MagicMock(content="")
-
-    tool = ReadEmailsTool(mock_jmap, mock_ollama, "test query")
+    tool = ReadEmailsTool(mock_jmap)
     result = await tool.execute(email_ids=["M001"])
 
     assert "Your order #123-456 has been shipped!" in result
+    mock_jmap.read_emails.assert_called_once_with(["M001"])
 
 
 @pytest.mark.asyncio
 async def test_read_emails_tool_no_ids():
     """Test that ReadEmailsTool returns early for empty ID list."""
     mock_jmap = AsyncMock()
-    mock_ollama = AsyncMock()
 
-    tool = ReadEmailsTool(mock_jmap, mock_ollama, "test query")
+    tool = ReadEmailsTool(mock_jmap)
     result = await tool.execute(email_ids=[])
 
     assert result == NO_EMAILS_TO_READ
     mock_jmap.read_emails.assert_not_called()
-    mock_ollama.chat.assert_not_called()
