@@ -4,6 +4,14 @@ from enum import StrEnum
 from pathlib import Path
 
 
+class ChannelType(StrEnum):
+    """Communication channel types."""
+
+    SIGNAL = "signal"
+    DISCORD = "discord"
+    BROWSER = "browser"
+
+
 class PennyConstants:
     """All constants for the Penny agent."""
 

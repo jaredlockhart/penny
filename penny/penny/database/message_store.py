@@ -55,6 +55,7 @@ class MessageStore:
         is_reaction: bool = False,
         recipient: str | None = None,
         thought_id: int | None = None,
+        device_id: int | None = None,
     ) -> int | None:
         """Log a user message or agent response. Returns the message ID or None."""
         if direction == PennyConstants.MessageDirection.OUTGOING:
@@ -71,6 +72,7 @@ class MessageStore:
                     is_reaction=is_reaction,
                     recipient=recipient,
                     thought_id=thought_id,
+                    device_id=device_id,
                 )
                 session.add(log)
                 session.commit()

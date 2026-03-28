@@ -1,25 +1,84 @@
-const messages = document.getElementById("messages");
-const input = document.getElementById("input");
-const sendBtn = document.getElementById("send");
-const status = document.getElementById("status");
-
 const SERVER_URL = "ws://localhost:9090";
 
 let ws = null;
 let reconnectTimer = null;
+let deviceLabel = null;
+
+// --- DOM refs (resolved after init) ---
+let messagesEl, inputEl, sendBtn, statusEl;
+
+// --- Registration ---
+
+async function init() {
+  statusEl = document.getElementById("status");
+  const stored = await browser.storage.local.get("deviceLabel");
+  if (stored.deviceLabel) {
+    deviceLabel = stored.deviceLabel;
+    showChat();
+  } else {
+    showRegister();
+  }
+}
+
+function showRegister() {
+  document.getElementById("register").classList.remove("hidden");
+  document.getElementById("chat").classList.add("hidden");
+
+  const labelInput = document.getElementById("device-label");
+  const registerBtn = document.getElementById("register-btn");
+
+  registerBtn.addEventListener("click", () => saveLabel(labelInput));
+  labelInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") saveLabel(labelInput);
+  });
+
+  labelInput.focus();
+}
+
+async function saveLabel(labelInput) {
+  const label = labelInput.value.trim();
+  if (!label) return;
+
+  deviceLabel = label;
+  await browser.storage.local.set({ deviceLabel: label });
+  showChat();
+}
+
+function showChat() {
+  document.getElementById("register").classList.add("hidden");
+  document.getElementById("chat").classList.remove("hidden");
+
+  messagesEl = document.getElementById("messages");
+  inputEl = document.getElementById("input");
+  sendBtn = document.getElementById("send");
+
+  sendBtn.addEventListener("click", send);
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  });
+  inputEl.addEventListener("input", autoResize);
+
+  setStatus(false);
+  connect();
+}
+
+// --- Chat UI ---
 
 function addMessage(text, sender) {
   const div = document.createElement("div");
   div.className = `message ${sender}`;
   div.textContent = text;
-  messages.appendChild(div);
-  messages.scrollTop = messages.scrollHeight;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function setStatus(connected) {
-  status.textContent = connected ? "connected" : "disconnected";
-  status.className = connected ? "connected" : "disconnected";
-  sendBtn.disabled = !connected;
+  statusEl.textContent = connected ? "connected" : "disconnected";
+  statusEl.className = connected ? "connected" : "disconnected";
+  if (sendBtn) sendBtn.disabled = !connected;
 }
 
 function setTyping(active) {
@@ -29,12 +88,20 @@ function setTyping(active) {
     indicator.id = "typing";
     indicator.className = "typing";
     indicator.textContent = "Penny is thinking...";
-    messages.appendChild(indicator);
-    messages.scrollTop = messages.scrollHeight;
+    messagesEl.appendChild(indicator);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   } else if (!active && indicator) {
     indicator.remove();
   }
 }
+
+function autoResize() {
+  inputEl.rows = 1;
+  const lines = Math.ceil(inputEl.scrollHeight / 20);
+  inputEl.rows = Math.min(lines, 4);
+}
+
+// --- WebSocket ---
 
 function connect() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
@@ -80,29 +147,15 @@ function scheduleReconnect() {
 }
 
 function send() {
-  const text = input.value.trim();
+  const text = inputEl.value.trim();
   if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
 
   addMessage(text, "user");
-  ws.send(JSON.stringify({ type: "message", content: text }));
-  input.value = "";
-  input.rows = 1;
+  ws.send(JSON.stringify({ type: "message", content: text, sender: deviceLabel }));
+  inputEl.value = "";
+  inputEl.rows = 1;
 }
 
-sendBtn.addEventListener("click", send);
-input.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    send();
-  }
-});
+// --- Boot ---
 
-// Auto-resize textarea
-input.addEventListener("input", () => {
-  input.rows = 1;
-  const lines = Math.ceil(input.scrollHeight / 20);
-  input.rows = Math.min(lines, 4);
-});
-
-setStatus(false);
-connect();
+init();

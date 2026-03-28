@@ -31,6 +31,8 @@ class IncomingMessage(BaseModel):
 
     sender: str
     content: str
+    channel_type: str | None = None  # ChannelType enum value
+    device_identifier: str | None = None  # Device identifier for routing
     quoted_text: str | None = None
     signal_timestamp: int | None = None  # Original Signal timestamp (ms since epoch)
     is_reaction: bool = False  # True if this is a reaction message
@@ -262,6 +264,8 @@ class MessageChannel(ABC):
         # Apply channel-specific formatting
         # We log the prepared content so quote matching works correctly
         prepared = self.prepare_outgoing(content)
+        device = self._db.devices.get_by_identifier(recipient)
+        device_id = device.id if device else None
         message_id = self._db.messages.log_message(
             PennyConstants.MessageDirection.OUTGOING,
             self.sender_id,
@@ -269,6 +273,7 @@ class MessageChannel(ABC):
             parent_id=parent_id,
             recipient=recipient,
             thought_id=thought_id,
+            device_id=device_id,
         )
         external_id = await self.send_message(recipient, prepared, attachments, quote_message)
         # Store the external ID for future reactions and quote replies
@@ -412,21 +417,38 @@ class MessageChannel(ABC):
 
         return False
 
-    def _needs_profile(self, sender: str) -> bool:
-        """Check if the sender has no profile set up."""
+    def _resolve_device_id(self, message: IncomingMessage) -> int | None:
+        """Look up the device ID from the message's device identifier."""
+        if not message.device_identifier:
+            return None
+        device = self._db.devices.get_by_identifier(message.device_identifier)
+        return device.id if device else None
+
+    def _needs_profile(self) -> bool:
+        """Check if any user profile exists (Penny is single-user)."""
         try:
-            return self._db.users.get_info(sender) is None
+            return self._db.users.get_primary_sender() is None
         except Exception:
             return False
 
+    def _resolve_user_sender(self, device_sender: str) -> str:
+        """Resolve a device identifier to the primary user sender for DB lookups."""
+        primary = self._db.users.get_primary_sender()
+        return primary if primary else device_sender
+
     async def _dispatch_to_agent(self, message: IncomingMessage) -> None:
         """Run the message through the agent loop with typing indicators."""
-        if self._needs_profile(message.sender):
+        device_id = self._resolve_device_id(message)
+        # Resolve to canonical user identity for DB lookups (history, prefs, etc.)
+        user_sender = self._resolve_user_sender(message.sender)
+
+        if self._needs_profile():
             self._db.messages.log_message(
                 PennyConstants.MessageDirection.INCOMING,
-                message.sender,
+                user_sender,
                 message.content,
                 signal_timestamp=message.signal_timestamp,
+                device_id=device_id,
             )
             await self.send_status_message(message.sender, PennyResponse.PROFILE_REQUIRED)
             return
@@ -439,15 +461,16 @@ class MessageChannel(ABC):
             logger.info("Dispatching to message agent for %s", message.sender)
             response = await self._message_agent.handle(
                 content=message.content,
-                sender=message.sender,
+                sender=user_sender,
                 images=message.images or None,
             )
 
             incoming_id = self._db.messages.log_message(
                 PennyConstants.MessageDirection.INCOMING,
-                message.sender,
+                user_sender,
                 message.content,
                 signal_timestamp=message.signal_timestamp,
+                device_id=device_id,
             )
 
             answer = response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
@@ -455,7 +478,7 @@ class MessageChannel(ABC):
             incoming_log = MessageLog(
                 id=incoming_id,
                 direction=PennyConstants.MessageDirection.INCOMING,
-                sender=message.sender,
+                sender=user_sender,
                 content=message.content,
                 signal_timestamp=message.signal_timestamp,
             )
@@ -490,12 +513,14 @@ class MessageChannel(ABC):
             )
             return
 
+        device_id = self._resolve_device_id(message)
         self._db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING,
             message.sender,
             message.content,
             parent_id=reacted_msg.id,
             is_reaction=True,
+            device_id=device_id,
         )
 
         logger.info(

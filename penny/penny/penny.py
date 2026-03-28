@@ -14,7 +14,7 @@ from penny.agents import (
     NotifyAgent,
     ThinkingAgent,
 )
-from penny.channels import MessageChannel, create_channel
+from penny.channels import MessageChannel, create_channel_manager
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
 from penny.constants import PennyConstants
@@ -52,7 +52,6 @@ class Penny:
         self._init_agents(config)
         self._init_commands(config)
         self._init_channel(config, channel)
-        self._init_browser_server(config)
         self._init_scheduler(config)
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -262,8 +261,8 @@ class Penny:
         return None
 
     def _init_channel(self, config: Config, channel: MessageChannel | None) -> None:
-        """Create channel and connect agents that send notifications."""
-        self.channel = channel or create_channel(
+        """Create channel manager and connect agents that send notifications."""
+        self.channel = channel or create_channel_manager(
             config=config,
             message_agent=self.chat_agent,
             db=self.db,
@@ -271,19 +270,6 @@ class Penny:
         )
         self.schedule_executor.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
-
-    def _init_browser_server(self, config: Config) -> None:
-        """Start browser extension WebSocket server if enabled."""
-        if not config.browser_enabled:
-            self._browser_server = None
-            return
-        from penny.channels.browser import BrowserServer
-
-        self._browser_server = BrowserServer(
-            host=config.browser_host,
-            port=config.browser_port,
-        )
-        logger.info("Browser extension server enabled on port %d", config.browser_port)
 
     def _init_scheduler(self, config: Config) -> None:
         """Create background scheduler with prioritized schedules."""
@@ -449,7 +435,7 @@ class Penny:
         if self.config.ollama_image_model:
             logger.info("Ollama model: %s (image generation)", self.config.ollama_image_model)
 
-        # Validate channel connectivity before starting (if implemented)
+        # Validate channel connectivity before starting
         validate_fn = getattr(self.channel, "validate_connectivity", None)
         if validate_fn and callable(validate_fn):
             await validate_fn()
@@ -461,10 +447,10 @@ class Penny:
         await self._prompt_for_missing_profiles()
 
         try:
-            tasks = [self.channel.listen(), self.scheduler.run()]
-            if self._browser_server:
-                tasks.append(self._browser_server.start())
-            await asyncio.gather(*tasks)
+            await asyncio.gather(
+                self.channel.listen(),
+                self.scheduler.run(),
+            )
         finally:
             await self.shutdown()
 
@@ -521,8 +507,6 @@ class Penny:
         logger.info("Shutting down agent...")
         self.scheduler.stop()
         await self.channel.close()
-        if self._browser_server:
-            await self._browser_server.close()
         await Agent.close_all()
         await self.model_client.close()
         if self.vision_model_client:

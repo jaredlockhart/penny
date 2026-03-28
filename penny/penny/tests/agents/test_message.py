@@ -189,6 +189,12 @@ source URL so the user can follow up."""
             )
         assert len(outgoing) >= 1, "Outgoing message should be logged"
 
+        # Verify device_id FK is populated on both incoming and outgoing
+        test_device = penny.db.devices.get_by_identifier(TEST_SENDER)
+        assert test_device is not None, "Test device should be registered"
+        assert incoming_messages[0].device_id == test_device.id
+        assert outgoing[0].device_id == test_device.id
+
         # Verify search logs have default trigger
         with penny.db.get_session() as session:
             search_logs = list(session.exec(select(SearchLog)).all())

@@ -10,6 +10,7 @@ import discord
 
 from penny.channels.base import IncomingMessage, MessageChannel
 from penny.channels.discord.models import DiscordMessage, DiscordUser
+from penny.constants import ChannelType
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -172,6 +173,8 @@ class DiscordChannel(MessageChannel):
         incoming = IncomingMessage(
             sender=sender,
             content=str(reaction.emoji),
+            channel_type=ChannelType.DISCORD,
+            device_identifier=sender,
             is_reaction=True,
             reacted_to_external_id=str(reaction.message.id),
         )
@@ -314,7 +317,12 @@ class DiscordChannel(MessageChannel):
 
             logger.info("Extracted Discord message - sender: %s, content: '%s'", sender, content)
 
-            return IncomingMessage(sender=sender, content=content)
+            return IncomingMessage(
+                sender=sender,
+                content=content,
+                channel_type=ChannelType.DISCORD,
+                device_identifier=sender,
+            )
 
         except Exception as e:
             logger.error("Failed to extract Discord message: %s", e)

@@ -55,6 +55,9 @@ class MessageLog(SQLModel, table=True):
     thought_id: int | None = Field(
         default=None, foreign_key="thought.id", index=True
     )  # FK to thought that triggered this notification
+    device_id: int | None = Field(
+        default=None, foreign_key="device.id", index=True
+    )  # FK to device that sent/received this message
     embedding: bytes | None = None  # Serialized float32 embedding vector
 
 
@@ -147,6 +150,17 @@ class Preference(SQLModel, table=True):
     last_thought_at: datetime | None = None  # When this preference was last used as a thinking seed
     mention_count: int = Field(default=1)  # Times this topic was mentioned in conversation
     source: str = Field(default="extracted", index=True)  # PreferenceSource enum value
+
+
+class Device(SQLModel, table=True):
+    """A registered device (channel endpoint) for the single user."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    channel_type: str = Field(index=True)  # ChannelType enum value
+    identifier: str = Field(unique=True, index=True)  # Phone number, discord ID, browser label
+    label: str  # Human-readable name (e.g., "Signal", "firefox macbook 16")
+    is_default: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ConversationHistory(SQLModel, table=True):

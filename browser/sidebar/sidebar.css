@@ -128,3 +128,63 @@ body {
   font-style: italic;
   padding: 4px 12px;
 }
+
+.hidden {
+  display: none !important;
+}
+
+#register {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  text-align: center;
+}
+
+#register p {
+  color: #aaa;
+  line-height: 1.5;
+}
+
+#device-label {
+  width: 100%;
+  max-width: 280px;
+  padding: 10px 14px;
+  border: 1px solid #3a3a6a;
+  border-radius: 8px;
+  background: #2a2a4a;
+  color: #e0e0e0;
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  text-align: center;
+}
+
+#device-label:focus {
+  border-color: #c0a0ff;
+}
+
+#register-btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 8px;
+  background: #c0a0ff;
+  color: #1a1a2e;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+#register-btn:hover {
+  background: #d0b0ff;
+}
+
+#chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}

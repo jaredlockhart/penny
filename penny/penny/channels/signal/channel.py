@@ -25,7 +25,7 @@ from penny.channels.signal.models import (
     SignalEnvelope,
     TypingIndicatorRequest,
 )
-from penny.constants import PennyConstants
+from penny.constants import ChannelType, PennyConstants
 
 # Error substrings that indicate a transient signal-cli transport failure.
 # These appear in the 400 response body when signal-cli's socket to Signal's
@@ -525,6 +525,8 @@ class SignalChannel(MessageChannel):
         return IncomingMessage(
             sender=sender,
             content=emoji,
+            channel_type=ChannelType.SIGNAL,
+            device_identifier=sender,
             is_reaction=True,
             reacted_to_external_id=str(reaction.targetSentTimestamp),
         )
@@ -554,6 +556,8 @@ class SignalChannel(MessageChannel):
         return IncomingMessage(
             sender=sender,
             content=content,
+            channel_type=ChannelType.SIGNAL,
+            device_identifier=sender,
             quoted_text=quoted_text,
             signal_timestamp=signal_timestamp,
         )
