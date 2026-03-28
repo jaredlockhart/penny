@@ -4,7 +4,6 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlmodel import select
 
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog
@@ -492,135 +491,52 @@ async def test_failed_extraction_does_not_mark_processed(
         assert len(espresso_prefs) == 1
 
 
-# ── Reaction preference extraction ───────────────────────────────────────
+# ── Reaction handling ────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_reaction_extracts_preference_with_deterministic_valence(
+async def test_reactions_to_regular_messages_create_no_preferences(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """Thumbs-up/down reactions create preferences with emoji-determined valence."""
+    """Reactions to regular Penny messages are marked processed with no preference created."""
     config = make_config(history_interval=99999.0)
-
-    def handler(request, count):
-        messages = request.get("messages", [])
-        user_msgs = [m for m in messages if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-
-        # Reaction topic extraction — responds to the reaction pipeline prompt
-        if "extract" in prompt_text.lower() and "single topic" in prompt_text.lower():
-            result = json.dumps(
-                {
-                    "topics": [
-                        {"index": 0, "content": "Hiking trails near Boulder Colorado"},
-                        {"index": 1, "content": "Kale smoothie recipes"},
-                    ]
-                }
-            )
-            return mock_ollama._make_text_response(request, result)
-
-        # Summarization
-        if "User:" in prompt_text:
-            return mock_ollama._make_text_response(request, "- No topics")
-
-        return mock_ollama._make_text_response(request, "- Topics")
-
-    mock_ollama.set_response_handler(handler)
+    mock_ollama.set_response_handler(
+        lambda req, count: mock_ollama._make_text_response(req, "- No topics")
+    )
 
     async with running_penny(config) as penny:
-        # Log Penny's outgoing messages that will be reacted to
-        penny.db.messages.log_message(
+        msg_id = penny.db.messages.log_message(
             PennyConstants.MessageDirection.OUTGOING,
             TEST_SENDER,
-            "I found some great hiking trails near Boulder!",
-        )
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.OUTGOING,
-            TEST_SENDER,
-            "You should try kale smoothies, they're super healthy.",
-        )
-
-        # Get the outgoing message IDs to use as parent_id for reactions
-        with penny.db.get_session() as session:
-            hiking_msg = session.exec(
-                select(MessageLog).where(MessageLog.content.contains("hiking"))
-            ).first()
-            kale_msg = session.exec(
-                select(MessageLog).where(MessageLog.content.contains("kale"))
-            ).first()
-        assert hiking_msg and kale_msg
-        hiking_msg_id = hiking_msg.id
-        kale_msg_id = kale_msg.id
-
-        # Insert reactions with explicit timestamps — get_user_reactions returns
-        # newest-first (DESC), so hiking must be newer to appear at index 0
-        now = datetime.now(UTC).replace(tzinfo=None)
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "\U0001f44e",
-            PennyConstants.MessageDirection.INCOMING,
-            now - timedelta(seconds=1),
-            is_reaction=True,
-            parent_id=kale_msg_id,
+            "You should try hiking near Boulder!",
         )
         _insert_message(
             penny,
             TEST_SENDER,
             "\U0001f44d",
             PennyConstants.MessageDirection.INCOMING,
-            now,
+            datetime.now(UTC).replace(tzinfo=None),
             is_reaction=True,
-            parent_id=hiking_msg_id,
+            parent_id=msg_id,
         )
 
         await penny.history_agent.execute()
 
-        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        hiking_prefs = [p for p in prefs if "hiking" in p.content.lower()]
-        kale_prefs = [p for p in prefs if "kale" in p.content.lower()]
-
-        assert len(hiking_prefs) == 1, f"Expected 1 hiking preference, got {hiking_prefs}"
-        assert hiking_prefs[0].valence == "positive"
-        assert hiking_prefs[0].source == "extracted"
-
-        assert len(kale_prefs) == 1, f"Expected 1 kale preference, got {kale_prefs}"
-        assert kale_prefs[0].valence == "negative"
-        assert kale_prefs[0].source == "extracted"
-
-        # Reactions should be marked processed
-        reactions = penny.db.messages.get_user_reactions(TEST_SENDER, limit=100)
-        assert len(reactions) == 0, "Reactions should be marked processed after extraction"
+        assert penny.db.preferences.get_for_user(TEST_SENDER) == []
+        assert penny.db.messages.get_user_reactions(TEST_SENDER, limit=100) == []
 
 
 @pytest.mark.asyncio
-async def test_reaction_without_parent_is_skipped(
+async def test_reaction_without_parent_is_marked_processed(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """Reactions without a parent message are skipped, not erroring."""
+    """Reactions without a parent message are still marked processed."""
     config = make_config(history_interval=99999.0)
-
-    reaction_topic_calls = 0
-
-    def handler(request, count):
-        nonlocal reaction_topic_calls
-        messages = request.get("messages", [])
-        user_msgs = [m for m in messages if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-
-        if "extract" in prompt_text.lower() and "single topic" in prompt_text.lower():
-            reaction_topic_calls += 1
-            return mock_ollama._make_text_response(request, json.dumps({"topics": []}))
-
-        if "User:" in prompt_text:
-            return mock_ollama._make_text_response(request, "- No topics")
-
-        return mock_ollama._make_text_response(request, "- Topics")
-
-    mock_ollama.set_response_handler(handler)
+    mock_ollama.set_response_handler(
+        lambda req, count: mock_ollama._make_text_response(req, "- No topics")
+    )
 
     async with running_penny(config) as penny:
-        # Reaction with no parent_id
         _insert_message(
             penny,
             TEST_SENDER,
@@ -632,29 +548,77 @@ async def test_reaction_without_parent_is_skipped(
 
         await penny.history_agent.execute()
 
-        # No LLM call should have been made for reaction topics
-        assert reaction_topic_calls == 0, "Should not call LLM for parentless reactions"
-
-        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        assert len(prefs) == 0
+        assert penny.db.preferences.get_for_user(TEST_SENDER) == []
+        assert penny.db.messages.get_user_reactions(TEST_SENDER, limit=100) == []
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_reaction_emoji_classification(
+async def test_thought_reaction_sets_valence_not_preference(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """HistoryAgent classifies reaction emojis as positive, negative, or unknown."""
+    """Reactions to thought notification messages set valence on the thought, not preferences."""
     config = make_config(history_interval=99999.0)
 
+    def handler(request, count):
+        messages = request.get("messages", [])
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
+        if "User:" in prompt_text:
+            return mock_ollama._make_text_response(request, "- No topics")
+        return mock_ollama._make_text_response(request, "- Topics")
+
+    mock_ollama.set_response_handler(handler)
+
     async with running_penny(config) as penny:
-        classify = penny.history_agent._classify_reaction_emoji
-        assert classify("\u2764\ufe0f") == "positive"
-        assert classify("\U0001f44d") == "positive"
-        assert classify("\U0001f44e") == "negative"
-        assert classify("\U0001f937") is None
+        # Store a thought, then log a notification message linked to it
+        thought = penny.db.thoughts.add(TEST_SENDER, "Interesting content about guitar amps")
+        assert thought is not None
+        notif_id = penny.db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            TEST_SENDER,
+            thought.content[:200],
+            recipient=TEST_SENDER,
+            thought_id=thought.id,
+        )
+        # React to the notification (thumbs up)
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "\U0001f44d",
+            PennyConstants.MessageDirection.INCOMING,
+            datetime.now(UTC).replace(tzinfo=None),
+            is_reaction=True,
+            parent_id=notif_id,
+        )
+
+        await penny.history_agent.execute()
+
+        # Valence should be stored on the thought
+        updated = penny.db.thoughts.get_by_id(thought.id)
+        assert updated is not None
+        assert updated.valence == 1, f"Expected valence=1, got {updated.valence}"
+
+        # No preference should have been created from this reaction
+        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
+        assert len(prefs) == 0, f"Expected no preferences, got {prefs}"
+
+        # Reaction should be marked processed
+        reactions = penny.db.messages.get_user_reactions(TEST_SENDER, limit=100)
+        assert len(reactions) == 0
+
+
+def test_reaction_emoji_classification():
+    """HistoryAgent classifies reaction emojis as 1, -1, or None."""
+    from penny.agents.history import HistoryAgent
+
+    classify = HistoryAgent._emoji_to_int_valence
+    assert classify("\u2764\ufe0f") == 1
+    assert classify("\U0001f44d") == 1
+    assert classify("\U0001f44e") == -1
+    assert classify("\U0001f937") is None
 
 
 @pytest.mark.asyncio

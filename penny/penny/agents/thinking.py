@@ -18,7 +18,7 @@ from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
 from penny.constants import PennyConstants
 from penny.ollama.embeddings import serialize_embedding
-from penny.ollama.similarity import embed_text
+from penny.ollama.similarity import compute_mention_weighted_sentiment, embed_text
 from penny.prompts import Prompt
 from penny.serper.client import search_image_url
 
@@ -186,24 +186,32 @@ class ThinkingAgent(Agent):
             report = ""
         if report and not await self._is_duplicate_thought(user, report):
             title, content = self._parse_title(report)
-            content_embedding = await self._embed_and_serialize(content)
-            title_embedding = await self._embed_and_serialize(title.lower()) if title else None
-            image_url = await self._search_thought_image(title) if title else None
-            self.db.thoughts.add(
-                user,
-                content,
-                preference_id=self._seed_pref_id,
-                embedding=content_embedding,
-                title=title,
-                title_embedding=title_embedding,
-                image_url=image_url,
-            )
-            logger.info(
-                "[inner_monologue] stored thought (seed=%s, title=%s): %s",
-                self._seed_topic or "free",
-                title or "none",
-                content[:200],
-            )
+            content_vec = await embed_text(self._embedding_model_client, content)
+            content_embedding = serialize_embedding(content_vec) if content_vec else None
+            if not await self._passes_preference_filter(user, content_vec):
+                logger.info(
+                    "[inner_monologue] filtered by preferences (seed=%s): %s",
+                    self._seed_topic or "free",
+                    content[:100],
+                )
+            else:
+                title_embedding = await self._embed_and_serialize(title.lower()) if title else None
+                image_url = await self._search_thought_image(title) if title else None
+                self.db.thoughts.add(
+                    user,
+                    content,
+                    preference_id=self._seed_pref_id,
+                    embedding=content_embedding,
+                    title=title,
+                    title_embedding=title_embedding,
+                    image_url=image_url,
+                )
+                logger.info(
+                    "[inner_monologue] stored thought (seed=%s, title=%s): %s",
+                    self._seed_topic or "free",
+                    title or "none",
+                    content[:200],
+                )
         elif report:
             logger.info(
                 "[inner_monologue] discarded duplicate (seed=%s): %s",
@@ -213,6 +221,25 @@ class ThinkingAgent(Agent):
         if self._seed_pref_id is not None:
             self.db.preferences.mark_thought_about(self._seed_pref_id)
         return True
+
+    async def _passes_preference_filter(self, user: str, vec: list[float] | None) -> bool:
+        """Return True if the thought passes mention-weighted preference scoring.
+
+        Gate: if no preferences (positive or negative) at or above
+        PREFERENCE_MENTION_THRESHOLD exist, return True (filter inactive — no
+        signal yet or no embedding client).
+        Score: weighted_avg_sim(positive prefs) - weighted_avg_sim(negative prefs) >= 0.
+        """
+        if not self._embedding_model_client or vec is None:
+            return True
+        threshold = int(self.config.runtime.PREFERENCE_MENTION_THRESHOLD)
+        preferences = self.db.preferences.get_with_embeddings(user)
+        has_signal = any((p.mention_count or 0) >= threshold and p.embedding for p in preferences)
+        if not has_signal:
+            return True
+        score = compute_mention_weighted_sentiment(vec, preferences, min_mentions=threshold)
+        logger.debug("[inner_monologue] preference filter score: %.4f", score)
+        return score >= 0.0
 
     async def _search_thought_image(self, title: str) -> str | None:
         """Search for an image URL to accompany a thought."""
