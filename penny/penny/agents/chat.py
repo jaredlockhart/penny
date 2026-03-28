@@ -44,6 +44,10 @@ class ChatAgent(Agent):
         """Read from config each call so /config changes take effect immediately."""
         return int(self.config.runtime.MESSAGE_MAX_STEPS)
 
+    def _should_retry_short_response(self) -> bool:
+        """Retry short responses for user-facing messages."""
+        return True
+
     # ── Message handling ───────────────────────────────────────────────
 
     async def handle(
