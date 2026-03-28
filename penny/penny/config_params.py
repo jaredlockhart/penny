@@ -203,7 +203,10 @@ ConfigParam(
 
 ConfigParam(
     key="PREFERENCE_MENTION_THRESHOLD",
-    description="Minimum mention count for extracted preferences to become thinking candidates",
+    description=(
+        "Minimum mention count for a preference to qualify as a thinking"
+        " seed and for sentiment scoring"
+    ),
     type=int,
     default=2,
     validator=_validate_positive_int,

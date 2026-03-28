@@ -225,20 +225,22 @@ class ThinkingAgent(Agent):
     async def _passes_preference_filter(self, user: str, vec: list[float] | None) -> bool:
         """Return True if the thought passes mention-weighted preference scoring.
 
-        Gate: if no positive preferences with mention_count > 1 exist, return True
-        (filter inactive — no signal yet or no embedding client configured).
+        Gate: if no positive preferences at or above PREFERENCE_MENTION_THRESHOLD
+        exist, return True (filter inactive — no signal yet or no embedding client).
         Score: weighted_avg_sim(positive prefs) - weighted_avg_sim(negative prefs) >= 0.
         """
         if not self._embedding_model_client or vec is None:
             return True
+        threshold = int(self.config.runtime.PREFERENCE_MENTION_THRESHOLD)
         preferences = self.db.preferences.get_with_embeddings(user)
         has_signal = any(
-            p.valence == PennyConstants.PreferenceValence.POSITIVE and (p.mention_count or 0) > 1
+            p.valence == PennyConstants.PreferenceValence.POSITIVE
+            and (p.mention_count or 0) >= threshold
             for p in preferences
         )
         if not has_signal:
             return True
-        score = compute_mention_weighted_sentiment(vec, preferences)
+        score = compute_mention_weighted_sentiment(vec, preferences, min_mentions=threshold)
         logger.debug("[inner_monologue] preference filter score: %.4f", score)
         return score >= 0.0
 

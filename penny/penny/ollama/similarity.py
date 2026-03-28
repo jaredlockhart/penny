@@ -51,11 +51,13 @@ async def embed_text(
 def compute_mention_weighted_sentiment(
     vec: list[float],
     preferences: list,
+    min_mentions: int,
 ) -> float:
     """Score a vector against mention-weighted positive and negative preferences.
 
-    Only preferences with mention_count > 1 are considered (mention=1 are
-    typically thought titles re-extracted by the history agent, not real signal).
+    Only preferences with mention_count >= min_mentions are considered.
+    Pass PREFERENCE_MENTION_THRESHOLD so the same gate controls both
+    seed-topic eligibility and sentiment filtering.
 
     Returns weighted_avg_sim(positive) - weighted_avg_sim(negative).
     Returns 0.0 when no qualifying preferences exist.
@@ -63,7 +65,7 @@ def compute_mention_weighted_sentiment(
     pos_weighted: list[tuple[list[float], int]] = []
     neg_weighted: list[tuple[list[float], int]] = []
     for p in preferences:
-        if not p.embedding or (p.mention_count or 0) <= 1:
+        if not p.embedding or (p.mention_count or 0) < min_mentions:
             continue
         pref_vec = deserialize_embedding(p.embedding)
         weight = p.mention_count

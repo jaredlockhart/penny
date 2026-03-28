@@ -391,7 +391,7 @@ def test_compute_mention_weighted_sentiment_likes_minus_dislikes():
         _make_pref([1.0, 0.0, 0.0], "positive"),  # identical = similarity 1.0
         _make_pref([0.0, 1.0, 0.0], "negative"),  # orthogonal = similarity 0.0
     ]
-    score = compute_mention_weighted_sentiment(vec, prefs)
+    score = compute_mention_weighted_sentiment(vec, prefs, min_mentions=2)
     assert score > 0.9  # close to 1.0
 
 
@@ -399,7 +399,7 @@ def test_compute_mention_weighted_sentiment_no_preferences():
     """Score is 0 when no qualifying preferences exist."""
     from penny.ollama.similarity import compute_mention_weighted_sentiment
 
-    score = compute_mention_weighted_sentiment([1.0, 0.0, 0.0], [])
+    score = compute_mention_weighted_sentiment([1.0, 0.0, 0.0], [], min_mentions=2)
     assert score == 0.0
 
 
