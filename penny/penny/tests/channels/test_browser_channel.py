@@ -325,6 +325,35 @@ class TestBrowserPreferenceHandlers:
         assert ws.sent == []
 
 
+class TestBrowserHeartbeat:
+    """Heartbeat resets the scheduler idle timer without touching schedule intervals."""
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_calls_notify_activity(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        scheduler = MagicMock()
+        channel.set_scheduler(scheduler)
+
+        ws = _MockWs()
+        await channel._process_raw_message(ws, '{"type": "heartbeat"}', None)  # ty: ignore[invalid-argument-type]
+
+        scheduler.notify_activity.assert_called_once()
+        scheduler.notify_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_without_scheduler_is_noop(self, tmp_path):
+        """No scheduler set — heartbeat is silently ignored."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+        ws = _MockWs()
+        # Should not raise
+        await channel._process_raw_message(ws, '{"type": "heartbeat"}', None)  # ty: ignore[invalid-argument-type]
+
+
 class TestBrowserThoughtReaction:
     """_handle_thought_reaction stores valence on thought and marks it notified."""
 

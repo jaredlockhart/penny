@@ -73,6 +73,15 @@ class BackgroundScheduler:
             schedule.reset()
         logger.debug("Scheduler: all schedules reset by incoming message")
 
+    def notify_activity(self) -> None:
+        """Called when browser activity is detected (e.g. URL change).
+
+        Resets only the idle timer so notifications are suppressed while the
+        user is actively browsing, without delaying scheduled task intervals.
+        """
+        self._last_message_time = time.monotonic()
+        logger.debug("Scheduler: idle timer reset by browser activity")
+
     def notify_foreground_start(self) -> None:
         """Called when foreground work (message/command processing) starts.
 
