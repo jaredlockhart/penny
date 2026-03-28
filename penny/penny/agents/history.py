@@ -3,7 +3,7 @@
 Runs on a schedule. Each cycle, for each user:
 1. Summarizes today's messages (midnight to now) via upsert — rolling update
 2. Backfills completed past days that lack history entries
-3. Extracts user preferences from sentiment and emoji reactions
+3. Extracts user preferences from text messages only
 """
 
 from __future__ import annotations
@@ -35,22 +35,6 @@ class IdentifiedPreferenceTopics(BaseModel):
     existing: list[str] = PydanticField(
         default_factory=list,
         description="Already-known preference content strings discussed in the conversation",
-    )
-
-
-class ExtractedTopic(BaseModel):
-    """A topic extracted from a single reaction parent message."""
-
-    index: int = PydanticField(description="The original message index number")
-    content: str = PydanticField(description="The preference topic (3-10 words)")
-
-
-class ExtractedTopics(BaseModel):
-    """Schema for batch topic extraction from reaction parent messages."""
-
-    topics: list[ExtractedTopic] = PydanticField(
-        default_factory=list,
-        description="Topics extracted from the numbered messages",
     )
 
 
@@ -259,7 +243,11 @@ class HistoryAgent(Agent):
     # ── Preference extraction ─────────────────────────────────────────────
 
     async def _extract_today_preferences(self, user: str) -> bool:
-        """Extract preferences from unprocessed messages and reactions."""
+        """Extract preferences from unprocessed text messages only.
+
+        Reactions are processed for thought valence only (no preference extraction)
+        and are always marked processed so they don't accumulate.
+        """
         messages = self.db.messages.get_unprocessed(user, limit=100)
         reactions = self.db.messages.get_user_reactions(user, limit=100)
         if not messages and not reactions:
@@ -274,10 +262,8 @@ class HistoryAgent(Agent):
                 processed_ids.extend(m.id for m in messages if m.id is not None)
 
         if reactions:
-            reaction_work = await self._extract_reaction_preferences(user, reactions)
-            if reaction_work:
-                processed_ids.extend(r.id for r in reactions if r.id is not None)
-                did_work = True
+            self._process_reactions(reactions)
+            processed_ids.extend(r.id for r in reactions if r.id is not None)
 
         if processed_ids:
             self.db.messages.mark_processed(processed_ids)
@@ -499,118 +485,29 @@ class HistoryAgent(Agent):
             )
             logger.info("Preference stored for %s: %s (%s)", user, content[:50], pref.valence)
 
-    # ── Reaction preference extraction ──────────────────────────────────
+    # ── Reaction handling ────────────────────────────────────────────────
 
-    async def _extract_reaction_preferences(self, user: str, reactions: list) -> bool:
-        """Extract preferences from emoji reactions (deterministic valence, LLM topics).
+    def _process_reactions(self, reactions: list) -> None:
+        """Set thought valence for reactions to thought notifications.
 
-        Thought reactions are processed immediately (valence stored, marked processed).
-        Regular reactions go through LLM topic extraction.
+        Reactions to regular messages are discarded — preference extraction
+        runs only on text messages. All reactions are marked processed by the caller.
         """
-        items, thought_ids = self._build_reaction_items(reactions)
-        did_work = False
-        if thought_ids:
-            self.db.messages.mark_processed(thought_ids)
-            did_work = True
-        if not items:
-            return did_work
-
-        extracted = await self._extract_reaction_topics(items)
-        if not extracted:
-            return did_work
-
-        return await self._store_reaction_preferences(user, extracted) or did_work
-
-    def _build_reaction_items(
-        self, reactions: list
-    ) -> tuple[list[tuple[str, str, int]], list[int]]:
-        """Build (parent_content, valence, index) tuples from recognized reactions.
-
-        Reactions to thought notification messages are routed to thought valence
-        storage and their IDs returned separately for immediate marking as processed.
-        Regular reactions are returned as items for LLM extraction.
-        """
-        items: list[tuple[str, str, int]] = []
-        thought_ids: list[int] = []
         for reaction in reactions:
-            valence = self._classify_reaction_emoji(reaction.content)
-            if not valence:
-                continue
             parent = self.db.messages.get_by_id(reaction.parent_id) if reaction.parent_id else None
-            if not parent or not parent.content:
+            if not parent or parent.thought_id is None:
                 continue
-            if parent.thought_id is not None:
-                int_valence = 1 if valence == PennyConstants.PreferenceValence.POSITIVE else -1
+            int_valence = self._emoji_to_int_valence(reaction.content)
+            if int_valence is not None:
                 self.db.thoughts.set_valence(parent.thought_id, int_valence)
-                if reaction.id is not None:
-                    thought_ids.append(reaction.id)
-                continue
-            items.append((parent.content[:200], valence, len(items)))
-        return items, thought_ids
-
-    async def _extract_reaction_topics(
-        self, items: list[tuple[str, str, int]]
-    ) -> list[tuple[str, str]]:
-        """Use LLM to extract topics from reaction parent messages.
-
-        Returns (topic, valence) pairs with valence determined by the emoji.
-        """
-        numbered = "\n".join(f'{i}. "{content}"' for content, _, i in items)
-        prompt = f"{Prompt.REACTION_TOPIC_EXTRACTION_PROMPT}\n\nMessages:\n{numbered}"
-
-        try:
-            response = await self._model_client.generate(
-                prompt=prompt,
-                tools=None,
-                format=ExtractedTopics.model_json_schema(),
-            )
-            if not response.content or not response.content.strip():
-                return []
-            result = ExtractedTopics.model_validate_json(response.content)
-        except Exception as e:
-            logger.error("Reaction topic extraction failed: %s", e)
-            return []
-
-        valence_map = {i: valence for _, valence, i in items}
-        return [
-            (topic.content.strip(), valence_map[topic.index])
-            for topic in result.topics
-            if topic.content.strip() and topic.index in valence_map
-        ]
-
-    async def _store_reaction_preferences(
-        self, user: str, topic_valence_pairs: list[tuple[str, str]]
-    ) -> bool:
-        """Dedup reaction topics against existing preferences and store survivors."""
-        existing = self.db.preferences.get_for_user(user)
-        topics = [t for t, _ in topic_valence_pairs]
-        valence_map = {t.lower(): v for t, v in topic_valence_pairs}
-
-        survivors = await self._dedup_preference_topics(topics, existing)
-        if not survivors:
-            return bool(topic_valence_pairs)
-
-        for topic, embedding in survivors:
-            valence = valence_map.get(topic.lower(), PennyConstants.PreferenceValence.POSITIVE)
-            self.db.preferences.add(
-                user=user,
-                content=topic,
-                valence=valence,
-                embedding=embedding,
-                source=PennyConstants.PreferenceSource.EXTRACTED,
-            )
-            logger.info("Reaction preference stored: '%s' (%s)", topic[:50], valence)
-        return True
-
-    # ── Reaction helpers ─────────────────────────────────────────────────
 
     @staticmethod
-    def _classify_reaction_emoji(emoji: str) -> str | None:
-        """Classify an emoji as positive, negative, or None (unknown)."""
+    def _emoji_to_int_valence(emoji: str) -> int | None:
+        """Classify an emoji as 1 (positive), -1 (negative), or None (unknown)."""
         if emoji in PennyConstants.POSITIVE_REACTION_EMOJIS:
-            return PennyConstants.PreferenceValence.POSITIVE
+            return 1
         if emoji in PennyConstants.NEGATIVE_REACTION_EMOJIS:
-            return PennyConstants.PreferenceValence.NEGATIVE
+            return -1
         return None
 
     # ── Shared helpers ────────────────────────────────────────────────────
