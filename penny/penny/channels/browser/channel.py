@@ -18,15 +18,22 @@ from websockets.asyncio.server import Server, ServerConnection
 from penny.channels.base import IncomingMessage, MessageChannel, PageContext
 from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_MESSAGE,
+    BROWSER_MSG_TYPE_PREFERENCE_ADD,
+    BROWSER_MSG_TYPE_PREFERENCE_DELETE,
+    BROWSER_MSG_TYPE_PREFERENCES_REQUEST,
     BROWSER_MSG_TYPE_THOUGHT_REACTION,
     BROWSER_MSG_TYPE_THOUGHTS_REQUEST,
     BROWSER_MSG_TYPE_TOOL_RESPONSE,
     BROWSER_RESP_TYPE_MESSAGE,
+    BROWSER_RESP_TYPE_PREFERENCES,
     BROWSER_RESP_TYPE_STATUS,
     BROWSER_RESP_TYPE_THOUGHTS,
     BROWSER_RESP_TYPE_TYPING,
     BrowserIncoming,
     BrowserOutgoing,
+    BrowserPreferenceAdd,
+    BrowserPreferenceDelete,
+    BrowserPreferencesRequest,
     BrowserToolRequest,
     BrowserToolResponse,
 )
@@ -148,6 +155,18 @@ class BrowserChannel(MessageChannel):
             self._handle_thought_reaction(data)
             return device_label
 
+        if msg_type == BROWSER_MSG_TYPE_PREFERENCES_REQUEST:
+            await self._handle_preferences_request(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_PREFERENCE_ADD:
+            await self._handle_preference_add(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_PREFERENCE_DELETE:
+            await self._handle_preference_delete(ws, data)
+            return device_label
+
         if msg_type == BROWSER_MSG_TYPE_MESSAGE:
             return await self._handle_chat_message(ws, data, device_label)
 
@@ -234,6 +253,53 @@ class BrowserChannel(MessageChannel):
             )
 
         logger.info("Thought %d reacted with %s from feed", thought_id, emoji)
+
+    async def _handle_preferences_request(self, ws: ServerConnection, data: dict) -> None:
+        """Query preferences by valence and send them to the browser."""
+        try:
+            req = BrowserPreferencesRequest(**data)
+        except Exception:
+            logger.warning("Invalid preferences_request: %s", str(data)[:200])
+            return
+        await self._send_preferences(ws, req.valence)
+
+    async def _handle_preference_add(self, ws: ServerConnection, data: dict) -> None:
+        """Add a preference and send the updated list for its valence."""
+        try:
+            req = BrowserPreferenceAdd(**data)
+        except Exception:
+            logger.warning("Invalid preference_add: %s", str(data)[:200])
+            return
+        primary = self._db.users.get_primary_sender()
+        if not primary or not req.content.strip():
+            return
+        self._db.preferences.add(primary, req.content.strip(), req.valence, source="manual")
+        await self._send_preferences(ws, req.valence)
+
+    async def _handle_preference_delete(self, ws: ServerConnection, data: dict) -> None:
+        """Delete a preference and send the updated list for its valence."""
+        try:
+            req = BrowserPreferenceDelete(**data)
+        except Exception:
+            logger.warning("Invalid preference_delete: %s", str(data)[:200])
+            return
+        pref = self._db.preferences.get_by_id(req.preference_id)
+        if not pref:
+            return
+        valence = pref.valence
+        self._db.preferences.delete(req.preference_id)
+        await self._send_preferences(ws, valence)
+
+    async def _send_preferences(self, ws: ServerConnection, valence: str) -> None:
+        """Send a preferences_response for the given valence."""
+        primary = self._db.users.get_primary_sender()
+        prefs = self._db.preferences.get_for_user_by_valence(primary, valence) if primary else []
+        items = [
+            {"id": p.id, "content": p.content, "mention_count": p.mention_count} for p in prefs
+        ]
+        response = {"type": BROWSER_RESP_TYPE_PREFERENCES, "valence": valence, "preferences": items}
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await ws.send(json.dumps(response))
 
     def _resolve_seed_topics(self, thoughts: list) -> dict[int | None, str]:
         """Build a map of preference_id → preference content for seed topics."""

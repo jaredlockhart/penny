@@ -11,6 +11,9 @@ BROWSER_MSG_TYPE_MESSAGE = "message"
 BROWSER_MSG_TYPE_TOOL_RESPONSE = "tool_response"
 BROWSER_MSG_TYPE_THOUGHTS_REQUEST = "thoughts_request"
 BROWSER_MSG_TYPE_THOUGHT_REACTION = "thought_reaction"
+BROWSER_MSG_TYPE_PREFERENCES_REQUEST = "preferences_request"
+BROWSER_MSG_TYPE_PREFERENCE_ADD = "preference_add"
+BROWSER_MSG_TYPE_PREFERENCE_DELETE = "preference_delete"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -18,6 +21,7 @@ BROWSER_RESP_TYPE_TYPING = "typing"
 BROWSER_RESP_TYPE_STATUS = "status"
 BROWSER_RESP_TYPE_TOOL_REQUEST = "tool_request"
 BROWSER_RESP_TYPE_THOUGHTS = "thoughts_response"
+BROWSER_RESP_TYPE_PREFERENCES = "preferences_response"
 
 
 class BrowserIncoming(BaseModel):
@@ -54,3 +58,25 @@ class BrowserToolRequest(BaseModel):
     request_id: str
     tool: str
     arguments: dict
+
+
+class BrowserPreferencesRequest(BaseModel):
+    """A request to list preferences by valence."""
+
+    type: str
+    valence: str
+
+
+class BrowserPreferenceAdd(BaseModel):
+    """A request to add a new preference."""
+
+    type: str
+    valence: str
+    content: str
+
+
+class BrowserPreferenceDelete(BaseModel):
+    """A request to delete a preference by ID."""
+
+    type: str
+    preference_id: int

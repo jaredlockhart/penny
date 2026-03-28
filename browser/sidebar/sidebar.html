@@ -16,11 +16,13 @@
       <div id="nav-bar">
         <img src="../penny.svg" alt="Penny" class="nav-icon">
         <button id="nav-chat" class="nav-btn active">Chat</button>
+        <button id="nav-likes" class="nav-btn">Likes</button>
+        <button id="nav-dislikes" class="nav-btn">Dislikes</button>
         <button id="nav-thoughts" class="nav-btn">Thoughts <span id="nav-thoughts-count"></span></button>
+        <span id="status" class="disconnected"></span>
       </div>
       <div id="messages-wrapper">
         <div id="messages"></div>
-        <span id="status" class="disconnected"></span>
       </div>
       <div id="permission-dialog" class="hidden">
         <p>Penny wants to browse <strong id="permission-domain"></strong></p>
@@ -43,6 +45,22 @@
       <div id="input-area">
         <textarea id="input" placeholder="Message Penny..." rows="1"></textarea>
         <button id="send">Send</button>
+      </div>
+
+      <div id="likes-panel" class="prefs-panel hidden">
+        <div class="prefs-list" id="likes-list"></div>
+        <div class="prefs-add">
+          <input type="text" id="likes-input" placeholder="Add a like...">
+          <button id="likes-add-btn">Add</button>
+        </div>
+      </div>
+
+      <div id="dislikes-panel" class="prefs-panel hidden">
+        <div class="prefs-list" id="dislikes-list"></div>
+        <div class="prefs-add">
+          <input type="text" id="dislikes-input" placeholder="Add a dislike...">
+          <button id="dislikes-add-btn">Add</button>
+        </div>
       </div>
     </div>
   </div>

@@ -1,5 +1,6 @@
 """Tests for BrowserChannel message extraction and device registration."""
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -201,6 +202,127 @@ class TestBrowseUrlTool:
         result = await tool.execute(url="https://example.com")
 
         assert "no content" in result.lower()
+
+
+class _MockWs:
+    """Minimal mock WebSocket that captures sent JSON messages."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send(self, data: str) -> None:
+        self.sent.append(json.loads(data))
+
+
+class TestBrowserPreferenceHandlers:
+    """Preference request/add/delete handlers send correct WebSocket responses."""
+
+    USER = "testuser"
+
+    def _channel(self, tmp_path, monkeypatch) -> tuple[BrowserChannel, Database]:
+        db = _make_db(tmp_path)
+        monkeypatch.setattr(db.users, "get_primary_sender", lambda: self.USER)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        return channel, db
+
+    @pytest.mark.asyncio
+    async def test_preferences_request_empty(self, tmp_path, monkeypatch):
+        """Request with no preferences sends an empty list."""
+        channel, _ = self._channel(tmp_path, monkeypatch)
+        ws = _MockWs()
+        await channel._handle_preferences_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "preferences_request", "valence": "positive"},
+        )
+
+        assert len(ws.sent) == 1
+        resp = ws.sent[0]
+        assert resp["type"] == "preferences_response"
+        assert resp["valence"] == "positive"
+        assert resp["preferences"] == []
+
+    @pytest.mark.asyncio
+    async def test_preferences_request_filters_by_valence(self, tmp_path, monkeypatch):
+        """Only preferences matching the requested valence are returned."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        db.preferences.add(self.USER, "dark roast coffee", "positive", source="manual")
+        db.preferences.add(self.USER, "hiking", "positive", source="manual")
+        db.preferences.add(self.USER, "cold weather", "negative", source="manual")
+
+        ws = _MockWs()
+        await channel._handle_preferences_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "preferences_request", "valence": "positive"},
+        )
+
+        resp = ws.sent[0]
+        contents = [p["content"] for p in resp["preferences"]]
+        assert "dark roast coffee" in contents
+        assert "hiking" in contents
+        assert "cold weather" not in contents
+
+    @pytest.mark.asyncio
+    async def test_preference_add_stores_and_returns_list(self, tmp_path, monkeypatch):
+        """preference_add persists the preference as manual and returns the updated list."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        ws = _MockWs()
+        await channel._handle_preference_add(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "preference_add", "valence": "positive", "content": "jazz music"},
+        )
+
+        resp = ws.sent[0]
+        assert resp["type"] == "preferences_response"
+        assert resp["valence"] == "positive"
+        assert resp["preferences"][0]["content"] == "jazz music"
+
+        saved = db.preferences.get_for_user_by_valence(self.USER, "positive")
+        assert len(saved) == 1
+        assert saved[0].source == "manual"
+
+    @pytest.mark.asyncio
+    async def test_preference_delete_removes_and_returns_list(self, tmp_path, monkeypatch):
+        """preference_delete removes the entry and returns the remaining list."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        pref = db.preferences.add(self.USER, "jazz music", "positive", source="manual")
+        assert pref is not None
+        db.preferences.add(self.USER, "hiking", "positive", source="manual")
+
+        ws = _MockWs()
+        await channel._handle_preference_delete(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "preference_delete", "preference_id": pref.id},
+        )
+
+        resp = ws.sent[0]
+        remaining = [p["content"] for p in resp["preferences"]]
+        assert "jazz music" not in remaining
+        assert "hiking" in remaining
+
+    @pytest.mark.asyncio
+    async def test_preference_add_ignores_blank_content(self, tmp_path, monkeypatch):
+        """preference_add with whitespace-only content sends nothing and stores nothing."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        ws = _MockWs()
+        await channel._handle_preference_add(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "preference_add", "valence": "positive", "content": "   "},
+        )
+
+        assert ws.sent == []
+        assert db.preferences.get_for_user_by_valence(self.USER, "positive") == []
+
+    @pytest.mark.asyncio
+    async def test_preference_delete_unknown_id_is_noop(self, tmp_path, monkeypatch):
+        """preference_delete with an unknown ID sends nothing."""
+        channel, _ = self._channel(tmp_path, monkeypatch)
+        ws = _MockWs()
+        await channel._handle_preference_delete(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "preference_delete", "preference_id": 9999},
+        )
+
+        assert ws.sent == []
 
 
 class TestPageContentSanitization:

@@ -17,12 +17,22 @@ export const ConnectionState = {
 
 // --- WebSocket: outgoing (browser → server) ---
 
-export type WsOutgoingType = "message" | "tool_response" | "thoughts_request" | "thought_reaction";
+export type WsOutgoingType =
+  | "message"
+  | "tool_response"
+  | "thoughts_request"
+  | "thought_reaction"
+  | "preferences_request"
+  | "preference_add"
+  | "preference_delete";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
   ThoughtsRequest: "thoughts_request",
   ThoughtReaction: "thought_reaction",
+  PreferencesRequest: "preferences_request",
+  PreferenceAdd: "preference_add",
+  PreferenceDelete: "preference_delete",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
@@ -45,17 +55,45 @@ export interface WsOutgoingToolResponse {
   error?: string;
 }
 
-export type WsOutgoing = WsOutgoingMessage | WsOutgoingToolResponse;
+export interface WsOutgoingPreferencesRequest {
+  type: typeof WsOutgoingType.PreferencesRequest;
+  valence: string;
+}
+
+export interface WsOutgoingPreferenceAdd {
+  type: typeof WsOutgoingType.PreferenceAdd;
+  valence: string;
+  content: string;
+}
+
+export interface WsOutgoingPreferenceDelete {
+  type: typeof WsOutgoingType.PreferenceDelete;
+  preference_id: number;
+}
+
+export type WsOutgoing =
+  | WsOutgoingMessage
+  | WsOutgoingToolResponse
+  | WsOutgoingPreferencesRequest
+  | WsOutgoingPreferenceAdd
+  | WsOutgoingPreferenceDelete;
 
 // --- WebSocket: incoming (server → browser) ---
 
-export type WsIncomingType = "message" | "typing" | "status" | "tool_request" | "thoughts_response";
+export type WsIncomingType =
+  | "message"
+  | "typing"
+  | "status"
+  | "tool_request"
+  | "thoughts_response"
+  | "preferences_response";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
   Status: "status",
   ToolRequest: "tool_request",
   ThoughtsResponse: "thoughts_response",
+  PreferencesResponse: "preferences_response",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -95,12 +133,25 @@ export interface WsIncomingThoughtsPayload {
   thoughts: ThoughtCard[];
 }
 
+export interface PreferenceItem {
+  id: number;
+  content: string;
+  mention_count: number;
+}
+
+export interface WsIncomingPreferencesPayload {
+  type: typeof WsIncomingType.PreferencesResponse;
+  valence: string;
+  preferences: PreferenceItem[];
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
   | WsIncomingStatusPayload
   | WsIncomingToolRequestPayload
-  | WsIncomingThoughtsPayload;
+  | WsIncomingThoughtsPayload
+  | WsIncomingPreferencesPayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
@@ -115,7 +166,11 @@ export type RuntimeMessageType =
   | "thoughts_request"
   | "thoughts_response"
   | "thought_reaction"
-  | "thought_count";
+  | "thought_count"
+  | "preferences_request"
+  | "preferences_response"
+  | "preference_add"
+  | "preference_delete";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -129,6 +184,10 @@ export const RuntimeMessageType = {
   ThoughtsResponse: "thoughts_response",
   ThoughtReaction: "thought_reaction",
   ThoughtCount: "thought_count",
+  PreferencesRequest: "preferences_request",
+  PreferencesResponse: "preferences_response",
+  PreferenceAdd: "preference_add",
+  PreferenceDelete: "preference_delete",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -205,6 +264,32 @@ export interface RuntimeThoughtCount {
   count: number;
 }
 
+/** Sidebar → background: request preferences by valence */
+export interface RuntimePreferencesRequest {
+  type: typeof RuntimeMessageType.PreferencesRequest;
+  valence: string;
+}
+
+/** Background → sidebar: preferences list for a valence */
+export interface RuntimePreferencesResponse {
+  type: typeof RuntimeMessageType.PreferencesResponse;
+  valence: string;
+  preferences: PreferenceItem[];
+}
+
+/** Sidebar → background: add a preference */
+export interface RuntimePreferenceAdd {
+  type: typeof RuntimeMessageType.PreferenceAdd;
+  valence: string;
+  content: string;
+}
+
+/** Sidebar → background: delete a preference */
+export interface RuntimePreferenceDelete {
+  type: typeof RuntimeMessageType.PreferenceDelete;
+  preference_id: number;
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -216,7 +301,11 @@ export type RuntimeMessage =
   | RuntimeThoughtsRequest
   | RuntimeThoughtsResponse
   | RuntimeThoughtReaction
-  | RuntimeThoughtCount;
+  | RuntimeThoughtCount
+  | RuntimePreferencesRequest
+  | RuntimePreferencesResponse
+  | RuntimePreferenceAdd
+  | RuntimePreferenceDelete;
 
 // --- Domain permissions ---
 

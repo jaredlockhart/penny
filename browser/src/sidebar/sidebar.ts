@@ -10,6 +10,7 @@ import {
   MAX_STORED_MESSAGES,
   type MessageSender,
   MessageSender as MS,
+  type PreferenceItem,
   type RuntimeMessage,
   RuntimeMessageType,
   STORAGE_KEY_CHAT_HISTORY,
@@ -29,6 +30,11 @@ let statusEl: HTMLElement;
 // Page context for decorating the next response
 let pendingPageRef: { title: string; url: string; image: string } | null = null;
 let currentPageImage = "";
+
+// Tab state
+type TabName = "chat" | "likes" | "dislikes";
+let activeTab: TabName = "chat";
+let lastPageInfo = { title: "", url: "", favicon: "", image: "", available: false };
 
 // --- Registration ---
 
@@ -82,12 +88,108 @@ async function showChat(): Promise<void> {
   });
   inputEl.addEventListener("input", autoResize);
 
+  document.getElementById("nav-chat")!.addEventListener("click", () => activateTab("chat"));
+  document.getElementById("nav-likes")!.addEventListener("click", () => activateTab("likes"));
+  document.getElementById("nav-dislikes")!.addEventListener("click", () => activateTab("dislikes"));
   document.getElementById("nav-thoughts")!.addEventListener("click", () => {
     browser.tabs.create({ url: browser.runtime.getURL("feed/feed.html") });
   });
 
+  setupPrefsAdd("positive", "likes");
+  setupPrefsAdd("negative", "dislikes");
+
   await rehydrateHistory();
   listenToBackground();
+}
+
+// --- Tab switching ---
+
+function activateTab(tab: TabName): void {
+  activeTab = tab;
+
+  document.getElementById("nav-chat")!.classList.toggle("active", tab === "chat");
+  document.getElementById("nav-likes")!.classList.toggle("active", tab === "likes");
+  document.getElementById("nav-dislikes")!.classList.toggle("active", tab === "dislikes");
+
+  document.getElementById("messages-wrapper")!.classList.toggle("hidden", tab !== "chat");
+  document.getElementById("input-area")!.classList.toggle("hidden", tab !== "chat");
+
+  if (tab !== "chat") {
+    document.getElementById("page-context-bar")!.classList.add("hidden");
+    document.getElementById("permission-dialog")!.classList.add("hidden");
+  } else {
+    updatePageContextBar(
+      lastPageInfo.title, lastPageInfo.url, lastPageInfo.favicon,
+      lastPageInfo.image, lastPageInfo.available,
+    );
+  }
+
+  document.getElementById("likes-panel")!.classList.toggle("hidden", tab !== "likes");
+  document.getElementById("dislikes-panel")!.classList.toggle("hidden", tab !== "dislikes");
+
+  if (tab === "likes") {
+    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferencesRequest, valence: "positive" });
+  } else if (tab === "dislikes") {
+    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferencesRequest, valence: "negative" });
+  }
+}
+
+// --- Preferences UI ---
+
+function renderPreferences(valence: string, prefs: PreferenceItem[]): void {
+  const listEl = document.getElementById(valence === "positive" ? "likes-list" : "dislikes-list")!;
+  listEl.innerHTML = "";
+
+  if (prefs.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "prefs-empty";
+    empty.textContent = valence === "positive" ? "No likes yet." : "No dislikes yet.";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  for (const pref of prefs) {
+    const row = document.createElement("div");
+    row.className = "pref-row";
+
+    const name = document.createElement("span");
+    name.className = "pref-name";
+    name.textContent = pref.content;
+
+    const count = document.createElement("span");
+    count.className = "pref-count";
+    count.textContent = `(${pref.mention_count})`;
+
+    const del = document.createElement("button");
+    del.className = "pref-delete";
+    del.textContent = "×";
+    del.setAttribute("aria-label", `Remove ${pref.content}`);
+    del.addEventListener("click", () => {
+      browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceDelete, preference_id: pref.id });
+    });
+
+    row.appendChild(name);
+    row.appendChild(count);
+    row.appendChild(del);
+    listEl.appendChild(row);
+  }
+}
+
+function setupPrefsAdd(valence: string, prefix: string): void {
+  const input = document.getElementById(`${prefix}-input`) as HTMLInputElement;
+  const btn = document.getElementById(`${prefix}-add-btn`) as HTMLButtonElement;
+
+  function add(): void {
+    const content = input.value.trim();
+    if (!content) return;
+    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceAdd, valence, content });
+    input.value = "";
+  }
+
+  btn.addEventListener("click", add);
+  input.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "Enter") add();
+  });
 }
 
 // --- Background communication ---
@@ -127,6 +229,8 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     if (countEl) countEl.textContent = message.count > 0 ? `(${message.count})` : "";
   } else if (message.type === RuntimeMessageType.PageInfo) {
     updatePageContextBar(message.title, message.url, message.favicon, message.image, message.available);
+  } else if (message.type === RuntimeMessageType.PreferencesResponse) {
+    renderPreferences(message.valence, message.preferences);
   }
 }
 
@@ -135,6 +239,8 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
 function updatePageContextBar(
   title: string, url: string, favicon: string, image: string, available: boolean,
 ): void {
+  lastPageInfo = { title, url, favicon, image, available };
+
   const bar = document.getElementById("page-context-bar")!;
   const titleEl = document.getElementById("page-context-title")!;
   const faviconEl = document.getElementById("page-context-favicon") as HTMLImageElement;
@@ -142,9 +248,9 @@ function updatePageContextBar(
 
   currentPageImage = image;
 
-  if (!available || !title) {
+  if (!available || !title || activeTab !== "chat") {
     bar.classList.add("hidden");
-    toggle.checked = false;
+    if (!available || !title) toggle.checked = false;
     return;
   }
 
