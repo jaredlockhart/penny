@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="penny.png" alt="Penny" width="128">
+</p>
+
 # Penny
 **Your private, personalized internet companion.**
 <br>

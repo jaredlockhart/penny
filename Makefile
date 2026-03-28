@@ -86,3 +86,15 @@ migrate-test: $(if $(LOCAL),,build)
 
 migrate-validate: $(if $(LOCAL),,build)
 	$(RUN) python -m penny.database.migrate --validate
+
+signal-avatar:
+	@python3 -c " \
+	import base64, json, os, urllib.request; \
+	number = os.environ.get('SIGNAL_NUMBER', ''); \
+	api = os.environ.get('SIGNAL_API_URL', 'http://localhost:8080'); \
+	f = open('penny.png', 'rb'); avatar = base64.b64encode(f.read()).decode(); f.close(); \
+	data = json.dumps({'name': 'Penny', 'avatar': avatar}).encode(); \
+	req = urllib.request.Request(api + '/v1/profiles/' + number, data=data, headers={'Content-Type': 'application/json'}, method='PUT'); \
+	urllib.request.urlopen(req, timeout=10); \
+	print('Signal avatar set for ' + number) \
+	"
