@@ -283,3 +283,9 @@ The feed page realizes the shift from interruption-based notifications to a brow
 - Penny logo: SVG traced from PNG, rendered to crisp PNGs at all icon sizes
 - Font Awesome icons (locally bundled, no CDN)
 - Signal profile avatar via signal-cli-rest-api
+
+### TODO — come back to these
+- **Page header on model-initiated browse_url**: when Penny calls browse_url on her own, the sidebar response should show the browsed page's image/title/URL header (same as user-initiated page context). Requires the server to include the browsed URL metadata alongside the response
+- **Deferred cleanup — drop sender column**: remove `sender` from `MessageLog`, migrate all queries to `device_id` or remove sender filtering (single-user). ~30 call sites
+- **Domain allowlist management UI**: currently managed via browser dev tools, needs a proper settings page
+- **Rate limiting on tool invocations**: prevent uncontrolled spidering from the thinking agent
