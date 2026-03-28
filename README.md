@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="penny.png" alt="Penny" width="128">
+  <img src="penny.svg" alt="Penny" width="128">
 </p>
 
 # Penny

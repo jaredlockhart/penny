@@ -63,6 +63,14 @@ h1 {
   font-size: 24px;
   font-weight: 600;
   color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#header-icon {
+  width: 32px;
+  height: 32px;
 }
 
 #tabs {
