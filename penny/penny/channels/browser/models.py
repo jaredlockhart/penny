@@ -14,6 +14,7 @@ BROWSER_MSG_TYPE_THOUGHT_REACTION = "thought_reaction"
 BROWSER_MSG_TYPE_PREFERENCES_REQUEST = "preferences_request"
 BROWSER_MSG_TYPE_PREFERENCE_ADD = "preference_add"
 BROWSER_MSG_TYPE_PREFERENCE_DELETE = "preference_delete"
+BROWSER_MSG_TYPE_HEARTBEAT = "heartbeat"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"

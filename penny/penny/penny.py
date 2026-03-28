@@ -297,6 +297,7 @@ class Penny:
             PeriodicSchedule(
                 agent=self.history_agent,
                 interval=config.runtime.HISTORY_INTERVAL,
+                requires_idle=False,
             ),
             PeriodicSchedule(
                 agent=self.notify_agent,
@@ -305,6 +306,7 @@ class Penny:
             PeriodicSchedule(
                 agent=self.thinking_agent,
                 interval=config.runtime.INNER_MONOLOGUE_INTERVAL,
+                requires_idle=False,
             ),
         ]
         self.scheduler = BackgroundScheduler(

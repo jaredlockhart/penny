@@ -49,6 +49,9 @@ DEFAULT_TEST_CONFIG = {
 # Default runtime param overrides for tests (disable background tasks)
 DEFAULT_TEST_RUNTIME_OVERRIDES: dict[str, int | float] = {
     "IDLE_SECONDS": 99999.0,
+    # Thinking and history run independent of idle — suppress via long intervals
+    "INNER_MONOLOGUE_INTERVAL": 99999.0,
+    "HISTORY_INTERVAL": 99999.0,
 }
 
 
