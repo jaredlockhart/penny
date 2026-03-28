@@ -469,7 +469,9 @@ class BrowserChannel(MessageChannel):
         text = re.sub(r"^#{1,6}\s+(.+)$", r"<strong>\1</strong>", text, flags=re.MULTILINE)
         text = re.sub(r"^-{3,}\s*$", "<hr>", text, flags=re.MULTILINE)
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2" target="_blank">\1</a>', text)
-        text = re.sub(r"(https?://[^\s<>&]+)", r'<a href="\1" target="_blank">\1</a>', text)
+        text = re.sub(
+            r'(?<!href=")(https?://[^\s<>&"]+)', r'<a href="\1" target="_blank">\1</a>', text
+        )
         text = text.replace("\n", "<br>")
         return text
 
