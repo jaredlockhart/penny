@@ -10,6 +10,7 @@ import logging
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
+from penny.channels.base import PageContext
 from penny.constants import PennyConstants
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -50,12 +51,14 @@ class ChatAgent(Agent):
         content: str,
         sender: str,
         images: list[str] | None = None,
+        page_context: PageContext | None = None,
     ) -> ControllerResponse:
         """Handle an incoming message — summary method.
 
         Builds context, processes images, runs agentic loop.
         """
         self._current_user = sender
+        self._pending_page_context = page_context
         try:
             content, has_images = await self._process_images(content, images)
             history = self.get_history(sender)
@@ -84,13 +87,65 @@ class ChatAgent(Agent):
             )
         finally:
             self._current_user = None
+            self._pending_page_context = None
+
+    # ── Message building ────────────────────────────────────────────────
+
+    def _build_messages(
+        self,
+        prompt: str,
+        history: list[tuple[str, str]] | None = None,
+        system_prompt: str | None = None,
+    ) -> list[dict]:
+        """Build messages, injecting page context as a synthetic browse_url result."""
+        messages = super()._build_messages(prompt, history, system_prompt)
+        if self._pending_page_context:
+            self._inject_page_context(messages, self._pending_page_context)
+        return messages
+
+    @staticmethod
+    def _inject_page_context(messages: list[dict], page_context: PageContext) -> None:
+        """Inject a synthetic browse_url tool call + result after the user prompt."""
+        if not page_context.text:
+            return
+
+        page_content = (
+            f"Title: {page_context.title}\nURL: {page_context.url}\n\n{page_context.text}"
+        )
+
+        # Assistant "called" browse_url for the current page
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "browse_url",
+                            "arguments": {"url": page_context.url},
+                        },
+                    }
+                ],
+            }
+        )
+        # Tool "returned" the page content
+        messages.append(
+            {
+                "role": "tool",
+                "content": page_content,
+                "tool_name": "browse_url",
+            }
+        )
 
     # ── System prompt ──────────────────────────────────────────────────────
 
     async def _build_system_prompt(
-        self, user: str, content: str | None = None, instructions: str | None = None
+        self,
+        user: str,
+        content: str | None = None,
+        instructions: str | None = None,
     ) -> str:
-        """Identity + profile + history + thought + instructions."""
+        """Identity + profile + history + thought + page hint + instructions."""
         return "\n\n".join(
             s
             for s in [
@@ -99,11 +154,19 @@ class ChatAgent(Agent):
                     self._profile_section(user, content),
                     self._history_section(user),
                     self._thought_section(user),
+                    self._page_hint_section(),
                 ),
                 self._instructions_section(instructions),
             ]
             if s
         )
+
+    def _page_hint_section(self) -> str | None:
+        """Minimal hint about what page the user is currently viewing."""
+        context = self._pending_page_context
+        if not context or not context.url:
+            return None
+        return f"### Current Browser Page\n{context.title}\n{context.url}"
 
     def _thought_section(self, sender: str) -> str | None:
         """Build thought context — only thoughts Penny has shared with the user.

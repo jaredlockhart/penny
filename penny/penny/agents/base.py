@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import urllib.parse as _urlparse
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -203,6 +204,7 @@ class Agent:
 
         self._search_tool = search_tool
         self._news_tool = news_tool
+        self._browser_tools_provider: Callable[[], list[Tool]] | None = None
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
 
@@ -276,8 +278,9 @@ class Agent:
         raise NotImplementedError(f"{type(self).__name__} must override get_max_steps()")
 
     def get_users(self) -> list[str]:
-        """Return users to process. Override to filter."""
-        return self.db.users.get_all_senders()
+        """Return the single user to process (Penny is single-user)."""
+        primary = self.db.users.get_primary_sender()
+        return [primary] if primary else []
 
     async def get_prompt(self, user: str) -> str | None:
         """Build the prompt for the agentic loop. Return None to skip this user."""
@@ -586,6 +589,10 @@ class Agent:
 
     # ── Tool management ──────────────────────────────────────────────────
 
+    def set_browser_tools_provider(self, provider: Callable[[], list[Tool]]) -> None:
+        """Set a callback that provides browser tools when a browser is connected."""
+        self._browser_tools_provider = provider
+
     def get_tools(self, user: str) -> list[Tool]:
         """Build tool list for this agent. Override in subclasses for custom tools."""
         tools: list[Tool] = []
@@ -593,6 +600,8 @@ class Agent:
             tools.append(self._search_tool)
         if self._news_tool:
             tools.append(self._news_tool)
+        if self._browser_tools_provider:
+            tools.extend(self._browser_tools_provider())
         return tools
 
     def _install_tools(self, tools: list[Tool]) -> None:

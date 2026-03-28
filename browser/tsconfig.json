@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "lib": ["ES2020", "DOM"],
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "sourceMap": false,
+    "declaration": false,
+    "skipLibCheck": true,
+    "isolatedModules": true
+  },
+  "include": ["src"],
+  "exclude": ["src/content"]
+}

@@ -165,87 +165,69 @@ async def test_startup_announcement_no_recipients(
 
 
 @pytest.mark.asyncio
-async def test_startup_announcement_multiple_recipients(
+async def test_startup_announcement_skipped_with_profile_but_no_messages(
+    signal_server, test_config, mock_ollama, running_penny, test_user_info
+):
+    """Profile exists but no message history — announcement should be skipped."""
+    # test_user_info creates a profile for TEST_SENDER but sends no messages.
+    # The announcement should not fire because there's no message history.
+    async with running_penny(test_config):
+        assert len(signal_server.outgoing_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_startup_announcement_multiple_devices(
     signal_server, test_config, mock_ollama, running_penny, monkeypatch
 ):
-    """Test that Penny sends startup announcement to all known recipients."""
-    # First run: populate database with multiple senders
+    """Test that Penny sends startup announcement to the primary user.
+
+    Penny is single-user: messages from any device resolve to the same user.
+    Startup announcements go to all known senders in the message log.
+    """
     mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
 
-    sender1 = TEST_SENDER
-    sender2 = "+15559998888"
-
     async with running_penny(test_config) as penny:
-        # Create user profiles before messaging (required for chat dispatch)
         penny.db.users.save_info(
-            sender=sender1,
-            name="Test User 1",
+            sender=TEST_SENDER,
+            name="Test User",
             location="Seattle, WA",
             timezone="America/Los_Angeles",
             date_of_birth="1990-01-01",
         )
-        penny.db.users.save_info(
-            sender=sender2,
-            name="Test User 2",
-            location="New York, NY",
-            timezone="America/New_York",
-            date_of_birth="1985-05-15",
-        )
+        from penny.constants import ChannelType
 
-        # Send from first sender
-        await signal_server.push_message(sender=sender1, content="hey penny")
+        penny.db.devices.register(ChannelType.SIGNAL, TEST_SENDER, "Signal", is_default=True)
+
+        # Send from primary device
+        await signal_server.push_message(sender=TEST_SENDER, content="hey penny")
         await signal_server.wait_for_message(timeout=10.0)
 
-        # Send from second sender
-        await signal_server.push_message(sender=sender2, content="hello")
-        await signal_server.wait_for_message(timeout=10.0)
-
-        # Verify both senders are in database
+        # All messages resolve to the primary sender
         senders = penny.db.users.get_all_senders()
-        assert sender1 in senders
-        assert sender2 in senders
+        assert TEST_SENDER in senders
 
     # Clear messages from first run
     signal_server.outgoing_messages.clear()
 
-    # Set commit message in environment variable
     monkeypatch.setenv("GIT_COMMIT_MESSAGE", "feat: update something cool")
-
-    # Second run: verify announcements to both recipients
     mock_ollama.set_default_flow(final_response="i updated something cool")
 
     async with running_penny(test_config):
-        expected_recipients = {sender1, sender2}
 
-        def all_recipients_notified():
-            all_recipients: set[str] = set()
+        def recipient_notified():
             for msg in signal_server.outgoing_messages:
-                all_recipients.update(msg.get("recipients", []))
-            return expected_recipients.issubset(all_recipients)
+                if TEST_SENDER in msg.get("recipients", []):
+                    return True
+            return False
 
-        await wait_until(all_recipients_notified)
+        await wait_until(recipient_notified)
 
-        # Should have sent to both recipients
-        # Note: Signal API may send separate messages or batch them
-        assert len(signal_server.outgoing_messages) >= 1, (
-            f"Expected at least 1 message, got {len(signal_server.outgoing_messages)}"
-        )
+        assert len(signal_server.outgoing_messages) >= 1
 
-        # Collect all recipients
-        all_recipients: set[str] = set()
-        for msg in signal_server.outgoing_messages:
-            all_recipients.update(msg.get("recipients", []))
-
-        assert sender1 in all_recipients, f"Expected {sender1} in recipients, got {all_recipients}"
-        assert sender2 in all_recipients, f"Expected {sender2} in recipients, got {all_recipients}"
-
-        # All messages should contain the restart message
         for msg in signal_server.outgoing_messages:
             message = msg["message"]
-            assert message.startswith("👋"), f"Expected message to start with 👋, got: {message}"
-            assert "i updated something cool" in message, (
-                f"Expected restart message in announcement, got: {message}"
-            )
+            assert message.startswith("👋")
+            assert "i updated something cool" in message
 
 
 @pytest.mark.asyncio

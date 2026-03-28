@@ -1,0 +1,22 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "tsc && npm run build:content",
+    "build:content": "node build-content.mjs",
+    "watch": "concurrently \"tsc --watch\" \"npm:watch:content\"",
+    "watch:content": "node build-content.mjs",
+    "dev": "npm run build && concurrently \"npm:watch\" \"npm:ext\"",
+    "ext": "web-ext run --firefox=/Applications/Firefox.app/Contents/MacOS/firefox --firefox-profile=default-release --keep-profile-changes --source-dir=."
+  },
+  "devDependencies": {
+    "@types/firefox-webext-browser": "^143.0.0",
+    "concurrently": "^9.1.2",
+    "esbuild": "^0.27.4",
+    "typescript": "^5.9.3",
+    "web-ext": "^8.4.0"
+  },
+  "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.2.0",
+    "defuddle": "^0.14.0"
+  }
+}

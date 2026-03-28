@@ -161,6 +161,12 @@ def test_user_info(test_config):
         timezone="America/Los_Angeles",
         date_of_birth="1990-01-01",
     )
+
+    # Register the test sender as a Signal device
+    from penny.constants import ChannelType
+
+    db.devices.register(ChannelType.SIGNAL, TEST_SENDER, "Test Signal", is_default=True)
+
     return db
 
 

@@ -29,6 +29,12 @@ class FetchNewsArgs(BaseModel):
     topic: str = "top news"
 
 
+class BrowseUrlArgs(BaseModel):
+    """Validated arguments for the browse_url tool."""
+
+    url: str
+
+
 class SearchEmailsArgs(BaseModel):
     """Validated arguments for the search_emails tool."""
 

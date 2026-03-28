@@ -45,5 +45,8 @@ Thumbs.db
 .uv/
 uv.lock
 
+# Node (browser extension)
+node_modules/
+
 # claude
 .claude/

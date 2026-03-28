@@ -69,6 +69,13 @@ class PreferenceStore:
         with self._session() as session:
             return session.get(Preference, pref_id)
 
+    def get_by_ids(self, pref_ids: set[int]) -> list[Preference]:
+        """Get multiple preferences by ID in a single query."""
+        if not pref_ids:
+            return []
+        with self._session() as session:
+            return list(session.exec(select(Preference).where(Preference.id.in_(pref_ids))).all())
+
     def get_for_user(self, user: str, limit: int = 100) -> list[Preference]:
         """Get all preferences for a user, newest first."""
         with self._session() as session:

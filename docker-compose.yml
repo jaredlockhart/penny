@@ -17,6 +17,8 @@ services:
         GIT_COMMIT_MESSAGE: ${GIT_COMMIT_MESSAGE:-unknown}
     image: penny
     restart: unless-stopped
+    ports:
+      - "9090:9090"
     volumes:
       - ./data:/penny/data
       - ./.env:/penny/.env

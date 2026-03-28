@@ -156,6 +156,11 @@ Search before replying when the user asks about something you could look up. \
 The only exception is pure greetings with zero topic content ('hey', 'hi') \
 or follow-ups where you already have the information from a previous search.
 
+When a 'Current Browser Page' section appears above, the user is browsing \
+that page right now. If they say 'this page', 'this thread', 'this article', \
+or anything ambiguous, they mean the Current Browser Page — not something \
+from earlier in the conversation.
+
 Go WIDE: cover as many angles of the user's question as possible. \
 Use multiple search queries to explore different facets, and do \
 follow-up searches to fill gaps. The user wants a comprehensive \
@@ -188,6 +193,12 @@ source URL so the user can follow up."""
                 session.exec(select(MessageLog).where(MessageLog.direction == "outgoing")).all()
             )
         assert len(outgoing) >= 1, "Outgoing message should be logged"
+
+        # Verify device_id FK is populated on both incoming and outgoing
+        test_device = penny.db.devices.get_by_identifier(TEST_SENDER)
+        assert test_device is not None, "Test device should be registered"
+        assert incoming_messages[0].device_id == test_device.id
+        assert outgoing[0].device_id == test_device.id
 
         # Verify search logs have default trigger
         with penny.db.get_session() as session:

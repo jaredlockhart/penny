@@ -386,3 +386,62 @@ def test_compute_sentiment_score_no_preferences():
 
     score = compute_sentiment_score([1.0, 0.0, 0.0], [], [])
     assert score == 0.0
+
+
+# ── Page context ─────────────────────────────────────────────────────────
+
+
+def test_page_context_injected_as_synthetic_tool_call():
+    """Page context is injected as a browse_url tool call + result in messages."""
+    from penny.agents.chat import ChatAgent
+    from penny.channels.base import PageContext
+
+    page_context = PageContext(
+        title="Example Product Page",
+        url="https://example.com/product",
+        text="This is a great product that costs $49.99",
+    )
+    messages: list[dict] = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "what is this page?"},
+    ]
+    ChatAgent._inject_page_context(messages, page_context)
+
+    assert len(messages) == 4
+    # Assistant tool call
+    assert messages[2]["role"] == "assistant"
+    assert messages[2]["tool_calls"][0]["function"]["name"] == "browse_url"
+    assert (
+        messages[2]["tool_calls"][0]["function"]["arguments"]["url"]
+        == "https://example.com/product"
+    )
+    # Tool result
+    assert messages[3]["role"] == "tool"
+    assert "$49.99" in messages[3]["content"]
+    assert "Example Product Page" in messages[3]["content"]
+
+
+def test_page_context_not_injected_when_empty():
+    """No injection when page context has no text."""
+    from penny.agents.chat import ChatAgent
+    from penny.channels.base import PageContext
+
+    messages: list[dict] = [{"role": "user", "content": "hi"}]
+    ChatAgent._inject_page_context(messages, PageContext(title="T", url="U", text=""))
+    assert len(messages) == 1  # unchanged
+
+
+def test_page_hint_in_system_prompt():
+    """System prompt includes a minimal page hint with title and URL."""
+    from penny.agents.chat import ChatAgent
+    from penny.channels.base import PageContext
+
+    context = PageContext(title="Cool Article", url="https://example.com/article", text="content")
+    agent = ChatAgent.__new__(ChatAgent)
+    agent._pending_page_context = context
+    hint = agent._page_hint_section()
+    assert hint is not None
+    assert "Cool Article" in hint
+    assert "https://example.com/article" in hint
+    # Should NOT contain the full text — that's in the tool result
+    assert "content" not in hint

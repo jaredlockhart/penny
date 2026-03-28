@@ -25,6 +25,12 @@ class UserStore:
         with self._session() as session:
             return session.exec(select(UserInfo).where(UserInfo.sender == sender)).first()
 
+    def get_primary_sender(self) -> str | None:
+        """Get the single user's primary sender identity (Penny is single-user)."""
+        with self._session() as session:
+            info = session.exec(select(UserInfo).limit(1)).first()
+            return info.sender if info else None
+
     def save_info(
         self,
         sender: str,

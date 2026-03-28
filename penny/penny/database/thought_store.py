@@ -27,6 +27,7 @@ class ThoughtStore:
         embedding: bytes | None = None,
         title: str | None = None,
         title_embedding: bytes | None = None,
+        image_url: str | None = None,
     ) -> Thought | None:
         """Append a thought to the log. Returns the created Thought or None."""
         try:
@@ -38,6 +39,7 @@ class ThoughtStore:
                     embedding=embedding,
                     title=title,
                     title_embedding=title_embedding,
+                    image_url=image_url,
                     created_at=datetime.now(UTC),
                 )
                 session.add(thought)
@@ -48,6 +50,11 @@ class ThoughtStore:
         except Exception as e:
             logger.error("Failed to log thought: %s", e)
             return None
+
+    def get_by_id(self, thought_id: int) -> Thought | None:
+        """Get a thought by its primary key."""
+        with self._session() as session:
+            return session.get(Thought, thought_id)
 
     def get_recent(self, user: str, limit: int = 50) -> list[Thought]:
         """Get recent thoughts for a user, oldest first (chronological order)."""
@@ -62,6 +69,18 @@ class ThoughtStore:
             )
             thoughts.reverse()
             return thoughts
+
+    def get_newest(self, user: str, limit: int = 50) -> list[Thought]:
+        """Get recent thoughts for a user, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Thought)
+                    .where(Thought.user == user)
+                    .order_by(Thought.created_at.desc())
+                    .limit(limit)
+                ).all()
+            )
 
     def get_recent_by_preference(
         self, user: str, preference_id: int | None, limit: int | None = None
@@ -186,6 +205,34 @@ class ThoughtStore:
                     .limit(limit)
                 ).all()
             )
+
+    def get_without_images(self, limit: int = 50) -> list[Thought]:
+        """Get thoughts with titles but no image_url (NULL only, not empty string)."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Thought)
+                    .where(
+                        Thought.title != None,  # noqa: E711
+                        Thought.title != "",
+                        Thought.image_url == None,  # noqa: E711
+                    )
+                    .order_by(Thought.created_at.desc())
+                    .limit(limit)
+                ).all()
+            )
+
+    def update_image_url(self, thought_id: int, image_url: str) -> None:
+        """Set the image_url for a thought."""
+        try:
+            with self._session() as session:
+                thought = session.get(Thought, thought_id)
+                if thought:
+                    thought.image_url = image_url
+                    session.add(thought)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to update thought %d image_url: %s", thought_id, e)
 
     def count(self, user: str) -> int:
         """Count total thoughts for a user."""

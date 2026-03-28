@@ -3,6 +3,7 @@
 import pytest
 
 from penny.channels.signal import SignalChannel
+from penny.constants import ChannelType
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.tests.conftest import TEST_SENDER
@@ -391,3 +392,86 @@ async def test_send_message_gives_up_after_max_retries(signal_server, test_confi
     assert len(signal_server._send_response_queue) == 0
 
     await channel.close()
+
+
+def test_extract_message_sets_channel_type_and_device_identifier():
+    """Extracted messages carry channel_type=signal and device_identifier=sender."""
+    from unittest.mock import MagicMock
+
+    channel = SignalChannel(
+        api_url="http://localhost:8080",
+        phone_number="+15551234567",
+        message_agent=MagicMock(),
+        db=MagicMock(),
+    )
+
+    raw = {
+        "account": "+15551234567",
+        "envelope": {
+            "source": TEST_SENDER,
+            "sourceNumber": TEST_SENDER,
+            "sourceUuid": "test-uuid",
+            "sourceName": "Test",
+            "sourceDevice": 1,
+            "timestamp": 1234567890,
+            "serverReceivedTimestamp": 1234567891,
+            "serverDeliveredTimestamp": 1234567892,
+            "dataMessage": {
+                "timestamp": 1234567890,
+                "message": "hello",
+                "expiresInSeconds": 0,
+                "viewOnce": False,
+            },
+        },
+    }
+
+    msg = channel.extract_message(raw)
+    assert msg is not None
+    assert msg.channel_type == ChannelType.SIGNAL
+    assert msg.device_identifier == TEST_SENDER
+    assert msg.sender == TEST_SENDER
+
+
+def test_extract_reaction_sets_channel_type():
+    """Extracted reactions carry channel_type=signal."""
+    from unittest.mock import MagicMock
+
+    channel = SignalChannel(
+        api_url="http://localhost:8080",
+        phone_number="+15551234567",
+        message_agent=MagicMock(),
+        db=MagicMock(),
+    )
+
+    raw = {
+        "account": "+15551234567",
+        "envelope": {
+            "source": TEST_SENDER,
+            "sourceNumber": TEST_SENDER,
+            "sourceUuid": "test-uuid",
+            "sourceName": "Test",
+            "sourceDevice": 1,
+            "timestamp": 1234567890,
+            "serverReceivedTimestamp": 1234567891,
+            "serverDeliveredTimestamp": 1234567892,
+            "dataMessage": {
+                "timestamp": 1234567890,
+                "message": None,
+                "expiresInSeconds": 0,
+                "viewOnce": False,
+                "reaction": {
+                    "emoji": "\U0001f44d",
+                    "targetAuthor": "+15551234567",
+                    "targetAuthorNumber": "+15551234567",
+                    "targetSentTimestamp": 1234567889,
+                    "isRemove": False,
+                },
+            },
+        },
+    }
+
+    msg = channel.extract_message(raw)
+    assert msg is not None
+    assert msg.channel_type == ChannelType.SIGNAL
+    assert msg.device_identifier == TEST_SENDER
+    assert msg.is_reaction is True
