@@ -178,7 +178,7 @@ class BrowserChannel(MessageChannel):
             await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_THOUGHTS))
             return
 
-        thoughts = self._db.thoughts.get_recent(primary, limit=50)
+        thoughts = self._db.thoughts.get_newest(primary, limit=50)
         seed_topics = self._resolve_seed_topics(thoughts)
         cards = [
             {

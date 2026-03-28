@@ -70,6 +70,18 @@ class ThoughtStore:
             thoughts.reverse()
             return thoughts
 
+    def get_newest(self, user: str, limit: int = 50) -> list[Thought]:
+        """Get recent thoughts for a user, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Thought)
+                    .where(Thought.user == user)
+                    .order_by(Thought.created_at.desc())
+                    .limit(limit)
+                ).all()
+            )
+
     def get_recent_by_preference(
         self, user: str, preference_id: int | None, limit: int | None = None
     ) -> list[Thought]:
