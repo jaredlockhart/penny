@@ -187,6 +187,7 @@ class ThinkingAgent(Agent):
             title, content = self._parse_title(report)
             content_embedding = await self._embed_and_serialize(content)
             title_embedding = await self._embed_and_serialize(title.lower()) if title else None
+            image_url = await self._search_thought_image(title) if title else None
             self.db.thoughts.add(
                 user,
                 content,
@@ -194,6 +195,7 @@ class ThinkingAgent(Agent):
                 embedding=content_embedding,
                 title=title,
                 title_embedding=title_embedding,
+                image_url=image_url,
             )
             logger.info(
                 "[inner_monologue] stored thought (seed=%s, title=%s): %s",
@@ -210,6 +212,16 @@ class ThinkingAgent(Agent):
         if self._seed_pref_id is not None:
             self.db.preferences.mark_thought_about(self._seed_pref_id)
         return True
+
+    async def _search_thought_image(self, title: str) -> str | None:
+        """Search for an image URL to accompany a thought."""
+        try:
+            from penny.serper.client import search_image_url
+
+            api_key = self.config.serper_api_key if self.config else None
+            return await search_image_url(title, api_key=api_key, max_results=3, timeout=5.0)
+        except Exception:
+            return None
 
     # ── Model calls ────────────────────────────────────────────────────────
 

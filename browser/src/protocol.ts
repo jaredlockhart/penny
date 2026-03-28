@@ -17,10 +17,11 @@ export const ConnectionState = {
 
 // --- WebSocket: outgoing (browser → server) ---
 
-export type WsOutgoingType = "message" | "tool_response";
+export type WsOutgoingType = "message" | "tool_response" | "thoughts_request";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
+  ThoughtsRequest: "thoughts_request",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingMessage {
@@ -41,12 +42,13 @@ export type WsOutgoing = WsOutgoingMessage | WsOutgoingToolResponse;
 
 // --- WebSocket: incoming (server → browser) ---
 
-export type WsIncomingType = "message" | "typing" | "status" | "tool_request";
+export type WsIncomingType = "message" | "typing" | "status" | "tool_request" | "thoughts_response";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
   Status: "status",
   ToolRequest: "tool_request",
+  ThoughtsResponse: "thoughts_response",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -71,11 +73,27 @@ export interface WsIncomingToolRequestPayload {
   arguments: Record<string, unknown>;
 }
 
+export interface ThoughtCard {
+  id: number;
+  title: string;
+  content: string;
+  image_url: string;
+  created_at: string;
+  notified: boolean;
+  seed_topic: string;
+}
+
+export interface WsIncomingThoughtsPayload {
+  type: typeof WsIncomingType.ThoughtsResponse;
+  thoughts: ThoughtCard[];
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
   | WsIncomingStatusPayload
-  | WsIncomingToolRequestPayload;
+  | WsIncomingToolRequestPayload
+  | WsIncomingThoughtsPayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
@@ -86,7 +104,9 @@ export type RuntimeMessageType =
   | "connection_state"
   | "permission_request"
   | "permission_response"
-  | "page_info";
+  | "page_info"
+  | "thoughts_request"
+  | "thoughts_response";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -96,6 +116,8 @@ export const RuntimeMessageType = {
   PermissionRequest: "permission_request",
   PermissionResponse: "permission_response",
   PageInfo: "page_info",
+  ThoughtsRequest: "thoughts_request",
+  ThoughtsResponse: "thoughts_response",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -148,6 +170,17 @@ export interface RuntimePageInfo {
   available: boolean;  // false if extraction failed or on a privileged page
 }
 
+/** Feed page → background: request thoughts */
+export interface RuntimeThoughtsRequest {
+  type: typeof RuntimeMessageType.ThoughtsRequest;
+}
+
+/** Background → feed page: thoughts data */
+export interface RuntimeThoughtsResponse {
+  type: typeof RuntimeMessageType.ThoughtsResponse;
+  thoughts: ThoughtCard[];
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -155,7 +188,9 @@ export type RuntimeMessage =
   | RuntimeConnectionState
   | RuntimePermissionRequest
   | RuntimePermissionResponse
-  | RuntimePageInfo;
+  | RuntimePageInfo
+  | RuntimeThoughtsRequest
+  | RuntimeThoughtsResponse;
 
 // --- Domain permissions ---
 

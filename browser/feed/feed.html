@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Penny's Thoughts</title>
+  <link rel="stylesheet" href="feed.css">
+</head>
+<body>
+  <div id="app">
+    <div id="header">
+      <h1>Penny's Thoughts</h1>
+      <div id="tabs">
+        <button class="tab active" data-tab="new">New</button>
+        <button class="tab" data-tab="archive">Archive</button>
+      </div>
+    </div>
+    <div id="loading">Loading thoughts...</div>
+    <div id="grid"></div>
+    <div id="load-more" class="hidden">
+      <button id="load-more-btn">Load more</button>
+    </div>
+  </div>
+
+  <div id="modal" class="hidden">
+    <div id="modal-backdrop"></div>
+    <div id="modal-content">
+      <img id="modal-image" src="" alt="">
+      <div id="modal-body">
+        <div id="modal-title"></div>
+        <div id="modal-date"></div>
+        <div id="modal-text"></div>
+      </div>
+      <button id="modal-close">&times;</button>
+    </div>
+  </div>
+  <script type="module" src="../dist/feed/feed.js"></script>
+</body>
+</html>

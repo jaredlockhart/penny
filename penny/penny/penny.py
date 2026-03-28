@@ -452,6 +452,37 @@ class Penny:
                 break
         return total
 
+    async def _backfill_thought_images(self) -> None:
+        """Backfill image URLs for thoughts that don't have one yet."""
+        if not self.config.serper_api_key:
+            return
+        from penny.serper.client import search_image_url
+
+        batch_size = 50
+        total = 0
+        while True:
+            thoughts = self.db.thoughts.get_without_images(limit=batch_size)
+            if not thoughts:
+                break
+            tasks = [
+                search_image_url(
+                    t.title or "",
+                    api_key=self.config.serper_api_key,
+                    max_results=3,
+                    timeout=5.0,
+                )
+                for t in thoughts
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for thought, result in zip(thoughts, results, strict=True):
+                if thought.id is None:
+                    continue
+                url = result if isinstance(result, str) else ""
+                self.db.thoughts.update_image_url(thought.id, url or "")
+            total += len(thoughts)
+        if total:
+            logger.info("Startup image backfill: %d thoughts", total)
+
     async def run(self) -> None:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
@@ -469,6 +500,7 @@ class Penny:
 
         await self._validate_optional_models()
         await self._backfill_all_embeddings()
+        await self._backfill_thought_images()
 
         await self._send_startup_announcement()
         await self._prompt_for_missing_profiles()

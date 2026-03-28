@@ -136,6 +136,7 @@ class Thought(SQLModel, table=True):
     embedding: bytes | None = None  # Serialized float32 content embedding (novelty/sentiment)
     title: str | None = None  # Short topic name for dedup and image search
     title_embedding: bytes | None = None  # Serialized float32 title embedding (dedup)
+    image_url: str | None = None  # Image URL for feed display
 
 
 class Preference(SQLModel, table=True):

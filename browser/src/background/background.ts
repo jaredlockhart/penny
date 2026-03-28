@@ -18,6 +18,7 @@ import {
   type WsIncomingPayload,
   WsIncomingType,
   type WsIncomingToolRequestPayload,
+  WsIncomingType as WsIn,
   WsOutgoingType,
 } from "../protocol.js";
 import {
@@ -136,6 +137,8 @@ function broadcastPageInfo(
 function handleRuntimeMessage(message: RuntimeMessage): void {
   if (message.type === RuntimeMessageType.SendChat) {
     sendChatToServer(message.content, message.include_page);
+  } else if (message.type === RuntimeMessageType.ThoughtsRequest) {
+    requestThoughts();
   }
 }
 
@@ -175,6 +178,8 @@ function connect(): void {
       broadcastToSidebar({ type: RuntimeMessageType.Typing, active: data.active });
     } else if (data.type === WsIncomingType.ToolRequest) {
       handleToolRequest(data);
+    } else if (data.type === WsIn.ThoughtsResponse) {
+      broadcastToSidebar({ type: RuntimeMessageType.ThoughtsResponse, thoughts: data.thoughts });
     }
   });
 
@@ -207,6 +212,11 @@ function sendChatToServer(content: string, includePage: boolean): void {
     payload.page_context = currentPageContext;
   }
   ws.send(JSON.stringify(payload));
+}
+
+function requestThoughts(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.ThoughtsRequest }));
 }
 
 function sendToolResponse(requestId: string, result?: string, error?: string): void {

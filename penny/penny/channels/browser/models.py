@@ -7,12 +7,14 @@ from pydantic import BaseModel
 # Incoming message types (browser → server)
 BROWSER_MSG_TYPE_MESSAGE = "message"
 BROWSER_MSG_TYPE_TOOL_RESPONSE = "tool_response"
+BROWSER_MSG_TYPE_THOUGHTS_REQUEST = "thoughts_request"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
 BROWSER_RESP_TYPE_TYPING = "typing"
 BROWSER_RESP_TYPE_STATUS = "status"
 BROWSER_RESP_TYPE_TOOL_REQUEST = "tool_request"
+BROWSER_RESP_TYPE_THOUGHTS = "thoughts_response"
 
 
 class PageContext(BaseModel):

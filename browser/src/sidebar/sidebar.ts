@@ -82,6 +82,10 @@ async function showChat(): Promise<void> {
   });
   inputEl.addEventListener("input", autoResize);
 
+  document.getElementById("nav-thoughts")!.addEventListener("click", () => {
+    browser.tabs.create({ url: browser.runtime.getURL("feed/feed.html") });
+  });
+
   await rehydrateHistory();
   listenToBackground();
 }

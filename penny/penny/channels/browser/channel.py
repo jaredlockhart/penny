@@ -18,9 +18,11 @@ from websockets.asyncio.server import Server, ServerConnection
 from penny.channels.base import IncomingMessage, MessageChannel
 from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_MESSAGE,
+    BROWSER_MSG_TYPE_THOUGHTS_REQUEST,
     BROWSER_MSG_TYPE_TOOL_RESPONSE,
     BROWSER_RESP_TYPE_MESSAGE,
     BROWSER_RESP_TYPE_STATUS,
+    BROWSER_RESP_TYPE_THOUGHTS,
     BROWSER_RESP_TYPE_TYPING,
     BrowserIncoming,
     BrowserOutgoing,
@@ -134,6 +136,10 @@ class BrowserChannel(MessageChannel):
             self._handle_tool_response(data)
             return device_label
 
+        if msg_type == BROWSER_MSG_TYPE_THOUGHTS_REQUEST:
+            await self._handle_thoughts_request(ws)
+            return device_label
+
         if msg_type == BROWSER_MSG_TYPE_MESSAGE:
             return await self._handle_chat_message(ws, data, device_label)
 
@@ -156,6 +162,44 @@ class BrowserChannel(MessageChannel):
             future.set_exception(RuntimeError(response.error))
         else:
             future.set_result(response.result or "")
+
+    async def _handle_thoughts_request(self, ws: ServerConnection) -> None:
+        """Query recent thoughts and send them to the browser."""
+        primary = self._db.users.get_primary_sender()
+        if not primary:
+            await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_THOUGHTS))
+            return
+
+        thoughts = self._db.thoughts.get_recent(primary, limit=50)
+        seed_topics = self._resolve_seed_topics(thoughts)
+        cards = [
+            {
+                "id": t.id,
+                "title": t.title or "",
+                "content": self.prepare_outgoing(t.content),
+                "image_url": t.image_url or "",
+                "created_at": t.created_at.isoformat() if t.created_at else "",
+                "notified": t.notified_at is not None,
+                "seed_topic": seed_topics.get(t.preference_id, ""),
+            }
+            for t in thoughts
+        ]
+
+        response = {"type": BROWSER_RESP_TYPE_THOUGHTS, "thoughts": cards}
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await ws.send(json.dumps(response))
+
+    def _resolve_seed_topics(self, thoughts: list) -> dict[int | None, str]:
+        """Build a map of preference_id → preference content for seed topics."""
+        pref_ids = {t.preference_id for t in thoughts if t.preference_id is not None}
+        if not pref_ids:
+            return {}
+        result: dict[int | None, str] = {}
+        for pref_id in pref_ids:
+            pref = self._db.preferences.get_by_id(pref_id)
+            if pref:
+                result[pref_id] = pref.content
+        return result
 
     async def _handle_chat_message(
         self, ws: ServerConnection, data: dict, device_label: str | None
