@@ -73,15 +73,23 @@ browser/
         browse_url.ts     — Hidden tab + content extraction handler
     sidebar/
       sidebar.ts          — Chat UI, page context toggle, message rendering
+    feed/
+      feed.ts             — Thought card grid, new/archive tabs, reactions, modal
     content/
       extract_text.ts     — Defuddle-based page extraction (bundled via esbuild)
   sidebar/
     sidebar.html          — Chat UI markup
     sidebar.css           — Light/dark theme via CSS custom properties
+  feed/
+    feed.html             — Thought feed page markup
+    feed.css              — Card grid, modal, tabs, reaction buttons
+  icons/
+    icon-{16,32,48,96}.png — Extension icons rendered from SVG
+  penny.svg               — Vector logo for in-page display
   manifest.json           — Permissions: storage, tabs, <all_urls>
   tsconfig.json           — Strict TypeScript, ES2020 target
   build-content.mjs       — esbuild wrapper for content script bundling
-  package.json            — TypeScript, esbuild, web-ext, concurrently, defuddle
+  package.json            — TypeScript, esbuild, web-ext, concurrently, defuddle, fontawesome
 ```
 
 ### Background script
@@ -214,13 +222,23 @@ The primary threat: malicious web pages embedding instructions in content that P
 - Signal provides fallback communication when no browser is connected
 - Thinking agent uses `browse_url` autonomously on any connected browser
 
-## Feed Model vs Notification Model
+## Feed Page (implemented)
 
-The extension enables a shift from interruption-based notifications (Signal) to a browsable discovery feed:
+The feed page realizes the shift from interruption-based notifications to a browsable discovery feed:
 
-- Signal notifications: Penny picks ONE thought, interrupts the user — high pressure on selection
-- Feed page: Penny surfaces everything, user browses at their own pace — scoring becomes presentation order, not a gate
-- Both coexist: feed for passive browsing, Signal for high-priority discoveries
+- **Card grid**: each thought rendered as a card with image (from serper, stored at creation time), title, seed topic byline, date, and truncated content
+- **New / Archive tabs**: unnotified thoughts in New, notified in Archive (paginated, 12 per page)
+- **Modal viewer**: click a card to see full content with image header
+- **Reactions**: thumbs up/down buttons on cards and modal. Clicking one:
+  - Sets `notified_at` on the thought (moves to Archive)
+  - Logs a synthetic outgoing message with the thought content + `thought_id` FK
+  - Logs a reaction message (👍/👎) with `parent_id` pointing to that outgoing message
+  - The preference extraction pipeline picks up the reaction identically to Signal emoji reactions
+  - Fades the card out of the New tab
+- **Unnotified count**: sidebar nav shows `Thoughts (N)` with the count of new thoughts, polled every 5 minutes
+- **Content rendering**: thought content processed through `prepare_outgoing()` server-side (markdown → HTML), rendered directly — no client-side duplication
+- **Image URLs**: stored on the `Thought` model at creation time (one serper call per thought). Startup backfill populates existing thoughts in parallel batches
+- Both models coexist: feed for passive browsing, Signal for high-priority discoveries
 
 ## Technology
 
@@ -239,7 +257,7 @@ The extension enables a shift from interruption-based notifications (Signal) to 
 2. ~~Add `browse_url` tool: extension can fetch and sanitize a page on demand~~ **Done**
 3. Add `search_web` tool: use browser's search engine
 4. Browsing history reader: passive preference extraction
-5. Feed page: render thoughts as a browsable page
+5. ~~Feed page: render thoughts as a browsable page~~ **Done**
 6. YouTube skill: first domain-specific skill
 7. Additional skills: Reddit, Amazon, forums, etc.
 
@@ -257,3 +275,11 @@ The extension enables a shift from interruption-based notifications (Signal) to 
 - `/draw` command working in browser (base64 data URI rendering)
 - Reconnection indicator with spinner
 - `web-ext` dev setup with auto-reload
+- Thoughts feed page with new/archive tabs, card grid, modal viewer
+- Thought reactions (thumbs up/down) feeding preference extraction pipeline
+- Image URLs stored on thoughts at creation time (serper search, startup backfill)
+- Seed topic bylines on thought cards (from preference FK)
+- Unnotified thought count in sidebar nav (5-minute polling)
+- Penny logo: SVG traced from PNG, rendered to crisp PNGs at all icon sizes
+- Font Awesome icons (locally bundled, no CDN)
+- Signal profile avatar via signal-cli-rest-api
