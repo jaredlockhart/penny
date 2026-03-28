@@ -225,8 +225,9 @@ class ThinkingAgent(Agent):
     async def _passes_preference_filter(self, user: str, vec: list[float] | None) -> bool:
         """Return True if the thought passes mention-weighted preference scoring.
 
-        Gate: if no positive preferences at or above PREFERENCE_MENTION_THRESHOLD
-        exist, return True (filter inactive — no signal yet or no embedding client).
+        Gate: if no preferences (positive or negative) at or above
+        PREFERENCE_MENTION_THRESHOLD exist, return True (filter inactive — no
+        signal yet or no embedding client).
         Score: weighted_avg_sim(positive prefs) - weighted_avg_sim(negative prefs) >= 0.
         """
         if not self._embedding_model_client or vec is None:
