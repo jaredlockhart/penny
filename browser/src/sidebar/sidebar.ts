@@ -122,6 +122,9 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     setTyping(message.active);
   } else if (message.type === RuntimeMessageType.PermissionRequest) {
     showPermissionDialog(message.request_id, message.domain, message.url);
+  } else if (message.type === RuntimeMessageType.ThoughtCount) {
+    const countEl = document.getElementById("nav-thoughts-count");
+    if (countEl) countEl.textContent = message.count > 0 ? `(${message.count})` : "";
   } else if (message.type === RuntimeMessageType.PageInfo) {
     updatePageContextBar(message.title, message.url, message.favicon, message.image, message.available);
   }

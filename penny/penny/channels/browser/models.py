@@ -8,6 +8,7 @@ from pydantic import BaseModel
 BROWSER_MSG_TYPE_MESSAGE = "message"
 BROWSER_MSG_TYPE_TOOL_RESPONSE = "tool_response"
 BROWSER_MSG_TYPE_THOUGHTS_REQUEST = "thoughts_request"
+BROWSER_MSG_TYPE_THOUGHT_REACTION = "thought_reaction"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"

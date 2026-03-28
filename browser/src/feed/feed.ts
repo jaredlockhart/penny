@@ -24,6 +24,7 @@ const ARCHIVE_PAGE_SIZE = 12;
 let allThoughts: ThoughtCard[] = [];
 let activeTab: "new" | "archive" = "new";
 let archivePage = 0;
+let modalThought: ThoughtCard | null = null;
 
 // --- Init ---
 
@@ -39,6 +40,8 @@ function init(): void {
 
   document.getElementById("modal-backdrop")!.addEventListener("click", closeModal);
   document.getElementById("modal-close")!.addEventListener("click", closeModal);
+  document.getElementById("modal-thumbs-up")!.addEventListener("click", () => modalReact("\u{1f44d}"));
+  document.getElementById("modal-thumbs-down")!.addEventListener("click", () => modalReact("\u{1f44e}"));
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeModal();
   });
@@ -107,6 +110,7 @@ function renderCards(thoughts: ThoughtCard[]): void {
 function createCard(thought: ThoughtCard): HTMLElement {
   const card = document.createElement("div");
   card.className = "card";
+  card.dataset.id = String(thought.id);
   card.style.cursor = "pointer";
   card.addEventListener("click", () => openModal(thought));
 
@@ -146,7 +150,47 @@ function createCard(thought: ThoughtCard): HTMLElement {
   body.appendChild(content);
 
   card.appendChild(body);
+
+  if (!thought.notified) {
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+
+    const thumbsUp = document.createElement("button");
+    thumbsUp.className = "reaction-btn thumbs-up";
+    thumbsUp.innerHTML = '<i class="fa-solid fa-thumbs-up"></i>';
+    thumbsUp.addEventListener("click", (e) => {
+      e.stopPropagation();
+      reactToThought(thought.id, "\u{1f44d}", card);
+    });
+
+    const thumbsDown = document.createElement("button");
+    thumbsDown.className = "reaction-btn thumbs-down";
+    thumbsDown.innerHTML = '<i class="fa-solid fa-thumbs-down"></i>';
+    thumbsDown.addEventListener("click", (e) => {
+      e.stopPropagation();
+      reactToThought(thought.id, "\u{1f44e}", card);
+    });
+
+    actions.appendChild(thumbsUp);
+    actions.appendChild(thumbsDown);
+    card.appendChild(actions);
+  }
+
   return card;
+}
+
+function reactToThought(thoughtId: number, emoji: string, card: HTMLElement | null): void {
+  browser.runtime.sendMessage({
+    type: RuntimeMessageType.ThoughtReaction,
+    thought_id: thoughtId,
+    emoji,
+  });
+  if (card) {
+    card.style.transition = "opacity 0.3s, transform 0.3s";
+    card.style.opacity = "0";
+    card.style.transform = "scale(0.95)";
+    setTimeout(() => card.remove(), 300);
+  }
 }
 
 function createPlaceholder(): HTMLElement {
@@ -164,15 +208,26 @@ function buildByline(thought: ThoughtCard): string {
 }
 
 function openModal(thought: ThoughtCard): void {
+  modalThought = thought;
   modalImage.src = thought.image_url || "";
   modalTitle.textContent = thought.title || "Untitled thought";
   modalDate.textContent = buildByline(thought);
   modalText.innerHTML = thought.content;
+  const actions = document.getElementById("modal-actions")!;
+  actions.classList.toggle("hidden", thought.notified);
   modal.classList.remove("hidden");
 }
 
 function closeModal(): void {
   modal.classList.add("hidden");
+  modalThought = null;
+}
+
+function modalReact(emoji: string): void {
+  if (!modalThought) return;
+  const card = document.querySelector(`.card[data-id="${modalThought.id}"]`) as HTMLElement | null;
+  reactToThought(modalThought.id, emoji, card);
+  closeModal();
 }
 
 function formatDate(iso: string): string {

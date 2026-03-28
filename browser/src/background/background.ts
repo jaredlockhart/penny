@@ -11,6 +11,7 @@ import {
   MAX_PAGE_CONTEXT_CHARS,
   type PageContext,
   RECONNECT_DELAY_MS,
+  THOUGHTS_POLL_INTERVAL_MS,
   type RuntimeMessage,
   RuntimeMessageType,
   SERVER_URL,
@@ -139,6 +140,8 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     sendChatToServer(message.content, message.include_page);
   } else if (message.type === RuntimeMessageType.ThoughtsRequest) {
     requestThoughts();
+  } else if (message.type === RuntimeMessageType.ThoughtReaction) {
+    sendThoughtReaction(message.thought_id, message.emoji);
   }
 }
 
@@ -172,6 +175,8 @@ function connect(): void {
 
     if (data.type === WsIncomingType.Status && data.connected) {
       setConnectionState(CS.Connected);
+      requestThoughts();
+      setInterval(requestThoughts, THOUGHTS_POLL_INTERVAL_MS);
     } else if (data.type === WsIncomingType.Message) {
       broadcastToSidebar({ type: RuntimeMessageType.ChatMessage, content: data.content });
     } else if (data.type === WsIncomingType.Typing) {
@@ -180,6 +185,8 @@ function connect(): void {
       handleToolRequest(data);
     } else if (data.type === WsIn.ThoughtsResponse) {
       broadcastToSidebar({ type: RuntimeMessageType.ThoughtsResponse, thoughts: data.thoughts });
+      const unnotified = data.thoughts.filter((t: { notified: boolean }) => !t.notified).length;
+      broadcastToSidebar({ type: RuntimeMessageType.ThoughtCount, count: unnotified });
     }
   });
 
@@ -217,6 +224,11 @@ function sendChatToServer(content: string, includePage: boolean): void {
 function requestThoughts(): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.ThoughtsRequest }));
+}
+
+function sendThoughtReaction(thoughtId: number, emoji: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.ThoughtReaction, thought_id: thoughtId, emoji }));
 }
 
 function sendToolResponse(requestId: string, result?: string, error?: string): void {

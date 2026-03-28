@@ -17,12 +17,19 @@ export const ConnectionState = {
 
 // --- WebSocket: outgoing (browser → server) ---
 
-export type WsOutgoingType = "message" | "tool_response" | "thoughts_request";
+export type WsOutgoingType = "message" | "tool_response" | "thoughts_request" | "thought_reaction";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
   ThoughtsRequest: "thoughts_request",
+  ThoughtReaction: "thought_reaction",
 } as const satisfies Record<string, WsOutgoingType>;
+
+export interface WsOutgoingThoughtReaction {
+  type: typeof WsOutgoingType.ThoughtReaction;
+  thought_id: number;
+  emoji: string;
+}
 
 export interface WsOutgoingMessage {
   type: typeof WsOutgoingType.Message;
@@ -106,7 +113,9 @@ export type RuntimeMessageType =
   | "permission_response"
   | "page_info"
   | "thoughts_request"
-  | "thoughts_response";
+  | "thoughts_response"
+  | "thought_reaction"
+  | "thought_count";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -118,6 +127,8 @@ export const RuntimeMessageType = {
   PageInfo: "page_info",
   ThoughtsRequest: "thoughts_request",
   ThoughtsResponse: "thoughts_response",
+  ThoughtReaction: "thought_reaction",
+  ThoughtCount: "thought_count",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -181,6 +192,19 @@ export interface RuntimeThoughtsResponse {
   thoughts: ThoughtCard[];
 }
 
+/** Feed page → background: react to a thought */
+export interface RuntimeThoughtReaction {
+  type: typeof RuntimeMessageType.ThoughtReaction;
+  thought_id: number;
+  emoji: string;
+}
+
+/** Background → sidebar: unnotified thought count */
+export interface RuntimeThoughtCount {
+  type: typeof RuntimeMessageType.ThoughtCount;
+  count: number;
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -190,7 +214,9 @@ export type RuntimeMessage =
   | RuntimePermissionResponse
   | RuntimePageInfo
   | RuntimeThoughtsRequest
-  | RuntimeThoughtsResponse;
+  | RuntimeThoughtsResponse
+  | RuntimeThoughtReaction
+  | RuntimeThoughtCount;
 
 // --- Domain permissions ---
 
@@ -216,6 +242,7 @@ export const MAX_PAGE_CONTEXT_CHARS = 5_000;
 
 // --- Tool constants ---
 
+export const THOUGHTS_POLL_INTERVAL_MS = 300_000;
 export const TOOL_TIMEOUT_MS = 30_000;
 export const TAB_LOAD_TIMEOUT_MS = 15_000;
 export const MAX_EXTRACTED_CHARS = 50_000;

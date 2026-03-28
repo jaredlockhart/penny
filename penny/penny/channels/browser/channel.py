@@ -18,6 +18,7 @@ from websockets.asyncio.server import Server, ServerConnection
 from penny.channels.base import IncomingMessage, MessageChannel
 from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_MESSAGE,
+    BROWSER_MSG_TYPE_THOUGHT_REACTION,
     BROWSER_MSG_TYPE_THOUGHTS_REQUEST,
     BROWSER_MSG_TYPE_TOOL_RESPONSE,
     BROWSER_RESP_TYPE_MESSAGE,
@@ -29,7 +30,7 @@ from penny.channels.browser.models import (
     BrowserToolRequest,
     BrowserToolResponse,
 )
-from penny.constants import ChannelType
+from penny.constants import ChannelType, PennyConstants
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -140,6 +141,10 @@ class BrowserChannel(MessageChannel):
             await self._handle_thoughts_request(ws)
             return device_label
 
+        if msg_type == BROWSER_MSG_TYPE_THOUGHT_REACTION:
+            self._handle_thought_reaction(data)
+            return device_label
+
         if msg_type == BROWSER_MSG_TYPE_MESSAGE:
             return await self._handle_chat_message(ws, data, device_label)
 
@@ -188,6 +193,44 @@ class BrowserChannel(MessageChannel):
         response = {"type": BROWSER_RESP_TYPE_THOUGHTS, "thoughts": cards}
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(json.dumps(response))
+
+    def _handle_thought_reaction(self, data: dict) -> None:
+        """Handle a thumbs up/down reaction to a thought from the feed page."""
+        thought_id = data.get("thought_id")
+        emoji = data.get("emoji", "")
+        if not thought_id or not emoji:
+            return
+
+        primary = self._db.users.get_primary_sender()
+        if not primary:
+            return
+
+        # Mark the thought as notified
+        self._db.thoughts.mark_notified(thought_id)
+
+        # Log a synthetic outgoing message for the thought (so reaction has a parent)
+        thought = self._db.thoughts.get_by_id(thought_id)
+        if not thought:
+            return
+        outgoing_id = self._db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            self.sender_id,
+            thought.content[:500],
+            recipient=primary,
+            thought_id=thought_id,
+        )
+
+        # Log the reaction as an incoming message (same as Signal reactions)
+        if outgoing_id:
+            self._db.messages.log_message(
+                PennyConstants.MessageDirection.INCOMING,
+                primary,
+                emoji,
+                parent_id=outgoing_id,
+                is_reaction=True,
+            )
+
+        logger.info("Thought %d reacted with %s from feed", thought_id, emoji)
 
     def _resolve_seed_topics(self, thoughts: list) -> dict[int | None, str]:
         """Build a map of preference_id → preference content for seed topics."""

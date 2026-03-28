@@ -51,6 +51,11 @@ class ThoughtStore:
             logger.error("Failed to log thought: %s", e)
             return None
 
+    def get_by_id(self, thought_id: int) -> Thought | None:
+        """Get a thought by its primary key."""
+        with self._session() as session:
+            return session.get(Thought, thought_id)
+
     def get_recent(self, user: str, limit: int = 50) -> list[Thought]:
         """Get recent thoughts for a user, oldest first (chronological order)."""
         with self._session() as session:
