@@ -15,6 +15,7 @@ from penny.serper.client import (
     _download_first_valid,
     _fetch_results,
     search_image,
+    search_image_url,
 )
 from penny.serper.models import SerperImageResponse
 
@@ -187,3 +188,64 @@ async def test_site_exclusions_constant_matches_blocked_domains():
     """_SITE_EXCLUSIONS is built from BLOCKED_IMAGE_DOMAINS."""
     for domain in BLOCKED_IMAGE_DOMAINS:
         assert f"-site:{domain}" in _SITE_EXCLUSIONS
+
+
+# --- search_image_url ---
+
+
+@pytest.mark.asyncio
+async def test_search_image_url_returns_direct_image_url(monkeypatch):
+    """search_image_url returns a URL with a recognized image extension."""
+    monkeypatch.setattr(
+        "penny.serper.client._fetch_results",
+        AsyncMock(
+            return_value=SerperImageResponse.model_validate(
+                _serper_response("https://example.com/photo.jpg")
+            )
+        ),
+    )
+    result = await search_image_url("cute dogs", api_key=FAKE_API_KEY, max_results=5, timeout=10.0)
+    assert result == "https://example.com/photo.jpg"
+
+
+@pytest.mark.asyncio
+async def test_search_image_url_skips_gallery_page(monkeypatch):
+    """search_image_url skips extensionless gallery pages and returns the next valid image URL."""
+    monkeypatch.setattr(
+        "penny.serper.client._fetch_results",
+        AsyncMock(
+            return_value=SerperImageResponse.model_validate(
+                _serper_response(
+                    "https://example.com/gallery",
+                    "https://example.com/image.png",
+                )
+            )
+        ),
+    )
+    result = await search_image_url("funny dog", api_key=FAKE_API_KEY, max_results=5, timeout=10.0)
+    assert result == "https://example.com/image.png"
+
+
+@pytest.mark.asyncio
+async def test_search_image_url_all_gallery_returns_none(monkeypatch):
+    """search_image_url returns None when all results are extensionless gallery URLs."""
+    monkeypatch.setattr(
+        "penny.serper.client._fetch_results",
+        AsyncMock(
+            return_value=SerperImageResponse.model_validate(
+                _serper_response(
+                    "https://example.com/gallery",
+                    "https://giphy.com/gifs/some-slug",
+                )
+            )
+        ),
+    )
+    result = await search_image_url("meme", api_key=FAKE_API_KEY, max_results=5, timeout=10.0)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_search_image_url_no_api_key_returns_none():
+    """No API key means no search attempt."""
+    result = await search_image_url("test", api_key=None, max_results=5, timeout=10.0)
+    assert result is None
