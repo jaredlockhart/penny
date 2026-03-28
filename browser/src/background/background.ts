@@ -82,13 +82,17 @@ function handleTabUpdated(
 }
 
 async function extractFromActiveTab(): Promise<void> {
+  let favicon = "";
   try {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     const tab = tabs[0];
     if (!tab?.id || !tab.url || SKIP_URL_PREFIXES.some((p) => tab.url!.startsWith(p))) {
       currentPageContext = null;
+      broadcastPageInfo("", "", "", "", false);
       return;
     }
+
+    favicon = tab.favIconUrl ?? "";
 
     const results = await browser.tabs.executeScript(tab.id, {
       file: "/dist/content/extract_text.js",
@@ -96,28 +100,42 @@ async function extractFromActiveTab(): Promise<void> {
     });
 
     if (results?.[0]) {
-      const data = results[0] as { title: string; url: string; text: string };
+      const data = results[0] as { title: string; url: string; text: string; image: string };
       currentPageContext = {
         title: data.title,
         url: data.url,
         text: data.text.slice(0, MAX_PAGE_CONTEXT_CHARS),
+        image: data.image,
       };
-      console.log("Page context extracted:", data.title, `(${data.text.length} chars)`);
+      broadcastPageInfo(data.title, data.url, favicon, data.image, true);
     } else {
-      console.log("Page context: no results from content script");
       currentPageContext = null;
+      broadcastPageInfo("", "", "", "", false);
     }
-  } catch (err) {
-    console.log("Page context extraction failed:", err);
+  } catch {
     currentPageContext = null;
+    broadcastPageInfo("", "", "", "", false);
   }
+}
+
+function broadcastPageInfo(
+  title: string, url: string, favicon: string, image: string, available: boolean,
+): void {
+  broadcastToSidebar({
+    type: RuntimeMessageType.PageInfo,
+    title,
+    url,
+    favicon,
+    image,
+    available,
+  });
 }
 
 // --- Runtime messaging (sidebar ↔ background) ---
 
 function handleRuntimeMessage(message: RuntimeMessage): void {
   if (message.type === RuntimeMessageType.SendChat) {
-    sendChatToServer(message.content);
+    sendChatToServer(message.content, message.include_page);
   }
 }
 
@@ -178,18 +196,15 @@ function scheduleReconnect(): void {
   }, RECONNECT_DELAY_MS);
 }
 
-function sendChatToServer(content: string): void {
+function sendChatToServer(content: string, includePage: boolean): void {
   if (!ws || ws.readyState !== WebSocket.OPEN || !deviceLabel) return;
   const payload: Record<string, unknown> = {
     type: WsOutgoingType.Message,
     content,
     sender: deviceLabel,
   };
-  if (currentPageContext) {
+  if (includePage && currentPageContext) {
     payload.page_context = currentPageContext;
-    console.log("Sending with page context:", currentPageContext.title);
-  } else {
-    console.log("Sending without page context");
   }
   ws.send(JSON.stringify(payload));
 }
@@ -252,6 +267,17 @@ async function executeBrowseUrl(
 browser.runtime.onConnect.addListener((port) => {
   if (port.name === "sidebar") {
     port.postMessage({ type: RuntimeMessageType.ConnectionState, state: connectionState });
+    // Send current page info so the toggle is populated immediately
+    if (currentPageContext) {
+      port.postMessage({
+        type: RuntimeMessageType.PageInfo,
+        title: currentPageContext.title,
+        url: currentPageContext.url,
+        favicon: "",
+        image: currentPageContext.image,
+        available: true,
+      });
+    }
   }
 });
 

@@ -13,6 +13,7 @@ interface PageData {
   title: string;
   url: string;
   text: string;
+  image: string;
 }
 
 function extractWithDefuddle(): string | null {
@@ -92,6 +93,20 @@ function stripHtmlTags(html: string): string {
   return div.innerText || div.textContent || "";
 }
 
+function extractMetaImage(): string {
+  const selectors = [
+    'meta[property="og:image"]',
+    'meta[name="twitter:image"]',
+    'meta[property="og:image:url"]',
+  ];
+  for (const selector of selectors) {
+    const el = document.querySelector(selector);
+    const content = el?.getAttribute("content");
+    if (content) return content;
+  }
+  return "";
+}
+
 function extract(): PageData {
   const text =
     extractWithDefuddle() ??
@@ -102,6 +117,7 @@ function extract(): PageData {
     title: document.title,
     url: location.href,
     text: text.slice(0, MAX_CHARS),
+    image: extractMetaImage(),
   };
 }
 

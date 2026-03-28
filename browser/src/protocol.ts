@@ -85,7 +85,8 @@ export type RuntimeMessageType =
   | "typing"
   | "connection_state"
   | "permission_request"
-  | "permission_response";
+  | "permission_response"
+  | "page_info";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -94,12 +95,14 @@ export const RuntimeMessageType = {
   ConnectionState: "connection_state",
   PermissionRequest: "permission_request",
   PermissionResponse: "permission_response",
+  PageInfo: "page_info",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
 export interface RuntimeSendChat {
   type: typeof RuntimeMessageType.SendChat;
   content: string;
+  include_page: boolean;
 }
 
 /** Background → sidebar: incoming message from Penny */
@@ -135,13 +138,24 @@ export interface RuntimePermissionResponse {
   allowed: boolean;
 }
 
+/** Background → sidebar: current page info for the context toggle */
+export interface RuntimePageInfo {
+  type: typeof RuntimeMessageType.PageInfo;
+  title: string;
+  url: string;
+  favicon: string;
+  image: string;      // og:image or similar meta image
+  available: boolean;  // false if extraction failed or on a privileged page
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
   | RuntimeTyping
   | RuntimeConnectionState
   | RuntimePermissionRequest
-  | RuntimePermissionResponse;
+  | RuntimePermissionResponse
+  | RuntimePageInfo;
 
 // --- Domain permissions ---
 
@@ -160,6 +174,7 @@ export interface PageContext {
   title: string;
   url: string;
   text: string;
+  image: string;
 }
 
 export const MAX_PAGE_CONTEXT_CHARS = 5_000;

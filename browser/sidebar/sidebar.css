@@ -249,9 +249,25 @@ body {
 }
 
 .message.penny img {
-  max-width: 100%;
-  border-radius: 6px;
-  margin-top: 6px;
+  width: calc(100% + 24px);
+  margin-left: -12px;
+  margin-right: -12px;
+  display: block;
+  border-radius: 0;
+}
+
+.message.penny img:first-child {
+  margin-top: -8px;
+  border-radius: 8px 8px 0 0;
+}
+
+.message.penny img:last-child {
+  margin-bottom: -8px;
+  border-radius: 0 0 8px 8px;
+}
+
+.message.penny img:only-child {
+  border-radius: 8px;
 }
 
 /* --- Utility --- */
@@ -316,6 +332,79 @@ body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+
+/* --- Page context bar --- */
+
+#page-context-bar {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+#page-context-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+#page-context-favicon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+#page-context-favicon[src=""],
+#page-context-favicon:not([src]) {
+  display: none;
+}
+
+#page-context-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#page-context-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+#page-context-label:hover {
+  color: var(--text-secondary);
+}
+
+#page-context-toggle {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* --- Page response header --- */
+
+.page-header {
+  margin-bottom: 8px;
+}
+
+.page-header-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.page-header-label a {
+  color: var(--accent-light);
+  text-decoration: none;
+}
+
+.page-header-label a:hover {
+  text-decoration: underline;
 }
 
 /* --- Permission dialog --- */

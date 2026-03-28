@@ -26,6 +26,10 @@ let inputEl: HTMLTextAreaElement;
 let sendBtn: HTMLButtonElement;
 let statusEl: HTMLElement;
 
+// Page context for decorating the next response
+let pendingPageRef: { title: string; url: string; image: string } | null = null;
+let currentPageImage = "";
+
 // --- Registration ---
 
 async function init(): Promise<void> {
@@ -103,12 +107,45 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     setStatus(message.state);
   } else if (message.type === RuntimeMessageType.ChatMessage) {
     setTyping(false);
-    addMessage(message.content, MS.Penny);
+    let content = message.content;
+    if (pendingPageRef) {
+      content = buildPageHeader(pendingPageRef) + content.replace(/<img[^>]*><br>/g, "");
+      pendingPageRef = null;
+    }
+    addMessage(content, MS.Penny);
+    setInputEnabled(true);
   } else if (message.type === RuntimeMessageType.Typing) {
     setTyping(message.active);
   } else if (message.type === RuntimeMessageType.PermissionRequest) {
     showPermissionDialog(message.request_id, message.domain, message.url);
+  } else if (message.type === RuntimeMessageType.PageInfo) {
+    updatePageContextBar(message.title, message.url, message.favicon, message.image, message.available);
   }
+}
+
+// --- Page context bar ---
+
+function updatePageContextBar(
+  title: string, url: string, favicon: string, image: string, available: boolean,
+): void {
+  const bar = document.getElementById("page-context-bar")!;
+  const titleEl = document.getElementById("page-context-title")!;
+  const faviconEl = document.getElementById("page-context-favicon") as HTMLImageElement;
+  const toggle = document.getElementById("page-context-toggle") as HTMLInputElement;
+
+  currentPageImage = image;
+
+  if (!available || !title) {
+    bar.classList.add("hidden");
+    toggle.checked = false;
+    return;
+  }
+
+  titleEl.textContent = title;
+  faviconEl.src = favicon || "";
+  bar.dataset.url = url;
+  toggle.checked = true;
+  bar.classList.remove("hidden");
 }
 
 // --- Permission dialog ---
@@ -144,10 +181,45 @@ function send(): void {
   const text = inputEl.value.trim();
   if (!text) return;
 
+  const toggle = document.getElementById("page-context-toggle") as HTMLInputElement;
+  const includePage = toggle?.checked ?? false;
+  const bar = document.getElementById("page-context-bar")!;
+  const titleEl = document.getElementById("page-context-title")!;
+
+  if (includePage && titleEl.textContent) {
+    pendingPageRef = {
+      title: titleEl.textContent,
+      url: bar.dataset.url ?? "",
+      image: currentPageImage,
+    };
+  } else {
+    pendingPageRef = null;
+  }
+
   addMessage(text, MS.User);
-  browser.runtime.sendMessage({ type: RuntimeMessageType.SendChat, content: text });
+  setInputEnabled(false);
+  browser.runtime.sendMessage({
+    type: RuntimeMessageType.SendChat,
+    content: text,
+    include_page: includePage,
+  });
   inputEl.value = "";
   inputEl.rows = 1;
+}
+
+function setInputEnabled(enabled: boolean): void {
+  inputEl.disabled = !enabled;
+  sendBtn.disabled = !enabled;
+  const toggle = document.getElementById("page-context-toggle") as HTMLInputElement;
+  if (toggle) toggle.disabled = !enabled;
+}
+
+function buildPageHeader(ref: { title: string; url: string; image: string }): string {
+  const img = ref.image
+    ? `<img src="${ref.image}" alt="${ref.title}">`
+    : "";
+  const link = `<a href="${ref.url}" target="_blank">${ref.title}</a>`;
+  return `<div class="page-header">${img}<div class="page-header-label">In response to ${link}</div></div>`;
 }
 
 // --- Chat history persistence ---
