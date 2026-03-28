@@ -117,23 +117,22 @@ body {
   border-bottom-color: var(--accent);
 }
 
-/* --- Messages wrapper (positions status dot) --- */
+/* --- Messages wrapper --- */
 
 #messages-wrapper {
   flex: 1;
-  position: relative;
   min-height: 0;
 }
 
 /* --- Status indicator --- */
 
 #status {
-  position: absolute;
-  bottom: 8px;
-  right: 8px;
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  margin-left: auto;
+  margin-right: 8px;
+  flex-shrink: 0;
 }
 
 #status.disconnected {
@@ -440,6 +439,106 @@ body {
 
 .page-header-label a:hover {
   text-decoration: underline;
+}
+
+/* --- Preferences panels --- */
+
+.prefs-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.prefs-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.pref-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+.pref-row:hover {
+  background: var(--bg-secondary);
+}
+
+.pref-name {
+  flex: 1;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.pref-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.pref-delete {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.pref-delete:hover {
+  color: var(--status-err-text);
+  background: var(--status-err-bg);
+}
+
+.prefs-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.prefs-add {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.prefs-add input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.prefs-add input:focus {
+  border-color: var(--accent);
+}
+
+.prefs-add button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.prefs-add button:hover {
+  background: var(--accent-hover);
 }
 
 /* --- Permission dialog --- */

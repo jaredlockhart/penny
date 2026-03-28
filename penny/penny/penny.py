@@ -269,7 +269,6 @@ class Penny:
             message_agent=self.chat_agent,
             db=self.db,
             command_registry=self.command_registry,
-            model_client=self.model_client,
         )
         self.schedule_executor.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)

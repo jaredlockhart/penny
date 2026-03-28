@@ -289,12 +289,3 @@ Examples:
         "- If a message has no identifiable topic, omit it\n"
         "- Return the original index number with each topic"
     )
-
-    PAGE_SANITIZE_PROMPT = (
-        "Rewrite the following web page content as a comprehensive, detailed summary. "
-        "Include all key facts, names, dates, prices, specs, quotes, and details. "
-        "Preserve the structure — use headings, lists, and paragraphs as appropriate. "
-        "Preserve all URLs exactly as they appear — copy them character for character. "
-        "Do not omit information. Do not add commentary or opinions. "
-        "Output only the rewritten content."
-    )

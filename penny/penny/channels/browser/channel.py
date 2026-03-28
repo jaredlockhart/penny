@@ -18,20 +18,26 @@ from websockets.asyncio.server import Server, ServerConnection
 from penny.channels.base import IncomingMessage, MessageChannel, PageContext
 from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_MESSAGE,
+    BROWSER_MSG_TYPE_PREFERENCE_ADD,
+    BROWSER_MSG_TYPE_PREFERENCE_DELETE,
+    BROWSER_MSG_TYPE_PREFERENCES_REQUEST,
     BROWSER_MSG_TYPE_THOUGHT_REACTION,
     BROWSER_MSG_TYPE_THOUGHTS_REQUEST,
     BROWSER_MSG_TYPE_TOOL_RESPONSE,
     BROWSER_RESP_TYPE_MESSAGE,
+    BROWSER_RESP_TYPE_PREFERENCES,
     BROWSER_RESP_TYPE_STATUS,
     BROWSER_RESP_TYPE_THOUGHTS,
     BROWSER_RESP_TYPE_TYPING,
     BrowserIncoming,
     BrowserOutgoing,
+    BrowserPreferenceAdd,
+    BrowserPreferenceDelete,
+    BrowserPreferencesRequest,
     BrowserToolRequest,
     BrowserToolResponse,
 )
 from penny.constants import ChannelType, PennyConstants
-from penny.prompts import Prompt
 from penny.serper.client import search_image_url
 
 if TYPE_CHECKING:
@@ -39,7 +45,6 @@ if TYPE_CHECKING:
     from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.database.models import MessageLog
-    from penny.ollama import OllamaClient
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +71,10 @@ class BrowserChannel(MessageChannel):
         message_agent: ChatAgent,
         db: Database,
         command_registry: CommandRegistry | None = None,
-        model_client: OllamaClient | None = None,
     ):
         super().__init__(message_agent=message_agent, db=db, command_registry=command_registry)
         self._host = host
         self._port = port
-        self._sanitize_client = model_client
         self._server: Server | None = None
         self._connections: dict[str, ServerConnection] = {}
         self._pending_requests: dict[str, asyncio.Future[str]] = {}
@@ -146,6 +149,18 @@ class BrowserChannel(MessageChannel):
 
         if msg_type == BROWSER_MSG_TYPE_THOUGHT_REACTION:
             self._handle_thought_reaction(data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_PREFERENCES_REQUEST:
+            await self._handle_preferences_request(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_PREFERENCE_ADD:
+            await self._handle_preference_add(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_PREFERENCE_DELETE:
+            await self._handle_preference_delete(ws, data)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_MESSAGE:
@@ -235,6 +250,53 @@ class BrowserChannel(MessageChannel):
 
         logger.info("Thought %d reacted with %s from feed", thought_id, emoji)
 
+    async def _handle_preferences_request(self, ws: ServerConnection, data: dict) -> None:
+        """Query preferences by valence and send them to the browser."""
+        try:
+            req = BrowserPreferencesRequest(**data)
+        except Exception:
+            logger.warning("Invalid preferences_request: %s", str(data)[:200])
+            return
+        await self._send_preferences(ws, req.valence)
+
+    async def _handle_preference_add(self, ws: ServerConnection, data: dict) -> None:
+        """Add a preference and send the updated list for its valence."""
+        try:
+            req = BrowserPreferenceAdd(**data)
+        except Exception:
+            logger.warning("Invalid preference_add: %s", str(data)[:200])
+            return
+        primary = self._db.users.get_primary_sender()
+        if not primary or not req.content.strip():
+            return
+        self._db.preferences.add(primary, req.content.strip(), req.valence, source="manual")
+        await self._send_preferences(ws, req.valence)
+
+    async def _handle_preference_delete(self, ws: ServerConnection, data: dict) -> None:
+        """Delete a preference and send the updated list for its valence."""
+        try:
+            req = BrowserPreferenceDelete(**data)
+        except Exception:
+            logger.warning("Invalid preference_delete: %s", str(data)[:200])
+            return
+        pref = self._db.preferences.get_by_id(req.preference_id)
+        if not pref:
+            return
+        valence = pref.valence
+        self._db.preferences.delete(req.preference_id)
+        await self._send_preferences(ws, valence)
+
+    async def _send_preferences(self, ws: ServerConnection, valence: str) -> None:
+        """Send a preferences_response for the given valence."""
+        primary = self._db.users.get_primary_sender()
+        prefs = self._db.preferences.get_for_user_by_valence(primary, valence) if primary else []
+        items = [
+            {"id": p.id, "content": p.content, "mention_count": p.mention_count} for p in prefs
+        ]
+        response = {"type": BROWSER_RESP_TYPE_PREFERENCES, "valence": valence, "preferences": items}
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await ws.send(json.dumps(response))
+
     def _resolve_seed_topics(self, thoughts: list) -> dict[int | None, str]:
         """Build a map of preference_id → preference content for seed topics."""
         pref_ids = {t.preference_id for t in thoughts if t.preference_id is not None}
@@ -262,14 +324,10 @@ class BrowserChannel(MessageChannel):
 
         envelope: dict = {"browser_sender": device_label, "content": msg.content}
         if msg.page_context and msg.page_context.text:
-            await self.send_typing(device_label, True)
-            sanitized_text = await self._sanitize_page_content(
-                msg.page_context.text, msg.page_context.url
-            )
             envelope["page_context"] = PageContext(
                 title=msg.page_context.title,
                 url=msg.page_context.url,
-                text=sanitized_text,
+                text=msg.page_context.text,
             )
         asyncio.create_task(self.handle_message(envelope))
         return device_label
@@ -298,9 +356,7 @@ class BrowserChannel(MessageChannel):
         await self._send_ws(ws, request)
 
         try:
-            raw_result = await asyncio.wait_for(future, timeout=PennyConstants.TOOL_REQUEST_TIMEOUT)
-            url = arguments.get("url", "") if tool == "browse_url" else ""
-            return await self._sanitize_page_content(raw_result, url)
+            return await asyncio.wait_for(future, timeout=PennyConstants.TOOL_REQUEST_TIMEOUT)
         except TimeoutError as e:
             raise TimeoutError(
                 f"Browser tool '{tool}' timed out after {PennyConstants.TOOL_REQUEST_TIMEOUT}s"
@@ -315,31 +371,6 @@ class BrowserChannel(MessageChannel):
         return None
 
     # --- Device registration ---
-
-    async def _sanitize_page_content(self, text: str, url: str) -> str:
-        """Summarize raw page content in a sandboxed model call.
-
-        All web content passes through this before entering the agent context.
-        No tools, no user context, no preferences — just rewriting.
-        """
-        if not self._sanitize_client or not text.strip():
-            return text
-        truncated = text[: PennyConstants.MAX_PAGE_CONTENT_CHARS]
-        try:
-            response = await self._sanitize_client.chat(
-                messages=[
-                    {"role": "system", "content": Prompt.PAGE_SANITIZE_PROMPT},
-                    {"role": "user", "content": f"URL: {url}\n\n{truncated}"},
-                ],
-            )
-            result = response.message.content if response.message else ""
-            logger.info(
-                "Sanitized page content: %s (%d → %d chars)", url, len(truncated), len(result)
-            )
-            return result.strip() or text
-        except Exception:
-            logger.warning("Page content sanitization failed for %s, using raw", url)
-            return text
 
     def _auto_register_device(self, device_label: str) -> None:
         """Register the browser device if not already known."""
