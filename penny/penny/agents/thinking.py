@@ -233,11 +233,7 @@ class ThinkingAgent(Agent):
             return True
         threshold = int(self.config.runtime.PREFERENCE_MENTION_THRESHOLD)
         preferences = self.db.preferences.get_with_embeddings(user)
-        has_signal = any(
-            p.valence == PennyConstants.PreferenceValence.POSITIVE
-            and (p.mention_count or 0) >= threshold
-            for p in preferences
-        )
+        has_signal = any((p.mention_count or 0) >= threshold and p.embedding for p in preferences)
         if not has_signal:
             return True
         score = compute_mention_weighted_sentiment(vec, preferences, min_mentions=threshold)

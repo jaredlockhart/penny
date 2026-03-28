@@ -1072,6 +1072,61 @@ async def test_preference_filter_rejects_disliked_content(
         assert len(thoughts) == 0, "Thought should be filtered when score < 0"
 
 
+@pytest.mark.asyncio
+async def test_preference_filter_active_with_only_negative_prefs(
+    signal_server,
+    mock_ollama,
+    make_config,
+    _mock_search,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Filter activates on qualifying negative prefs alone — no positive prefs required."""
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=2,
+        free_thinking_probability=0.0,
+        news_thinking_probability=0.0,
+    )
+
+    async def _fixed_embed(_client, _text):
+        return [0.0, 0.0, 1.0]
+
+    monkeypatch.setattr("penny.agents.thinking.embed_text", _fixed_embed)
+
+    from penny.ollama.embeddings import serialize_embedding
+
+    # Negative pref points toward the thought vector — score = 0 - 1 = -1
+    neg_vec = serialize_embedding([0.0, 0.0, 1.0])
+
+    def handler(request, count):
+        if count == 1:
+            return mock_ollama._make_tool_call_response(
+                request, "search", {"queries": ["test"], "reasoning": "x"}
+            )
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+        penny.thinking_agent._embedding_model_client = object()
+
+        # Only a qualifying negative pref — no positive prefs at all
+        neg_pref = penny.db.preferences.add(
+            TEST_SENDER, "AI-generated music", "negative", source="extracted", mention_count=2
+        )
+        assert neg_pref
+        penny.db.preferences.update_embedding(neg_pref.id, neg_vec)
+
+        await penny.thinking_agent.execute()
+
+        thoughts = penny.db.thoughts.get_recent(TEST_SENDER)
+        assert len(thoughts) == 0, "Filter should activate on qualifying negative prefs alone"
+
+
 # ── 5. URL validation (unit tests) ───────────────────────────────────────
 
 
