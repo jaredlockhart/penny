@@ -40,6 +40,18 @@ logger = logging.getLogger(__name__)
 TOOL_REQUEST_TIMEOUT = 30.0
 
 
+def _attachment_to_src(attachment: str) -> str | None:
+    """Convert an attachment string to an <img> src value."""
+    if attachment.startswith("http"):
+        return attachment
+    if attachment.startswith("data:"):
+        return attachment
+    # Raw base64 — assume PNG (Ollama image generation output)
+    if len(attachment) > 100:
+        return f"data:image/png;base64,{attachment}"
+    return None
+
+
 class BrowserChannel(MessageChannel):
     """WebSocket server channel for the browser extension sidebar."""
 
@@ -243,13 +255,15 @@ class BrowserChannel(MessageChannel):
 
     @staticmethod
     def _prepend_images(message: str, attachments: list[str] | None) -> str:
-        """Prepend image URLs as <img> tags before the message HTML."""
+        """Prepend image attachments as <img> tags before the message HTML."""
         if not attachments:
             return message
-        images = "".join(
-            f'<img src="{url}" alt="image"><br>' for url in attachments if url.startswith("http")
-        )
-        return f"{images}{message}" if images else message
+        tags: list[str] = []
+        for att in attachments:
+            src = _attachment_to_src(att)
+            if src:
+                tags.append(f'<img src="{src}" alt="image"><br>')
+        return f"{''.join(tags)}{message}" if tags else message
 
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """Send a typing indicator to a browser client."""

@@ -136,15 +136,27 @@ class TestBrowserPrepareOutgoing:
 
 
 class TestBrowserImageHandling:
-    """_prepend_images puts image URLs before the message content."""
+    """_prepend_images puts images before the message content."""
 
     def test_prepends_image_url(self):
         result = BrowserChannel._prepend_images("hello", ["https://example.com/img.jpg"])
         assert result.startswith('<img src="https://example.com/img.jpg"')
         assert result.endswith("hello")
 
-    def test_skips_non_http(self):
-        result = BrowserChannel._prepend_images("hello", ["data:image/png;base64,abc"])
+    def test_prepends_data_uri(self):
+        result = BrowserChannel._prepend_images("hello", ["data:image/png;base64,abc123"])
+        assert '<img src="data:image/png;base64,abc123"' in result
+        assert result.endswith("hello")
+
+    def test_prepends_raw_base64_as_data_uri(self):
+        """Raw base64 from /draw gets wrapped in a data:image/png URI."""
+        raw_b64 = "iVBORw0KGgoAAAANSUhEUg" + "A" * 200
+        result = BrowserChannel._prepend_images("hello", [raw_b64])
+        assert '<img src="data:image/png;base64,' in result
+        assert result.endswith("hello")
+
+    def test_skips_short_non_url(self):
+        result = BrowserChannel._prepend_images("hello", ["short"])
         assert result == "hello"
 
     def test_no_attachments(self):
