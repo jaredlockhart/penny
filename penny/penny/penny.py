@@ -270,6 +270,33 @@ class Penny:
         )
         self.schedule_executor.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
+        self._wire_browser_tools()
+
+    def _wire_browser_tools(self) -> None:
+        """Connect browser tools to agents when a browser channel is available."""
+        from penny.channels.browser import BrowserChannel
+        from penny.channels.manager import ChannelManager
+        from penny.constants import ChannelType
+        from penny.tools.browse_url import BrowseUrlTool
+
+        if not isinstance(self.channel, ChannelManager):
+            return
+        browser_ch = self.channel.get_channel(ChannelType.BROWSER)
+        if not isinstance(browser_ch, BrowserChannel):
+            return
+
+        def provider() -> list:
+            if not browser_ch.has_tool_connection:
+                return []
+            return [
+                BrowseUrlTool(
+                    request_fn=browser_ch.send_tool_request,
+                    model_client=self.model_client,
+                )
+            ]
+
+        self.chat_agent.set_browser_tools_provider(provider)
+        self.thinking_agent.set_browser_tools_provider(provider)
 
     def _init_scheduler(self, config: Config) -> None:
         """Create background scheduler with prioritized schedules."""

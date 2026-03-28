@@ -106,7 +106,38 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     addMessage(message.content, MS.Penny);
   } else if (message.type === RuntimeMessageType.Typing) {
     setTyping(message.active);
+  } else if (message.type === RuntimeMessageType.PermissionRequest) {
+    showPermissionDialog(message.request_id, message.domain, message.url);
   }
+}
+
+// --- Permission dialog ---
+
+function showPermissionDialog(requestId: string, domain: string, url: string): void {
+  const dialog = document.getElementById("permission-dialog")!;
+  document.getElementById("permission-domain")!.textContent = domain;
+  document.getElementById("permission-url")!.textContent = url;
+  dialog.classList.remove("hidden");
+
+  const allowBtn = document.getElementById("permission-allow")!;
+  const denyBtn = document.getElementById("permission-deny")!;
+
+  function respond(allowed: boolean): void {
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.PermissionResponse,
+      request_id: requestId,
+      allowed,
+    });
+    dialog.classList.add("hidden");
+    allowBtn.removeEventListener("click", onAllow);
+    denyBtn.removeEventListener("click", onDeny);
+  }
+
+  function onAllow(): void { respond(true); }
+  function onDeny(): void { respond(false); }
+
+  allowBtn.addEventListener("click", onAllow);
+  denyBtn.addEventListener("click", onDeny);
 }
 
 function send(): void {

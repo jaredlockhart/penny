@@ -8,19 +8,24 @@ import html
 import json
 import logging
 import re
+import uuid
 from typing import TYPE_CHECKING
 
 import websockets
+from pydantic import BaseModel
 from websockets.asyncio.server import Server, ServerConnection
 
 from penny.channels.base import IncomingMessage, MessageChannel
 from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_MESSAGE,
+    BROWSER_MSG_TYPE_TOOL_RESPONSE,
     BROWSER_RESP_TYPE_MESSAGE,
     BROWSER_RESP_TYPE_STATUS,
     BROWSER_RESP_TYPE_TYPING,
     BrowserIncoming,
     BrowserOutgoing,
+    BrowserToolRequest,
+    BrowserToolResponse,
 )
 from penny.constants import ChannelType
 
@@ -31,6 +36,8 @@ if TYPE_CHECKING:
     from penny.database.models import MessageLog
 
 logger = logging.getLogger(__name__)
+
+TOOL_REQUEST_TIMEOUT = 30.0
 
 
 class BrowserChannel(MessageChannel):
@@ -49,11 +56,19 @@ class BrowserChannel(MessageChannel):
         self._port = port
         self._server: Server | None = None
         self._connections: dict[str, ServerConnection] = {}
+        self._pending_requests: dict[str, asyncio.Future[str]] = {}
 
     @property
     def sender_id(self) -> str:
         """Identifier for outgoing browser messages."""
         return "penny"
+
+    @property
+    def has_tool_connection(self) -> bool:
+        """Whether any browser is connected for tool execution."""
+        return len(self._connections) > 0
+
+    # --- WebSocket server ---
 
     async def listen(self) -> None:
         """Start the WebSocket server and block forever."""
@@ -77,9 +92,19 @@ class BrowserChannel(MessageChannel):
         except websockets.ConnectionClosed:
             pass
         finally:
-            if device_label:
-                self._connections.pop(device_label, None)
-            logger.info("Browser disconnected: %s", device_label or "unregistered")
+            self._cleanup_connection(device_label)
+
+    def _cleanup_connection(self, device_label: str | None) -> None:
+        """Remove connection and reject pending requests on disconnect."""
+        if device_label:
+            self._connections.pop(device_label, None)
+        # Reject any pending tool requests from this connection
+        for _request_id, future in list(self._pending_requests.items()):
+            if not future.done():
+                future.set_exception(ConnectionError("Browser disconnected"))
+        logger.info("Browser disconnected: %s", device_label or "unregistered")
+
+    # --- Message dispatch ---
 
     async def _process_raw_message(
         self, ws: ServerConnection, raw: str | bytes, device_label: str | None
@@ -87,12 +112,50 @@ class BrowserChannel(MessageChannel):
         """Parse and dispatch a single WebSocket message. Returns updated device_label."""
         try:
             data = json.loads(raw)
-            msg = BrowserIncoming(**data)
-        except json.JSONDecodeError, ValueError:
-            logger.warning("Invalid message from browser: %s", str(raw)[:200])
+        except json.JSONDecodeError:
+            logger.warning("Invalid JSON from browser: %s", str(raw)[:200])
             return device_label
 
-        if msg.type != BROWSER_MSG_TYPE_MESSAGE or not msg.content.strip():
+        msg_type = data.get("type", "")
+
+        if msg_type == BROWSER_MSG_TYPE_TOOL_RESPONSE:
+            self._handle_tool_response(data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_MESSAGE:
+            return await self._handle_chat_message(ws, data, device_label)
+
+        return device_label
+
+    def _handle_tool_response(self, data: dict) -> None:
+        """Resolve a pending tool request future."""
+        try:
+            response = BrowserToolResponse(**data)
+        except Exception:
+            logger.warning("Invalid tool response: %s", str(data)[:200])
+            return
+
+        future = self._pending_requests.pop(response.request_id, None)
+        if not future or future.done():
+            logger.warning("No pending request for id: %s", response.request_id)
+            return
+
+        if response.error:
+            future.set_exception(RuntimeError(response.error))
+        else:
+            future.set_result(response.result or "")
+
+    async def _handle_chat_message(
+        self, ws: ServerConnection, data: dict, device_label: str | None
+    ) -> str | None:
+        """Process a chat message from the browser."""
+        try:
+            msg = BrowserIncoming(**data)
+        except Exception:
+            logger.warning("Invalid chat message: %s", str(data)[:200])
+            return device_label
+
+        if not msg.content.strip():
             return device_label
 
         device_label = msg.sender or "browser-user"
@@ -103,6 +166,42 @@ class BrowserChannel(MessageChannel):
         asyncio.create_task(self.handle_message(envelope))
         return device_label
 
+    # --- Tool requests ---
+
+    async def send_tool_request(self, tool: str, arguments: dict) -> str:
+        """Send a tool request to a connected browser and await the response."""
+        ws = self._get_tool_connection()
+        if ws is None:
+            raise RuntimeError("No browser connected for tool execution")
+
+        request_id = str(uuid.uuid4())
+        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        self._pending_requests[request_id] = future
+
+        request = BrowserToolRequest(
+            request_id=request_id,
+            tool=tool,
+            arguments=arguments,
+        )
+        await self._send_ws(ws, request)
+
+        try:
+            return await asyncio.wait_for(future, timeout=TOOL_REQUEST_TIMEOUT)
+        except TimeoutError as e:
+            raise TimeoutError(
+                f"Browser tool '{tool}' timed out after {TOOL_REQUEST_TIMEOUT}s"
+            ) from e
+        finally:
+            self._pending_requests.pop(request_id, None)
+
+    def _get_tool_connection(self) -> ServerConnection | None:
+        """Get the first available browser connection for tool execution."""
+        if self._connections:
+            return next(iter(self._connections.values()))
+        return None
+
+    # --- Device registration ---
+
     def _auto_register_device(self, device_label: str) -> None:
         """Register the browser device if not already known."""
         self._db.devices.register(
@@ -110,6 +209,8 @@ class BrowserChannel(MessageChannel):
             identifier=device_label,
             label=device_label,
         )
+
+    # --- MessageChannel interface ---
 
     def extract_message(self, raw_data: dict) -> IncomingMessage | None:
         """Extract a message from browser WebSocket data."""
@@ -179,11 +280,10 @@ class BrowserChannel(MessageChannel):
 
     # --- Markdown to HTML formatting ---
 
-    # Regex pattern for markdown tables: header | separator | data rows
     _TABLE_PATTERN = re.compile(
-        r"^(\|[^\n]+\|)\n"  # Header row
-        r"(\|[-:\s|]+\|)\n"  # Separator row
-        r"((?:\|[^\n]+\|\n?)+)",  # Data rows (one or more)
+        r"^(\|[^\n]+\|)\n"
+        r"(\|[-:\s|]+\|)\n"
+        r"((?:\|[^\n]+\|\n?)+)",
         re.MULTILINE,
     )
 
@@ -221,25 +321,15 @@ class BrowserChannel(MessageChannel):
     @staticmethod
     def _convert_markdown_to_html(text: str) -> str:
         """Convert markdown formatting to HTML tags (text is already escaped)."""
-        # Fenced code blocks → <pre><code>
         text = re.sub(r"```([\s\S]*?)```", r"<pre><code>\1</code></pre>", text)
-        # Inline code → <code>
         text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
-        # Bold → <strong>
         text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
-        # Italic → <em>
         text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
-        # Strikethrough → <s>
         text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
-        # Headings → <strong> (no size difference in sidebar)
         text = re.sub(r"^#{1,6}\s+(.+)$", r"<strong>\1</strong>", text, flags=re.MULTILINE)
-        # Horizontal rules
         text = re.sub(r"^-{3,}\s*$", "<hr>", text, flags=re.MULTILINE)
-        # Markdown links → <a>
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2" target="_blank">\1</a>', text)
-        # Bare URLs → <a>
         text = re.sub(r"(https?://[^\s<>&]+)", r'<a href="\1" target="_blank">\1</a>', text)
-        # Newlines → <br>
         text = text.replace("\n", "<br>")
         return text
 
@@ -247,6 +337,8 @@ class BrowserChannel(MessageChannel):
     def _collapse_blank_lines(text: str) -> str:
         """Collapse multiple consecutive <br> tags."""
         return re.sub(r"(<br>){3,}", "<br><br>", text)
+
+    # --- Connection management ---
 
     async def close(self) -> None:
         """Shut down the WebSocket server."""
@@ -256,7 +348,7 @@ class BrowserChannel(MessageChannel):
         logger.info("Browser channel closed")
 
     @staticmethod
-    async def _send_ws(ws: ServerConnection, msg: BrowserOutgoing) -> None:
+    async def _send_ws(ws: ServerConnection, msg: BaseModel) -> None:
         """Send a message to a WebSocket connection, suppressing closed errors."""
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(msg.model_dump_json(exclude_none=True))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import urllib.parse as _urlparse
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -203,6 +204,7 @@ class Agent:
 
         self._search_tool = search_tool
         self._news_tool = news_tool
+        self._browser_tools_provider: Callable[[], list[Tool]] | None = None
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
 
@@ -587,6 +589,10 @@ class Agent:
 
     # ── Tool management ──────────────────────────────────────────────────
 
+    def set_browser_tools_provider(self, provider: Callable[[], list[Tool]]) -> None:
+        """Set a callback that provides browser tools when a browser is connected."""
+        self._browser_tools_provider = provider
+
     def get_tools(self, user: str) -> list[Tool]:
         """Build tool list for this agent. Override in subclasses for custom tools."""
         tools: list[Tool] = []
@@ -594,6 +600,8 @@ class Agent:
             tools.append(self._search_tool)
         if self._news_tool:
             tools.append(self._news_tool)
+        if self._browser_tools_provider:
+            tools.extend(self._browser_tools_provider())
         return tools
 
     def _install_tools(self, tools: list[Tool]) -> None:

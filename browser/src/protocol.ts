@@ -17,9 +17,10 @@ export const ConnectionState = {
 
 // --- WebSocket: outgoing (browser → server) ---
 
-export type WsOutgoingType = "message";
+export type WsOutgoingType = "message" | "tool_response";
 export const WsOutgoingType = {
   Message: "message",
+  ToolResponse: "tool_response",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingMessage {
@@ -28,13 +29,23 @@ export interface WsOutgoingMessage {
   sender: string;
 }
 
+export interface WsOutgoingToolResponse {
+  type: typeof WsOutgoingType.ToolResponse;
+  request_id: string;
+  result?: string;
+  error?: string;
+}
+
+export type WsOutgoing = WsOutgoingMessage | WsOutgoingToolResponse;
+
 // --- WebSocket: incoming (server → browser) ---
 
-export type WsIncomingType = "message" | "typing" | "status";
+export type WsIncomingType = "message" | "typing" | "status" | "tool_request";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
   Status: "status",
+  ToolRequest: "tool_request",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -52,19 +63,36 @@ export interface WsIncomingStatusPayload {
   connected: boolean;
 }
 
+export interface WsIncomingToolRequestPayload {
+  type: typeof WsIncomingType.ToolRequest;
+  request_id: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
-  | WsIncomingStatusPayload;
+  | WsIncomingStatusPayload
+  | WsIncomingToolRequestPayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
-export type RuntimeMessageType = "send_chat" | "chat_message" | "typing" | "connection_state";
+export type RuntimeMessageType =
+  | "send_chat"
+  | "chat_message"
+  | "typing"
+  | "connection_state"
+  | "permission_request"
+  | "permission_response";
+
 export const RuntimeMessageType = {
   SendChat: "send_chat",
   ChatMessage: "chat_message",
   Typing: "typing",
   ConnectionState: "connection_state",
+  PermissionRequest: "permission_request",
+  PermissionResponse: "permission_response",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -91,11 +119,45 @@ export interface RuntimeConnectionState {
   state: ConnectionState;
 }
 
+/** Background → sidebar: ask user to allow/deny a domain */
+export interface RuntimePermissionRequest {
+  type: typeof RuntimeMessageType.PermissionRequest;
+  request_id: string;
+  domain: string;
+  url: string;
+}
+
+/** Sidebar → background: user's permission decision */
+export interface RuntimePermissionResponse {
+  type: typeof RuntimeMessageType.PermissionResponse;
+  request_id: string;
+  allowed: boolean;
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
   | RuntimeTyping
-  | RuntimeConnectionState;
+  | RuntimeConnectionState
+  | RuntimePermissionRequest
+  | RuntimePermissionResponse;
+
+// --- Domain permissions ---
+
+export type DomainPermission = "allowed" | "blocked";
+export const DomainPermission = {
+  Allowed: "allowed",
+  Blocked: "blocked",
+} as const satisfies Record<string, DomainPermission>;
+
+/** Map of domain → permission stored in browser.storage.local */
+export type DomainAllowlist = Record<string, DomainPermission>;
+
+// --- Tool constants ---
+
+export const TOOL_TIMEOUT_MS = 30_000;
+export const TAB_LOAD_TIMEOUT_MS = 15_000;
+export const MAX_EXTRACTED_CHARS = 50_000;
 
 // --- Chat UI ---
 
@@ -118,6 +180,7 @@ export const MAX_STORED_MESSAGES = 200;
 
 export const STORAGE_KEY_DEVICE_LABEL = "deviceLabel";
 export const STORAGE_KEY_CHAT_HISTORY = "chatHistory";
+export const STORAGE_KEY_DOMAIN_ALLOWLIST = "domainAllowlist";
 
 // --- UI constants ---
 

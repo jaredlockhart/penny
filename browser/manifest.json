@@ -5,7 +5,9 @@
   "description": "Penny browser channel — chat sidebar and browser tools",
 
   "permissions": [
-    "storage"
+    "storage",
+    "tabs",
+    "<all_urls>"
   ],
 
   "sidebar_action": {

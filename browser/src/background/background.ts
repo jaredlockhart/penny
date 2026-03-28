@@ -1,11 +1,13 @@
 /**
  * Background script — owns the WebSocket connection to Penny server.
+ * Handles tool requests from the server and permission prompts.
  * The sidebar communicates with this script via browser.runtime messaging.
  */
 
 import {
   type ConnectionState,
   ConnectionState as CS,
+  DomainPermission as DP,
   RECONNECT_DELAY_MS,
   type RuntimeMessage,
   RuntimeMessageType,
@@ -13,8 +15,16 @@ import {
   STORAGE_KEY_DEVICE_LABEL,
   type WsIncomingPayload,
   WsIncomingType,
+  type WsIncomingToolRequestPayload,
   WsOutgoingType,
 } from "../protocol.js";
+import {
+  checkDomainPermission,
+  extractDomain,
+  requestPermissionFromUser,
+  storeDomainPermission,
+} from "./permissions.js";
+import { browseUrl } from "./tools/browse_url.js";
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -50,8 +60,9 @@ function handleStorageChange(
 
 function handleRuntimeMessage(message: RuntimeMessage): void {
   if (message.type === RuntimeMessageType.SendChat) {
-    sendToServer(message.content);
+    sendChatToServer(message.content);
   }
+  // PermissionResponse is handled directly in permissions.ts listener
 }
 
 function broadcastToSidebar(message: RuntimeMessage): void {
@@ -88,6 +99,8 @@ function connect(): void {
       broadcastToSidebar({ type: RuntimeMessageType.ChatMessage, content: data.content });
     } else if (data.type === WsIncomingType.Typing) {
       broadcastToSidebar({ type: RuntimeMessageType.Typing, active: data.active });
+    } else if (data.type === WsIncomingType.ToolRequest) {
+      handleToolRequest(data);
     }
   });
 
@@ -109,12 +122,65 @@ function scheduleReconnect(): void {
   }, RECONNECT_DELAY_MS);
 }
 
-function sendToServer(content: string): void {
+function sendChatToServer(content: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN || !deviceLabel) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.Message, content, sender: deviceLabel }));
 }
 
-// --- Public state (sidebar can query on open) ---
+function sendToolResponse(requestId: string, result?: string, error?: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    type: WsOutgoingType.ToolResponse,
+    request_id: requestId,
+    result,
+    error,
+  }));
+}
+
+// --- Tool request handling ---
+
+async function handleToolRequest(request: WsIncomingToolRequestPayload): Promise<void> {
+  const { request_id, tool, arguments: args } = request;
+
+  try {
+    if (tool === "browse_url") {
+      const result = await executeBrowseUrl(request_id, args);
+      sendToolResponse(request_id, result);
+    } else {
+      sendToolResponse(request_id, undefined, `Unknown tool: ${tool}`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    sendToolResponse(request_id, undefined, message);
+  }
+}
+
+async function executeBrowseUrl(
+  requestId: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const url = args.url as string;
+  if (!url) throw new Error("Missing required argument: url");
+
+  const domain = extractDomain(url);
+  const permission = await checkDomainPermission(domain);
+
+  if (permission === "blocked") {
+    throw new Error(`Domain ${domain} is blocked by user`);
+  }
+
+  if (permission === "unknown") {
+    const allowed = await requestPermissionFromUser(requestId, domain, url);
+    await storeDomainPermission(domain, allowed ? DP.Allowed : DP.Blocked);
+    if (!allowed) {
+      throw new Error(`User denied access to ${domain}`);
+    }
+  }
+
+  return await browseUrl(url);
+}
+
+// --- Sidebar state sync ---
 
 browser.runtime.onConnect.addListener((port) => {
   if (port.name === "sidebar") {

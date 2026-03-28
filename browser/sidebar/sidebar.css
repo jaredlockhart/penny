@@ -317,3 +317,49 @@ body {
   flex: 1;
   min-height: 0;
 }
+
+/* --- Permission dialog --- */
+
+#permission-dialog {
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+#permission-dialog p {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.permission-url {
+  color: var(--text-muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.permission-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.permission-actions button {
+  padding: 6px 20px;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#permission-allow {
+  background: var(--status-ok-text);
+  color: var(--bg-primary);
+}
+
+#permission-deny {
+  background: var(--status-err-text);
+  color: var(--bg-primary);
+}

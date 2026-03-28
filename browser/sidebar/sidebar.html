@@ -17,6 +17,14 @@
         <div id="messages"></div>
         <span id="status" class="disconnected"></span>
       </div>
+      <div id="permission-dialog" class="hidden">
+        <p>Penny wants to browse <strong id="permission-domain"></strong></p>
+        <p class="permission-url" id="permission-url"></p>
+        <div class="permission-actions">
+          <button id="permission-allow">Allow</button>
+          <button id="permission-deny" class="deny">Deny</button>
+        </div>
+      </div>
       <div id="input-area">
         <textarea id="input" placeholder="Message Penny..." rows="1"></textarea>
         <button id="send">Send</button>
