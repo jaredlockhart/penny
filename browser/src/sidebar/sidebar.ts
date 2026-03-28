@@ -182,9 +182,20 @@ function renderMessage(text: string, sender: MessageSender, animate = true): voi
     div.textContent = text;
   }
   messagesEl.appendChild(div);
+  if (!animate) return;
+
+  scrollToMessage(div);
+
+  // Re-scroll after images load (dimensions unknown until rendered)
+  const images = Array.from(div.querySelectorAll("img"));
+  for (const img of images) {
+    img.addEventListener("load", () => scrollToMessage(div), { once: true });
+  }
+}
+
+function scrollToMessage(div: HTMLElement): void {
   const fitsInView = div.offsetHeight <= messagesEl.clientHeight;
-  const block: ScrollLogicalPosition = fitsInView ? "end" : "start";
-  div.scrollIntoView({ block, behavior: animate ? "smooth" : "instant" });
+  div.scrollIntoView({ block: fitsInView ? "end" : "start", behavior: "smooth" });
 }
 
 function addMessage(text: string, sender: MessageSender): void {
