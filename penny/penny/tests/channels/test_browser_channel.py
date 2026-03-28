@@ -116,6 +116,12 @@ class TestBrowserPrepareOutgoing:
         result = self._channel(tmp_path).prepare_outgoing("visit https://example.com today")
         assert '<a href="https://example.com"' in result
 
+    def test_markdown_link_no_nested_anchors(self, tmp_path):
+        result = self._channel(tmp_path).prepare_outgoing("[Recipe](https://example.com/recipe)")
+        assert result.count("<a ") == 1
+        assert result.count("</a>") == 1
+        assert '<a href="https://example.com/recipe" target="_blank">Recipe</a>' in result
+
     def test_html_escaped(self, tmp_path):
         result = self._channel(tmp_path).prepare_outgoing("use <script>alert('xss')</script>")
         assert "<script>" not in result
