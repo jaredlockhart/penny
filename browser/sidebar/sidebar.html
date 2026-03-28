@@ -6,11 +6,6 @@
 </head>
 <body>
   <div id="app">
-    <div id="header">
-      <h1>Penny</h1>
-      <span id="status" class="disconnected">disconnected</span>
-    </div>
-
     <div id="register" class="hidden">
       <p>Give this browser a name so Penny knows which device you're on.</p>
       <input id="device-label" type="text" placeholder="e.g. firefox macbook 16">
@@ -18,13 +13,16 @@
     </div>
 
     <div id="chat" class="hidden">
-      <div id="messages"></div>
+      <div id="messages-wrapper">
+        <div id="messages"></div>
+        <span id="status" class="disconnected"></span>
+      </div>
       <div id="input-area">
         <textarea id="input" placeholder="Message Penny..." rows="1"></textarea>
         <button id="send">Send</button>
       </div>
     </div>
   </div>
-  <script src="sidebar.js"></script>
+  <script type="module" src="../dist/sidebar/sidebar.js"></script>
 </body>
 </html>

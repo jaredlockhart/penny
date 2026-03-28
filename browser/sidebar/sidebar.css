@@ -1,3 +1,65 @@
+/* --- Theme variables --- */
+
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f0f0f5;
+  --bg-tertiary: #e4e4ec;
+  --text-primary: #1a1a2e;
+  --text-secondary: #555;
+  --text-muted: #888;
+  --border: #d0d0dd;
+  --accent: #7c5cbf;
+  --accent-hover: #6a4bab;
+  --accent-text: #ffffff;
+  --accent-light: #7c5cbf;
+  --accent-light-hover: #6a4bab;
+  --msg-user-bg: #e4e4ec;
+  --msg-user-text: #1a1a2e;
+  --msg-penny-bg: #f0f0f5;
+  --msg-penny-text: #1a1a2e;
+  --msg-penny-strong: #4a3a6a;
+  --code-bg: #e4e4ec;
+  --status-ok-bg: #d4edda;
+  --status-ok-text: #28a745;
+  --status-err-bg: #f8d7da;
+  --status-err-text: #dc3545;
+  --status-warn-bg: #fff3cd;
+  --status-warn-text: #b8860b;
+  --status-warn-border: #b8860b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #2a2a4a;
+    --bg-tertiary: #3a3a6a;
+    --text-primary: #e0e0e0;
+    --text-secondary: #aaa;
+    --text-muted: #888;
+    --border: #2a2a4a;
+    --accent: #c0a0ff;
+    --accent-hover: #d0b0ff;
+    --accent-text: #1a1a2e;
+    --accent-light: #c0a0ff;
+    --accent-light-hover: #d0b0ff;
+    --msg-user-bg: #3a3a6a;
+    --msg-user-text: #e0e0e0;
+    --msg-penny-bg: #2a2a4a;
+    --msg-penny-text: #e0e0e0;
+    --msg-penny-strong: #f0e0ff;
+    --code-bg: #1a1a2e;
+    --status-ok-bg: #1a3a1a;
+    --status-ok-text: #6bff6b;
+    --status-err-bg: #3a2020;
+    --status-err-text: #ff6b6b;
+    --status-warn-bg: #3a3020;
+    --status-warn-text: #ffb86b;
+    --status-warn-border: #ffb86b;
+  }
+}
+
+/* --- Base layout --- */
+
 * {
   margin: 0;
   padding: 0;
@@ -7,8 +69,8 @@
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
-  background: #1a1a2e;
-  color: #e0e0e0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -20,51 +82,39 @@ body {
   height: 100%;
 }
 
-#header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid #2a2a4a;
+/* --- Messages wrapper (positions status dot) --- */
+
+#messages-wrapper {
+  flex: 1;
+  position: relative;
+  min-height: 0;
 }
 
-#header h1 {
-  font-size: 16px;
-  font-weight: 600;
-  color: #c0a0ff;
-}
+/* --- Status indicator --- */
 
 #status {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
 }
 
 #status.disconnected {
-  background: #3a2020;
-  color: #ff6b6b;
+  display: none;
 }
 
 #status.connected {
-  background: #1a3a1a;
-  color: #6bff6b;
+  background: var(--status-ok-text);
 }
 
 #status.reconnecting {
-  background: #3a3020;
-  color: #ffb86b;
-}
-
-#status.reconnecting::before {
-  content: "";
-  display: inline-block;
   width: 10px;
   height: 10px;
-  border: 2px solid #ffb86b;
+  background: none;
+  border: 2px solid var(--status-warn-text);
   border-top-color: transparent;
-  border-radius: 50%;
-  margin-right: 4px;
-  vertical-align: middle;
   animation: spin 0.8s linear infinite;
 }
 
@@ -72,8 +122,10 @@ body {
   to { transform: rotate(360deg); }
 }
 
+/* --- Messages --- */
+
 #messages {
-  flex: 1;
+  height: 100%;
   overflow-y: auto;
   padding: 12px 16px;
   display: flex;
@@ -91,30 +143,32 @@ body {
 
 .message.user {
   align-self: flex-end;
-  background: #3a3a6a;
-  color: #e0e0e0;
+  background: var(--msg-user-bg);
+  color: var(--msg-user-text);
 }
 
 .message.penny {
   align-self: flex-start;
-  background: #2a2a4a;
-  color: #e0e0e0;
+  background: var(--msg-penny-bg);
+  color: var(--msg-penny-text);
 }
+
+/* --- Input area --- */
 
 #input-area {
   display: flex;
   gap: 8px;
   padding: 12px 16px;
-  border-top: 1px solid #2a2a4a;
+  border-top: 1px solid var(--border);
 }
 
 #input {
   flex: 1;
   padding: 8px 12px;
-  border: 1px solid #3a3a6a;
+  border: 1px solid var(--bg-tertiary);
   border-radius: 8px;
-  background: #2a2a4a;
-  color: #e0e0e0;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   font-family: inherit;
   font-size: 14px;
   resize: none;
@@ -122,21 +176,21 @@ body {
 }
 
 #input:focus {
-  border-color: #c0a0ff;
+  border-color: var(--accent);
 }
 
 #send {
   padding: 8px 16px;
   border: none;
   border-radius: 8px;
-  background: #c0a0ff;
-  color: #1a1a2e;
+  background: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
   cursor: pointer;
 }
 
 #send:hover {
-  background: #d0b0ff;
+  background: var(--accent-hover);
 }
 
 #send:disabled {
@@ -144,32 +198,35 @@ body {
   cursor: not-allowed;
 }
 
+/* --- Typing indicator --- */
+
 .typing {
   font-size: 12px;
-  color: #888;
+  color: var(--text-muted);
   font-style: italic;
   padding: 4px 12px;
 }
 
-/* Penny message HTML formatting */
+/* --- Penny message HTML formatting --- */
+
 .message.penny a {
-  color: #c0a0ff;
+  color: var(--accent-light);
   text-decoration: underline;
 }
 
 .message.penny a:hover {
-  color: #d0b0ff;
+  color: var(--accent-light-hover);
 }
 
 .message.penny code {
-  background: #1a1a2e;
+  background: var(--code-bg);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 13px;
 }
 
 .message.penny pre {
-  background: #1a1a2e;
+  background: var(--code-bg);
   padding: 8px;
   border-radius: 6px;
   overflow-x: auto;
@@ -183,12 +240,12 @@ body {
 
 .message.penny hr {
   border: none;
-  border-top: 1px solid #3a3a6a;
+  border-top: 1px solid var(--bg-tertiary);
   margin: 8px 0;
 }
 
 .message.penny strong {
-  color: #f0e0ff;
+  color: var(--msg-penny-strong);
 }
 
 .message.penny img {
@@ -197,9 +254,13 @@ body {
   margin-top: 6px;
 }
 
+/* --- Utility --- */
+
 .hidden {
   display: none !important;
 }
+
+/* --- Registration screen --- */
 
 #register {
   flex: 1;
@@ -213,7 +274,7 @@ body {
 }
 
 #register p {
-  color: #aaa;
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
@@ -221,10 +282,10 @@ body {
   width: 100%;
   max-width: 280px;
   padding: 10px 14px;
-  border: 1px solid #3a3a6a;
+  border: 1px solid var(--bg-tertiary);
   border-radius: 8px;
-  background: #2a2a4a;
-  color: #e0e0e0;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   font-family: inherit;
   font-size: 14px;
   outline: none;
@@ -232,22 +293,22 @@ body {
 }
 
 #device-label:focus {
-  border-color: #c0a0ff;
+  border-color: var(--accent);
 }
 
 #register-btn {
   padding: 10px 24px;
   border: none;
   border-radius: 8px;
-  background: #c0a0ff;
-  color: #1a1a2e;
+  background: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
 }
 
 #register-btn:hover {
-  background: #d0b0ff;
+  background: var(--accent-hover);
 }
 
 #chat {

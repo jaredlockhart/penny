@@ -15,7 +15,7 @@
   },
 
   "background": {
-    "scripts": ["background/background.js"],
+    "scripts": ["dist/background/background.js"],
     "type": "module"
   },
 
