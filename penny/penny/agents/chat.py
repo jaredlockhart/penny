@@ -57,6 +57,7 @@ class ChatAgent(Agent):
         Builds context, processes images, runs agentic loop.
         """
         self._current_user = sender
+        self._pending_page_context = page_context
         try:
             content, has_images = await self._process_images(content, images)
             history = self.get_history(sender)
@@ -76,9 +77,7 @@ class ChatAgent(Agent):
 
             logger.info("Handling message from %s (conversation mode)", sender)
             self._install_tools(self.get_tools(sender))
-            system_prompt = await self._build_system_prompt(
-                sender, content, page_context=page_context
-            )
+            system_prompt = await self._build_system_prompt(sender, content)
             return await self.run(
                 prompt=content,
                 max_steps=self.get_max_steps(),
@@ -87,6 +86,56 @@ class ChatAgent(Agent):
             )
         finally:
             self._current_user = None
+            self._pending_page_context = None
+
+    # ── Message building ────────────────────────────────────────────────
+
+    def _build_messages(
+        self,
+        prompt: str,
+        history: list[tuple[str, str]] | None = None,
+        system_prompt: str | None = None,
+    ) -> list[dict]:
+        """Build messages, injecting page context as a synthetic browse_url result."""
+        messages = super()._build_messages(prompt, history, system_prompt)
+        if self._pending_page_context:
+            self._inject_page_context(messages, self._pending_page_context)
+        return messages
+
+    @staticmethod
+    def _inject_page_context(messages: list[dict], page_context: dict) -> None:
+        """Inject a synthetic browse_url tool call + result after the user prompt."""
+        title = page_context.get("title", "")
+        url = page_context.get("url", "")
+        text = page_context.get("text", "")
+        if not text:
+            return
+
+        page_content = f"Title: {title}\nURL: {url}\n\n{text}"
+
+        # Assistant "called" browse_url for the current page
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "browse_url",
+                            "arguments": {"url": url},
+                        },
+                    }
+                ],
+            }
+        )
+        # Tool "returned" the page content
+        messages.append(
+            {
+                "role": "tool",
+                "content": page_content,
+                "tool_name": "browse_url",
+            }
+        )
 
     # ── System prompt ──────────────────────────────────────────────────────
 
@@ -95,9 +144,8 @@ class ChatAgent(Agent):
         user: str,
         content: str | None = None,
         instructions: str | None = None,
-        page_context: dict | None = None,
     ) -> str:
-        """Identity + profile + history + thought + page context + instructions."""
+        """Identity + profile + history + thought + page hint + instructions."""
         return "\n\n".join(
             s
             for s in [
@@ -106,24 +154,23 @@ class ChatAgent(Agent):
                     self._profile_section(user, content),
                     self._history_section(user),
                     self._thought_section(user),
-                    self._page_context_section(page_context),
+                    self._page_hint_section(),
                 ),
                 self._instructions_section(instructions),
             ]
             if s
         )
 
-    @staticmethod
-    def _page_context_section(page_context: dict | None) -> str | None:
-        """Build context section for the page the user is currently viewing."""
-        if not page_context:
+    def _page_hint_section(self) -> str | None:
+        """Minimal hint about what page the user is currently viewing."""
+        ctx = self._pending_page_context
+        if not ctx:
             return None
-        title = page_context.get("title", "")
-        url = page_context.get("url", "")
-        text = page_context.get("text", "")
-        if not text:
+        title = ctx.get("title", "")
+        url = ctx.get("url", "")
+        if not url:
             return None
-        return f"### Current Browser Page\n{title}\n{url}\n\n{text}"
+        return f"### Current Browser Page\n{title}\n{url}"
 
     def _thought_section(self, sender: str) -> str | None:
         """Build thought context — only thoughts Penny has shared with the user.

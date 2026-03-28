@@ -1,15 +1,13 @@
 /**
- * Content script — extracts visible text from the current page.
- * Injected programmatically by the background script via browser.tabs.executeScript.
- * Returns structured page data to the caller.
+ * Content script — extracts main content from the current page using Defuddle.
+ * Falls back to CSS heuristics if Defuddle returns insufficient content.
+ * Bundled with esbuild (not compiled by tsc) since content scripts can't use imports.
  */
 
-const MAX_CHARS = 50_000;
+import { Defuddle } from "defuddle";
 
-const SKIP_TAGS = new Set([
-  "SCRIPT", "STYLE", "NOSCRIPT", "SVG", "IFRAME", "OBJECT", "EMBED",
-  "TEMPLATE", "HEAD", "META", "LINK",
-]);
+const MIN_CONTENT_LENGTH = 200;
+const MAX_CHARS = 50_000;
 
 interface PageData {
   title: string;
@@ -17,10 +15,52 @@ interface PageData {
   text: string;
 }
 
-function extractVisibleText(): string {
-  const chunks: string[] = [];
-  let charCount = 0;
+function extractWithDefuddle(): string | null {
+  try {
+    const clone = document.cloneNode(true) as Document;
+    const result = new Defuddle(clone).parse();
+    const text = result.content
+      ? stripHtmlTags(result.content)
+      : null;
+    if (text && text.length >= MIN_CONTENT_LENGTH) {
+      return text;
+    }
+  } catch {
+    // Defuddle failed — fall through to heuristics
+  }
+  return null;
+}
 
+function extractWithHeuristics(): string | null {
+  const selectors = [
+    "article",
+    "main",
+    '[role="main"]',
+    "#content",
+    ".post-content",
+    ".article-content",
+    ".entry-content",
+  ];
+
+  for (const selector of selectors) {
+    const el = document.querySelector(selector);
+    if (el) {
+      const text = (el as HTMLElement).innerText?.trim();
+      if (text && text.length >= MIN_CONTENT_LENGTH) {
+        return text;
+      }
+    }
+  }
+  return null;
+}
+
+function extractAllVisibleText(): string {
+  const SKIP_TAGS = new Set([
+    "SCRIPT", "STYLE", "NOSCRIPT", "SVG", "IFRAME",
+    "NAV", "ASIDE", "FOOTER", "HEADER",
+  ]);
+
+  const chunks: string[] = [];
   const walker = document.createTreeWalker(
     document.body,
     NodeFilter.SHOW_TEXT,
@@ -29,7 +69,10 @@ function extractVisibleText(): string {
         const parent = node.parentElement;
         if (!parent) return NodeFilter.FILTER_REJECT;
         if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
-        if (isHidden(parent)) return NodeFilter.FILTER_REJECT;
+        const style = window.getComputedStyle(parent);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return NodeFilter.FILTER_REJECT;
+        }
         return NodeFilter.FILTER_ACCEPT;
       },
     },
@@ -37,36 +80,29 @@ function extractVisibleText(): string {
 
   let node: Text | null;
   while ((node = walker.nextNode() as Text | null)) {
-    if (charCount >= MAX_CHARS) break;
     const text = node.textContent?.trim();
-    if (text) {
-      chunks.push(text);
-      charCount += text.length;
-    }
+    if (text) chunks.push(text);
   }
-
-  return chunks.join("\n").slice(0, MAX_CHARS);
+  return chunks.join("\n");
 }
 
-function isHidden(el: HTMLElement): boolean {
-  if (el.hasAttribute("aria-hidden") && el.getAttribute("aria-hidden") === "true") {
-    return true;
-  }
-  const style = window.getComputedStyle(el);
-  return (
-    style.display === "none" ||
-    style.visibility === "hidden" ||
-    style.opacity === "0"
-  );
+function stripHtmlTags(html: string): string {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return div.innerText || div.textContent || "";
 }
 
 function extract(): PageData {
+  const text =
+    extractWithDefuddle() ??
+    extractWithHeuristics() ??
+    extractAllVisibleText();
+
   return {
     title: document.title,
     url: location.href,
-    text: extractVisibleText(),
+    text: text.slice(0, MAX_CHARS),
   };
 }
 
-// Return the result to executeScript caller
 extract();

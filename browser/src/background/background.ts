@@ -102,11 +102,13 @@ async function extractFromActiveTab(): Promise<void> {
         url: data.url,
         text: data.text.slice(0, MAX_PAGE_CONTEXT_CHARS),
       };
+      console.log("Page context extracted:", data.title, `(${data.text.length} chars)`);
     } else {
+      console.log("Page context: no results from content script");
       currentPageContext = null;
     }
-  } catch {
-    // Content script injection can fail (e.g., privileged pages)
+  } catch (err) {
+    console.log("Page context extraction failed:", err);
     currentPageContext = null;
   }
 }
@@ -185,6 +187,9 @@ function sendChatToServer(content: string): void {
   };
   if (currentPageContext) {
     payload.page_context = currentPageContext;
+    console.log("Sending with page context:", currentPageContext.title);
+  } else {
+    console.log("Sending without page context");
   }
   ws.send(JSON.stringify(payload));
 }
