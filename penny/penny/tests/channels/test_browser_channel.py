@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from penny.channels.browser.channel import BrowserChannel
 from penny.constants import ChannelType
 from penny.database import Database
@@ -168,3 +170,127 @@ class TestBrowserImageHandling:
         result = BrowserChannel._prepend_images("text", urls)
         assert result.count("<img") == 2
         assert result.endswith("text")
+
+
+class TestBrowseUrlTool:
+    """BrowseUrlTool passes through pre-sanitized content from the channel."""
+
+    @pytest.mark.asyncio
+    async def test_returns_channel_content_directly(self):
+        """Tool returns whatever the channel's request_fn provides — no summarization."""
+        from unittest.mock import AsyncMock
+
+        from penny.tools.browse_url import BrowseUrlTool
+
+        request_fn = AsyncMock(return_value="Pre-sanitized page content from channel.")
+        tool = BrowseUrlTool(request_fn=request_fn)
+        result = await tool.execute(url="https://example.com")
+
+        assert result == "Pre-sanitized page content from channel."
+        request_fn.assert_called_once_with("browse_url", {"url": "https://example.com"})
+
+    @pytest.mark.asyncio
+    async def test_returns_no_content_message_for_empty(self):
+        """Tool returns a message when the channel returns empty content."""
+        from unittest.mock import AsyncMock
+
+        from penny.tools.browse_url import BrowseUrlTool
+
+        request_fn = AsyncMock(return_value="  ")
+        tool = BrowseUrlTool(request_fn=request_fn)
+        result = await tool.execute(url="https://example.com")
+
+        assert "no content" in result.lower()
+
+
+class TestPageContentSanitization:
+    """_sanitize_page_content runs a sandboxed model call on raw web content."""
+
+    @pytest.mark.asyncio
+    async def test_sanitizes_page_content(self, tmp_path, monkeypatch):
+        """Raw page content is rewritten through a sandboxed model call."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        db = _make_db(tmp_path)
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.message.content = "Sanitized summary of the page."
+        mock_client.chat = AsyncMock(return_value=mock_response)
+
+        channel = BrowserChannel(
+            host="localhost",
+            port=9999,
+            message_agent=MagicMock(),
+            db=db,
+            model_client=mock_client,
+        )
+        result = await channel._sanitize_page_content(
+            "Raw <script>alert('xss')</script> page content", "https://example.com"
+        )
+
+        assert result == "Sanitized summary of the page."
+        mock_client.chat.assert_called_once()
+        call_args = mock_client.chat.call_args
+        messages = call_args[1]["messages"]
+        assert messages[0]["role"] == "system"
+        assert "URL: https://example.com" in messages[1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_returns_raw_when_no_model_client(self, tmp_path):
+        """Without a model client, raw content passes through unchanged."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(
+            host="localhost",
+            port=9999,
+            message_agent=MagicMock(),
+            db=db,
+        )
+        result = await channel._sanitize_page_content("raw content", "https://example.com")
+        assert result == "raw content"
+
+    @pytest.mark.asyncio
+    async def test_returns_raw_on_model_failure(self, tmp_path):
+        """If the model call fails, raw content is returned as fallback."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        db = _make_db(tmp_path)
+        mock_client = MagicMock()
+        mock_client.chat = AsyncMock(side_effect=RuntimeError("model down"))
+
+        channel = BrowserChannel(
+            host="localhost",
+            port=9999,
+            message_agent=MagicMock(),
+            db=db,
+            model_client=mock_client,
+        )
+        result = await channel._sanitize_page_content("raw content", "https://example.com")
+        assert result == "raw content"
+
+    @pytest.mark.asyncio
+    async def test_truncates_to_max_chars(self, tmp_path):
+        """Content is truncated before sending to the model."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from penny.constants import PennyConstants
+
+        db = _make_db(tmp_path)
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.message.content = "summarized"
+        mock_client.chat = AsyncMock(return_value=mock_response)
+
+        channel = BrowserChannel(
+            host="localhost",
+            port=9999,
+            message_agent=MagicMock(),
+            db=db,
+            model_client=mock_client,
+        )
+        long_text = "x" * (PennyConstants.MAX_PAGE_CONTENT_CHARS + 1000)
+        await channel._sanitize_page_content(long_text, "https://example.com")
+
+        call_args = mock_client.chat.call_args
+        user_content = call_args[1]["messages"][1]["content"]
+        # The URL prefix + content should not exceed max + URL overhead
+        assert len(user_content) < PennyConstants.MAX_PAGE_CONTENT_CHARS + 200
