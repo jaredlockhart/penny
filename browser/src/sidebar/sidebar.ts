@@ -3,12 +3,15 @@ import {
   ConnectionState as CS,
   type IncomingPayload,
   IncomingType,
+  MAX_STORED_MESSAGES,
   type MessageSender,
   MessageSender as MS,
   OutgoingType,
   RECONNECT_DELAY_MS,
   SERVER_URL,
+  STORAGE_KEY_CHAT_HISTORY,
   STORAGE_KEY_DEVICE_LABEL,
+  type StoredMessage,
   TEXTAREA_LINE_HEIGHT,
   TEXTAREA_MAX_ROWS,
   TYPING_INDICATOR_TEXT,
@@ -61,7 +64,7 @@ async function saveLabel(labelInput: HTMLInputElement): Promise<void> {
   showChat();
 }
 
-function showChat(): void {
+async function showChat(): Promise<void> {
   document.getElementById("register")!.classList.add("hidden");
   document.getElementById("chat")!.classList.remove("hidden");
 
@@ -78,13 +81,36 @@ function showChat(): void {
   });
   inputEl.addEventListener("input", autoResize);
 
+  await rehydrateHistory();
   setStatus(CS.Disconnected);
   connect();
 }
 
+// --- Chat history persistence ---
+
+async function rehydrateHistory(): Promise<void> {
+  const stored = await browser.storage.local.get(STORAGE_KEY_CHAT_HISTORY);
+  const messages: StoredMessage[] = stored[STORAGE_KEY_CHAT_HISTORY] ?? [];
+  for (const msg of messages) {
+    renderMessage(msg.text, msg.sender, false);
+  }
+  // Jump to bottom after rehydration
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function persistMessage(text: string, sender: MessageSender): Promise<void> {
+  const stored = await browser.storage.local.get(STORAGE_KEY_CHAT_HISTORY);
+  const messages: StoredMessage[] = stored[STORAGE_KEY_CHAT_HISTORY] ?? [];
+  messages.push({ text, sender });
+  if (messages.length > MAX_STORED_MESSAGES) {
+    messages.splice(0, messages.length - MAX_STORED_MESSAGES);
+  }
+  await browser.storage.local.set({ [STORAGE_KEY_CHAT_HISTORY]: messages });
+}
+
 // --- Chat UI ---
 
-function addMessage(text: string, sender: MessageSender): void {
+function renderMessage(text: string, sender: MessageSender, animate = true): void {
   const div = document.createElement("div");
   div.className = `message ${sender}`;
   if (sender === MS.Penny) {
@@ -93,7 +119,12 @@ function addMessage(text: string, sender: MessageSender): void {
     div.textContent = text;
   }
   messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  div.scrollIntoView({ block: "start", behavior: animate ? "smooth" : "instant" });
+}
+
+function addMessage(text: string, sender: MessageSender): void {
+  renderMessage(text, sender);
+  persistMessage(text, sender);
 }
 
 function setStatus(state: ConnectionState): void {

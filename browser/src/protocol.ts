@@ -65,9 +65,19 @@ export const MessageSender = {
   Penny: "penny",
 } as const satisfies Record<string, MessageSender>;
 
+// --- Chat history ---
+
+export interface StoredMessage {
+  text: string;
+  sender: MessageSender;
+}
+
+export const MAX_STORED_MESSAGES = 200;
+
 // --- Storage keys ---
 
 export const STORAGE_KEY_DEVICE_LABEL = "deviceLabel";
+export const STORAGE_KEY_CHAT_HISTORY = "chatHistory";
 
 // --- UI constants ---
 
