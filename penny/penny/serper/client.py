@@ -126,7 +126,7 @@ async def search_image_url(
                 if any(blocked in domain for blocked in BLOCKED_IMAGE_DOMAINS):
                     continue
                 ext = _parse_extension(result.imageUrl)
-                if ext and ext not in ALLOWED_IMAGE_EXTENSIONS:
+                if not ext or ext not in ALLOWED_IMAGE_EXTENSIONS:
                     continue
                 logger.info("Image URL search found: %s", result.imageUrl[:120])
                 return result.imageUrl
