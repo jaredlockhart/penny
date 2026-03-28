@@ -75,6 +75,7 @@ class BrowserChannel(MessageChannel):
         self._server: Server | None = None
         self._connections: dict[str, ServerConnection] = {}
         self._pending_requests: dict[str, asyncio.Future[str]] = {}
+        self._pending_request_connections: dict[str, ServerConnection] = {}
 
     @property
     def sender_id(self) -> str:
@@ -110,15 +111,15 @@ class BrowserChannel(MessageChannel):
         except websockets.ConnectionClosed:
             pass
         finally:
-            self._cleanup_connection(device_label)
+            self._cleanup_connection(ws, device_label)
 
-    def _cleanup_connection(self, device_label: str | None) -> None:
-        """Remove connection and reject pending requests on disconnect."""
+    def _cleanup_connection(self, ws: ServerConnection, device_label: str | None) -> None:
+        """Remove connection and reject pending requests for the disconnected ws."""
         if device_label:
             self._connections.pop(device_label, None)
-        # Reject any pending tool requests from this connection
-        for _request_id, future in list(self._pending_requests.items()):
-            if not future.done():
+        # Only reject pending requests that were sent to this specific connection
+        for request_id, future in list(self._pending_requests.items()):
+            if not future.done() and self._pending_request_connections.get(request_id) is ws:
                 future.set_exception(ConnectionError("Browser disconnected"))
         logger.info("Browser disconnected: %s", device_label or "unregistered")
 
@@ -289,6 +290,7 @@ class BrowserChannel(MessageChannel):
         request_id = str(uuid.uuid4())
         future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
         self._pending_requests[request_id] = future
+        self._pending_request_connections[request_id] = ws
 
         request = BrowserToolRequest(
             request_id=request_id,
@@ -307,6 +309,7 @@ class BrowserChannel(MessageChannel):
             ) from e
         finally:
             self._pending_requests.pop(request_id, None)
+            self._pending_request_connections.pop(request_id, None)
 
     def _get_tool_connection(self) -> ServerConnection | None:
         """Get the first available browser connection for tool execution."""

@@ -1,11 +1,15 @@
 """Tests for BrowserChannel message extraction and device registration."""
 
+import asyncio
 from unittest.mock import MagicMock
+
+import pytest
 
 from penny.channels.browser.channel import BrowserChannel
 from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.migrate import migrate
+from penny.tools.browse_url import BrowseUrlTool
 
 
 def _make_db(tmp_path) -> Database:
@@ -168,3 +172,47 @@ class TestBrowserImageHandling:
         result = BrowserChannel._prepend_images("text", urls)
         assert result.count("<img") == 2
         assert result.endswith("text")
+
+
+class TestBrowserCleanupConnection:
+    """_cleanup_connection only rejects pending requests for the disconnected WebSocket."""
+
+    @pytest.mark.asyncio
+    async def test_only_rejects_requests_for_disconnected_ws(self, tmp_path):
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+        ws_a = MagicMock()
+        ws_b = MagicMock()
+
+        loop = asyncio.get_event_loop()
+        future_a: asyncio.Future[str] = loop.create_future()
+        future_b: asyncio.Future[str] = loop.create_future()
+
+        channel._pending_requests["req-a"] = future_a
+        channel._pending_request_connections["req-a"] = ws_a
+        channel._pending_requests["req-b"] = future_b
+        channel._pending_request_connections["req-b"] = ws_b
+
+        channel._cleanup_connection(ws_a, "device-a")
+
+        assert future_a.done()
+        assert isinstance(future_a.exception(), ConnectionError)
+        assert not future_b.done()
+
+        future_b.cancel()
+
+
+class TestBrowseUrlToolConnectionError:
+    """BrowseUrlTool returns a friendly message when the browser disconnects."""
+
+    @pytest.mark.asyncio
+    async def test_connection_error_returns_friendly_message(self):
+        async def disconnected_fn(tool: str, args: dict) -> str:
+            raise ConnectionError("Browser disconnected")
+
+        tool = BrowseUrlTool(request_fn=disconnected_fn, model_client=MagicMock())
+        result = await tool.execute(url="https://example.com")
+
+        assert "not connected" in result
+        assert "https://example.com" in result

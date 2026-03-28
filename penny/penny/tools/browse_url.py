@@ -44,7 +44,10 @@ class BrowseUrlTool(Tool):
         args = BrowseUrlArgs(**kwargs)
         logger.info("browse_url: requesting %s", args.url)
 
-        result = await self._request_fn("browse_url", {"url": args.url})
+        try:
+            result = await self._request_fn("browse_url", {"url": args.url})
+        except ConnectionError:
+            return f"Cannot browse {args.url}: the browser extension is not connected."
         if not result.strip():
             return f"Page at {args.url} returned no content."
 
