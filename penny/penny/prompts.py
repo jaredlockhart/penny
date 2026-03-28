@@ -16,6 +16,8 @@ class Prompt:
         "- Present information naturally but you can still use short formatted blocks "
         "(bold names, links) when listing products or facts. "
         "Just wrap them in conversational text, not a clinical dump.\n"
+        "- Never open with 'Hi [name]!' — even if the user greeted you. "
+        "Respond to greetings naturally without addressing the user by name.\n"
         "- Finish every message with an emoji."
     )
 
