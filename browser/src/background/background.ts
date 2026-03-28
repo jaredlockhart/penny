@@ -142,6 +142,12 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     requestThoughts();
   } else if (message.type === RuntimeMessageType.ThoughtReaction) {
     sendThoughtReaction(message.thought_id, message.emoji);
+  } else if (message.type === RuntimeMessageType.PreferencesRequest) {
+    requestPreferences(message.valence);
+  } else if (message.type === RuntimeMessageType.PreferenceAdd) {
+    sendPreferenceAdd(message.valence, message.content);
+  } else if (message.type === RuntimeMessageType.PreferenceDelete) {
+    sendPreferenceDelete(message.preference_id);
   }
 }
 
@@ -187,6 +193,12 @@ function connect(): void {
       broadcastToSidebar({ type: RuntimeMessageType.ThoughtsResponse, thoughts: data.thoughts });
       const unnotified = data.thoughts.filter((t: { notified: boolean }) => !t.notified).length;
       broadcastToSidebar({ type: RuntimeMessageType.ThoughtCount, count: unnotified });
+    } else if (data.type === WsIn.PreferencesResponse) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.PreferencesResponse,
+        valence: data.valence,
+        preferences: data.preferences,
+      });
     }
   });
 
@@ -229,6 +241,21 @@ function requestThoughts(): void {
 function sendThoughtReaction(thoughtId: number, emoji: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.ThoughtReaction, thought_id: thoughtId, emoji }));
+}
+
+function requestPreferences(valence: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.PreferencesRequest, valence }));
+}
+
+function sendPreferenceAdd(valence: string, content: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.PreferenceAdd, valence, content }));
+}
+
+function sendPreferenceDelete(preferenceId: number): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.PreferenceDelete, preference_id: preferenceId }));
 }
 
 function sendToolResponse(requestId: string, result?: string, error?: string): void {
