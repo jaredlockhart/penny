@@ -262,6 +262,7 @@ class BrowserChannel(MessageChannel):
 
         envelope: dict = {"browser_sender": device_label, "content": msg.content}
         if msg.page_context and msg.page_context.text:
+            await self.send_typing(device_label, True)
             sanitized_text = await self._sanitize_page_content(
                 msg.page_context.text, msg.page_context.url
             )
