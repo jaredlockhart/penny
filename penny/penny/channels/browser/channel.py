@@ -31,6 +31,7 @@ from penny.channels.browser.models import (
     BrowserToolResponse,
 )
 from penny.constants import ChannelType, PennyConstants
+from penny.prompts import Prompt
 from penny.serper.client import search_image_url
 
 if TYPE_CHECKING:
@@ -41,18 +42,6 @@ if TYPE_CHECKING:
     from penny.ollama import OllamaClient
 
 logger = logging.getLogger(__name__)
-
-TOOL_REQUEST_TIMEOUT = 30.0
-MAX_RAW_CHARS = 100_000
-
-SANITIZE_SYSTEM_PROMPT = (
-    "Rewrite the following web page content as a comprehensive, detailed summary. "
-    "Include all key facts, names, dates, prices, specs, quotes, and details. "
-    "Preserve the structure — use headings, lists, and paragraphs as appropriate. "
-    "Preserve all URLs exactly as they appear — copy them character for character. "
-    "Do not omit information. Do not add commentary or opinions. "
-    "Output only the rewritten content."
-)
 
 
 def _attachment_to_src(attachment: str) -> str | None:
@@ -308,12 +297,12 @@ class BrowserChannel(MessageChannel):
         await self._send_ws(ws, request)
 
         try:
-            raw_result = await asyncio.wait_for(future, timeout=TOOL_REQUEST_TIMEOUT)
+            raw_result = await asyncio.wait_for(future, timeout=PennyConstants.TOOL_REQUEST_TIMEOUT)
             url = arguments.get("url", "") if tool == "browse_url" else ""
             return await self._sanitize_page_content(raw_result, url)
         except TimeoutError as e:
             raise TimeoutError(
-                f"Browser tool '{tool}' timed out after {TOOL_REQUEST_TIMEOUT}s"
+                f"Browser tool '{tool}' timed out after {PennyConstants.TOOL_REQUEST_TIMEOUT}s"
             ) from e
         finally:
             self._pending_requests.pop(request_id, None)
@@ -334,11 +323,11 @@ class BrowserChannel(MessageChannel):
         """
         if not self._sanitize_client or not text.strip():
             return text
-        truncated = text[:MAX_RAW_CHARS]
+        truncated = text[: PennyConstants.MAX_PAGE_CONTENT_CHARS]
         try:
             response = await self._sanitize_client.chat(
                 messages=[
-                    {"role": "system", "content": SANITIZE_SYSTEM_PROMPT},
+                    {"role": "system", "content": Prompt.PAGE_SANITIZE_PROMPT},
                     {"role": "user", "content": f"URL: {url}\n\n{truncated}"},
                 ],
             )

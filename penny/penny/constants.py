@@ -129,3 +129,7 @@ class PennyConstants:
 
     # History constants
     MAX_WEEKLY_ROLLUPS_PER_RUN = 2
+
+    # Browser channel constants
+    TOOL_REQUEST_TIMEOUT = 30.0
+    MAX_PAGE_CONTENT_CHARS = 100_000
