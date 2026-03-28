@@ -223,32 +223,21 @@ class BrowserChannel(MessageChannel):
         if not primary:
             return
 
-        # Mark the thought as notified
+        valence = self._classify_reaction_emoji(emoji)
+        if valence is not None:
+            self._db.thoughts.set_valence(thought_id, valence)
+
         self._db.thoughts.mark_notified(thought_id)
+        logger.info("Thought %d reacted with %s from feed (valence=%s)", thought_id, emoji, valence)
 
-        # Log a synthetic outgoing message for the thought (so reaction has a parent)
-        thought = self._db.thoughts.get_by_id(thought_id)
-        if not thought:
-            return
-        outgoing_id = self._db.messages.log_message(
-            PennyConstants.MessageDirection.OUTGOING,
-            self.sender_id,
-            thought.content[:500],
-            recipient=primary,
-            thought_id=thought_id,
-        )
-
-        # Log the reaction as an incoming message (same as Signal reactions)
-        if outgoing_id:
-            self._db.messages.log_message(
-                PennyConstants.MessageDirection.INCOMING,
-                primary,
-                emoji,
-                parent_id=outgoing_id,
-                is_reaction=True,
-            )
-
-        logger.info("Thought %d reacted with %s from feed", thought_id, emoji)
+    @staticmethod
+    def _classify_reaction_emoji(emoji: str) -> int | None:
+        """Return 1 for positive emoji, -1 for negative, None for unrecognised."""
+        if emoji in PennyConstants.POSITIVE_REACTION_EMOJIS:
+            return 1
+        if emoji in PennyConstants.NEGATIVE_REACTION_EMOJIS:
+            return -1
+        return None
 
     async def _handle_preferences_request(self, ws: ServerConnection, data: dict) -> None:
         """Query preferences by valence and send them to the browser."""

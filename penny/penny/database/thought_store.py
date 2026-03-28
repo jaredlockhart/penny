@@ -234,6 +234,34 @@ class ThoughtStore:
         except Exception as e:
             logger.error("Failed to update thought %d image_url: %s", thought_id, e)
 
+    def set_valence(self, thought_id: int, valence: int) -> None:
+        """Set the user reaction valence on a thought (1 = positive, -1 = negative)."""
+        try:
+            with self._session() as session:
+                thought = session.get(Thought, thought_id)
+                if thought:
+                    thought.valence = valence
+                    session.add(thought)
+                    session.commit()
+                    logger.debug("Set valence %d on thought %d", valence, thought_id)
+        except Exception as e:
+            logger.error("Failed to set valence on thought %d: %s", thought_id, e)
+
+    def get_valenced(self, user: str) -> list[Thought]:
+        """Get all thoughts with a user reaction valence and an embedding."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Thought)
+                    .where(
+                        Thought.user == user,
+                        Thought.valence != None,  # noqa: E711
+                        Thought.embedding != None,  # noqa: E711
+                    )
+                    .order_by(Thought.created_at.asc())
+                ).all()
+            )
+
     def count(self, user: str) -> int:
         """Count total thoughts for a user."""
         with self._session() as session:

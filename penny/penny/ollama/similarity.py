@@ -21,10 +21,9 @@ logger = logging.getLogger(__name__)
 # Re-export so existing `from penny.ollama.similarity import DedupStrategy` works
 __all__ = [
     "DedupStrategy",
-    "compute_sentiment_score",
+    "compute_mention_weighted_sentiment",
     "embed_text",
     "is_embedding_duplicate",
-    "load_preference_vectors",
     "novelty_score",
 ]
 
@@ -49,51 +48,39 @@ async def embed_text(
 # ── Sentiment scoring ────────────────────────────────────────────────────────
 
 
-def compute_sentiment_score(
+def compute_mention_weighted_sentiment(
     vec: list[float],
-    likes: list[list[float]],
-    dislikes: list[list[float]],
-) -> float:
-    """Score = avg similarity to likes - avg similarity to dislikes.
-
-    Higher scores indicate stronger alignment with liked topics.
-    Returns 0.0 when both lists are empty.
-    """
-    like_score = 0.0
-    if likes:
-        like_score = sum(cosine_similarity(vec, lv) for lv in likes) / len(likes)
-    dislike_score = 0.0
-    if dislikes:
-        dislike_score = sum(cosine_similarity(vec, dv) for dv in dislikes) / len(dislikes)
-    return like_score - dislike_score
-
-
-def load_preference_vectors(
     preferences: list,
-    positive_valence: str,
-    negative_valence: str,
-) -> tuple[list[list[float]], list[list[float]]]:
-    """Load like and dislike embedding vectors from preference records.
+    min_mentions: int,
+) -> float:
+    """Score a vector against mention-weighted positive and negative preferences.
 
-    Args:
-        preferences: Preference records with .embedding and .valence attributes.
-        positive_valence: Valence string for likes (e.g. "positive").
-        negative_valence: Valence string for dislikes (e.g. "negative").
+    Only preferences with mention_count >= min_mentions are considered.
+    Pass PREFERENCE_MENTION_THRESHOLD so the same gate controls both
+    seed-topic eligibility and sentiment filtering.
 
-    Returns:
-        (likes, dislikes) as lists of float vectors.
+    Returns weighted_avg_sim(positive) - weighted_avg_sim(negative).
+    Returns 0.0 when no qualifying preferences exist.
     """
-    likes: list[list[float]] = []
-    dislikes: list[list[float]] = []
+    pos_weighted: list[tuple[list[float], int]] = []
+    neg_weighted: list[tuple[list[float], int]] = []
     for p in preferences:
-        if not p.embedding:
+        if not p.embedding or (p.mention_count or 0) < min_mentions:
             continue
-        vec = deserialize_embedding(p.embedding)
-        if p.valence == positive_valence:
-            likes.append(vec)
-        elif p.valence == negative_valence:
-            dislikes.append(vec)
-    return likes, dislikes
+        pref_vec = deserialize_embedding(p.embedding)
+        weight = p.mention_count
+        if p.valence == "positive":
+            pos_weighted.append((pref_vec, weight))
+        elif p.valence == "negative":
+            neg_weighted.append((pref_vec, weight))
+
+    def weighted_avg(items: list[tuple[list[float], int]]) -> float:
+        if not items:
+            return 0.0
+        total_w = sum(w for _, w in items)
+        return sum(cosine_similarity(vec, v) * w for v, w in items) / total_w
+
+    return weighted_avg(pos_weighted) - weighted_avg(neg_weighted)
 
 
 def novelty_score(vec: list[float], recent_vecs: list[list[float]]) -> float:

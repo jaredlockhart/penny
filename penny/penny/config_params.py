@@ -203,7 +203,10 @@ ConfigParam(
 
 ConfigParam(
     key="PREFERENCE_MENTION_THRESHOLD",
-    description="Minimum mention count for extracted preferences to become thinking candidates",
+    description=(
+        "Minimum mention count for a preference to qualify as a thinking"
+        " seed and for sentiment scoring"
+    ),
     type=int,
     default=2,
     validator=_validate_positive_int,
@@ -362,23 +365,6 @@ ConfigParam(
     group=GROUP_NOTIFY,
 )
 
-ConfigParam(
-    key="NOVELTY_WEIGHT",
-    description="Weight for novelty in notification candidate scoring (0-1)",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-    group=GROUP_NOTIFY,
-)
-
-ConfigParam(
-    key="SENTIMENT_WEIGHT",
-    description="Weight for preference alignment in notification candidate scoring (0-1)",
-    type=float,
-    default=0.5,
-    validator=_validate_unit_float,
-    group=GROUP_NOTIFY,
-)
 
 ConfigParam(
     key="CHECKIN_IMAGE_PROMPT",
