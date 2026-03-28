@@ -110,6 +110,7 @@ async function extractFromActiveTab(): Promise<void> {
         image: data.image,
       };
       broadcastPageInfo(data.title, data.url, favicon, data.image, true);
+      sendHeartbeat();
     } else {
       currentPageContext = null;
       broadcastPageInfo("", "", "", "", false);
@@ -231,6 +232,11 @@ function sendChatToServer(content: string, includePage: boolean): void {
     payload.page_context = currentPageContext;
   }
   ws.send(JSON.stringify(payload));
+}
+
+function sendHeartbeat(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.Heartbeat }));
 }
 
 function requestThoughts(): void {

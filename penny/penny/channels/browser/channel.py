@@ -17,6 +17,7 @@ from websockets.asyncio.server import Server, ServerConnection
 
 from penny.channels.base import IncomingMessage, MessageChannel, PageContext
 from penny.channels.browser.models import (
+    BROWSER_MSG_TYPE_HEARTBEAT,
     BROWSER_MSG_TYPE_MESSAGE,
     BROWSER_MSG_TYPE_PREFERENCE_ADD,
     BROWSER_MSG_TYPE_PREFERENCE_DELETE,
@@ -166,7 +167,16 @@ class BrowserChannel(MessageChannel):
         if msg_type == BROWSER_MSG_TYPE_MESSAGE:
             return await self._handle_chat_message(ws, data, device_label)
 
+        if msg_type == BROWSER_MSG_TYPE_HEARTBEAT:
+            self._handle_heartbeat()
+            return device_label
+
         return device_label
+
+    def _handle_heartbeat(self) -> None:
+        """Reset the idle timer when the browser reports active browsing."""
+        if self._scheduler:
+            self._scheduler.notify_activity()
 
     def _handle_tool_response(self, data: dict) -> None:
         """Resolve a pending tool request future."""

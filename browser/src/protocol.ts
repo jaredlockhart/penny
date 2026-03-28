@@ -24,7 +24,8 @@ export type WsOutgoingType =
   | "thought_reaction"
   | "preferences_request"
   | "preference_add"
-  | "preference_delete";
+  | "preference_delete"
+  | "heartbeat";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -33,6 +34,7 @@ export const WsOutgoingType = {
   PreferencesRequest: "preferences_request",
   PreferenceAdd: "preference_add",
   PreferenceDelete: "preference_delete",
+  Heartbeat: "heartbeat",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
@@ -71,12 +73,17 @@ export interface WsOutgoingPreferenceDelete {
   preference_id: number;
 }
 
+export interface WsOutgoingHeartbeat {
+  type: typeof WsOutgoingType.Heartbeat;
+}
+
 export type WsOutgoing =
   | WsOutgoingMessage
   | WsOutgoingToolResponse
   | WsOutgoingPreferencesRequest
   | WsOutgoingPreferenceAdd
-  | WsOutgoingPreferenceDelete;
+  | WsOutgoingPreferenceDelete
+  | WsOutgoingHeartbeat;
 
 // --- WebSocket: incoming (server → browser) ---
 
