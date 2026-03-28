@@ -1,14 +1,17 @@
+/**
+ * Sidebar script — pure UI layer.
+ * Communicates with the background script via browser.runtime messaging.
+ * No direct WebSocket connection.
+ */
+
 import {
   type ConnectionState,
   ConnectionState as CS,
-  type IncomingPayload,
-  IncomingType,
   MAX_STORED_MESSAGES,
   type MessageSender,
   MessageSender as MS,
-  OutgoingType,
-  RECONNECT_DELAY_MS,
-  SERVER_URL,
+  type RuntimeMessage,
+  RuntimeMessageType,
   STORAGE_KEY_CHAT_HISTORY,
   STORAGE_KEY_DEVICE_LABEL,
   type StoredMessage,
@@ -16,10 +19,6 @@ import {
   TEXTAREA_MAX_ROWS,
   TYPING_INDICATOR_TEXT,
 } from "../protocol.js";
-
-let ws: WebSocket | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let deviceLabel: string | null = null;
 
 // DOM refs (resolved after init)
 let messagesEl: HTMLElement;
@@ -33,7 +32,6 @@ async function init(): Promise<void> {
   statusEl = document.getElementById("status")!;
   const stored = await browser.storage.local.get(STORAGE_KEY_DEVICE_LABEL);
   if (stored[STORAGE_KEY_DEVICE_LABEL]) {
-    deviceLabel = stored[STORAGE_KEY_DEVICE_LABEL] as string;
     showChat();
   } else {
     showRegister();
@@ -59,7 +57,6 @@ async function saveLabel(labelInput: HTMLInputElement): Promise<void> {
   const label = labelInput.value.trim();
   if (!label) return;
 
-  deviceLabel = label;
   await browser.storage.local.set({ [STORAGE_KEY_DEVICE_LABEL]: label });
   showChat();
 }
@@ -82,8 +79,44 @@ async function showChat(): Promise<void> {
   inputEl.addEventListener("input", autoResize);
 
   await rehydrateHistory();
-  setStatus(CS.Disconnected);
-  connect();
+  listenToBackground();
+}
+
+// --- Background communication ---
+
+function listenToBackground(): void {
+  // Get current connection state from background
+  const port = browser.runtime.connect({ name: "sidebar" });
+  port.onMessage.addListener((message: object) => {
+    handleBackgroundMessage(message as RuntimeMessage);
+  });
+  port.onDisconnect.addListener(() => {
+    setStatus(CS.Disconnected);
+  });
+
+  // Listen for ongoing broadcasts
+  browser.runtime.onMessage.addListener(handleBackgroundMessage);
+}
+
+function handleBackgroundMessage(message: RuntimeMessage): void {
+  if (message.type === RuntimeMessageType.ConnectionState) {
+    setStatus(message.state);
+  } else if (message.type === RuntimeMessageType.ChatMessage) {
+    setTyping(false);
+    addMessage(message.content, MS.Penny);
+  } else if (message.type === RuntimeMessageType.Typing) {
+    setTyping(message.active);
+  }
+}
+
+function send(): void {
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  addMessage(text, MS.User);
+  browser.runtime.sendMessage({ type: RuntimeMessageType.SendChat, content: text });
+  inputEl.value = "";
+  inputEl.rows = 1;
 }
 
 // --- Chat history persistence ---
@@ -94,7 +127,6 @@ async function rehydrateHistory(): Promise<void> {
   for (const msg of messages) {
     renderMessage(msg.text, msg.sender, false);
   }
-  // Jump to bottom after rehydration
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
@@ -119,7 +151,9 @@ function renderMessage(text: string, sender: MessageSender, animate = true): voi
     div.textContent = text;
   }
   messagesEl.appendChild(div);
-  div.scrollIntoView({ block: "start", behavior: animate ? "smooth" : "instant" });
+  const fitsInView = div.offsetHeight <= messagesEl.clientHeight;
+  const block: ScrollLogicalPosition = fitsInView ? "end" : "start";
+  div.scrollIntoView({ block, behavior: animate ? "smooth" : "instant" });
 }
 
 function addMessage(text: string, sender: MessageSender): void {
@@ -150,61 +184,6 @@ function autoResize(): void {
   inputEl.rows = 1;
   const lines = Math.ceil(inputEl.scrollHeight / TEXTAREA_LINE_HEIGHT);
   inputEl.rows = Math.min(lines, TEXTAREA_MAX_ROWS);
-}
-
-// --- WebSocket ---
-
-function connect(): void {
-  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
-    return;
-  }
-
-  ws = new WebSocket(SERVER_URL);
-
-  ws.addEventListener("open", () => {
-    console.log("Connected to Penny server");
-  });
-
-  ws.addEventListener("message", (event: MessageEvent) => {
-    const data: IncomingPayload = JSON.parse(event.data);
-
-    if (data.type === IncomingType.Status && data.connected) {
-      setStatus(CS.Connected);
-    } else if (data.type === IncomingType.Message) {
-      setTyping(false);
-      addMessage(data.content, MS.Penny);
-    } else if (data.type === IncomingType.Typing) {
-      setTyping(data.active);
-    }
-  });
-
-  ws.addEventListener("close", () => {
-    setStatus(CS.Reconnecting);
-    setTyping(false);
-    scheduleReconnect();
-  });
-
-  ws.addEventListener("error", () => {
-    // Error fires before close — close handler will reconnect
-  });
-}
-
-function scheduleReconnect(): void {
-  if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connect();
-  }, RECONNECT_DELAY_MS);
-}
-
-function send(): void {
-  const text = inputEl.value.trim();
-  if (!text || !ws || ws.readyState !== WebSocket.OPEN || !deviceLabel) return;
-
-  addMessage(text, MS.User);
-  ws.send(JSON.stringify({ type: OutgoingType.Message, content: text, sender: deviceLabel }));
-  inputEl.value = "";
-  inputEl.rows = 1;
 }
 
 // --- Boot ---
