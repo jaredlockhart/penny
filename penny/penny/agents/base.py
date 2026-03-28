@@ -138,6 +138,20 @@ def _build_strong_nudge(messages: list[dict]) -> str:
     return "You have gathered enough information. Please provide your final response."
 
 
+def _build_empty_retry_nudge(messages: list[dict]) -> str:
+    """Build a nudge for when the model returns empty content with no preceding tool calls.
+
+    Includes the original user question so the model has a clear target to respond to.
+    """
+    original_question = next(
+        (m["content"] for m in messages if m.get("role") == MessageRole.USER),
+        None,
+    )
+    if original_question:
+        return f"Please provide your response to: {original_question}"
+    return "Please provide your response."
+
+
 # Phrases that indicate a model refusal — used to detect and retry unhelpful responses
 _REFUSAL_PHRASES = (
     "i can't",
@@ -410,7 +424,7 @@ class Agent:
                         "and provide a helpful response."
                     )
                 else:
-                    nudge = "Please provide your response."
+                    nudge = _build_empty_retry_nudge(messages)
                 messages.append({"role": MessageRole.USER, "content": nudge})
                 if not is_final_step:
                     continue

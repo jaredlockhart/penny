@@ -98,6 +98,11 @@ class OllamaClient:
                 logger.debug("Response content: %s", response.content)
                 if response.has_tool_calls:
                     logger.debug("Response tool calls: %s", response.message.tool_calls)
+                if not response.content and not response.has_tool_calls:
+                    logger.warning(
+                        "Ollama returned empty content with no tool calls: raw_message=%s",
+                        str(raw_dict.get("message", {}))[:500],
+                    )
 
                 # Log to database
                 if self.db:
