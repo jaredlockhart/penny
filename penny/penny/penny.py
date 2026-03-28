@@ -482,50 +482,40 @@ class Penny:
             await self.shutdown()
 
     async def _send_startup_announcement(self) -> None:
-        """Send a startup announcement to all known recipients."""
+        """Send a startup announcement to the user's default device."""
         try:
-            senders = self.db.users.get_all_senders()
-            if not senders:
-                logger.info("No recipients found for startup announcement")
+            sender = self.db.users.get_primary_sender()
+            if not sender:
+                logger.info("No user profile found for startup announcement")
                 return
 
-            # Generate restart message
-            restart_msg = await get_restart_message(self.model_client)
+            # Only announce if the user has chatted before (not a fresh profile)
+            if not self.db.messages.get_latest_incoming_time(sender):
+                logger.info("No message history yet, skipping startup announcement")
+                return
 
-            # Combine wave with restart message
+            restart_msg = await get_restart_message(self.model_client)
             announcement = f"👋 {restart_msg}"
 
-            logger.info("Sending startup announcement to %d recipient(s)", len(senders))
-            for sender in senders:
-                try:
-                    await self.channel.send_status_message(sender, announcement)
-                except Exception as e:
-                    logger.warning("Failed to send startup announcement to %s: %s", sender, e)
+            logger.info("Sending startup announcement to %s", sender)
+            await self.channel.send_status_message(sender, announcement)
         except Exception as e:
             logger.warning("Failed to send startup announcement: %s", e)
 
     async def _prompt_for_missing_profiles(self) -> None:
-        """Prompt users who don't have a profile set up yet."""
+        """Prompt the user if they don't have a profile set up yet (single-user)."""
         try:
-            senders = self.db.users.get_all_senders()
-            if not senders:
-                logger.info("No recipients to check for missing profiles")
-                return
+            if self.db.users.get_primary_sender():
+                return  # Profile exists, nothing to do
 
+            # No profile — send prompt to any known sender from message history
+            senders = self.db.users.get_all_senders()
             for sender in senders:
                 try:
-                    user_info = self.db.users.get_info(sender)
-                    if not user_info:
-                        logger.info("User %s has no profile, sending prompt", sender)
-                        try:
-                            await self.channel.send_status_message(
-                                sender, PennyResponse.PROFILE_REQUIRED
-                            )
-                        except Exception as e:
-                            logger.warning("Failed to send profile prompt to %s: %s", sender, e)
-                except Exception:
-                    # Silently skip if userinfo table doesn't exist yet
-                    pass
+                    logger.info("User %s has no profile, sending prompt", sender)
+                    await self.channel.send_status_message(sender, PennyResponse.PROFILE_REQUIRED)
+                except Exception as e:
+                    logger.warning("Failed to send profile prompt to %s: %s", sender, e)
         except Exception as e:
             logger.warning("Failed to send profile prompts: %s", e)
 

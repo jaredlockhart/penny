@@ -165,3 +165,39 @@ class TestChannelManagerDelegation:
 
         manager.prepare_outgoing("hello")
         signal_ch.prepare_outgoing.assert_called_once_with("hello")
+
+
+class TestUserSenderResolution:
+    """_resolve_user_sender returns primary sender for any device identifier."""
+
+    def test_resolves_browser_device_to_primary_sender(self, tmp_path):
+        """A browser device identifier resolves to the primary user's sender."""
+        db = _make_db(tmp_path)
+        db.users.save_info(
+            sender="+15551234567",
+            name="Test",
+            location="NYC",
+            timezone="America/New_York",
+            date_of_birth="1990-01-01",
+        )
+        manager = ChannelManager(message_agent=MagicMock(), db=db)
+        assert manager._resolve_user_sender("firefox-macbook") == "+15551234567"
+
+    def test_resolves_signal_device_to_itself(self, tmp_path):
+        """The primary sender resolves to itself."""
+        db = _make_db(tmp_path)
+        db.users.save_info(
+            sender="+15551234567",
+            name="Test",
+            location="NYC",
+            timezone="America/New_York",
+            date_of_birth="1990-01-01",
+        )
+        manager = ChannelManager(message_agent=MagicMock(), db=db)
+        assert manager._resolve_user_sender("+15551234567") == "+15551234567"
+
+    def test_falls_back_to_device_when_no_profile(self, tmp_path):
+        """Without a profile, returns the device identifier as-is."""
+        db = _make_db(tmp_path)
+        manager = ChannelManager(message_agent=MagicMock(), db=db)
+        assert manager._resolve_user_sender("firefox-macbook") == "firefox-macbook"

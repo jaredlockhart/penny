@@ -514,9 +514,10 @@ class MessageChannel(ABC):
             return
 
         device_id = self._resolve_device_id(message)
+        user_sender = self._resolve_user_sender(message.sender)
         self._db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING,
-            message.sender,
+            user_sender,
             message.content,
             parent_id=reacted_msg.id,
             is_reaction=True,
@@ -543,10 +544,11 @@ class MessageChannel(ABC):
         """Execute a known command with typing indicator and send the result."""
         assert self._command_registry is not None
         command = self._command_registry.get(command_name)
+        user_sender = self._resolve_user_sender(message.sender)
         typing_task = asyncio.create_task(self._typing_loop(message.sender))
         try:
             context = self._command_context
-            context.user = message.sender
+            context.user = user_sender
             context.message = message
 
             assert command is not None
@@ -557,7 +559,7 @@ class MessageChannel(ABC):
             await self.send_message(
                 message.sender, prepared, attachments=result.attachments, quote_message=None
             )
-            self._log_command_result(message.sender, command_name, command_args, response)
+            self._log_command_result(user_sender, command_name, command_args, response)
             logger.info("Executed command /%s for %s", command_name, message.sender)
 
         except Exception as e:
@@ -566,7 +568,7 @@ class MessageChannel(ABC):
             prepared = self.prepare_outgoing(error_response)
             await self.send_message(message.sender, prepared, attachments=None, quote_message=None)
             self._log_command_result(
-                message.sender, command_name, command_args, error_response, error=str(e)
+                user_sender, command_name, command_args, error_response, error=str(e)
             )
         finally:
             typing_task.cancel()
@@ -603,8 +605,9 @@ class MessageChannel(ABC):
             response = PennyResponse.UNKNOWN_COMMAND.format(command_name=command_name)
             prepared = self.prepare_outgoing(response)
             await self.send_message(message.sender, prepared, attachments=None, quote_message=None)
+            user_sender = self._resolve_user_sender(message.sender)
             self._log_command_result(
-                message.sender, command_name, command_args, response, error="unknown command"
+                user_sender, command_name, command_args, response, error="unknown command"
             )
             return
 

@@ -165,6 +165,17 @@ async def test_startup_announcement_no_recipients(
 
 
 @pytest.mark.asyncio
+async def test_startup_announcement_skipped_with_profile_but_no_messages(
+    signal_server, test_config, mock_ollama, running_penny, test_user_info
+):
+    """Profile exists but no message history — announcement should be skipped."""
+    # test_user_info creates a profile for TEST_SENDER but sends no messages.
+    # The announcement should not fire because there's no message history.
+    async with running_penny(test_config):
+        assert len(signal_server.outgoing_messages) == 0
+
+
+@pytest.mark.asyncio
 async def test_startup_announcement_multiple_devices(
     signal_server, test_config, mock_ollama, running_penny, monkeypatch
 ):
