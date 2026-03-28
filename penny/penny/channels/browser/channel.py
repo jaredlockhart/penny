@@ -311,18 +311,23 @@ class BrowserChannel(MessageChannel):
     async def _handle_config_request(self, ws: ServerConnection) -> None:
         """Return all runtime config params with current values."""
         from penny.config_params import get_params_by_group
+
         params = []
         for group, group_params in get_params_by_group():
             for param in group_params:
-                current = getattr(self._config.runtime, param.key) if self._config else param.default
-                params.append({
-                    "key": param.key,
-                    "value": str(current),
-                    "default": str(param.default),
-                    "description": param.description,
-                    "type": param.type.__name__,
-                    "group": group,
-                })
+                current = (
+                    getattr(self._config.runtime, param.key) if self._config else param.default
+                )
+                params.append(
+                    {
+                        "key": param.key,
+                        "value": str(current),
+                        "default": str(param.default),
+                        "description": param.description,
+                        "type": param.type.__name__,
+                        "group": group,
+                    }
+                )
         response = {"type": BROWSER_RESP_TYPE_CONFIG, "params": params}
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(json.dumps(response))
@@ -330,9 +335,12 @@ class BrowserChannel(MessageChannel):
     async def _handle_config_update(self, ws: ServerConnection, data: dict) -> None:
         """Validate and persist a single config param update."""
         from datetime import datetime
+
+        from sqlmodel import Session
+
         from penny.config_params import RUNTIME_CONFIG_PARAMS
         from penny.database.models import RuntimeConfig
-        from sqlmodel import Session
+
         try:
             req = BrowserConfigUpdate(**data)
         except Exception:
@@ -354,12 +362,14 @@ class BrowserChannel(MessageChannel):
                 existing.updated_at = datetime.utcnow()
                 session.add(existing)
             else:
-                session.add(RuntimeConfig(
-                    key=req.key,
-                    value=str(validated),
-                    description=param.description,
-                    updated_at=datetime.utcnow(),
-                ))
+                session.add(
+                    RuntimeConfig(
+                        key=req.key,
+                        value=str(validated),
+                        description=param.description,
+                        updated_at=datetime.utcnow(),
+                    )
+                )
             session.commit()
         logger.info("Config updated via browser: %s = %s", req.key, validated)
         await self._handle_config_request(ws)
