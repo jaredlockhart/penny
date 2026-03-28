@@ -38,7 +38,6 @@ from penny.channels.browser.models import (
     BrowserToolResponse,
 )
 from penny.constants import ChannelType, PennyConstants
-from penny.prompts import Prompt
 from penny.serper.client import search_image_url
 
 if TYPE_CHECKING:
@@ -46,7 +45,6 @@ if TYPE_CHECKING:
     from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.database.models import MessageLog
-    from penny.ollama import OllamaClient
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +71,10 @@ class BrowserChannel(MessageChannel):
         message_agent: ChatAgent,
         db: Database,
         command_registry: CommandRegistry | None = None,
-        model_client: OllamaClient | None = None,
     ):
         super().__init__(message_agent=message_agent, db=db, command_registry=command_registry)
         self._host = host
         self._port = port
-        self._sanitize_client = model_client
         self._server: Server | None = None
         self._connections: dict[str, ServerConnection] = {}
         self._pending_requests: dict[str, asyncio.Future[str]] = {}
@@ -328,14 +324,10 @@ class BrowserChannel(MessageChannel):
 
         envelope: dict = {"browser_sender": device_label, "content": msg.content}
         if msg.page_context and msg.page_context.text:
-            await self.send_typing(device_label, True)
-            sanitized_text = await self._sanitize_page_content(
-                msg.page_context.text, msg.page_context.url
-            )
             envelope["page_context"] = PageContext(
                 title=msg.page_context.title,
                 url=msg.page_context.url,
-                text=sanitized_text,
+                text=msg.page_context.text,
             )
         asyncio.create_task(self.handle_message(envelope))
         return device_label
@@ -364,9 +356,7 @@ class BrowserChannel(MessageChannel):
         await self._send_ws(ws, request)
 
         try:
-            raw_result = await asyncio.wait_for(future, timeout=PennyConstants.TOOL_REQUEST_TIMEOUT)
-            url = arguments.get("url", "") if tool == "browse_url" else ""
-            return await self._sanitize_page_content(raw_result, url)
+            return await asyncio.wait_for(future, timeout=PennyConstants.TOOL_REQUEST_TIMEOUT)
         except TimeoutError as e:
             raise TimeoutError(
                 f"Browser tool '{tool}' timed out after {PennyConstants.TOOL_REQUEST_TIMEOUT}s"
@@ -381,31 +371,6 @@ class BrowserChannel(MessageChannel):
         return None
 
     # --- Device registration ---
-
-    async def _sanitize_page_content(self, text: str, url: str) -> str:
-        """Summarize raw page content in a sandboxed model call.
-
-        All web content passes through this before entering the agent context.
-        No tools, no user context, no preferences — just rewriting.
-        """
-        if not self._sanitize_client or not text.strip():
-            return text
-        truncated = text[: PennyConstants.MAX_PAGE_CONTENT_CHARS]
-        try:
-            response = await self._sanitize_client.chat(
-                messages=[
-                    {"role": "system", "content": Prompt.PAGE_SANITIZE_PROMPT},
-                    {"role": "user", "content": f"URL: {url}\n\n{truncated}"},
-                ],
-            )
-            result = response.message.content if response.message else ""
-            logger.info(
-                "Sanitized page content: %s (%d → %d chars)", url, len(truncated), len(result)
-            )
-            return result.strip() or text
-        except Exception:
-            logger.warning("Page content sanitization failed for %s, using raw", url)
-            return text
 
     def _auto_register_device(self, device_label: str) -> None:
         """Register the browser device if not already known."""
