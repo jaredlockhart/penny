@@ -149,6 +149,10 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     sendPreferenceAdd(message.valence, message.content);
   } else if (message.type === RuntimeMessageType.PreferenceDelete) {
     sendPreferenceDelete(message.preference_id);
+  } else if (message.type === RuntimeMessageType.ConfigRequest) {
+    requestConfig();
+  } else if (message.type === RuntimeMessageType.ConfigUpdate) {
+    sendConfigUpdate(message.key, message.value);
   }
 }
 
@@ -200,6 +204,8 @@ function connect(): void {
         valence: data.valence,
         preferences: data.preferences,
       });
+    } else if (data.type === WsIn.ConfigResponse) {
+      broadcastToSidebar({ type: RuntimeMessageType.ConfigResponse, params: data.params });
     }
   });
 
@@ -262,6 +268,16 @@ function sendPreferenceAdd(valence: string, content: string): void {
 function sendPreferenceDelete(preferenceId: number): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.PreferenceDelete, preference_id: preferenceId }));
+}
+
+function requestConfig(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.ConfigRequest }));
+}
+
+function sendConfigUpdate(key: string, value: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.ConfigUpdate, key, value }));
 }
 
 function sendToolResponse(requestId: string, result?: string, error?: string): void {

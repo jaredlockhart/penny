@@ -156,6 +156,7 @@ h1 {
   aspect-ratio: 16 / 9;
   object-fit: cover;
   display: block;
+  border-radius: 12px 12px 0 0;
 }
 
 .card-body {
@@ -251,6 +252,7 @@ h1 {
   justify-content: center;
   font-size: 32px;
   color: var(--text-muted);
+  border-radius: 12px 12px 0 0;
 }
 
 /* --- Modal --- */

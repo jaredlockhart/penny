@@ -17,6 +17,8 @@ from websockets.asyncio.server import Server, ServerConnection
 
 from penny.channels.base import IncomingMessage, MessageChannel, PageContext
 from penny.channels.browser.models import (
+    BROWSER_MSG_TYPE_CONFIG_REQUEST,
+    BROWSER_MSG_TYPE_CONFIG_UPDATE,
     BROWSER_MSG_TYPE_HEARTBEAT,
     BROWSER_MSG_TYPE_MESSAGE,
     BROWSER_MSG_TYPE_PREFERENCE_ADD,
@@ -25,11 +27,13 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_THOUGHT_REACTION,
     BROWSER_MSG_TYPE_THOUGHTS_REQUEST,
     BROWSER_MSG_TYPE_TOOL_RESPONSE,
+    BROWSER_RESP_TYPE_CONFIG,
     BROWSER_RESP_TYPE_MESSAGE,
     BROWSER_RESP_TYPE_PREFERENCES,
     BROWSER_RESP_TYPE_STATUS,
     BROWSER_RESP_TYPE_THOUGHTS,
     BROWSER_RESP_TYPE_TYPING,
+    BrowserConfigUpdate,
     BrowserIncoming,
     BrowserOutgoing,
     BrowserPreferenceAdd,
@@ -171,6 +175,14 @@ class BrowserChannel(MessageChannel):
             self._handle_heartbeat()
             return device_label
 
+        if msg_type == BROWSER_MSG_TYPE_CONFIG_REQUEST:
+            await self._handle_config_request(ws)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_CONFIG_UPDATE:
+            await self._handle_config_update(ws, data)
+            return device_label
+
         return device_label
 
     def _handle_heartbeat(self) -> None:
@@ -295,6 +307,72 @@ class BrowserChannel(MessageChannel):
         response = {"type": BROWSER_RESP_TYPE_PREFERENCES, "valence": valence, "preferences": items}
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(json.dumps(response))
+
+    async def _handle_config_request(self, ws: ServerConnection) -> None:
+        """Return all runtime config params with current values."""
+        from penny.config_params import get_params_by_group
+
+        params = []
+        for group, group_params in get_params_by_group():
+            for param in group_params:
+                current = (
+                    getattr(self._config.runtime, param.key) if self._config else param.default
+                )
+                params.append(
+                    {
+                        "key": param.key,
+                        "value": str(current),
+                        "default": str(param.default),
+                        "description": param.description,
+                        "type": param.type.__name__,
+                        "group": group,
+                    }
+                )
+        response = {"type": BROWSER_RESP_TYPE_CONFIG, "params": params}
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await ws.send(json.dumps(response))
+
+    async def _handle_config_update(self, ws: ServerConnection, data: dict) -> None:
+        """Validate and persist a single config param update."""
+        from datetime import datetime
+
+        from sqlmodel import Session
+
+        from penny.config_params import RUNTIME_CONFIG_PARAMS
+        from penny.database.models import RuntimeConfig
+
+        try:
+            req = BrowserConfigUpdate(**data)
+        except Exception:
+            logger.warning("Invalid config_update: %s", str(data)[:200])
+            return
+        param = RUNTIME_CONFIG_PARAMS.get(req.key)
+        if not param:
+            logger.warning("Unknown config key: %s", req.key)
+            return
+        try:
+            validated = param.validator(req.value)
+        except ValueError as e:
+            logger.warning("Invalid config value %s=%s: %s", req.key, req.value, e)
+            return
+        with Session(self._db.engine) as session:
+            existing = session.get(RuntimeConfig, req.key)
+            if existing:
+                existing.value = str(validated)
+                existing.updated_at = datetime.utcnow()
+                session.add(existing)
+            else:
+                session.add(
+                    RuntimeConfig(
+                        key=req.key,
+                        value=str(validated),
+                        description=param.description,
+                        updated_at=datetime.utcnow(),
+                    )
+                )
+            session.commit()
+        logger.info("Config updated via browser: %s = %s", req.key, validated)
+        await self._handle_config_request(ws)
 
     def _resolve_seed_topics(self, thoughts: list) -> dict[int | None, str]:
         """Build a map of preference_id → preference content for seed topics."""
