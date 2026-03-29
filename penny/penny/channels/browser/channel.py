@@ -44,12 +44,7 @@ from penny.channels.browser.models import (
 )
 from penny.constants import ChannelType, PennyConstants
 from penny.serper.client import search_image_url
-from penny.tools.browse_url import BrowseUrlTool
-from penny.tools.fetch_news import FetchNewsTool
-from penny.tools.models import SearchArgs
-from penny.tools.read_emails import ReadEmailsTool
-from penny.tools.search import SearchTool
-from penny.tools.search_emails import SearchEmailsTool
+from penny.tools.base import Tool
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -527,24 +522,7 @@ class BrowserChannel(MessageChannel):
     @staticmethod
     def _format_tool_status(tool_name: str, arguments: dict) -> str:
         """Format a human-readable status label for a tool call."""
-        if tool_name == SearchTool.name:
-            try:
-                queries = SearchArgs(**arguments).queries
-                q = ", ".join(f'"{q}"' for q in queries[:2])
-                return f"Searching for {q}"
-            except Exception:
-                return "Searching"
-        if tool_name == FetchNewsTool.name:
-            topic = arguments.get("topic", "top news")
-            return f"Fetching news about {topic}"
-        if tool_name == BrowseUrlTool.name:
-            url = arguments.get("url", "")
-            return f"Reading {url}" if url else "Reading page"
-        if tool_name == SearchEmailsTool.name:
-            return "Searching emails"
-        if tool_name == ReadEmailsTool.name:
-            return "Reading emails"
-        return f"Using {tool_name}"
+        return Tool.format_status(tool_name, arguments)
 
     async def _send_tool_status(self, recipient: str, text: str) -> None:
         """Update the typing indicator with a tool status message."""

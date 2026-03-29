@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 from penny.tools.models import ToolCall, ToolDefinition, ToolResult
 
@@ -17,6 +17,13 @@ class Tool(ABC):
     description: str
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
 
+    _registry: ClassVar[dict[str, type["Tool"]]] = {}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if "name" in cls.__dict__:
+            Tool._registry[cls.name] = cls
+
     @abstractmethod
     async def execute(self, **kwargs) -> Any:
         """
@@ -29,6 +36,17 @@ class Tool(ABC):
             Tool result (will be serialized to string for model)
         """
         pass
+
+    @classmethod
+    def to_action_str(cls, arguments: dict) -> str:
+        """Return a human-readable status string for this tool call. Override per tool."""
+        return f"Using {cls.name}"
+
+    @classmethod
+    def format_status(cls, tool_name: str, arguments: dict) -> str:
+        """Dispatch to the matching tool's to_action_str via the class registry."""
+        tool_cls = cls._registry.get(tool_name)
+        return tool_cls.to_action_str(arguments) if tool_cls else f"Using {tool_name}"
 
     def to_definition(self) -> ToolDefinition:
         """Convert to tool definition for prompt."""

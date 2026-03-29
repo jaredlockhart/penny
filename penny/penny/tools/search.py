@@ -57,6 +57,16 @@ class SearchTool(Tool):
             "required": ["queries"],
         }
 
+    @classmethod
+    def to_action_str(cls, arguments: dict) -> str:
+        """Format search queries into a readable status string."""
+        try:
+            queries = SearchArgs(**arguments).queries
+            q = ", ".join(f'"{q}"' for q in queries[:2])
+            return f"Searching for {q}"
+        except Exception:
+            return "Searching"
+
     @staticmethod
     def _clean_text(raw_text: str) -> str:
         """Strip markdown formatting and citations from Perplexity results."""
