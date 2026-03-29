@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,7 +46,7 @@ class BackgroundScheduler:
     def __init__(
         self,
         schedules: list[Schedule],
-        idle_threshold: float,
+        idle_threshold: Callable[[], float],
         tick_interval: float = 1.0,
     ):
         """
@@ -53,7 +54,7 @@ class BackgroundScheduler:
 
         Args:
             schedules: List of schedules in priority order (first checked first)
-            idle_threshold: Global idle threshold in seconds before background tasks can run
+            idle_threshold: Callable returning current idle threshold in seconds (read each tick)
             tick_interval: How often to check schedules in seconds
         """
         self._schedules = schedules
@@ -128,12 +129,12 @@ class BackgroundScheduler:
         logger.info(
             "Background scheduler started with tasks: %s (idle_threshold=%.0fs)",
             task_names,
-            self._idle_threshold,
+            self._idle_threshold(),
         )
 
         while self._running:
             idle_seconds = time.monotonic() - self._last_message_time
-            is_idle = idle_seconds >= self._idle_threshold
+            is_idle = idle_seconds >= self._idle_threshold()
 
             # Skip all background tasks if foreground work is active
             if not self._foreground_active:
