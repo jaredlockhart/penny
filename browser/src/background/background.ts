@@ -317,6 +317,26 @@ async function handleToolRequest(request: WsIncomingToolRequestPayload): Promise
   }
 }
 
+// Serialize permission prompts so concurrent tool requests don't clobber the dialog
+let permissionQueue: Promise<void> = Promise.resolve();
+
+async function checkOrPromptPermission(
+  requestId: string, domain: string, url: string,
+): Promise<void> {
+  // Re-check inside the queue — a prior prompt may have already resolved this domain
+  const permission = await checkDomainPermission(domain);
+  if (permission === "allowed") return;
+  if (permission === "blocked") {
+    throw new Error(`Domain ${domain} is blocked by user`);
+  }
+
+  const allowed = await requestPermissionFromUser(requestId, domain, url);
+  await storeDomainPermission(domain, allowed ? DP.Allowed : DP.Blocked);
+  if (!allowed) {
+    throw new Error(`User denied access to ${domain}`);
+  }
+}
+
 async function executeBrowseUrl(
   requestId: string,
   args: Record<string, unknown>,
@@ -332,11 +352,10 @@ async function executeBrowseUrl(
   }
 
   if (permission === "unknown") {
-    const allowed = await requestPermissionFromUser(requestId, domain, url);
-    await storeDomainPermission(domain, allowed ? DP.Allowed : DP.Blocked);
-    if (!allowed) {
-      throw new Error(`User denied access to ${domain}`);
-    }
+    // Queue the prompt so only one dialog shows at a time
+    const prompt = permissionQueue.then(() => checkOrPromptPermission(requestId, domain, url));
+    permissionQueue = prompt.catch(() => {});
+    await prompt;
   }
 
   return await browseUrl(url);
