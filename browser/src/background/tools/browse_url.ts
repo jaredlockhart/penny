@@ -18,19 +18,26 @@ interface PageData {
   ready: boolean;
 }
 
+const MAX_TAB_ATTEMPTS = 3;
+
 export async function browseUrl(url: string): Promise<string> {
-  console.log(`[browse_url] opening: ${url}`);
-  const tab = await openHiddenTab(url);
-  try {
-    await waitForTabLoad(tab.id!);
-    const pageData = await pollForContent(tab.id!);
-    return formatResult(pageData);
-  } catch (err) {
-    console.error(`[browse_url] failed:`, err);
-    return `Failed to read ${url}: ${err}`;
-  } finally {
-    await closeTab(tab.id!);
+  for (let attempt = 1; attempt <= MAX_TAB_ATTEMPTS; attempt++) {
+    console.log(`[browse_url] opening: ${url} (attempt ${attempt}/${MAX_TAB_ATTEMPTS})`);
+    const tab = await openHiddenTab(url);
+    try {
+      await waitForTabLoad(tab.id!);
+      const pageData = await pollForContent(tab.id!);
+      return formatResult(pageData);
+    } catch (err) {
+      console.warn(`[browse_url] attempt ${attempt} failed:`, err);
+      if (attempt === MAX_TAB_ATTEMPTS) {
+        return `Failed to read ${url}: ${err}`;
+      }
+    } finally {
+      await closeTab(tab.id!);
+    }
   }
+  return `Failed to read ${url}`;
 }
 
 async function pollForContent(tabId: number): Promise<PageData> {
@@ -48,8 +55,11 @@ async function pollForContent(tabId: number): Promise<PageData> {
     await new Promise((r) => setTimeout(r, EXTRACT_POLL_MS));
   }
   const final = await extractPageContent(tabId);
+  if (!final.ready) {
+    throw new Error(`Page not ready after ${EXTRACT_MAX_RETRIES} retries`);
+  }
   console.warn(
-    `[browse_url] settled on ${final.text.trim().length} chars after ${EXTRACT_MAX_RETRIES} retries (ready=${final.ready})`,
+    `[browse_url] settled on ${final.text.trim().length} chars after ${EXTRACT_MAX_RETRIES} retries`,
   );
   return final;
 }

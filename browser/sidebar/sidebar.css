@@ -168,14 +168,11 @@ body {
   flex-shrink: 0;
 }
 
-#status.disconnected {
-  display: none;
-}
-
 #status.connected {
   background: var(--status-ok-text);
 }
 
+#status.disconnected,
 #status.reconnecting {
   width: 10px;
   height: 10px;
@@ -272,6 +269,12 @@ body {
   color: var(--text-muted);
   font-style: italic;
   padding: 4px 12px;
+}
+
+.typing.tool-status {
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .typing-dots span {

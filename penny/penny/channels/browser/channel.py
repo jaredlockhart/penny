@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 import websockets
@@ -544,6 +545,49 @@ class BrowserChannel(MessageChannel):
         await self._send_ws(
             ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=True, content=text)
         )
+
+    def make_background_tool_callback(
+        self,
+    ) -> tuple[
+        Callable[[list[tuple[str, dict]]], Awaitable[None]],
+        Callable[[], Awaitable[None]],
+    ]:
+        """Create an on_tool_start callback and cleanup for background agents.
+
+        Sends tool status to the addon that would handle tool requests
+        (the connection returned by _get_tool_connection).
+        Returns (on_tool_start, cleanup) — call cleanup after the run to clear the indicator.
+        """
+        completed: list[str] = []
+
+        async def on_tool_start(tools: list[tuple[str, dict]]) -> None:
+            ws = self._get_tool_connection()
+            if not ws:
+                return
+            current = [self._format_tool_status(name, args) for name, args in tools]
+            lines: list[str] = []
+            for item in completed:
+                lines.append(f"&#x2713; {item}")
+            for item in current:
+                lines.append(item)
+            await self._send_ws(
+                ws,
+                BrowserOutgoing(
+                    type=BROWSER_RESP_TYPE_TYPING, active=True, content="<br>".join(lines)
+                ),
+            )
+            completed.extend(current)
+
+        async def cleanup() -> None:
+            if not completed:
+                return
+            ws = self._get_tool_connection()
+            if ws:
+                await self._send_ws(
+                    ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=False)
+                )
+
+        return on_tool_start, cleanup
 
     # --- Image handling ---
 

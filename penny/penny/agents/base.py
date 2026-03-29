@@ -220,6 +220,16 @@ class Agent:
 
         self._tool_executor = ToolExecutor(self._tool_registry, timeout=tool_timeout)
         self._keep_tools_on_final_step = False
+        self._on_tool_start_factory: (
+            Callable[
+                [],
+                tuple[
+                    Callable[[list[tuple[str, dict]]], Awaitable[None]],
+                    Callable[[], Awaitable[None]],
+                ],
+            ]
+            | None
+        ) = None
 
         Agent._instances.append(self)
 
@@ -262,12 +272,20 @@ class Agent:
             logger.info("%s starting for %s", self.name, user)
             system_prompt = await self._build_system_prompt(user)
             history = self.get_history(user)
-            await self.run(
-                prompt=prompt,
-                max_steps=self.get_max_steps(),
-                system_prompt=system_prompt,
-                history=history,
+            on_tool_start, tool_cleanup = (
+                self._on_tool_start_factory() if self._on_tool_start_factory else (None, None)
             )
+            try:
+                await self.run(
+                    prompt=prompt,
+                    max_steps=self.get_max_steps(),
+                    system_prompt=system_prompt,
+                    history=history,
+                    on_tool_start=on_tool_start,
+                )
+            finally:
+                if tool_cleanup:
+                    await tool_cleanup()
             did_work = await self.after_run(user)
             logger.info("%s complete for %s", self.name, user)
             return did_work

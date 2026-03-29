@@ -289,6 +289,7 @@ class Penny:
 
         self._multi_tool.set_browse_url_provider(browse_tool_provider)
         self._thinking_multi_tool.set_browse_url_provider(browse_tool_provider)
+        self.thinking_agent._on_tool_start_factory = browser_ch.make_background_tool_callback
 
     def _init_scheduler(self, config: Config) -> None:
         """Create background scheduler with prioritized schedules."""

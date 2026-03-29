@@ -445,7 +445,7 @@ function updatePageContextBar(
   faviconEl.src = favicon || "";
   bar.dataset.url = url;
   if (urlChanged) {
-    toggle.checked = true;
+    toggle.checked = false;
   }
   bar.classList.remove("hidden");
 }
@@ -582,20 +582,27 @@ function setStatus(state: ConnectionState): void {
 }
 
 function typingHTML(text: string): string {
-  return `${text}<span class="typing-dots"><span>.</span><span>.</span><span>.</span></span>`;
+  const dots = `<span class="typing-dots"><span>.</span><span>.</span><span>.</span></span>`;
+  if (!text.includes("<br>")) return `${text}${dots}`;
+  return text
+    .split("<br>")
+    .map((line) => (line.startsWith("&#x2713;") ? line : `${line}${dots}`))
+    .join("<br>");
 }
 
 function setTyping(active: boolean, content?: string): void {
   const text = content ?? "Penny is thinking";
+  const isToolStatus = content != null && content.includes("<br>");
   let indicator = document.getElementById("typing");
   if (active && !indicator) {
     indicator = document.createElement("div");
     indicator.id = "typing";
-    indicator.className = "typing";
+    indicator.className = isToolStatus ? "typing tool-status" : "typing";
     indicator.innerHTML = typingHTML(text);
     messagesEl.appendChild(indicator);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   } else if (active && indicator && content) {
+    indicator.className = isToolStatus ? "typing tool-status" : "typing";
     indicator.innerHTML = typingHTML(text);
   } else if (!active && indicator) {
     indicator.remove();
