@@ -83,7 +83,7 @@ async def test_foreground_cancels_active_background_task():
     schedule = _AlwaysRunSchedule(agent)
     scheduler = BackgroundScheduler(
         schedules=[schedule],
-        idle_threshold=0.0,
+        idle_threshold=lambda: 0.0,
         tick_interval=0.01,
     )
 
@@ -115,7 +115,7 @@ async def test_foreground_during_idle_prevents_task_start():
     schedule = _AlwaysRunSchedule(agent)
     scheduler = BackgroundScheduler(
         schedules=[schedule],
-        idle_threshold=0.0,
+        idle_threshold=lambda: 0.0,
         tick_interval=0.01,
     )
 
@@ -178,7 +178,7 @@ async def test_scheduler_skips_agents_with_no_work():
 
     scheduler = BackgroundScheduler(
         schedules=[schedule_a, schedule_b],
-        idle_threshold=0.0,
+        idle_threshold=lambda: 0.0,
         tick_interval=0.01,
     )
 
@@ -210,7 +210,7 @@ async def test_scheduler_mark_complete_only_on_work():
 
     scheduler = BackgroundScheduler(
         schedules=[schedule_no_work, schedule_has_work],
-        idle_threshold=0.0,
+        idle_threshold=lambda: 0.0,
         tick_interval=0.01,
     )
 
@@ -235,11 +235,11 @@ async def test_scheduler_mark_complete_only_on_work():
 async def test_no_work_agent_stays_eligible_without_interval_wait():
     """An agent that returns False stays eligible on the next tick (no interval penalty)."""
     agent = _SimpleAgent("idle_agent", return_value=False)
-    schedule = PeriodicSchedule(agent=agent, interval=0.5)  # ty: ignore[invalid-argument-type]
+    schedule = PeriodicSchedule(agent=agent, interval=lambda: 0.5)  # ty: ignore[invalid-argument-type]
 
     scheduler = BackgroundScheduler(
         schedules=[schedule],
-        idle_threshold=0.0,
+        idle_threshold=lambda: 0.0,
         tick_interval=0.01,
     )
 
@@ -269,7 +269,7 @@ async def test_scheduler_breaks_when_agent_does_work():
 
     scheduler = BackgroundScheduler(
         schedules=[schedule_a, schedule_b],
-        idle_threshold=0.0,
+        idle_threshold=lambda: 0.0,
         tick_interval=0.01,
     )
 
