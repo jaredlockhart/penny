@@ -50,7 +50,7 @@ class BrowserOutgoing(BaseModel):
     """A message sent to the browser extension."""
 
     type: str
-    content: str = ""
+    content: str | None = None
     active: bool | None = None
     connected: bool | None = None
 
