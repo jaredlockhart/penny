@@ -41,6 +41,11 @@ async function openHiddenTab(url: string): Promise<browser.tabs.Tab> {
   if (!tab.id) {
     throw new Error("Failed to create tab");
   }
+  try {
+    await browser.tabs.hide(tab.id);
+  } catch {
+    // tabHide may not be available — tab stays visible but still works
+  }
   return tab;
 }
 
