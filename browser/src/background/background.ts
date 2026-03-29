@@ -354,6 +354,20 @@ browser.runtime.onConnect.addListener((port) => {
   }
 });
 
+// --- Debug: test browse_url from background console ---
+// Usage: debugBrowseUrl("https://example.com")
+
+// @ts-expect-error -- exposed for console debugging
+globalThis.debugBrowseUrl = (url: string): void => {
+  browseUrl(url).then(
+    (result) => {
+      console.log(`[debug] ${result.length} chars`);
+      console.log(result);
+    },
+    (err) => console.error("[debug] ERROR:", err),
+  );
+};
+
 // --- Boot ---
 
 init();

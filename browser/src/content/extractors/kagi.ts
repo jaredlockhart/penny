@@ -2,12 +2,13 @@
  * Kagi search results extractor.
  *
  * Extracts structured search results (title, URL, snippet) from Kagi's DOM.
- * Runs before Defuddle in the extraction pipeline since Defuddle's registry
- * can't be extended externally (esbuild bundles separate module instances).
+ * Returns null when .search-result elements haven't rendered yet — the caller
+ * (pollForContent) re-injects the content script until ready=true.
  */
 
 export function extractKagiResults(): string | null {
   if (!location.hostname.includes("kagi.com")) return null;
+
   const results = document.querySelectorAll(".search-result");
   if (results.length === 0) return null;
 
