@@ -128,10 +128,12 @@ def _build_strong_nudge(messages: list[dict]) -> str:
     Called when many preceding tool calls may have saturated the model's context.
     Including the original question gives the model a clear target after heavy tool use.
     """
-    original_question = next(
-        (m["content"] for m in messages if m.get("role") == MessageRole.USER),
-        None,
-    )
+    user_messages = [
+        m["content"]
+        for m in messages
+        if m.get("role") == MessageRole.USER and not m["content"].startswith("You have gathered")
+    ]
+    original_question = user_messages[-1] if user_messages else None
     if original_question:
         return (
             f"You have gathered enough information from your searches. "

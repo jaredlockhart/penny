@@ -748,6 +748,75 @@ class TestEmptyContentAfterToolCalls:
         await agent.close()
 
 
+class TestStrongNudgeUsesLastQuestion:
+    """Test that the strong nudge references the current question, not prior history."""
+
+    @pytest.mark.asyncio
+    async def test_nudge_references_current_question_not_history(
+        self,
+        test_db,
+        mock_ollama,
+        _mock_search,
+    ):
+        """When the agentic loop exhausts tool calls and fires a strong nudge,
+        the nudge must reference the latest user question — not an earlier one
+        from conversation history.
+
+        Regression: _build_strong_nudge used next() (first user message) instead
+        of the last, so with conversation history it would reference a prior question.
+        """
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=5)
+
+        history = [
+            ("user", "what are some good 40k novels?"),
+            ("assistant", "Here are some novels..."),
+            ("user", "who were the dark mechanicum leaders?"),
+            ("assistant", "Here are the leaders..."),
+            ("user", "who starred in judge dredd 1995?"),
+            ("assistant", "Here is the cast..."),
+        ]
+
+        current_question = "what else was joan chen in?"
+        nudge_content = None
+
+        def handler(request, count):
+            nonlocal nudge_content
+            messages = request["messages"]
+            user_msgs = [m for m in messages if m.get("role") == "user"]
+            last_user = user_msgs[-1]["content"] if user_msgs else ""
+
+            if "gathered enough" in last_user:
+                nudge_content = last_user
+                return mock_ollama._make_text_response(request, "Joan Chen was in Twin Peaks")
+
+            # After 4 tool calls, return empty to trigger truncation + strong nudge
+            if count >= 5:
+                return mock_ollama._make_text_response(request, "")
+
+            return mock_ollama._make_tool_call_response(
+                request, "search", {"query": f"joan chen filmography {count}"}
+            )
+
+        mock_ollama.set_response_handler(handler)
+        agent.allow_repeat_tools = True
+        response = await agent.run(
+            current_question,
+            max_steps=max_steps,
+            history=history,
+        )
+
+        assert nudge_content is not None, "Strong nudge should have fired"
+        assert "joan chen" in nudge_content.lower(), (
+            f"Nudge should reference 'joan chen' but got: {nudge_content}"
+        )
+        assert "dark mechanicum" not in nudge_content.lower(), (
+            f"Nudge should NOT reference prior question but got: {nudge_content}"
+        )
+        assert response.answer == "Joan Chen was in Twin Peaks"
+
+        await agent.close()
+
+
 class TestRefusalRetry:
     """Test that model refusals trigger a retry nudge."""
 

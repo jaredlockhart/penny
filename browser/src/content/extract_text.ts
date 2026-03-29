@@ -15,6 +15,7 @@ interface PageData {
   url: string;
   text: string;
   image: string;
+  ready: boolean;
 }
 
 function extractWithDefuddle(): string | null {
@@ -109,8 +110,21 @@ function extractMetaImage(): string {
 }
 
 function extract(): PageData {
+  // Kagi pages must use the Kagi extractor — no fallbacks.
+  // Returns ready=false when results haven't rendered yet;
+  // pollForContent re-injects until ready.
+  if (location.hostname.includes("kagi.com")) {
+    const kagi = extractKagiResults();
+    return {
+      title: document.title,
+      url: location.href,
+      text: kagi ? kagi.slice(0, MAX_CHARS) : "",
+      image: "",
+      ready: kagi !== null,
+    };
+  }
+
   const text =
-    extractKagiResults() ??
     extractWithDefuddle() ??
     extractWithHeuristics() ??
     extractAllVisibleText();
@@ -120,6 +134,7 @@ function extract(): PageData {
     url: location.href,
     text: text.slice(0, MAX_CHARS),
     image: extractMetaImage(),
+    ready: true,
   };
 }
 
