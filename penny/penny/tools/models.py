@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class SearchArgs(BaseModel):
     """Validated arguments for the search tool."""
 
-    queries: list[str]
+    query: str
 
 
 class SearchResult(BaseModel):
@@ -33,6 +33,13 @@ class BrowseUrlArgs(BaseModel):
     """Validated arguments for the browse_url tool."""
 
     url: str
+
+
+class MultiToolArgs(BaseModel):
+    """Validated arguments for the multi-tool."""
+
+    queries: list[str] = Field(default_factory=list)
+    reasoning: str | None = None
 
 
 class SearchEmailsArgs(BaseModel):

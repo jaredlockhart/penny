@@ -242,7 +242,7 @@ def setup_ollama_flow(mock_ollama):  # noqa: F811
             if request_count[0] == 1:
                 # First call: message agent tool call
                 return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": [search_query]}
+                    request, "fetch", {"queries": [search_query]}
                 )
             elif request_count[0] == 2:
                 # Second call: message agent final response

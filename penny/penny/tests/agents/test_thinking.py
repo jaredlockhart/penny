@@ -95,7 +95,7 @@ async def test_seeded_thinking_full_loop(
             # Step 1: tool call
             return mock_ollama._make_tool_call_response(
                 request,
-                "search",
+                "fetch",
                 {"queries": ["quantum gravity 2026"], "reasoning": "Researching seed topic"},
             )
         if count == 2:
@@ -154,14 +154,13 @@ creative work, technical deep-dives, or discoveries. Avoid \
 troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
-- **search**: Search the web for current information. \
-Accepts up to 1 query per call.
+- **fetch**: Look things up. Pass up to 1 query and/or URL.
 
 Go DEEP, not wide:
-- Search for the topic, then pick the single most interesting result
-- Do follow-up searches to learn more about that specific thing
-- Do NOT search for a different subtopic on each step
-- Do NOT repeat the same search query you already ran
+- Explore the topic using your tools, then pick the single most interesting result
+- Do follow-up lookups to learn more about that specific thing
+- Do NOT explore a different subtopic on each step
+- Do NOT repeat the same query you already ran
 
 When you receive 'dig deeper', that means: learn more about what \
 you already found. More detail on the same thing, not a new thing.
@@ -238,7 +237,7 @@ async def test_free_thinking_full_loop(
         if count == 1:
             return mock_ollama._make_tool_call_response(
                 request,
-                "search",
+                "fetch",
                 {"queries": ["interesting science 2026"], "reasoning": "Exploring freely"},
             )
         if count == 2:
@@ -294,14 +293,13 @@ creative work, technical deep-dives, or discoveries. Avoid \
 troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
-- **search**: Search the web for current information. \
-Accepts up to 1 query per call.
+- **fetch**: Look things up. Pass up to 1 query and/or URL.
 
 Go DEEP, not wide:
-- Search for the topic, then pick the single most interesting result
-- Do follow-up searches to learn more about that specific thing
-- Do NOT search for a different subtopic on each step
-- Do NOT repeat the same search query you already ran
+- Explore the topic using your tools, then pick the single most interesting result
+- Do follow-up lookups to learn more about that specific thing
+- Do NOT explore a different subtopic on each step
+- Do NOT repeat the same query you already ran
 
 When you receive 'dig deeper', that means: learn more about what \
 you already found. More detail on the same thing, not a new thing.
@@ -315,7 +313,7 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
         # -- Tools: search available, message_user absent
         tools = requests_seen[0].get("tools") or []
         tool_names = [t["function"]["name"] for t in tools]
-        assert "search" in tool_names
+        assert "fetch" in tool_names
         assert "message_user" not in tool_names
 
         # -- Tool results flow into subsequent steps
@@ -374,7 +372,7 @@ async def test_news_thinking_full_loop(
         if count == 1:
             return mock_ollama._make_tool_call_response(
                 request,
-                "search",
+                "fetch",
                 {"queries": ["top news stories 2026"], "reasoning": "Reading the news"},
             )
         if count == 2:
@@ -421,16 +419,13 @@ creative work, technical deep-dives, or discoveries. Avoid \
 troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
-- **search**: Search the web for current information. \
-Accepts up to 1 query per call.
-- **fetch_news**: Search for recent news articles on a topic. \
-Returns headlines, summaries, and URLs.
+- **fetch**: Look things up. Pass up to 1 query and/or URL.
 
 Go DEEP, not wide:
-- Search for the topic, then pick the single most interesting result
-- Do follow-up searches to learn more about that specific thing
-- Do NOT search for a different subtopic on each step
-- Do NOT repeat the same search query you already ran
+- Explore the topic using your tools, then pick the single most interesting result
+- Do follow-up lookups to learn more about that specific thing
+- Do NOT explore a different subtopic on each step
+- Do NOT repeat the same query you already ran
 
 When you receive 'dig deeper', that means: learn more about what \
 you already found. More detail on the same thing, not a new thing.
@@ -441,11 +436,10 @@ All information in your responses must come from your tool results. \
 If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
-        # -- Tools: both search and fetch_news available
+        # -- Tools: fetch (MultiTool) available
         tools = requests_seen[0].get("tools") or []
         tool_names = [t["function"]["name"] for t in tools]
-        assert "search" in tool_names
-        assert "fetch_news" in tool_names
+        assert "fetch" in tool_names
 
         # No preference marked (news thinking has no seed preference)
         pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER)
@@ -479,7 +473,7 @@ async def test_news_browsing_full_loop(
         if count == 1:
             return mock_ollama._make_tool_call_response(
                 request,
-                "search",
+                "fetch",
                 {"queries": ["latest news 2026"], "reasoning": "Browsing news"},
             )
         if count == 2:
@@ -534,7 +528,7 @@ async def test_preference_rotation_via_last_thought_at(
         if count == 1:
             return mock_ollama._make_tool_call_response(
                 request,
-                "search",
+                "fetch",
                 {"queries": ["astrophysics 2026"], "reasoning": "Researching"},
             )
         if count == 2:
@@ -814,7 +808,7 @@ async def test_seeded_duplicate_thought_skips_storage(
         if count == 1:
             return mock_ollama._make_tool_call_response(
                 request,
-                "search",
+                "fetch",
                 {"queries": ["quantum gravity"], "reasoning": "Researching"},
             )
         if count == 2:
@@ -872,7 +866,7 @@ async def test_free_duplicate_thought_skips_storage(
         if count == 1:
             return mock_ollama._make_tool_call_response(
                 request,
-                "search",
+                "fetch",
                 {"queries": ["interesting science"], "reasoning": "Exploring"},
             )
         if count == 2:
@@ -933,7 +927,7 @@ async def test_novel_thought_is_stored(
         if count == 1:
             return mock_ollama._make_tool_call_response(
                 request,
-                "search",
+                "fetch",
                 {"queries": ["quantum gravity"], "reasoning": "Researching"},
             )
         if count == 2:
@@ -989,7 +983,7 @@ async def test_preference_filter_inactive_without_qualifying_prefs(
     def handler(request, count):
         if count == 1:
             return mock_ollama._make_tool_call_response(
-                request, "search", {"queries": ["test"], "reasoning": "x"}
+                request, "fetch", {"queries": ["test"], "reasoning": "x"}
             )
         return mock_ollama._make_text_response(request, MOCK_REPORT)
 
@@ -1042,7 +1036,7 @@ async def test_preference_filter_rejects_disliked_content(
     def handler(request, count):
         if count == 1:
             return mock_ollama._make_tool_call_response(
-                request, "search", {"queries": ["test"], "reasoning": "x"}
+                request, "fetch", {"queries": ["test"], "reasoning": "x"}
             )
         return mock_ollama._make_text_response(request, MOCK_REPORT)
 
@@ -1104,7 +1098,7 @@ async def test_preference_filter_active_with_only_negative_prefs(
     def handler(request, count):
         if count == 1:
             return mock_ollama._make_tool_call_response(
-                request, "search", {"queries": ["test"], "reasoning": "x"}
+                request, "fetch", {"queries": ["test"], "reasoning": "x"}
             )
         return mock_ollama._make_text_response(request, MOCK_REPORT)
 

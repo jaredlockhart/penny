@@ -389,8 +389,8 @@ export const MAX_PAGE_CONTEXT_CHARS = 5_000;
 // --- Tool constants ---
 
 export const THOUGHTS_POLL_INTERVAL_MS = 300_000;
-export const TOOL_TIMEOUT_MS = 30_000;
-export const TAB_LOAD_TIMEOUT_MS = 15_000;
+export const TOOL_TIMEOUT_MS = 60_000;
+export const TAB_LOAD_TIMEOUT_MS = 60_000;
 export const MAX_EXTRACTED_CHARS = 50_000;
 
 // --- Chat UI ---

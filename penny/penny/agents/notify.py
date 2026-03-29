@@ -628,8 +628,8 @@ class NotifyAgent(Agent):
             if tc.tool != "search":
                 continue
             args = SearchArgs.model_validate(tc.arguments)
-            if args.queries:
-                return args.queries[0]
+            if args.query:
+                return args.query
         return None
 
     # Matches **bold text** in markdown (first occurrence)

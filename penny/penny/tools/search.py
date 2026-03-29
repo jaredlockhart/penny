@@ -20,11 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 class SearchTool(Tool):
-    """Search tool: runs one or more Perplexity text searches in parallel."""
+    """Search tool: runs a single Perplexity text search."""
 
     name = "search"
-
-    MAX_QUERIES = 5
 
     def __init__(
         self,
@@ -32,38 +30,28 @@ class SearchTool(Tool):
         db=None,
         *,
         default_trigger: str = PennyConstants.SearchTrigger.USER_MESSAGE,
-        max_queries: int | None = None,
     ):
         self.perplexity = Perplexity(api_key=perplexity_api_key)
         self.db = db
         self.redact_terms: list[str] = []
         self.default_trigger = default_trigger
-        self._max_queries = max_queries or self.MAX_QUERIES
-        n = self._max_queries
-        self.description = (
-            f"Search the web for current information. Accepts up to {n} "
-            f"{'query' if n == 1 else 'queries'} per call."
-        )
+        self.description = "Search the web for current information."
         self.parameters = {
             "type": "object",
             "properties": {
-                "queries": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": n,
-                    "description": f"Search queries (max {n})",
+                "query": {
+                    "type": "string",
+                    "description": "Search query",
                 },
             },
-            "required": ["queries"],
+            "required": ["query"],
         }
 
     @classmethod
     def to_action_str(cls, arguments: dict) -> str:
-        """Format search queries into a readable status string."""
+        """Format search query into a readable status string."""
         try:
-            queries = SearchArgs(**arguments).queries
-            q = ", ".join(f'"{q}"' for q in queries[:2])
-            return f"Searching for {q}"
+            return f'Searching for "{SearchArgs(**arguments).query}"'
         except Exception:
             return "Searching"
 
@@ -84,50 +72,19 @@ class SearchTool(Tool):
         return text.strip()
 
     async def execute(self, **kwargs) -> Any:
-        """Run one or more text searches in parallel.
+        """Run a single text search.
 
         Accepts optional kwargs beyond the tool schema (not exposed to the model):
             trigger: SearchTrigger value for log_search (default: user_message)
         """
         args = SearchArgs(**kwargs)
-        queries = args.queries[: self._max_queries]
         trigger: str = kwargs.get("trigger", self.default_trigger)
-
-        tasks = [self._execute_single_query(q, trigger) for q in queries]
-        results = await asyncio.gather(*tasks)
-        return self._merge_results(queries, results)
-
-    async def _execute_single_query(self, query: str, trigger: str) -> SearchResult:
-        """Run text search for a single query."""
-        redacted = self._redact_query(query)
+        redacted = self._redact_query(args.query)
         text_result = await self._search_text(redacted, trigger)
         if isinstance(text_result, Exception):
             return SearchResult(text=PennyResponse.SEARCH_ERROR.format(error=text_result))
         text, urls = text_result
         return SearchResult(text=text, urls=urls)
-
-    @staticmethod
-    def _merge_results(queries: list[str], results: list[SearchResult]) -> SearchResult:
-        """Merge multiple search results into one with per-query sections."""
-        if len(results) == 1:
-            return results[0]
-
-        sections: list[str] = []
-        all_urls: list[str] = []
-
-        for query, result in zip(queries, results, strict=True):
-            sections.append(f"## Results for: {query}\n{result.text}")
-            all_urls.extend(result.urls)
-
-        # Deduplicate URLs while preserving order
-        seen: set[str] = set()
-        unique_urls: list[str] = []
-        for url in all_urls:
-            if url not in seen:
-                seen.add(url)
-                unique_urls.append(url)
-
-        return SearchResult(text="\n\n".join(sections), urls=unique_urls)
 
     def _redact_query(self, query: str) -> str:
         """Remove redact_terms from query (case-insensitive, whole-word)."""

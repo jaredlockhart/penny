@@ -1,5 +1,7 @@
 """Main agent loop for Penny."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import signal
@@ -34,9 +36,10 @@ from penny.scheduler import (
 )
 from penny.scheduler.schedule_runner import ScheduleExecutor
 from penny.startup import get_restart_message
-from penny.tools import SearchTool, Tool
+from penny.tools import SearchTool
 from penny.tools.browse_url import BrowseUrlTool
 from penny.tools.fetch_news import FetchNewsTool
+from penny.tools.multi import MultiTool
 from penny.tools.news import NewsTool
 from penny.zoho.models import ZohoCredentials
 
@@ -95,26 +98,24 @@ class Penny:
             else None
         )
 
-    def _create_search_tools(self, db: Database) -> list[Tool]:
-        """Build search tools list for a given database."""
+    def _create_search_tool(self, db: Database) -> SearchTool | None:
+        """Build a search tool for a given database."""
         if not self.config.perplexity_api_key:
-            return []
-        return [
-            SearchTool(
-                perplexity_api_key=self.config.perplexity_api_key,
-                db=db,
-            )
-        ]
-
-    def _create_thinking_search_tool(self, config: Config) -> Tool | None:
-        """Build a search tool for the thinking agent (PENNY_ENRICHMENT trigger)."""
-        if not config.perplexity_api_key:
             return None
         return SearchTool(
-            perplexity_api_key=config.perplexity_api_key,
-            db=self.db,
-            default_trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
-            max_queries=1,
+            perplexity_api_key=self.config.perplexity_api_key,
+            db=db,
+        )
+
+    def _create_multi_tool(
+        self, search_tool: SearchTool | None, max_calls: int | None = None
+    ) -> MultiTool:
+        """Build a MultiTool wrapper for the given search tool."""
+        calls = max_calls or int(self.config.runtime.MESSAGE_MAX_TOOL_CALLS)
+        return MultiTool(
+            search_tool=search_tool,
+            news_tool=self._news_tool,
+            max_calls=calls,
         )
 
     def _create_chat_agent(self, db: Database) -> ChatAgent:
@@ -130,11 +131,11 @@ class Penny:
             max_retries=self.config.ollama_max_retries,
             retry_delay=self.config.ollama_retry_delay,
         )
-        search_tools = self._create_search_tools(db)
+        search_tool = self._create_search_tool(db)
+        multi_tool = self._create_multi_tool(search_tool)
         return ChatAgent(
-            search_tool=search_tools[0] if search_tools else None,
-            news_tool=self._news_tool,
             system_prompt=Prompt.CONVERSATION_PROMPT,
+            multi_tool=multi_tool,
             model_client=client,
             tools=[],
             db=db,
@@ -152,13 +153,12 @@ class Penny:
 
     def _init_agents(self, config: Config) -> None:
         """Create message agent and background processing agents."""
-        shared_search_tools = self._create_search_tools(self.db)
-        self._shared_search_tool = shared_search_tools[0] if shared_search_tools else None
+        self._shared_search_tool = self._create_search_tool(self.db)
         self._news_tool = self._create_news_tool(config)
+        self._multi_tool = self._create_multi_tool(self._shared_search_tool)
         self.chat_agent = ChatAgent(
-            search_tool=self._shared_search_tool,
-            news_tool=self._news_tool,
             system_prompt=Prompt.CONVERSATION_PROMPT,
+            multi_tool=self._multi_tool,
             model_client=self.model_client,
             tools=[],
             db=self.db,
@@ -194,10 +194,10 @@ class Penny:
     def _init_background_agents(self, config: Config) -> None:
         """Create monologue, history, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
-        thinking_search_tool = self._create_thinking_search_tool(config)
+        thinking_search_tool = self._create_search_tool(self.db)
+        self._thinking_multi_tool = self._create_multi_tool(thinking_search_tool, max_calls=1)
         self.thinking_agent = ThinkingAgent(
-            search_tool=thinking_search_tool,
-            news_tool=self._news_tool,
+            multi_tool=self._thinking_multi_tool,
             embedding_model_client=self.embedding_model_client,
             **kwargs,
         )
@@ -281,13 +281,14 @@ class Penny:
         if not isinstance(browser_ch, BrowserChannel):
             return
 
-        def provider() -> list:
+        # Chat agent uses MultiTool — give it a provider checked at dispatch time.
+        def browse_tool_provider() -> BrowseUrlTool | None:
             if not browser_ch.has_tool_connection:
-                return []
-            return [BrowseUrlTool(request_fn=browser_ch.send_tool_request)]
+                return None
+            return BrowseUrlTool(request_fn=browser_ch.send_tool_request)
 
-        self.chat_agent.set_browser_tools_provider(provider)
-        self.thinking_agent.set_browser_tools_provider(provider)
+        self._multi_tool.set_browse_url_provider(browse_tool_provider)
+        self._thinking_multi_tool.set_browse_url_provider(browse_tool_provider)
 
     def _init_scheduler(self, config: Config) -> None:
         """Create background scheduler with prioritized schedules."""
