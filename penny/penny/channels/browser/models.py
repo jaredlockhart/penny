@@ -15,6 +15,8 @@ BROWSER_MSG_TYPE_PREFERENCES_REQUEST = "preferences_request"
 BROWSER_MSG_TYPE_PREFERENCE_ADD = "preference_add"
 BROWSER_MSG_TYPE_PREFERENCE_DELETE = "preference_delete"
 BROWSER_MSG_TYPE_HEARTBEAT = "heartbeat"
+BROWSER_MSG_TYPE_CONFIG_REQUEST = "config_request"
+BROWSER_MSG_TYPE_CONFIG_UPDATE = "config_update"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -23,6 +25,7 @@ BROWSER_RESP_TYPE_STATUS = "status"
 BROWSER_RESP_TYPE_TOOL_REQUEST = "tool_request"
 BROWSER_RESP_TYPE_THOUGHTS = "thoughts_response"
 BROWSER_RESP_TYPE_PREFERENCES = "preferences_response"
+BROWSER_RESP_TYPE_CONFIG = "config_response"
 
 
 class BrowserIncoming(BaseModel):
@@ -81,3 +84,11 @@ class BrowserPreferenceDelete(BaseModel):
 
     type: str
     preference_id: int
+
+
+class BrowserConfigUpdate(BaseModel):
+    """A request to update a runtime config param."""
+
+    type: str
+    key: str
+    value: str

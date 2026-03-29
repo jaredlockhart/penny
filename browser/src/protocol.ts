@@ -25,7 +25,9 @@ export type WsOutgoingType =
   | "preferences_request"
   | "preference_add"
   | "preference_delete"
-  | "heartbeat";
+  | "heartbeat"
+  | "config_request"
+  | "config_update";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -35,6 +37,8 @@ export const WsOutgoingType = {
   PreferenceAdd: "preference_add",
   PreferenceDelete: "preference_delete",
   Heartbeat: "heartbeat",
+  ConfigRequest: "config_request",
+  ConfigUpdate: "config_update",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
@@ -93,7 +97,8 @@ export type WsIncomingType =
   | "status"
   | "tool_request"
   | "thoughts_response"
-  | "preferences_response";
+  | "preferences_response"
+  | "config_response";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
@@ -101,6 +106,7 @@ export const WsIncomingType = {
   ToolRequest: "tool_request",
   ThoughtsResponse: "thoughts_response",
   PreferencesResponse: "preferences_response",
+  ConfigResponse: "config_response",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -152,13 +158,28 @@ export interface WsIncomingPreferencesPayload {
   preferences: PreferenceItem[];
 }
 
+export interface RuntimeConfigParam {
+  key: string;
+  value: string;
+  default: string;
+  description: string;
+  type: "int" | "float" | "str";
+  group: string;
+}
+
+export interface WsIncomingConfigPayload {
+  type: typeof WsIncomingType.ConfigResponse;
+  params: RuntimeConfigParam[];
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
   | WsIncomingStatusPayload
   | WsIncomingToolRequestPayload
   | WsIncomingThoughtsPayload
-  | WsIncomingPreferencesPayload;
+  | WsIncomingPreferencesPayload
+  | WsIncomingConfigPayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
@@ -177,7 +198,10 @@ export type RuntimeMessageType =
   | "preferences_request"
   | "preferences_response"
   | "preference_add"
-  | "preference_delete";
+  | "preference_delete"
+  | "config_request"
+  | "config_response"
+  | "config_update";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -195,6 +219,9 @@ export const RuntimeMessageType = {
   PreferencesResponse: "preferences_response",
   PreferenceAdd: "preference_add",
   PreferenceDelete: "preference_delete",
+  ConfigRequest: "config_request",
+  ConfigResponse: "config_response",
+  ConfigUpdate: "config_update",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -297,6 +324,24 @@ export interface RuntimePreferenceDelete {
   preference_id: number;
 }
 
+/** Sidebar → background: request all config params */
+export interface RuntimeConfigRequest {
+  type: typeof RuntimeMessageType.ConfigRequest;
+}
+
+/** Background → sidebar: all config params with current values */
+export interface RuntimeConfigResponse {
+  type: typeof RuntimeMessageType.ConfigResponse;
+  params: RuntimeConfigParam[];
+}
+
+/** Sidebar → background: update one config param */
+export interface RuntimeConfigUpdate {
+  type: typeof RuntimeMessageType.ConfigUpdate;
+  key: string;
+  value: string;
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -312,7 +357,10 @@ export type RuntimeMessage =
   | RuntimePreferencesRequest
   | RuntimePreferencesResponse
   | RuntimePreferenceAdd
-  | RuntimePreferenceDelete;
+  | RuntimePreferenceDelete
+  | RuntimeConfigRequest
+  | RuntimeConfigResponse
+  | RuntimeConfigUpdate;
 
 // --- Domain permissions ---
 
