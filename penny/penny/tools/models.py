@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class SearchArgs(BaseModel):
     """Validated arguments for the search tool."""
 
-    queries: list[str]
+    query: str
 
 
 class SearchResult(BaseModel):
@@ -33,6 +33,37 @@ class BrowseUrlArgs(BaseModel):
     """Validated arguments for the browse_url tool."""
 
     url: str
+
+
+class InnerCall(BaseModel):
+    """A single lookup inside a MultiTool call — exactly one key set.
+
+    Uses single-key flat objects: {"search": "query"}, {"browse_url": "url"},
+    or {"fetch_news": "topic"}.
+    """
+
+    search: str | None = None
+    browse_url: str | None = None
+    fetch_news: str | None = None
+
+    @property
+    def tool_name(self) -> str:
+        if self.search is not None:
+            return "search"
+        if self.browse_url is not None:
+            return "browse_url"
+        return "fetch_news"
+
+    @property
+    def value(self) -> str:
+        return self.search or self.browse_url or self.fetch_news or ""
+
+
+class MultiToolArgs(BaseModel):
+    """Validated arguments for the multi-tool."""
+
+    calls: list[InnerCall]
+    reasoning: str | None = None
 
 
 class SearchEmailsArgs(BaseModel):

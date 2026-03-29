@@ -1,5 +1,7 @@
 """Main agent loop for Penny."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import signal
@@ -37,6 +39,7 @@ from penny.startup import get_restart_message
 from penny.tools import SearchTool, Tool
 from penny.tools.browse_url import BrowseUrlTool
 from penny.tools.fetch_news import FetchNewsTool
+from penny.tools.multi import MultiTool
 from penny.tools.news import NewsTool
 from penny.zoho.models import ZohoCredentials
 
@@ -95,7 +98,7 @@ class Penny:
             else None
         )
 
-    def _create_search_tools(self, db: Database) -> list[Tool]:
+    def _create_search_tools(self, db: Database) -> list[SearchTool]:
         """Build search tools list for a given database."""
         if not self.config.perplexity_api_key:
             return []
@@ -114,8 +117,11 @@ class Penny:
             perplexity_api_key=config.perplexity_api_key,
             db=self.db,
             default_trigger=PennyConstants.SearchTrigger.PENNY_ENRICHMENT,
-            max_queries=1,
         )
+
+    def _create_multi_tool(self, search_tool: SearchTool | None) -> MultiTool:
+        """Build the MultiTool wrapper for chat agent tool dispatch."""
+        return MultiTool(search_tool=search_tool, news_tool=self._news_tool)
 
     def _create_chat_agent(self, db: Database) -> ChatAgent:
         """Factory for creating ChatAgent with a given database.
@@ -131,9 +137,9 @@ class Penny:
             retry_delay=self.config.ollama_retry_delay,
         )
         search_tools = self._create_search_tools(db)
+        multi_tool = self._create_multi_tool(search_tools[0] if search_tools else None)
         return ChatAgent(
-            search_tool=search_tools[0] if search_tools else None,
-            news_tool=self._news_tool,
+            multi_tool=multi_tool,
             system_prompt=Prompt.CONVERSATION_PROMPT,
             model_client=client,
             tools=[],
@@ -155,9 +161,9 @@ class Penny:
         shared_search_tools = self._create_search_tools(self.db)
         self._shared_search_tool = shared_search_tools[0] if shared_search_tools else None
         self._news_tool = self._create_news_tool(config)
+        self._multi_tool = self._create_multi_tool(self._shared_search_tool)
         self.chat_agent = ChatAgent(
-            search_tool=self._shared_search_tool,
-            news_tool=self._news_tool,
+            multi_tool=self._multi_tool,
             system_prompt=Prompt.CONVERSATION_PROMPT,
             model_client=self.model_client,
             tools=[],
@@ -281,12 +287,20 @@ class Penny:
         if not isinstance(browser_ch, BrowserChannel):
             return
 
+        # Chat agent uses MultiTool — give it a provider checked at dispatch time.
+        def browse_tool_provider() -> BrowseUrlTool | None:
+            if not browser_ch.has_tool_connection:
+                return None
+            return BrowseUrlTool(request_fn=browser_ch.send_tool_request)
+
+        self._multi_tool.set_browse_url_provider(browse_tool_provider)
+
+        # Thinking agent keeps individual tool provider (goes deep, not wide).
         def provider() -> list:
             if not browser_ch.has_tool_connection:
                 return []
             return [BrowseUrlTool(request_fn=browser_ch.send_tool_request)]
 
-        self.chat_agent.set_browser_tools_provider(provider)
         self.thinking_agent.set_browser_tools_provider(provider)
 
     def _init_scheduler(self, config: Config) -> None:

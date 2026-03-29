@@ -514,8 +514,9 @@ class BrowserChannel(MessageChannel):
         """Pass an on_tool_start callback so tool calls update the typing indicator."""
         recipient = message.sender
 
-        async def on_tool_start(tool_name: str, arguments: dict) -> None:
-            await self._send_tool_status(recipient, self._format_tool_status(tool_name, arguments))
+        async def on_tool_start(tools: list[tuple[str, dict]]) -> None:
+            parts = [self._format_tool_status(name, args) for name, args in tools]
+            await self._send_tool_status(recipient, " + ".join(parts))
 
         return {"on_tool_start": on_tool_start}
 

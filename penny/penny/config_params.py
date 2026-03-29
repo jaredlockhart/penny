@@ -117,6 +117,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="MESSAGE_MAX_TOOL_CALLS",
+    description="Max parallel tool calls per agent step",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_GLOBAL,
+)
+
+ConfigParam(
     key="IMAGE_DOWNLOAD_TIMEOUT",
     description="Timeout in seconds for image downloads",
     type=float,
