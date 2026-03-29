@@ -15,6 +15,7 @@ interface PageData {
   title: string;
   url: string;
   text: string;
+  ready: boolean;
 }
 
 export async function browseUrl(url: string): Promise<string> {
@@ -36,19 +37,19 @@ async function pollForContent(tabId: number): Promise<PageData> {
   for (let attempt = 1; attempt <= EXTRACT_MAX_RETRIES; attempt++) {
     const data = await extractPageContent(tabId);
     const textLen = data.text.trim().length;
-    if (textLen >= MIN_CONTENT_LENGTH) {
+    if (data.ready && textLen >= MIN_CONTENT_LENGTH) {
       console.log(`[browse_url] extracted ${textLen} chars (attempt ${attempt})`);
       return data;
     }
+    const reason = !data.ready ? "not ready" : `only ${textLen} chars`;
     console.log(
-      `[browse_url] only ${textLen} chars, waiting for JS render (attempt ${attempt}/${EXTRACT_MAX_RETRIES})`,
+      `[browse_url] ${reason}, waiting (attempt ${attempt}/${EXTRACT_MAX_RETRIES})`,
     );
     await new Promise((r) => setTimeout(r, EXTRACT_POLL_MS));
   }
-  // Return whatever we got — might be enough for simple pages
   const final = await extractPageContent(tabId);
   console.warn(
-    `[browse_url] settled on ${final.text.trim().length} chars after ${EXTRACT_MAX_RETRIES} retries`,
+    `[browse_url] settled on ${final.text.trim().length} chars after ${EXTRACT_MAX_RETRIES} retries (ready=${final.ready})`,
   );
   return final;
 }
