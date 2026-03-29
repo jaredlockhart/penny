@@ -1,6 +1,7 @@
 """Tests for BrowserChannel message extraction and device registration."""
 
 import json
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -532,3 +533,101 @@ class TestBrowserThoughtReaction:
 
         reactions = db.messages.get_user_reactions(self.USER, limit=100)
         assert reactions == []
+
+
+class TestFormatToolStatus:
+    """_format_tool_status produces human-readable labels for each tool."""
+
+    def test_search_single_query(self):
+        result = BrowserChannel._format_tool_status("search", {"queries": ["firefox memory"]})
+        assert result == 'Searching for "firefox memory"'
+
+    def test_search_two_queries(self):
+        result = BrowserChannel._format_tool_status("search", {"queries": ["q1", "q2"]})
+        assert '"q1"' in result
+        assert '"q2"' in result
+
+    def test_search_only_first_two_queries_shown(self):
+        result = BrowserChannel._format_tool_status("search", {"queries": ["q1", "q2", "q3"]})
+        assert '"q3"' not in result
+
+    def test_browse_url_with_url(self):
+        result = BrowserChannel._format_tool_status("browse_url", {"url": "https://example.com"})
+        assert result == "Reading https://example.com"
+
+    def test_browse_url_without_url(self):
+        result = BrowserChannel._format_tool_status("browse_url", {})
+        assert result == "Reading page"
+
+    def test_fetch_news_with_topic(self):
+        result = BrowserChannel._format_tool_status("fetch_news", {"topic": "climate change"})
+        assert result == "Fetching news about climate change"
+
+    def test_fetch_news_default_topic(self):
+        result = BrowserChannel._format_tool_status("fetch_news", {})
+        assert result == "Fetching news about top news"
+
+    def test_search_emails(self):
+        result = BrowserChannel._format_tool_status("search_emails", {"text": "invoice"})
+        assert result == "Searching emails"
+
+    def test_read_emails(self):
+        result = BrowserChannel._format_tool_status("read_emails", {"email_ids": ["123"]})
+        assert result == "Reading emails"
+
+    def test_unknown_tool(self):
+        result = BrowserChannel._format_tool_status("my_custom_tool", {})
+        assert result == "Using my_custom_tool"
+
+
+class TestMakeHandleKwargs:
+    """_make_handle_kwargs returns a callback that sends tool status to the browser."""
+
+    @pytest.mark.asyncio
+    async def test_returns_on_tool_start_key(self, tmp_path):
+        """_make_handle_kwargs always returns a dict with an on_tool_start callable."""
+        from penny.channels.base import IncomingMessage
+
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        message = IncomingMessage(sender="browser-user", content="hello")
+        kwargs = channel._make_handle_kwargs(message)
+
+        assert "on_tool_start" in kwargs
+        assert callable(kwargs["on_tool_start"])
+
+    @pytest.mark.asyncio
+    async def test_callback_sends_tool_status(self, tmp_path):
+        """Callback calls _send_tool_status with the sender and formatted text."""
+        from unittest.mock import AsyncMock
+
+        from penny.channels.base import IncomingMessage
+
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        channel._send_tool_status = AsyncMock()  # ty: ignore[invalid-assignment]
+
+        message = IncomingMessage(sender="firefox-macbook", content="hello")
+        kwargs = channel._make_handle_kwargs(message)
+        await kwargs["on_tool_start"]("search", {"queries": ["test query"]})
+
+        channel._send_tool_status.assert_called_once()
+        recipient, text = channel._send_tool_status.call_args.args
+        assert recipient == "firefox-macbook"
+        assert '"test query"' in text
+
+    @pytest.mark.asyncio
+    async def test_send_tool_status_sends_typing_with_content(self, tmp_path):
+        """_send_tool_status sends a typing message with the status text as content."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        ws = _MockWs()
+        cast(dict, channel._connections)["browser-user"] = ws
+
+        await channel._send_tool_status("browser-user", "Searching for stuff")
+
+        assert len(ws.sent) == 1
+        msg = ws.sent[0]
+        assert msg["type"] == "typing"
+        assert msg["active"] is True
+        assert msg["content"] == "Searching for stuff"

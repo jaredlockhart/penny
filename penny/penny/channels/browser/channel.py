@@ -44,6 +44,7 @@ from penny.channels.browser.models import (
 )
 from penny.constants import ChannelType, PennyConstants
 from penny.serper.client import search_image_url
+from penny.tools.models import SearchArgs
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -508,6 +509,46 @@ class BrowserChannel(MessageChannel):
             return False
         await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=typing))
         return True
+
+    def _make_handle_kwargs(self, message: IncomingMessage) -> dict:
+        """Pass an on_tool_start callback so tool calls update the typing indicator."""
+        recipient = message.sender
+
+        async def on_tool_start(tool_name: str, arguments: dict) -> None:
+            await self._send_tool_status(recipient, self._format_tool_status(tool_name, arguments))
+
+        return {"on_tool_start": on_tool_start}
+
+    @staticmethod
+    def _format_tool_status(tool_name: str, arguments: dict) -> str:
+        """Format a human-readable status label for a tool call."""
+        if tool_name == "search":
+            try:
+                queries = SearchArgs(**arguments).queries
+                q = ", ".join(f'"{q}"' for q in queries[:2])
+                return f"Searching for {q}"
+            except Exception:
+                return "Searching"
+        if tool_name == "fetch_news":
+            topic = arguments.get("topic", "top news")
+            return f"Fetching news about {topic}"
+        if tool_name == "browse_url":
+            url = arguments.get("url", "")
+            return f"Reading {url}" if url else "Reading page"
+        if tool_name == "search_emails":
+            return "Searching emails"
+        if tool_name == "read_emails":
+            return "Reading emails"
+        return f"Using {tool_name}"
+
+    async def _send_tool_status(self, recipient: str, text: str) -> None:
+        """Update the typing indicator with a tool status message."""
+        ws = self._connections.get(recipient)
+        if not ws:
+            return
+        await self._send_ws(
+            ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=True, content=text)
+        )
 
     # --- Image handling ---
 

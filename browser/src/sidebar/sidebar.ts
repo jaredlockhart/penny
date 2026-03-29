@@ -403,7 +403,7 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     addMessage(content, MS.Penny);
     setInputEnabled(true);
   } else if (message.type === RuntimeMessageType.Typing) {
-    setTyping(message.active);
+    setTyping(message.active, message.content);
   } else if (message.type === RuntimeMessageType.PermissionRequest) {
     if (activeView === "settings") showView("chat");
     showPermissionDialog(message.request_id, message.domain, message.url);
@@ -584,15 +584,22 @@ function setStatus(state: ConnectionState): void {
   if (sendBtn) sendBtn.disabled = state !== CS.Connected;
 }
 
-function setTyping(active: boolean): void {
+function typingHTML(text: string): string {
+  return `${text}<span class="typing-dots"><span>.</span><span>.</span><span>.</span></span>`;
+}
+
+function setTyping(active: boolean, content?: string): void {
+  const text = content ?? "Penny is thinking";
   let indicator = document.getElementById("typing");
   if (active && !indicator) {
     indicator = document.createElement("div");
     indicator.id = "typing";
     indicator.className = "typing";
-    indicator.innerHTML = 'Penny is thinking<span class="typing-dots"><span>.</span><span>.</span><span>.</span></span>';
+    indicator.innerHTML = typingHTML(text);
     messagesEl.appendChild(indicator);
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  } else if (active && indicator && content) {
+    indicator.innerHTML = typingHTML(text);
   } else if (!active && indicator) {
     indicator.remove();
   }

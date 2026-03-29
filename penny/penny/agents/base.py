@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import urllib.parse as _urlparse
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -302,12 +302,13 @@ class Agent:
         max_steps: int,
         history: list[tuple[str, str]] | None = None,
         system_prompt: str | None = None,
+        on_tool_start: Callable[[str, dict], Awaitable[None]] | None = None,
     ) -> ControllerResponse:
         """Run the agentic loop — prompt in, response out."""
         self._tool_result_text = []
         messages = self._build_messages(prompt, history, system_prompt)
         tools = self._tool_registry.get_ollama_tools()
-        return await self._run_agentic_loop(messages, tools, max_steps)
+        return await self._run_agentic_loop(messages, tools, max_steps, on_tool_start)
 
     # ── Agentic loop internals ───────────────────────────────────────────
 
@@ -322,6 +323,7 @@ class Agent:
         messages: list[dict],
         tools: list[dict],
         steps: int,
+        on_tool_start: Callable[[str, dict], Awaitable[None]] | None = None,
     ) -> ControllerResponse:
         """Execute the step loop: call model, process tool calls, or return final answer."""
         attachments: list[str] = []
@@ -350,7 +352,7 @@ class Agent:
                 logger.warning("Model hallucinated tool calls on final step — ignoring")
 
             if response.has_tool_calls and not strip_tools:
-                result = await self._process_tool_calls(response, called_tools)
+                result = await self._process_tool_calls(response, called_tools, on_tool_start)
                 messages.extend(result.messages)
                 tool_call_records.extend(result.records)
                 source_urls.extend(result.source_urls)
@@ -615,6 +617,7 @@ class Agent:
         self,
         response,
         called_tools: set[tuple[str, ...]],
+        on_tool_start: Callable[[str, dict], Awaitable[None]] | None = None,
     ) -> _StepResult:
         """Process all tool calls from a model response. Returns results to append."""
         logger.info("Model requested %d tool call(s)", len(response.message.tool_calls or []))
@@ -640,6 +643,11 @@ class Agent:
                 continue
 
             called_tools.add(call_key)
+            if on_tool_start:
+                try:
+                    await on_tool_start(tool_name, dict(arguments))
+                except Exception:
+                    logger.debug("on_tool_start callback failed for %s", tool_name)
             result_str, record, urls, image = await self._execute_single_tool(
                 tool_name, arguments, reasoning
             )
