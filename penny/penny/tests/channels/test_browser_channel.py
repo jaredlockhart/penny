@@ -325,6 +325,141 @@ class TestBrowserPreferenceHandlers:
         assert ws.sent == []
 
 
+class TestBrowserConfigHandlers:
+    """config_request and config_update handlers send and persist correctly."""
+
+    def _channel(self, tmp_path) -> tuple[BrowserChannel, Database]:
+        from unittest.mock import MagicMock
+
+        from penny.config_params import RuntimeParams
+
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        # Give channel a real RuntimeParams so DB lookups work after updates
+        config = MagicMock()
+        config.runtime = RuntimeParams(db=db)
+        channel._config = config
+        return channel, db
+
+    @pytest.mark.asyncio
+    async def test_config_request_returns_all_params(self, tmp_path):
+        """config_request sends a config_response containing every registered param."""
+        from penny.config_params import RUNTIME_CONFIG_PARAMS
+
+        channel, _ = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._handle_config_request(ws)  # ty: ignore[invalid-argument-type]
+
+        assert len(ws.sent) == 1
+        resp = ws.sent[0]
+        assert resp["type"] == "config_response"
+        keys = {p["key"] for p in resp["params"]}
+        assert keys == set(RUNTIME_CONFIG_PARAMS.keys())
+
+    @pytest.mark.asyncio
+    async def test_config_request_param_shape(self, tmp_path):
+        """Each param includes key, value, default, description, type, and group."""
+        channel, _ = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._handle_config_request(ws)  # ty: ignore[invalid-argument-type]
+
+        param = next(p for p in ws.sent[0]["params"] if p["key"] == "IDLE_SECONDS")
+        assert param["value"] == "60.0"
+        assert param["default"] == "60.0"
+        assert param["type"] == "float"
+        assert "idle" in param["description"].lower()
+        assert param["group"] == "Schedule"
+
+    @pytest.mark.asyncio
+    async def test_config_update_persists_value(self, tmp_path):
+        """config_update writes the validated value to the runtime_config table."""
+        from sqlmodel import Session, select
+
+        from penny.database.models import RuntimeConfig
+
+        channel, db = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._handle_config_update(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "config_update", "key": "MESSAGE_MAX_STEPS", "value": "12"},
+        )
+
+        with Session(db.engine) as session:
+            row = session.exec(
+                select(RuntimeConfig).where(RuntimeConfig.key == "MESSAGE_MAX_STEPS")
+            ).first()
+        assert row is not None
+        assert row.value == "12"
+
+    @pytest.mark.asyncio
+    async def test_config_update_returns_updated_config_response(self, tmp_path):
+        """config_update sends back a config_response reflecting the new value."""
+        channel, _ = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._handle_config_update(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "config_update", "key": "MESSAGE_MAX_STEPS", "value": "15"},
+        )
+
+        assert len(ws.sent) == 1
+        resp = ws.sent[0]
+        assert resp["type"] == "config_response"
+        param = next(p for p in resp["params"] if p["key"] == "MESSAGE_MAX_STEPS")
+        assert param["value"] == "15"
+
+    @pytest.mark.asyncio
+    async def test_config_update_unknown_key_is_noop(self, tmp_path):
+        """Unknown config key sends nothing and writes nothing to the DB."""
+        channel, _ = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._handle_config_update(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "config_update", "key": "NOT_A_REAL_KEY", "value": "42"},
+        )
+
+        assert ws.sent == []
+
+    @pytest.mark.asyncio
+    async def test_config_update_invalid_value_is_noop(self, tmp_path):
+        """Value that fails validation sends nothing and writes nothing to the DB."""
+        channel, _ = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._handle_config_update(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "config_update", "key": "MESSAGE_MAX_STEPS", "value": "-5"},
+        )
+
+        assert ws.sent == []
+
+    @pytest.mark.asyncio
+    async def test_config_request_dispatched_via_process_raw_message(self, tmp_path):
+        """config_request type is dispatched through _process_raw_message."""
+        channel, _ = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "config_request"}),
+            None,
+        )
+
+        assert len(ws.sent) == 1
+        assert ws.sent[0]["type"] == "config_response"
+
+    @pytest.mark.asyncio
+    async def test_config_update_dispatched_via_process_raw_message(self, tmp_path):
+        """config_update type is dispatched through _process_raw_message."""
+        channel, _ = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "config_update", "key": "MESSAGE_MAX_STEPS", "value": "10"}),
+            None,
+        )
+
+        assert len(ws.sent) == 1
+        assert ws.sent[0]["type"] == "config_response"
+
+
 class TestBrowserHeartbeat:
     """Heartbeat resets the scheduler idle timer without touching schedule intervals."""
 
