@@ -17,7 +17,7 @@ class Tool(ABC):
     description: str
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
 
-    _registry: ClassVar[dict[str, type["Tool"]]] = {}
+    _registry: ClassVar[dict[str, type[Tool]]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
