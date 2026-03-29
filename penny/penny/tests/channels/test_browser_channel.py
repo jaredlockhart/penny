@@ -495,6 +495,73 @@ class TestBrowserHeartbeat:
         await channel._process_raw_message(ws, '{"type": "heartbeat"}', None)  # ty: ignore[invalid-argument-type]
 
 
+class TestBrowserRegister:
+    """Register message populates _connections so tool requests can be routed."""
+
+    @pytest.mark.asyncio
+    async def test_register_populates_connections(self, tmp_path):
+        """After register, has_tool_connection is True and _connections has the device."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        assert not channel.has_tool_connection
+
+        ws = _MockWs()
+        label = await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "register", "sender": "firefox-macbook"}),
+            None,
+        )
+
+        assert label == "firefox-macbook"
+        assert channel.has_tool_connection
+        assert "firefox-macbook" in channel._connections
+
+    @pytest.mark.asyncio
+    async def test_register_creates_device_in_db(self, tmp_path):
+        """Register auto-registers the device in the database."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+        ws = _MockWs()
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "register", "sender": "firefox-macbook"}),
+            None,
+        )
+
+        device = db.devices.get_by_identifier("firefox-macbook")
+        assert device is not None
+        assert device.label == "firefox-macbook"
+
+    @pytest.mark.asyncio
+    async def test_tool_request_works_after_register_without_chat(self, tmp_path):
+        """Tool requests succeed after register even if no chat message was sent."""
+        import asyncio
+
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+        ws = _MockWs()
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "register", "sender": "firefox-macbook"}),
+            None,
+        )
+
+        # Simulate a tool response arriving after we send the request
+        async def fake_tool_response():
+            await asyncio.sleep(0.05)
+            # Find the pending request and resolve it
+            for _req_id, future in channel._pending_requests.items():
+                if not future.done():
+                    future.set_result("page content here")
+                    break
+
+        asyncio.create_task(fake_tool_response())
+        result = await channel.send_tool_request("browse_url", {"url": "https://example.com"})
+        assert result == "page content here"
+
+
 class TestBrowserThoughtReaction:
     """_handle_thought_reaction stores valence on thought and marks it notified."""
 
