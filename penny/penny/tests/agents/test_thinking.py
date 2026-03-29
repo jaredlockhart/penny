@@ -154,7 +154,7 @@ creative work, technical deep-dives, or discoveries. Avoid \
 troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
-- **fetch**: Look things up. Pass search queries and URLs together in queries.
+- **fetch**: Look things up. Pass up to 1 query and/or URL.
 
 Go DEEP, not wide:
 - Explore the topic using your tools, then pick the single most interesting result
@@ -293,7 +293,7 @@ creative work, technical deep-dives, or discoveries. Avoid \
 troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
-- **fetch**: Look things up. Pass search queries and URLs together in queries.
+- **fetch**: Look things up. Pass up to 1 query and/or URL.
 
 Go DEEP, not wide:
 - Explore the topic using your tools, then pick the single most interesting result
@@ -419,7 +419,7 @@ creative work, technical deep-dives, or discoveries. Avoid \
 troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
-- **fetch**: Look things up. Pass search queries and URLs together in queries.
+- **fetch**: Look things up. Pass up to 1 query and/or URL.
 
 Go DEEP, not wide:
 - Explore the topic using your tools, then pick the single most interesting result

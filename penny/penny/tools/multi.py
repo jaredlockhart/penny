@@ -35,22 +35,6 @@ class MultiTool(Tool):
     """
 
     name = "fetch"
-    description = "Look things up. Pass search queries and URLs together in queries."
-    parameters: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "reasoning": {
-                "type": "string",
-                "description": "Think out loud about what you're looking up and why.",
-            },
-            "queries": {
-                "type": "array",
-                "description": "Search queries and/or URLs to look up.",
-                "items": {"type": "string"},
-            },
-        },
-        "required": ["queries"],
-    }
 
     def __init__(
         self,
@@ -58,6 +42,25 @@ class MultiTool(Tool):
         news_tool: FetchNewsTool | None = None,
         max_calls: int = 5,
     ):
+        n = max_calls
+        items = "query and/or URL" if n == 1 else "queries and/or URLs"
+        self.description = f"Look things up. Pass up to {n} {items}."
+        self.parameters = {
+            "type": "object",
+            "properties": {
+                "reasoning": {
+                    "type": "string",
+                    "description": "Think out loud about what you're looking up and why.",
+                },
+                "queries": {
+                    "type": "array",
+                    "description": f"Search queries and/or URLs to look up (max {n})",
+                    "items": {"type": "string"},
+                    "maxItems": n,
+                },
+            },
+            "required": ["queries"],
+        }
         self._search_tool = search_tool
         self._news_tool = news_tool
         self._max_calls = max_calls
