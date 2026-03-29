@@ -193,6 +193,7 @@ class Agent:
         allow_repeat_tools: bool = False,
         search_tool: Tool | None = None,
         news_tool: Tool | None = None,
+        multi_tool: MultiTool | None = None,
     ):
         self.config = config
         self.system_prompt = system_prompt
@@ -206,6 +207,7 @@ class Agent:
 
         self._search_tool = search_tool
         self._news_tool = news_tool
+        self._multi_tool = multi_tool
         self._browser_tools_provider: Callable[[], list[Tool]] | None = None
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
@@ -598,7 +600,12 @@ class Agent:
         self._browser_tools_provider = provider
 
     def get_tools(self, user: str) -> list[Tool]:
-        """Build tool list for this agent. Override in subclasses for custom tools."""
+        """Build tool list for this agent.
+
+        Returns MultiTool if configured, otherwise individual tools.
+        """
+        if self._multi_tool is not None:
+            return [self._multi_tool]
         tools: list[Tool] = []
         if self._search_tool:
             tools.append(self._search_tool)
@@ -860,12 +867,10 @@ class Agent:
                 name = user_info.name
                 user_said_name = bool(re.search(rf"\b{re.escape(name)}\b", content, re.IGNORECASE))
                 redact = [] if user_said_name else [name]
-                if self._search_tool and isinstance(self._search_tool, SearchTool):
+                if self._multi_tool is not None:
+                    self._multi_tool.redact_terms = redact
+                elif self._search_tool and isinstance(self._search_tool, SearchTool):
                     self._search_tool.redact_terms = redact
-                # Also propagate into MultiTool's inner search tool if registered.
-                for tool in self._tool_registry.get_all() if self._tool_registry else []:
-                    if isinstance(tool, MultiTool):
-                        tool.redact_terms = redact
 
             logger.debug("Built profile context for %s", sender)
             return f"### User Profile\nThe user's name is {user_info.name}."

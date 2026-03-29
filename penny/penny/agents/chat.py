@@ -15,7 +15,6 @@ from penny.channels.base import PageContext
 from penny.constants import PennyConstants
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
-from penny.tools.base import Tool
 from penny.tools.multi import MultiTool
 
 logger = logging.getLogger(__name__)
@@ -42,16 +41,6 @@ class ChatAgent(Agent):
     """
 
     name: str = "chat"
-
-    def __init__(self, *, multi_tool: MultiTool | None = None, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._multi_tool = multi_tool
-
-    def get_tools(self, user: str) -> list[Tool]:
-        """Return MultiTool if configured, otherwise fall back to individual tools."""
-        if self._multi_tool is not None:
-            return [self._multi_tool]
-        return super().get_tools(user)
 
     def get_max_steps(self) -> int:
         """Read from config each call so /config changes take effect immediately."""
