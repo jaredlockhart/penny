@@ -10,6 +10,11 @@ from penny.channels.browser.channel import BrowserChannel
 from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.migrate import migrate
+from penny.tools.browse_url import BrowseUrlTool
+from penny.tools.fetch_news import FetchNewsTool
+from penny.tools.read_emails import ReadEmailsTool
+from penny.tools.search import SearchTool
+from penny.tools.search_emails import SearchEmailsTool
 
 
 def _make_db(tmp_path) -> Database:
@@ -189,7 +194,7 @@ class TestBrowseUrlTool:
         result = await tool.execute(url="https://example.com")
 
         assert result == "Pre-sanitized page content from channel."
-        request_fn.assert_called_once_with("browse_url", {"url": "https://example.com"})
+        request_fn.assert_called_once_with(BrowseUrlTool.name, {"url": "https://example.com"})
 
     @pytest.mark.asyncio
     async def test_returns_no_content_message_for_empty(self):
@@ -539,40 +544,46 @@ class TestFormatToolStatus:
     """_format_tool_status produces human-readable labels for each tool."""
 
     def test_search_single_query(self):
-        result = BrowserChannel._format_tool_status("search", {"queries": ["firefox memory"]})
+        result = BrowserChannel._format_tool_status(
+            SearchTool.name, {"queries": ["firefox memory"]}
+        )
         assert result == 'Searching for "firefox memory"'
 
     def test_search_two_queries(self):
-        result = BrowserChannel._format_tool_status("search", {"queries": ["q1", "q2"]})
+        result = BrowserChannel._format_tool_status(SearchTool.name, {"queries": ["q1", "q2"]})
         assert '"q1"' in result
         assert '"q2"' in result
 
     def test_search_only_first_two_queries_shown(self):
-        result = BrowserChannel._format_tool_status("search", {"queries": ["q1", "q2", "q3"]})
+        result = BrowserChannel._format_tool_status(
+            SearchTool.name, {"queries": ["q1", "q2", "q3"]}
+        )
         assert '"q3"' not in result
 
     def test_browse_url_with_url(self):
-        result = BrowserChannel._format_tool_status("browse_url", {"url": "https://example.com"})
+        result = BrowserChannel._format_tool_status(
+            BrowseUrlTool.name, {"url": "https://example.com"}
+        )
         assert result == "Reading https://example.com"
 
     def test_browse_url_without_url(self):
-        result = BrowserChannel._format_tool_status("browse_url", {})
+        result = BrowserChannel._format_tool_status(BrowseUrlTool.name, {})
         assert result == "Reading page"
 
     def test_fetch_news_with_topic(self):
-        result = BrowserChannel._format_tool_status("fetch_news", {"topic": "climate change"})
+        result = BrowserChannel._format_tool_status(FetchNewsTool.name, {"topic": "climate change"})
         assert result == "Fetching news about climate change"
 
     def test_fetch_news_default_topic(self):
-        result = BrowserChannel._format_tool_status("fetch_news", {})
+        result = BrowserChannel._format_tool_status(FetchNewsTool.name, {})
         assert result == "Fetching news about top news"
 
     def test_search_emails(self):
-        result = BrowserChannel._format_tool_status("search_emails", {"text": "invoice"})
+        result = BrowserChannel._format_tool_status(SearchEmailsTool.name, {"text": "invoice"})
         assert result == "Searching emails"
 
     def test_read_emails(self):
-        result = BrowserChannel._format_tool_status("read_emails", {"email_ids": ["123"]})
+        result = BrowserChannel._format_tool_status(ReadEmailsTool.name, {"email_ids": ["123"]})
         assert result == "Reading emails"
 
     def test_unknown_tool(self):
@@ -609,7 +620,7 @@ class TestMakeHandleKwargs:
 
         message = IncomingMessage(sender="firefox-macbook", content="hello")
         kwargs = channel._make_handle_kwargs(message)
-        await kwargs["on_tool_start"]("search", {"queries": ["test query"]})
+        await kwargs["on_tool_start"](SearchTool.name, {"queries": ["test query"]})
 
         channel._send_tool_status.assert_called_once()
         recipient, text = channel._send_tool_status.call_args.args
