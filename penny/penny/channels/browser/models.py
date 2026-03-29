@@ -17,6 +17,7 @@ BROWSER_MSG_TYPE_PREFERENCE_DELETE = "preference_delete"
 BROWSER_MSG_TYPE_HEARTBEAT = "heartbeat"
 BROWSER_MSG_TYPE_CONFIG_REQUEST = "config_request"
 BROWSER_MSG_TYPE_CONFIG_UPDATE = "config_update"
+BROWSER_MSG_TYPE_REGISTER = "register"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -92,3 +93,10 @@ class BrowserConfigUpdate(BaseModel):
     type: str
     key: str
     value: str
+
+
+class BrowserRegister(BaseModel):
+    """Addon registers its device label on connect."""
+
+    type: str
+    sender: str

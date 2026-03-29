@@ -25,6 +25,7 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_PREFERENCE_ADD,
     BROWSER_MSG_TYPE_PREFERENCE_DELETE,
     BROWSER_MSG_TYPE_PREFERENCES_REQUEST,
+    BROWSER_MSG_TYPE_REGISTER,
     BROWSER_MSG_TYPE_THOUGHT_REACTION,
     BROWSER_MSG_TYPE_THOUGHTS_REQUEST,
     BROWSER_MSG_TYPE_TOOL_RESPONSE,
@@ -40,6 +41,7 @@ from penny.channels.browser.models import (
     BrowserPreferenceAdd,
     BrowserPreferenceDelete,
     BrowserPreferencesRequest,
+    BrowserRegister,
     BrowserToolRequest,
     BrowserToolResponse,
 )
@@ -146,6 +148,9 @@ class BrowserChannel(MessageChannel):
 
         msg_type = data.get("type", "")
 
+        if msg_type == BROWSER_MSG_TYPE_REGISTER:
+            return self._handle_register(ws, data)
+
         if msg_type == BROWSER_MSG_TYPE_TOOL_RESPONSE:
             self._handle_tool_response(data)
             return device_label
@@ -191,6 +196,15 @@ class BrowserChannel(MessageChannel):
         """Reset the idle timer when the browser reports active browsing."""
         if self._scheduler:
             self._scheduler.notify_activity()
+
+    def _handle_register(self, ws: ServerConnection, data: dict) -> str:
+        """Register a browser connection by device label."""
+        msg = BrowserRegister(**data)
+        device_label = msg.sender
+        self._connections[device_label] = ws
+        self._auto_register_device(device_label)
+        logger.info("Browser registered: %s", device_label)
+        return device_label
 
     def _handle_tool_response(self, data: dict) -> None:
         """Resolve a pending tool request future."""

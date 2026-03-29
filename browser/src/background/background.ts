@@ -189,6 +189,7 @@ function connect(): void {
 
     if (data.type === WsIncomingType.Status && data.connected) {
       setConnectionState(CS.Connected);
+      sendRegister();
       requestThoughts();
       setInterval(requestThoughts, THOUGHTS_POLL_INTERVAL_MS);
     } else if (data.type === WsIncomingType.Message) {
@@ -241,6 +242,11 @@ function sendChatToServer(content: string, includePage: boolean): void {
     payload.page_context = currentPageContext;
   }
   ws.send(JSON.stringify(payload));
+}
+
+function sendRegister(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !deviceLabel) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.Register, sender: deviceLabel }));
 }
 
 function sendHeartbeat(): void {
