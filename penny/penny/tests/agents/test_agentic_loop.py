@@ -63,7 +63,7 @@ class TestReasoningStripped:
                 return mock_ollama._make_tool_call_response(
                     request,
                     "search",
-                    {"queries": ["weather"], "reasoning": "User asked about weather"},
+                    {"query": "weather", "reasoning": "User asked about weather"},
                 )
             return mock_ollama._make_text_response(request, "here's the weather!")
 
@@ -85,9 +85,7 @@ class TestReasoningStripped:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["weather"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "weather"})
             return mock_ollama._make_text_response(request, "done")
 
         mock_ollama.set_response_handler(handler)
@@ -110,9 +108,7 @@ class TestLastStepToolRemoval:
         def handler(request, count):
             if count == 1:
                 # Step 1: model makes a tool call
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             # Step 2 (final): model must produce text — verify no tools sent
             return mock_ollama._make_text_response(request, "final answer")
 
@@ -135,11 +131,9 @@ class TestLastStepToolRemoval:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             # Final step: model hallucinates a tool call despite no tools offered
-            return mock_ollama._make_tool_call_response(request, "search", {"queries": ["more"]})
+            return mock_ollama._make_tool_call_response(request, "search", {"query": "more"})
 
         mock_ollama.set_response_handler(handler)
 
@@ -158,11 +152,9 @@ class TestLastStepToolRemoval:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             # Final step: model returns text AND a hallucinated tool call
-            resp = mock_ollama._make_tool_call_response(request, "search", {"queries": ["more"]})
+            resp = mock_ollama._make_tool_call_response(request, "search", {"query": "more"})
             resp["message"]["content"] = "here is the answer"
             return resp
 
@@ -189,11 +181,11 @@ class TestRepeatCallGuard:
         def handler(request, count):
             if count == 1:
                 return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["first topic"]}
+                    request, "search", {"query": "first topic"}
                 )
             if count == 2:
                 return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["second topic"]}
+                    request, "search", {"query": "second topic"}
                 )
             return mock_ollama._make_text_response(request, "done")
 
@@ -203,8 +195,8 @@ class TestRepeatCallGuard:
         assert response.answer == "done"
         # Both searches should have executed
         assert len(response.tool_calls) == 2
-        assert response.tool_calls[0].arguments["queries"] == ["first topic"]
-        assert response.tool_calls[1].arguments["queries"] == ["second topic"]
+        assert response.tool_calls[0].arguments["query"] == "first topic"
+        assert response.tool_calls[1].arguments["query"] == "second topic"
 
         await agent.close()
 
@@ -216,7 +208,7 @@ class TestRepeatCallGuard:
         def handler(request, count):
             if count <= 2:
                 return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["same query"]}
+                    request, "search", {"query": "same query"}
                 )
             return mock_ollama._make_text_response(request, "done")
 
@@ -255,9 +247,7 @@ class TestEmptyContentFallback:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             return mock_ollama._make_text_response(request, "")
 
         mock_ollama.set_response_handler(handler)
@@ -342,11 +332,11 @@ class TestAfterStepHook:
         def handler(request, count):
             if count == 1:
                 return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["first"], "reasoning": "step 1 reason"}
+                    request, "search", {"query": "first", "reasoning": "step 1 reason"}
                 )
             if count == 2:
                 return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["second"], "reasoning": "step 2 reason"}
+                    request, "search", {"query": "second", "reasoning": "step 2 reason"}
                 )
             return mock_ollama._make_text_response(request, "done")
 
@@ -376,9 +366,7 @@ class TestEmptyContentRetry:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
                 # Thinking-only response: empty content, no tool calls
                 return mock_ollama._make_text_response(request, "")
@@ -444,9 +432,7 @@ class TestEmptyContentAfterToolCalls:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
                 return mock_ollama._make_text_response(request, "")
             return mock_ollama._make_text_response(request, "Here's what I found!")
@@ -488,9 +474,7 @@ class TestEmptyContentAfterToolCalls:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
                 return mock_ollama._make_text_response(
                     request, "<think>Let me reason about this...</think>"
@@ -515,19 +499,13 @@ class TestEmptyContentAfterToolCalls:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["first"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "first"})
             if count == 2:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["second"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "second"})
             if count == 3:
                 return mock_ollama._make_text_response(request, "")
             if count == 4:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["third"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "third"})
             if count == 5:
                 return mock_ollama._make_text_response(request, "")
             return mock_ollama._make_text_response(request, "synthesized answer")
@@ -546,9 +524,7 @@ class TestEmptyContentAfterToolCalls:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             return mock_ollama._make_text_response(request, "")
 
         mock_ollama.set_response_handler(handler)
@@ -569,9 +545,7 @@ class TestEmptyContentAfterToolCalls:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             messages = request["messages"]
             tool_messages = [m for m in messages if m.get("role") == "tool"]
             assert len(tool_messages) == 1
@@ -600,9 +574,7 @@ class TestRefusalRetry:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
                 return mock_ollama._make_text_response(
                     request, "I'm sorry, but I can't help with that."
@@ -730,9 +702,7 @@ class TestMalformedUrlCleaning:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             return mock_ollama._make_text_response(
                 request, "Found something at https://bad.example/path-"
             )
@@ -768,7 +738,7 @@ class TestAllToolsFailedAbort:
         def handler(request, count):
             # Model keeps trying tool calls — all fail
             return mock_ollama._make_tool_call_response(
-                request, "search", {"queries": [f"attempt {count}"]}
+                request, "search", {"query": f"attempt {count}"}
             )
 
         mock_ollama.set_response_handler(handler)
@@ -797,7 +767,7 @@ class TestAllToolsFailedAbort:
         def handler(request, count):
             if count <= 2:
                 return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": [f"q{count}"]}
+                    request, "search", {"query": f"q{count}"}
                 )
             return mock_ollama._make_text_response(request, "here are results")
 
@@ -827,7 +797,7 @@ class TestOnToolStartCallback:
         def handler(request, count):
             if count <= 2:
                 return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": [f"query {count}"]}
+                    request, "search", {"query": f"query {count}"}
                 )
             return mock_ollama._make_text_response(request, "done")
 
@@ -837,8 +807,8 @@ class TestOnToolStartCallback:
         response = await agent.run("test", max_steps=max_steps, on_tool_start=on_tool_start)
         assert response.answer == "done"
         assert len(captured) == 2
-        assert captured[0] == ("search", {"queries": ["query 1"]})
-        assert captured[1] == ("search", {"queries": ["query 2"]})
+        assert captured[0] == ("search", {"query": "query 1"})
+        assert captured[1] == ("search", {"query": "query 2"})
 
         await agent.close()
 
@@ -855,7 +825,7 @@ class TestOnToolStartCallback:
         def handler(request, count):
             if count <= 2:
                 return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["same query"]}
+                    request, "search", {"query": "same query"}
                 )
             return mock_ollama._make_text_response(request, "done")
 
@@ -879,9 +849,7 @@ class TestOnToolStartCallback:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"queries": ["test"]}
-                )
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
             return mock_ollama._make_text_response(request, "done")
 
         mock_ollama.set_response_handler(handler)

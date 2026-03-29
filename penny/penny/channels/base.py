@@ -315,8 +315,8 @@ class MessageChannel(ABC):
             if tc.tool != "search":
                 continue
             args = SearchArgs.model_validate(tc.arguments)
-            if args.queries:
-                return args.queries[0]
+            if args.query:
+                return args.query
         return None
 
     async def _resolve_image(

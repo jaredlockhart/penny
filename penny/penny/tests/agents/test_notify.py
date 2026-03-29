@@ -185,8 +185,7 @@ You are reaching out to a friend proactively — sharing something \
 interesting you've been thinking about or found in the news.
 
 You have tools available:
-- **search**: Search the web for current information. \
-Accepts up to 5 queries per call.
+- **search**: Search the web for current information.
 
 If your context includes 'Your Latest Thought', share it with the \
 user. Start with a casual greeting, then tell them the whole thing \
@@ -507,7 +506,7 @@ def test_extract_search_query_from_search_tool():
     from penny.agents.models import ToolCallRecord
 
     records = [
-        ToolCallRecord(tool="search", arguments={"queries": ["latest space news"]}),
+        ToolCallRecord(tool="search", arguments={"query": "latest space news"}),
     ]
     result = NotifyAgent._extract_search_query(records)
     assert result == "latest space news"

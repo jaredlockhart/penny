@@ -544,21 +544,12 @@ class TestFormatToolStatus:
     """_format_tool_status produces human-readable labels for each tool."""
 
     def test_search_single_query(self):
-        result = BrowserChannel._format_tool_status(
-            SearchTool.name, {"queries": ["firefox memory"]}
-        )
+        result = BrowserChannel._format_tool_status(SearchTool.name, {"query": "firefox memory"})
         assert result == 'Searching for "firefox memory"'
 
-    def test_search_two_queries(self):
-        result = BrowserChannel._format_tool_status(SearchTool.name, {"queries": ["q1", "q2"]})
-        assert '"q1"' in result
-        assert '"q2"' in result
-
-    def test_search_only_first_two_queries_shown(self):
-        result = BrowserChannel._format_tool_status(
-            SearchTool.name, {"queries": ["q1", "q2", "q3"]}
-        )
-        assert '"q3"' not in result
+    def test_search_invalid_args(self):
+        result = BrowserChannel._format_tool_status(SearchTool.name, {})
+        assert result == "Searching"
 
     def test_browse_url_with_url(self):
         result = BrowserChannel._format_tool_status(
@@ -620,7 +611,7 @@ class TestMakeHandleKwargs:
 
         message = IncomingMessage(sender="firefox-macbook", content="hello")
         kwargs = channel._make_handle_kwargs(message)
-        await kwargs["on_tool_start"](SearchTool.name, {"queries": ["test query"]})
+        await kwargs["on_tool_start"](SearchTool.name, {"query": "test query"})
 
         channel._send_tool_status.assert_called_once()
         recipient, text = channel._send_tool_status.call_args.args

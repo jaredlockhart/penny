@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import urllib.parse as _urlparse
@@ -619,13 +620,16 @@ class Agent:
         called_tools: set[tuple[str, ...]],
         on_tool_start: Callable[[str, dict], Awaitable[None]] | None = None,
     ) -> _StepResult:
-        """Process all tool calls from a model response. Returns results to append."""
+        """Process all tool calls from a model response, executing valid ones in parallel."""
         logger.info("Model requested %d tool call(s)", len(response.message.tool_calls or []))
         messages: list[dict] = [response.message.to_input_message()]
         records: list[ToolCallRecord] = []
         source_urls: list[str] = []
         attachments: list[str] = []
 
+        # Dedup check and on_tool_start are sequential: dedup requires ordered mutation of
+        # called_tools, and on_tool_start fires UI status updates before execution begins.
+        pending: list[tuple[str, dict, str | None]] = []
         for ollama_tool_call in response.message.tool_calls or []:
             tool_name = ollama_tool_call.function.name
             arguments = ollama_tool_call.function.arguments
@@ -648,9 +652,16 @@ class Agent:
                     await on_tool_start(tool_name, dict(arguments))
                 except Exception:
                     logger.debug("on_tool_start callback failed for %s", tool_name)
-            result_str, record, urls, image = await self._execute_single_tool(
-                tool_name, arguments, reasoning
-            )
+            pending.append((tool_name, arguments, reasoning))
+
+        # Execute all valid tool calls in parallel.
+        results = await asyncio.gather(
+            *[self._execute_single_tool(name, args, reasoning) for name, args, reasoning in pending]
+        )
+
+        for (tool_name, _, _), (result_str, record, urls, image) in zip(
+            pending, results, strict=True
+        ):
             records.append(record)
             source_urls.extend(urls)
             if image:

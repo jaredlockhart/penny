@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class SearchArgs(BaseModel):
     """Validated arguments for the search tool."""
 
-    queries: list[str]
+    query: str
 
 
 class SearchResult(BaseModel):
