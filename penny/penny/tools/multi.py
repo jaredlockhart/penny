@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import urllib.parse
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -98,9 +99,13 @@ class MultiTool(Tool):
 
         cap = self._max_calls
         tasks: list[tuple[str, str, Any]] = []
+        has_browser = bool(self._browse_url_provider and self._browse_url_provider())
         for q in args.queries[:cap]:
             if _URL_PATTERN.match(q):
                 tasks.append(("browse_url", q, self._dispatch_browse(q)))
+            elif has_browser:
+                kagi_url = f"https://kagi.com/search?q={urllib.parse.quote(q)}"
+                tasks.append(("search", q, self._dispatch_browse(kagi_url)))
             else:
                 tasks.append(("search", q, self._dispatch_search(q)))
 

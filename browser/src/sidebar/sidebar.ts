@@ -52,7 +52,6 @@ type SettingsTab = "likes" | "dislikes" | "domains" | "config";
 let activeView: View = "register";
 let activeSettingsTab: SettingsTab = "likes";
 let pendingConfigSave = false;
-let lastPageInfo = { title: "", url: "", favicon: "", image: "", available: false };
 
 // --- Registration ---
 
@@ -428,8 +427,6 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
 function updatePageContextBar(
   title: string, url: string, favicon: string, image: string, available: boolean,
 ): void {
-  lastPageInfo = { title, url, favicon, image, available };
-
   const bar = document.getElementById("page-context-bar")!;
   const titleEl = document.getElementById("page-context-title")!;
   const faviconEl = document.getElementById("page-context-favicon") as HTMLImageElement;

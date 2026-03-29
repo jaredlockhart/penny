@@ -536,6 +536,74 @@ class TestParallelToolCalls:
         assert response.answer == "done"
         await agent.close()
 
+    @pytest.mark.asyncio
+    async def test_text_queries_route_to_kagi_when_browser_connected(self, test_db, mock_ollama):
+        """When a browser is connected, text queries go to Kagi via browse_url."""
+        from penny.tools.multi import MultiTool
+
+        browse_results: dict[str, str] = {}
+
+        async def fake_execute(**kw):
+            browse_results[kw["url"]] = f"Results for {kw['url']}"
+            return browse_results[kw["url"]]
+
+        browse_mock = AsyncMock(side_effect=fake_execute)
+        browse_tool = type("B", (), {"execute": browse_mock})()
+
+        multi = MultiTool(search_tool=None, news_tool=None, max_calls=5)  # type: ignore[arg-type]
+        multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]
+
+        await multi.execute(queries=["best pizza toronto"])
+
+        assert len(browse_results) == 1
+        kagi_url = list(browse_results.keys())[0]
+        assert kagi_url.startswith("https://kagi.com/search?q=")
+        assert "best%20pizza%20toronto" in kagi_url
+
+    @pytest.mark.asyncio
+    async def test_text_queries_fall_back_to_search_without_browser(self, test_db, mock_ollama):
+        """Without a browser, text queries go to the search tool."""
+        from penny.tools.multi import MultiTool
+
+        search_queries: list[str] = []
+
+        async def fake_execute(**kw):
+            search_queries.append(kw["query"])
+            return SearchResult(text="search results")
+
+        search_mock = AsyncMock(side_effect=fake_execute)
+        search_tool = type("S", (), {"execute": search_mock})()  # ty: ignore[invalid-argument-type]
+
+        multi = MultiTool(search_tool=search_tool, news_tool=None, max_calls=5)  # ty: ignore[invalid-argument-type]
+
+        await multi.execute(queries=["best pizza toronto"])
+
+        assert len(search_queries) == 1
+        assert search_queries[0] == "best pizza toronto"
+
+    @pytest.mark.asyncio
+    async def test_urls_always_route_to_browse(self, test_db, mock_ollama):
+        """URLs always go to browse_url regardless of browser connection."""
+        from penny.tools.multi import MultiTool
+
+        browse_urls: list[str] = []
+
+        async def fake_execute(**kw):
+            browse_urls.append(kw["url"])
+            return f"Page content from {kw['url']}"
+
+        browse_mock = AsyncMock(side_effect=fake_execute)
+        browse_tool = type("B", (), {"execute": browse_mock})()
+
+        multi = MultiTool(search_tool=None, news_tool=None, max_calls=5)  # type: ignore[arg-type]
+        multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]
+
+        await multi.execute(queries=["https://example.com/page", "https://other.com"])
+
+        assert len(browse_urls) == 2
+        assert "https://example.com/page" in browse_urls
+        assert "https://other.com" in browse_urls
+
 
 class TestEmptyContentAfterToolCalls:
     """Tests for combined empty-content fixes: synthesis prompt, think tag stripping,
