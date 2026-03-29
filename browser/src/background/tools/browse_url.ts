@@ -4,6 +4,8 @@
 
 import { TAB_LOAD_TIMEOUT_MS } from "../../protocol.js";
 
+const BROWSE_MAX_RETRIES = 3;
+
 interface PageData {
   title: string;
   url: string;
@@ -11,20 +13,38 @@ interface PageData {
 }
 
 export async function browseUrl(url: string): Promise<string> {
-  const tab = await openHiddenTab(url);
-  try {
-    await waitForTabLoad(tab.id!);
-    const pageData = await extractPageContent(tab.id!);
-    return formatResult(pageData);
-  } finally {
-    await closeTab(tab.id!);
+  for (let attempt = 1; attempt <= BROWSE_MAX_RETRIES; attempt++) {
+    console.log(`[browse_url] attempt ${attempt}/${BROWSE_MAX_RETRIES}: ${url}`);
+    const tab = await openHiddenTab(url);
+    try {
+      await waitForTabLoad(tab.id!);
+      console.log(`[browse_url] page complete, extracting content`);
+      const pageData = await extractPageContent(tab.id!);
+      const textLen = pageData.text.trim().length;
+      if (textLen > 0) {
+        console.log(`[browse_url] extracted ${textLen} chars`);
+        return formatResult(pageData);
+      }
+      console.warn(`[browse_url] empty content on attempt ${attempt}`);
+    } catch (err) {
+      console.error(`[browse_url] attempt ${attempt} failed:`, err);
+    } finally {
+      await closeTab(tab.id!);
+    }
   }
+  console.error(`[browse_url] gave up after ${BROWSE_MAX_RETRIES} attempts: ${url}`);
+  return `No content extracted from ${url} after ${BROWSE_MAX_RETRIES} attempts`;
 }
 
 async function openHiddenTab(url: string): Promise<browser.tabs.Tab> {
   const tab = await browser.tabs.create({ url, active: false });
   if (!tab.id) {
     throw new Error("Failed to create tab");
+  }
+  try {
+    await browser.tabs.hide(tab.id);
+  } catch {
+    // tabHide may not be available — tab stays visible but still works
   }
   return tab;
 }

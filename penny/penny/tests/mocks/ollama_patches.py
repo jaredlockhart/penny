@@ -58,7 +58,7 @@ class MockOllamaAsyncClient:
 
         def handler(request: dict, count: int) -> dict:
             if count == 1:
-                return self._make_tool_call_response(request, "search", {"queries": [search_query]})
+                return self._make_tool_call_response(request, "fetch", {"queries": [search_query]})
             return self._make_text_response(request, final_response)
 
         self._response_handler = handler
@@ -122,7 +122,13 @@ class MockOllamaAsyncClient:
     def _make_tool_call_response(
         self, request: dict, tool_name: str, arguments: dict[str, Any]
     ) -> dict:
-        """Create a response with a tool call."""
+        """Create a response with a single tool call."""
+        return self._make_parallel_tool_calls_response(request, [(tool_name, arguments)])
+
+    def _make_parallel_tool_calls_response(
+        self, request: dict, tool_calls: list[tuple[str, dict[str, Any]]]
+    ) -> dict:
+        """Create a response with multiple tool calls in a single turn."""
         return {
             "model": request.get("model", "test-model"),
             "created_at": datetime.now(UTC).isoformat(),
@@ -130,12 +136,7 @@ class MockOllamaAsyncClient:
                 "role": "assistant",
                 "content": "",
                 "tool_calls": [
-                    {
-                        "function": {
-                            "name": tool_name,
-                            "arguments": arguments,
-                        }
-                    }
+                    {"function": {"name": name, "arguments": args}} for name, args in tool_calls
                 ],
             },
             "done": True,

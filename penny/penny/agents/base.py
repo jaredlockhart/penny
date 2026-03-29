@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import urllib.parse as _urlparse
@@ -18,6 +19,7 @@ from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import SearchTool, Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.models import SearchResult
+from penny.tools.multi import MultiTool
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +193,7 @@ class Agent:
         allow_repeat_tools: bool = False,
         search_tool: Tool | None = None,
         news_tool: Tool | None = None,
+        multi_tool: MultiTool | None = None,
     ):
         self.config = config
         self.system_prompt = system_prompt
@@ -204,6 +207,7 @@ class Agent:
 
         self._search_tool = search_tool
         self._news_tool = news_tool
+        self._multi_tool = multi_tool
         self._browser_tools_provider: Callable[[], list[Tool]] | None = None
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
@@ -302,7 +306,7 @@ class Agent:
         max_steps: int,
         history: list[tuple[str, str]] | None = None,
         system_prompt: str | None = None,
-        on_tool_start: Callable[[str, dict], Awaitable[None]] | None = None,
+        on_tool_start: Callable[[list[tuple[str, dict]]], Awaitable[None]] | None = None,
     ) -> ControllerResponse:
         """Run the agentic loop — prompt in, response out."""
         self._tool_result_text = []
@@ -323,7 +327,7 @@ class Agent:
         messages: list[dict],
         tools: list[dict],
         steps: int,
-        on_tool_start: Callable[[str, dict], Awaitable[None]] | None = None,
+        on_tool_start: Callable[[list[tuple[str, dict]]], Awaitable[None]] | None = None,
     ) -> ControllerResponse:
         """Execute the step loop: call model, process tool calls, or return final answer."""
         attachments: list[str] = []
@@ -596,7 +600,12 @@ class Agent:
         self._browser_tools_provider = provider
 
     def get_tools(self, user: str) -> list[Tool]:
-        """Build tool list for this agent. Override in subclasses for custom tools."""
+        """Build tool list for this agent.
+
+        Returns MultiTool if configured, otherwise individual tools.
+        """
+        if self._multi_tool is not None:
+            return [self._multi_tool]
         tools: list[Tool] = []
         if self._search_tool:
             tools.append(self._search_tool)
@@ -617,16 +626,20 @@ class Agent:
         self,
         response,
         called_tools: set[tuple[str, ...]],
-        on_tool_start: Callable[[str, dict], Awaitable[None]] | None = None,
+        on_tool_start: Callable[[list[tuple[str, dict]]], Awaitable[None]] | None = None,
     ) -> _StepResult:
-        """Process all tool calls from a model response. Returns results to append."""
+        """Process all tool calls from a model response, executing valid ones in parallel."""
         logger.info("Model requested %d tool call(s)", len(response.message.tool_calls or []))
         messages: list[dict] = [response.message.to_input_message()]
         records: list[ToolCallRecord] = []
         source_urls: list[str] = []
         attachments: list[str] = []
 
-        for ollama_tool_call in response.message.tool_calls or []:
+        # Dedup check and on_tool_start are sequential: dedup requires ordered mutation of
+        # called_tools, and on_tool_start fires UI status updates before execution begins.
+        max_calls = int(self.config.runtime.MESSAGE_MAX_TOOL_CALLS) if self.config else 5
+        pending: list[tuple[str, dict, str | None]] = []
+        for ollama_tool_call in (response.message.tool_calls or [])[:max_calls]:
             tool_name = ollama_tool_call.function.name
             arguments = ollama_tool_call.function.arguments
 
@@ -643,14 +656,24 @@ class Agent:
                 continue
 
             called_tools.add(call_key)
-            if on_tool_start:
-                try:
-                    await on_tool_start(tool_name, dict(arguments))
-                except Exception:
-                    logger.debug("on_tool_start callback failed for %s", tool_name)
-            result_str, record, urls, image = await self._execute_single_tool(
-                tool_name, arguments, reasoning
-            )
+            pending.append((tool_name, arguments, reasoning))
+
+        # Fire on_tool_start once with all pending tools so the UI can show
+        # a combined status (e.g. "Searching A + Searching B") for parallel calls.
+        if on_tool_start and pending:
+            try:
+                await on_tool_start([(name, dict(args)) for name, args, _ in pending])
+            except Exception:
+                logger.debug("on_tool_start callback failed")
+
+        # Execute all valid tool calls in parallel.
+        results = await asyncio.gather(
+            *[self._execute_single_tool(name, args, reasoning) for name, args, reasoning in pending]
+        )
+
+        for (tool_name, _, _), (result_str, record, urls, image) in zip(
+            pending, results, strict=True
+        ):
             records.append(record)
             source_urls.extend(urls)
             if image:
@@ -820,8 +843,9 @@ class Agent:
     def _instructions_section(self, override: str | None = None) -> str:
         """## Instructions — agent-specific prompt with tool descriptions."""
         prompt = override or self.system_prompt
-        if "{tools}" in prompt:
-            prompt = prompt.format(tools=self._build_tool_summary())
+        if "{tools}" in prompt or "{max_tool_calls}" in prompt:
+            max_tool_calls = int(self.config.runtime.MESSAGE_MAX_TOOL_CALLS) if self.config else 5
+            prompt = prompt.format(tools=self._build_tool_summary(), max_tool_calls=max_tool_calls)
         return f"## Instructions\n{prompt}"
 
     @staticmethod
@@ -842,8 +866,11 @@ class Agent:
             if content is not None:
                 name = user_info.name
                 user_said_name = bool(re.search(rf"\b{re.escape(name)}\b", content, re.IGNORECASE))
-                if self._search_tool and isinstance(self._search_tool, SearchTool):
-                    self._search_tool.redact_terms = [] if user_said_name else [name]
+                redact = [] if user_said_name else [name]
+                if self._multi_tool is not None:
+                    self._multi_tool.redact_terms = redact
+                elif self._search_tool and isinstance(self._search_tool, SearchTool):
+                    self._search_tool.redact_terms = redact
 
             logger.debug("Built profile context for %s", sender)
             return f"### User Profile\nThe user's name is {user_info.name}."
