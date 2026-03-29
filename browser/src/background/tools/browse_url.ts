@@ -1,10 +1,15 @@
 /**
  * browse_url tool — opens a URL in a hidden tab, extracts visible text, closes the tab.
+ *
+ * After the page reports "complete", polls extraction up to EXTRACT_MAX_RETRIES
+ * times to handle JS-rendered content (e.g. Kagi search results, SPAs).
  */
 
 import { TAB_LOAD_TIMEOUT_MS } from "../../protocol.js";
 
-const BROWSE_MAX_RETRIES = 3;
+const EXTRACT_MAX_RETRIES = 10;
+const EXTRACT_POLL_MS = 1000;
+const MIN_CONTENT_LENGTH = 200;
 
 interface PageData {
   title: string;
@@ -13,27 +18,39 @@ interface PageData {
 }
 
 export async function browseUrl(url: string): Promise<string> {
-  for (let attempt = 1; attempt <= BROWSE_MAX_RETRIES; attempt++) {
-    console.log(`[browse_url] attempt ${attempt}/${BROWSE_MAX_RETRIES}: ${url}`);
-    const tab = await openHiddenTab(url);
-    try {
-      await waitForTabLoad(tab.id!);
-      console.log(`[browse_url] page complete, extracting content`);
-      const pageData = await extractPageContent(tab.id!);
-      const textLen = pageData.text.trim().length;
-      if (textLen > 0) {
-        console.log(`[browse_url] extracted ${textLen} chars`);
-        return formatResult(pageData);
-      }
-      console.warn(`[browse_url] empty content on attempt ${attempt}`);
-    } catch (err) {
-      console.error(`[browse_url] attempt ${attempt} failed:`, err);
-    } finally {
-      await closeTab(tab.id!);
-    }
+  console.log(`[browse_url] opening: ${url}`);
+  const tab = await openHiddenTab(url);
+  try {
+    await waitForTabLoad(tab.id!);
+    const pageData = await pollForContent(tab.id!);
+    return formatResult(pageData);
+  } catch (err) {
+    console.error(`[browse_url] failed:`, err);
+    return `Failed to read ${url}: ${err}`;
+  } finally {
+    await closeTab(tab.id!);
   }
-  console.error(`[browse_url] gave up after ${BROWSE_MAX_RETRIES} attempts: ${url}`);
-  return `No content extracted from ${url} after ${BROWSE_MAX_RETRIES} attempts`;
+}
+
+async function pollForContent(tabId: number): Promise<PageData> {
+  for (let attempt = 1; attempt <= EXTRACT_MAX_RETRIES; attempt++) {
+    const data = await extractPageContent(tabId);
+    const textLen = data.text.trim().length;
+    if (textLen >= MIN_CONTENT_LENGTH) {
+      console.log(`[browse_url] extracted ${textLen} chars (attempt ${attempt})`);
+      return data;
+    }
+    console.log(
+      `[browse_url] only ${textLen} chars, waiting for JS render (attempt ${attempt}/${EXTRACT_MAX_RETRIES})`,
+    );
+    await new Promise((r) => setTimeout(r, EXTRACT_POLL_MS));
+  }
+  // Return whatever we got — might be enough for simple pages
+  const final = await extractPageContent(tabId);
+  console.warn(
+    `[browse_url] settled on ${final.text.trim().length} chars after ${EXTRACT_MAX_RETRIES} retries`,
+  );
+  return final;
 }
 
 async function openHiddenTab(url: string): Promise<browser.tabs.Tab> {

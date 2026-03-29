@@ -121,6 +121,8 @@ async function extractFromActiveTab(): Promise<void> {
   }
 }
 
+
+
 function broadcastPageInfo(
   title: string, url: string, favicon: string, image: string, available: boolean,
 ): void {

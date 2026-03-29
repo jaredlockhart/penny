@@ -5,6 +5,7 @@
  */
 
 import { Defuddle } from "defuddle";
+import { extractKagiResults } from "./extractors/kagi";
 
 const MIN_CONTENT_LENGTH = 200;
 const MAX_CHARS = 50_000;
@@ -19,7 +20,7 @@ interface PageData {
 function extractWithDefuddle(): string | null {
   try {
     const clone = document.cloneNode(true) as Document;
-    const result = new Defuddle(clone).parse();
+    const result = new Defuddle(clone, { url: location.href }).parse();
     const text = result.content
       ? stripHtmlTags(result.content)
       : null;
@@ -109,6 +110,7 @@ function extractMetaImage(): string {
 
 function extract(): PageData {
   const text =
+    extractKagiResults() ??
     extractWithDefuddle() ??
     extractWithHeuristics() ??
     extractAllVisibleText();
