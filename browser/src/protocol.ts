@@ -27,7 +27,8 @@ export type WsOutgoingType =
   | "preference_delete"
   | "heartbeat"
   | "config_request"
-  | "config_update";
+  | "config_update"
+  | "register";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -39,6 +40,7 @@ export const WsOutgoingType = {
   Heartbeat: "heartbeat",
   ConfigRequest: "config_request",
   ConfigUpdate: "config_update",
+  Register: "register",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
