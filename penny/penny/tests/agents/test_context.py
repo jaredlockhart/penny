@@ -163,7 +163,11 @@ async def test_conversation_builds_user_assistant_turns(
 async def test_conversation_merges_consecutive_same_role(
     signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
 ):
-    """Consecutive messages from the same role are merged with newlines."""
+    """Consecutive messages from the same role are merged with newlines.
+
+    Proactive outgoing messages (no parent_id) are excluded from context —
+    only direct replies (parent_id set) are included alongside user messages.
+    """
     config = make_config()
 
     async with running_penny(config) as penny:
@@ -177,17 +181,29 @@ async def test_conversation_merges_consecutive_same_role(
             TEST_SENDER,
             "second message",
         )
+        # Direct reply (parent_id set) — included in context
         penny.db.messages.log_message(
             PennyConstants.MessageDirection.OUTGOING,
             penny.config.signal_number,
             "response",
+            parent_id=2,
+            recipient=TEST_SENDER,
+        )
+        # Proactive notification (no parent_id) — excluded from context
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            penny.config.signal_number,
+            "proactive thought",
             recipient=TEST_SENDER,
         )
 
         conversation = penny.chat_agent._build_conversation(TEST_SENDER)
-        assert len(conversation) == 2  # Merged user messages + one assistant
+        contents = " ".join(c for _, c in conversation)
+        assert len(conversation) == 2  # Merged user messages + one assistant reply
         assert "first message" in conversation[0][1]
         assert "second message" in conversation[0][1]
+        assert "response" in contents
+        assert "proactive thought" not in contents
 
 
 @pytest.mark.asyncio
