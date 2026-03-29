@@ -1,18 +1,20 @@
 """MultiTool — dispatches heterogeneous parallel lookups via a single tool call.
 
 Works around single-tool-call-per-turn limitations in models like gpt-oss:20b.
-The model packs all lookups into one tools call; the server fans them out in parallel.
+The model packs everything into a single queries array; the server detects URLs
+and routes them to browse_url while plain text goes to search.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from penny.tools.base import Tool
-from penny.tools.models import InnerCall, MultiToolArgs, SearchResult
+from penny.tools.models import MultiToolArgs, SearchResult
 
 if TYPE_CHECKING:
     from penny.tools.browse_url import BrowseUrlTool
@@ -21,17 +23,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_URL_PATTERN = re.compile(r"^https?://")
+
 
 class MultiTool(Tool):
-    """Single tool call that fans out to search, browse_url, and fetch_news in parallel.
+    """Single tool call that fans out queries to search or browse_url.
 
-    The model emits one tool call with a tool_calls array of single-key objects:
-      [{"search": "query"}, {"browse_url": "https://..."}, {"fetch_news": "topic"}]
-    Each item is dispatched to its sub-tool concurrently.
+    The model emits one tool call with a queries array:
+      {"queries": ["topic", "https://example.com", "another topic"]}
+    URLs are detected and routed to browse_url; plain text goes to search.
     """
 
-    name = "tools"
-    description = "Run search, browse_url, and fetch_news lookups in parallel via a calls array."
+    name = "fetch"
+    description = "Look things up. Pass search queries and URLs together in queries."
     parameters: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -39,34 +43,24 @@ class MultiTool(Tool):
                 "type": "string",
                 "description": "Think out loud about what you're looking up and why.",
             },
-            "calls": {
+            "queries": {
                 "type": "array",
-                "description": "Up to 5 lookups to run in parallel.",
-                "items": {
-                    "type": "object",
-                    "description": (
-                        '{"search": "query"} or '
-                        '{"browse_url": "https://..."} or '
-                        '{"fetch_news": "topic"}'
-                    ),
-                    "properties": {
-                        "search": {"type": "string"},
-                        "browse_url": {"type": "string"},
-                        "fetch_news": {"type": "string"},
-                    },
-                },
+                "description": "Search queries and/or URLs to look up.",
+                "items": {"type": "string"},
             },
         },
-        "required": ["calls"],
+        "required": ["queries"],
     }
 
     def __init__(
         self,
         search_tool: SearchTool | None = None,
         news_tool: FetchNewsTool | None = None,
+        max_calls: int = 5,
     ):
         self._search_tool = search_tool
         self._news_tool = news_tool
+        self._max_calls = max_calls
         self._browse_url_provider: Callable[[], BrowseUrlTool | None] | None = None
 
     def set_browse_url_provider(self, provider: Callable[[], BrowseUrlTool | None]) -> None:
@@ -85,32 +79,34 @@ class MultiTool(Tool):
 
     @classmethod
     def to_action_str(cls, arguments: dict) -> str:
-        """Format inner calls into a readable status string."""
-        calls = arguments.get("calls", [])
-        parts = []
-        for c in calls:
-            if "search" in c:
-                parts.append(f'Searching "{c["search"]}"')
-            elif "browse_url" in c:
-                url = c["browse_url"].replace("https://", "").replace("http://", "")
-                parts.append(f"Reading {url[:50]}")
-            elif "fetch_news" in c:
-                parts.append(f"News: {c['fetch_news']}")
-        return " + ".join(parts) if parts else "Looking up..."
+        """Format lookups into a readable status string."""
+        parts: list[str] = []
+        for q in arguments.get("queries", []):
+            if _URL_PATTERN.match(q):
+                short = q.replace("https://", "").replace("http://", "")
+                parts.append(f"Reading {short[:50]}")
+            else:
+                parts.append(f'Searching "{q}"')
+        return "<br>".join(parts) if parts else "Looking up..."
 
     async def execute(self, **kwargs: Any) -> SearchResult:
-        """Dispatch all inner calls in parallel and return labeled combined results."""
+        """Dispatch all lookups in parallel — URLs to browse, text to search."""
         args = MultiToolArgs(**kwargs)
-        calls = args.calls[:5]  # enforce config cap
 
-        results = await asyncio.gather(
-            *[self._dispatch(call) for call in calls], return_exceptions=True
-        )
+        cap = self._max_calls
+        tasks: list[tuple[str, str, Any]] = []
+        for q in args.queries[:cap]:
+            if _URL_PATTERN.match(q):
+                tasks.append(("browse_url", q, self._dispatch_browse(q)))
+            else:
+                tasks.append(("search", q, self._dispatch_search(q)))
+
+        results = await asyncio.gather(*[coro for _, _, coro in tasks], return_exceptions=True)
 
         sections: list[str] = []
         all_urls: list[str] = []
-        for call, result in zip(calls, results, strict=True):
-            label = f"{call.tool_name}: {call.value}"
+        for (kind, value, _), result in zip(tasks, results, strict=True):
+            label = f"{kind}: {value}"
             if isinstance(result, Exception):
                 logger.warning("MultiTool sub-call failed (%s): %s", label, result)
                 sections.append(f"## {label}\nError: {result}")
@@ -122,19 +118,15 @@ class MultiTool(Tool):
 
         return SearchResult(text="\n\n---\n\n".join(sections), urls=all_urls)
 
-    async def _dispatch(self, call: InnerCall) -> Any:
-        """Route one inner call to the right sub-tool."""
-        if call.search is not None:
-            if not self._search_tool:
-                return "Search not available."
-            return await self._search_tool.execute(query=call.search)
-        if call.browse_url is not None:
-            browse_tool = self._browse_url_provider() if self._browse_url_provider else None
-            if not browse_tool:
-                return f"No browser connected — cannot read {call.browse_url}."
-            return await browse_tool.execute(url=call.browse_url)
-        if call.fetch_news is not None:
-            if not self._news_tool:
-                return "News not available."
-            return await self._news_tool.execute(topic=call.fetch_news)
-        return "No tool specified."
+    async def _dispatch_search(self, query: str) -> Any:
+        """Run a single search query."""
+        if not self._search_tool:
+            return "Search not available."
+        return await self._search_tool.execute(query=query)
+
+    async def _dispatch_browse(self, url: str) -> Any:
+        """Read a single URL."""
+        browse_tool = self._browse_url_provider() if self._browse_url_provider else None
+        if not browse_tool:
+            return f"No browser connected — cannot read {url}."
+        return await browse_tool.execute(url=url)

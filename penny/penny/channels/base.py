@@ -312,15 +312,14 @@ class MessageChannel(ABC):
     def _extract_image_prompt(response) -> str | None:
         """Extract a short image search query from the agent's tool calls."""
         for tc in response.tool_calls or []:
-            if tc.tool == "search":
+            if tc.tool == "fetch":
+                for q in tc.arguments.get("queries", []):
+                    if not q.startswith("http"):
+                        return q
+            elif tc.tool == "search":
                 args = SearchArgs.model_validate(tc.arguments)
                 if args.query:
                     return args.query
-            elif tc.tool == "tools":
-                # MultiTool: find the first search inner call
-                for inner in tc.arguments.get("calls", []):
-                    if "search" in inner and inner["search"]:
-                        return inner["search"]
         return None
 
     async def _resolve_image(

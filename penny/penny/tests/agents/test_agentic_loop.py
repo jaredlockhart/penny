@@ -10,7 +10,7 @@ from penny.config_params import RuntimeParams
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.responses import PennyResponse
-from penny.tools.models import ToolResult
+from penny.tools.models import SearchResult, ToolResult
 from penny.tools.search import SearchTool
 
 
@@ -500,6 +500,40 @@ class TestParallelToolCalls:
         assert response.tool_calls[0].arguments["query"] == "topic A"
         assert response.tool_calls[1].arguments["query"] == "topic B"
 
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_large_multi_tool_results_not_truncated(self, test_db, mock_ollama):
+        """Two large tool results from MultiTool both survive into the model context."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        page_a = "A" * 15000  # 15k chars — realistic extracted web page
+        page_b = "B" * 15000
+
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(
+                tool="fetch",
+                result=SearchResult(text=f"## page A\n{page_a}\n\n---\n\n## page B\n{page_b}"),
+            )
+        )
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(
+                    request, "fetch", {"queries": ["https://a.com", "https://b.com"]}
+                )
+            # Verify both pages present in the tool message
+            messages = request["messages"]
+            tool_messages = [m for m in messages if m.get("role") == "tool"]
+            assert len(tool_messages) == 1
+            content = tool_messages[0]["content"]
+            assert "A" * 1000 in content, "Page A content was truncated"
+            assert "B" * 1000 in content, "Page B content was truncated"
+            return mock_ollama._make_text_response(request, "done")
+
+        mock_ollama.set_response_handler(handler)
+        response = await agent.run("test", max_steps=max_steps)
+        assert response.answer == "done"
         await agent.close()
 
 

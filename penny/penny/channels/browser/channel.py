@@ -511,12 +511,23 @@ class BrowserChannel(MessageChannel):
         return True
 
     def _make_handle_kwargs(self, message: IncomingMessage) -> dict:
-        """Pass an on_tool_start callback so tool calls update the typing indicator."""
+        """Pass an on_tool_start callback so tool calls update the typing indicator.
+
+        Builds a cumulative checklist: prior steps show as completed (checkmark),
+        current step shows as in-progress (dots).
+        """
         recipient = message.sender
+        completed: list[str] = []
 
         async def on_tool_start(tools: list[tuple[str, dict]]) -> None:
-            parts = [self._format_tool_status(name, args) for name, args in tools]
-            await self._send_tool_status(recipient, " + ".join(parts))
+            current = [self._format_tool_status(name, args) for name, args in tools]
+            lines: list[str] = []
+            for item in completed:
+                lines.append(f"&#x2713; {item}")
+            for item in current:
+                lines.append(item)
+            await self._send_tool_status(recipient, "<br>".join(lines))
+            completed.extend(current)
 
         return {"on_tool_start": on_tool_start}
 

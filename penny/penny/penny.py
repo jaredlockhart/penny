@@ -98,16 +98,14 @@ class Penny:
             else None
         )
 
-    def _create_search_tools(self, db: Database) -> list[SearchTool]:
-        """Build search tools list for a given database."""
+    def _create_search_tool(self, db: Database) -> SearchTool | None:
+        """Build a search tool for a given database."""
         if not self.config.perplexity_api_key:
-            return []
-        return [
-            SearchTool(
-                perplexity_api_key=self.config.perplexity_api_key,
-                db=db,
-            )
-        ]
+            return None
+        return SearchTool(
+            perplexity_api_key=self.config.perplexity_api_key,
+            db=db,
+        )
 
     def _create_thinking_search_tool(self, config: Config) -> Tool | None:
         """Build a search tool for the thinking agent (PENNY_ENRICHMENT trigger)."""
@@ -121,7 +119,12 @@ class Penny:
 
     def _create_multi_tool(self, search_tool: SearchTool | None) -> MultiTool:
         """Build the MultiTool wrapper for chat agent tool dispatch."""
-        return MultiTool(search_tool=search_tool, news_tool=self._news_tool)
+        max_calls = int(self.config.runtime.MESSAGE_MAX_TOOL_CALLS)
+        return MultiTool(
+            search_tool=search_tool,
+            news_tool=self._news_tool,
+            max_calls=max_calls,
+        )
 
     def _create_chat_agent(self, db: Database) -> ChatAgent:
         """Factory for creating ChatAgent with a given database.
@@ -136,8 +139,8 @@ class Penny:
             max_retries=self.config.ollama_max_retries,
             retry_delay=self.config.ollama_retry_delay,
         )
-        search_tools = self._create_search_tools(db)
-        multi_tool = self._create_multi_tool(search_tools[0] if search_tools else None)
+        search_tool = self._create_search_tool(db)
+        multi_tool = self._create_multi_tool(search_tool)
         return ChatAgent(
             multi_tool=multi_tool,
             system_prompt=Prompt.CONVERSATION_PROMPT,
@@ -158,8 +161,7 @@ class Penny:
 
     def _init_agents(self, config: Config) -> None:
         """Create message agent and background processing agents."""
-        shared_search_tools = self._create_search_tools(self.db)
-        self._shared_search_tool = shared_search_tools[0] if shared_search_tools else None
+        self._shared_search_tool = self._create_search_tool(self.db)
         self._news_tool = self._create_news_tool(config)
         self._multi_tool = self._create_multi_tool(self._shared_search_tool)
         self.chat_agent = ChatAgent(

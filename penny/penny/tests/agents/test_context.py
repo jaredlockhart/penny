@@ -423,7 +423,7 @@ def test_compute_mention_weighted_sentiment_no_preferences():
 
 
 def test_page_context_injected_as_synthetic_tool_call():
-    """Page context is injected as a browse_url tool call + result in messages."""
+    """Page context is injected as a search tool call + result in messages."""
     from penny.agents.chat import ChatAgent
     from penny.channels.base import PageContext
 
@@ -439,15 +439,15 @@ def test_page_context_injected_as_synthetic_tool_call():
     ChatAgent._inject_page_context(messages, page_context)
 
     assert len(messages) == 4
-    # Assistant tool call
+    # Assistant tool call uses MultiTool format (name="fetch", URL in queries)
     assert messages[2]["role"] == "assistant"
-    assert messages[2]["tool_calls"][0]["function"]["name"] == "browse_url"
-    assert (
-        messages[2]["tool_calls"][0]["function"]["arguments"]["url"]
-        == "https://example.com/product"
-    )
+    assert messages[2]["tool_calls"][0]["function"]["name"] == "fetch"
+    assert messages[2]["tool_calls"][0]["function"]["arguments"]["queries"] == [
+        "https://example.com/product"
+    ]
     # Tool result
     assert messages[3]["role"] == "tool"
+    assert messages[3]["tool_name"] == "fetch"
     assert "$49.99" in messages[3]["content"]
     assert "Example Product Page" in messages[3]["content"]
 

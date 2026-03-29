@@ -112,7 +112,7 @@ class ChatAgent(Agent):
         history: list[tuple[str, str]] | None = None,
         system_prompt: str | None = None,
     ) -> list[dict]:
-        """Build messages, injecting page context as a synthetic browse_url result."""
+        """Build messages, injecting page context as a synthetic tools result."""
         messages = super()._build_messages(prompt, history, system_prompt)
         if self._pending_page_context:
             self._inject_page_context(messages, self._pending_page_context)
@@ -120,7 +120,11 @@ class ChatAgent(Agent):
 
     @staticmethod
     def _inject_page_context(messages: list[dict], page_context: PageContext) -> None:
-        """Inject a synthetic browse_url tool call + result after the user prompt."""
+        """Inject a synthetic search call + result for page context.
+
+        Uses the MultiTool format so the synthetic history matches the tool
+        the model actually sees in its tool definitions.
+        """
         if not page_context.text:
             return
 
@@ -128,7 +132,7 @@ class ChatAgent(Agent):
             f"Title: {page_context.title}\nURL: {page_context.url}\n\n{page_context.text}"
         )
 
-        # Assistant "called" browse_url for the current page
+        # Assistant "called" fetch with the URL in queries
         messages.append(
             {
                 "role": "assistant",
@@ -136,8 +140,10 @@ class ChatAgent(Agent):
                 "tool_calls": [
                     {
                         "function": {
-                            "name": "browse_url",
-                            "arguments": {"url": page_context.url},
+                            "name": MultiTool.name,
+                            "arguments": {
+                                "queries": [page_context.url],
+                            },
                         },
                     }
                 ],
@@ -148,7 +154,7 @@ class ChatAgent(Agent):
             {
                 "role": "tool",
                 "content": page_content,
-                "tool_name": "browse_url",
+                "tool_name": MultiTool.name,
             }
         )
 
