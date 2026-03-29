@@ -371,7 +371,12 @@ class MessageStore:
     def get_messages_since(
         self, sender: str, since: datetime, limit: int = 100
     ) -> list[MessageLog]:
-        """Get conversation messages since a timestamp, oldest first, capped at limit."""
+        """Get conversation messages since a timestamp, oldest first, capped at limit.
+
+        Only includes user messages and Penny's direct replies (parent_id set).
+        Proactive notifications (thoughts, news, check-ins) are excluded — they
+        have no parent_id and are already represented in the system prompt context.
+        """
         with self._session() as session:
             incoming = list(
                 session.exec(
@@ -387,20 +392,7 @@ class MessageStore:
                 ).all()
             )
             threaded = self._get_threaded_replies(session, incoming)
-            autonomous = list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                        MessageLog.parent_id == None,  # noqa: E711
-                        MessageLog.recipient == sender,
-                        MessageLog.timestamp >= since,
-                    )
-                    .order_by(MessageLog.timestamp.desc())
-                    .limit(limit)
-                ).all()
-            )
-            all_messages = incoming + threaded + autonomous
+            all_messages = incoming + threaded
             all_messages.sort(key=lambda m: m.timestamp)
             return all_messages[-limit:]
 
