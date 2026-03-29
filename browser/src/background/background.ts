@@ -177,6 +177,7 @@ function connect(): void {
     return;
   }
 
+  setConnectionState(CS.Reconnecting);
   ws = new WebSocket(SERVER_URL);
 
   ws.addEventListener("open", () => {
