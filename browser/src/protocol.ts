@@ -117,6 +117,7 @@ export interface WsIncomingMessagePayload {
 export interface WsIncomingTypingPayload {
   type: typeof WsIncomingType.Typing;
   active: boolean;
+  content?: string;
 }
 
 export interface WsIncomingStatusPayload {
@@ -241,6 +242,7 @@ export interface RuntimeChatMessage {
 export interface RuntimeTyping {
   type: typeof RuntimeMessageType.Typing;
   active: boolean;
+  content?: string;
 }
 
 /** Background → sidebar: connection state changed */

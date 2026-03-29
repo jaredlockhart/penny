@@ -806,3 +806,88 @@ class TestAllToolsFailedAbort:
         assert response.answer == "here are results"
 
         await agent.close()
+
+
+class TestOnToolStartCallback:
+    """Test that the on_tool_start callback fires before each tool execution."""
+
+    @pytest.mark.asyncio
+    async def test_callback_called_for_each_tool_execution(self, test_db, mock_ollama):
+        """on_tool_start fires once per unique tool call with name and args."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(tool="search", result="result")
+        )
+
+        captured: list[tuple[str, dict]] = []
+
+        async def on_tool_start(tool_name: str, arguments: dict) -> None:
+            captured.append((tool_name, arguments))
+
+        def handler(request, count):
+            if count <= 2:
+                return mock_ollama._make_tool_call_response(
+                    request, "search", {"queries": [f"query {count}"]}
+                )
+            return mock_ollama._make_text_response(request, "done")
+
+        mock_ollama.set_response_handler(handler)
+        agent.allow_repeat_tools = True
+
+        response = await agent.run("test", max_steps=max_steps, on_tool_start=on_tool_start)
+        assert response.answer == "done"
+        assert len(captured) == 2
+        assert captured[0] == ("search", {"queries": ["query 1"]})
+        assert captured[1] == ("search", {"queries": ["query 2"]})
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_callback_not_called_for_deduped_repeat(self, test_db, mock_ollama):
+        """on_tool_start does not fire for a repeat call that gets deduplicated."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+
+        captured: list[tuple[str, dict]] = []
+
+        async def on_tool_start(tool_name: str, arguments: dict) -> None:
+            captured.append((tool_name, arguments))
+
+        def handler(request, count):
+            if count <= 2:
+                return mock_ollama._make_tool_call_response(
+                    request, "search", {"queries": ["same query"]}
+                )
+            return mock_ollama._make_text_response(request, "done")
+
+        mock_ollama.set_response_handler(handler)
+
+        await agent.run("test", max_steps=max_steps, on_tool_start=on_tool_start)
+        assert len(captured) == 1
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_failing_callback_does_not_abort_tool(self, test_db, mock_ollama):
+        """A callback that raises an exception does not prevent tool execution."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(tool="search", result="result")
+        )
+
+        async def on_tool_start(tool_name: str, arguments: dict) -> None:
+            raise RuntimeError("callback exploded")
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(
+                    request, "search", {"queries": ["test"]}
+                )
+            return mock_ollama._make_text_response(request, "done")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test", max_steps=max_steps, on_tool_start=on_tool_start)
+        assert response.answer == "done"
+        assert len(response.tool_calls) == 1
+
+        await agent.close()

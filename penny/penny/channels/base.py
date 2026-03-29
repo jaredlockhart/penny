@@ -445,6 +445,10 @@ class MessageChannel(ABC):
         primary = self._db.users.get_primary_sender()
         return primary if primary else device_sender
 
+    def _make_handle_kwargs(self, message: IncomingMessage) -> dict:
+        """Return extra kwargs for ChatAgent.handle(). Override in subclasses."""
+        return {}
+
     async def _dispatch_to_agent(self, message: IncomingMessage) -> None:
         """Run the message through the agent loop with typing indicators."""
         device_id = self._resolve_device_id(message)
@@ -473,6 +477,7 @@ class MessageChannel(ABC):
                 sender=user_sender,
                 images=message.images or None,
                 page_context=message.page_context,
+                **self._make_handle_kwargs(message),
             )
 
             incoming_id = self._db.messages.log_message(

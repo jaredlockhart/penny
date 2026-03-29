@@ -36,6 +36,10 @@ class ReadEmailsTool(Tool):
         "required": ["email_ids"],
     }
 
+    @classmethod
+    def to_action_str(cls, arguments: dict) -> str:
+        return "Reading emails"
+
     def __init__(
         self,
         email_client: EmailClient,

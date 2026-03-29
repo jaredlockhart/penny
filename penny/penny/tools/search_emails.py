@@ -52,6 +52,10 @@ class SearchEmailsTool(Tool):
         "required": [],
     }
 
+    @classmethod
+    def to_action_str(cls, arguments: dict) -> str:
+        return "Searching emails"
+
     def __init__(self, email_client: EmailClient) -> None:
         self._client = email_client
 

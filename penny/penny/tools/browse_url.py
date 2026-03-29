@@ -36,6 +36,12 @@ class BrowseUrlTool(Tool):
         "required": ["url"],
     }
 
+    @classmethod
+    def to_action_str(cls, arguments: dict) -> str:
+        """Format URL into a readable status string."""
+        url = arguments.get("url", "")
+        return f"Reading {url}" if url else "Reading page"
+
     def __init__(self, request_fn: Callable[[str, dict], Awaitable[str]]):
         self._request_fn = request_fn
 
