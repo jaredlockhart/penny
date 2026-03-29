@@ -295,22 +295,22 @@ class Penny:
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
                 agent=self.history_agent,
-                interval=config.runtime.HISTORY_INTERVAL,
+                interval=lambda: config.runtime.HISTORY_INTERVAL,
                 requires_idle=False,
             ),
             PeriodicSchedule(
                 agent=self.notify_agent,
-                interval=config.runtime.NOTIFY_CHECK_INTERVAL,
+                interval=lambda: config.runtime.NOTIFY_CHECK_INTERVAL,
             ),
             PeriodicSchedule(
                 agent=self.thinking_agent,
-                interval=config.runtime.INNER_MONOLOGUE_INTERVAL,
+                interval=lambda: config.runtime.INNER_MONOLOGUE_INTERVAL,
                 requires_idle=False,
             ),
         ]
         self.scheduler = BackgroundScheduler(
             schedules=schedules,
-            idle_threshold=config.runtime.IDLE_SECONDS,
+            idle_threshold=lambda: config.runtime.IDLE_SECONDS,
             tick_interval=config.scheduler_tick_interval,
         )
         self._connect_scheduler(config)

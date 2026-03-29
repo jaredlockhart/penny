@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from penny.scheduler.base import Schedule
@@ -20,7 +21,7 @@ class PeriodicSchedule(Schedule):
     def __init__(
         self,
         agent: Agent,
-        interval: float,
+        interval: Callable[[], float],
         requires_idle: bool = True,
     ):
         """
@@ -28,7 +29,7 @@ class PeriodicSchedule(Schedule):
 
         Args:
             agent: The agent to execute on each interval
-            interval: Time in seconds between executions
+            interval: Callable returning current interval in seconds (read each tick)
             requires_idle: If True, only runs when system is past the idle threshold.
                            If False, runs on its own timer regardless of user activity.
         """
@@ -42,7 +43,7 @@ class PeriodicSchedule(Schedule):
         logger.info(
             "PeriodicSchedule created for %s with interval=%.0fs requires_idle=%s",
             agent.name,
-            interval,
+            interval(),
             requires_idle,
         )
 
@@ -56,7 +57,7 @@ class PeriodicSchedule(Schedule):
             return True
 
         elapsed = now - self._last_run
-        return elapsed >= self._interval
+        return elapsed >= self._interval()
 
     def reset(self) -> None:
         """Reset last run time on message arrival — no-op for idle-independent schedules."""
