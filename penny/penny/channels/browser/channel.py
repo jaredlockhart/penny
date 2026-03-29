@@ -44,6 +44,7 @@ from penny.channels.browser.models import (
 )
 from penny.constants import ChannelType, PennyConstants
 from penny.serper.client import search_image_url
+from penny.tools.base import Tool
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -508,6 +509,29 @@ class BrowserChannel(MessageChannel):
             return False
         await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=typing))
         return True
+
+    def _make_handle_kwargs(self, message: IncomingMessage) -> dict:
+        """Pass an on_tool_start callback so tool calls update the typing indicator."""
+        recipient = message.sender
+
+        async def on_tool_start(tool_name: str, arguments: dict) -> None:
+            await self._send_tool_status(recipient, self._format_tool_status(tool_name, arguments))
+
+        return {"on_tool_start": on_tool_start}
+
+    @staticmethod
+    def _format_tool_status(tool_name: str, arguments: dict) -> str:
+        """Format a human-readable status label for a tool call."""
+        return Tool.format_status(tool_name, arguments)
+
+    async def _send_tool_status(self, recipient: str, text: str) -> None:
+        """Update the typing indicator with a tool status message."""
+        ws = self._connections.get(recipient)
+        if not ws:
+            return
+        await self._send_ws(
+            ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=True, content=text)
+        )
 
     # --- Image handling ---
 

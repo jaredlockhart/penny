@@ -191,7 +191,7 @@ function connect(): void {
     } else if (data.type === WsIncomingType.Message) {
       broadcastToSidebar({ type: RuntimeMessageType.ChatMessage, content: data.content });
     } else if (data.type === WsIncomingType.Typing) {
-      broadcastToSidebar({ type: RuntimeMessageType.Typing, active: data.active });
+      broadcastToSidebar({ type: RuntimeMessageType.Typing, active: data.active, content: data.content });
     } else if (data.type === WsIncomingType.ToolRequest) {
       handleToolRequest(data);
     } else if (data.type === WsIn.ThoughtsResponse) {

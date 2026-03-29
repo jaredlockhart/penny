@@ -7,6 +7,7 @@ Context is injected automatically via the Agent base class.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
@@ -52,6 +53,7 @@ class ChatAgent(Agent):
         sender: str,
         images: list[str] | None = None,
         page_context: PageContext | None = None,
+        on_tool_start: Callable[[str, dict], Awaitable[None]] | None = None,
     ) -> ControllerResponse:
         """Handle an incoming message — summary method.
 
@@ -84,6 +86,7 @@ class ChatAgent(Agent):
                 max_steps=self.get_max_steps(),
                 history=history,
                 system_prompt=system_prompt,
+                on_tool_start=on_tool_start,
             )
         finally:
             self._current_user = None

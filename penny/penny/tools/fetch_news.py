@@ -35,6 +35,12 @@ class FetchNewsTool(Tool):
         "required": [],
     }
 
+    @classmethod
+    def to_action_str(cls, arguments: dict) -> str:
+        """Format news topic into a readable status string."""
+        topic = FetchNewsArgs(**arguments).topic
+        return f"Fetching news about {topic}"
+
     def __init__(self, news_tool: NewsTool):
         self._news_tool = news_tool
 

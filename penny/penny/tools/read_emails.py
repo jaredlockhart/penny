@@ -7,6 +7,7 @@ from typing import Any
 
 from penny.email.protocol import EmailClient
 from penny.tools.base import Tool
+from penny.tools.ollama import OllamaClient
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,19 @@ class ReadEmailsTool(Tool):
         "required": ["email_ids"],
     }
 
-    def __init__(self, email_client: EmailClient) -> None:
+    @classmethod
+    def to_action_str(cls, arguments: dict) -> str:
+        return "Reading emails"
+
+    def __init__(
+        self,
+        email_client: EmailClient,
+        ollama_client: OllamaClient,
+        user_query: str,
+    ) -> None:
         self._client = email_client
+        self._ollama_client = ollama_client
+        self._user_query = user_query
 
     async def execute(self, **kwargs: Any) -> str:
         """Read emails and return their content."""
