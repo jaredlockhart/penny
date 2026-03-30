@@ -7,7 +7,9 @@
 import {
   type ConnectionState,
   ConnectionState as CS,
+  type DomainAllowlist,
   DomainPermission as DP,
+  type DomainPermissionEntry,
   MAX_PAGE_CONTEXT_CHARS,
   type PageContext,
   RECONNECT_DELAY_MS,
@@ -16,6 +18,7 @@ import {
   RuntimeMessageType,
   SERVER_URL,
   STORAGE_KEY_DEVICE_LABEL,
+  STORAGE_KEY_DOMAIN_ALLOWLIST,
   STORAGE_KEY_TOOL_USE,
   type WsIncomingPayload,
   WsIncomingType,
@@ -158,6 +161,10 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     sendConfigUpdate(message.key, message.value);
   } else if (message.type === RuntimeMessageType.ToolUseToggle) {
     setToolUse(message.enabled);
+  } else if (message.type === RuntimeMessageType.DomainUpdate) {
+    sendDomainUpdate(message.domain, message.permission);
+  } else if (message.type === RuntimeMessageType.DomainDelete) {
+    sendDomainDelete(message.domain);
   }
 }
 
@@ -214,6 +221,12 @@ function connect(): void {
       });
     } else if (data.type === WsIn.ConfigResponse) {
       broadcastToSidebar({ type: RuntimeMessageType.ConfigResponse, params: data.params });
+    } else if (data.type === WsIn.DomainPermissionsSync) {
+      syncDomainPermissionsToLocal(data.permissions);
+      broadcastToSidebar({
+        type: RuntimeMessageType.DomainPermissionsSync,
+        permissions: data.permissions,
+      });
     }
   });
 
@@ -293,6 +306,24 @@ function sendConfigUpdate(key: string, value: string): void {
   ws.send(JSON.stringify({ type: WsOutgoingType.ConfigUpdate, key, value }));
 }
 
+function sendDomainUpdate(domain: string, permission: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.DomainUpdate, domain, permission }));
+}
+
+function sendDomainDelete(domain: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.DomainDelete, domain }));
+}
+
+function syncDomainPermissionsToLocal(permissions: DomainPermissionEntry[]): void {
+  const allowlist: DomainAllowlist = {};
+  for (const { domain, permission } of permissions) {
+    allowlist[domain] = permission;
+  }
+  browser.storage.local.set({ [STORAGE_KEY_DOMAIN_ALLOWLIST]: allowlist });
+}
+
 async function sendCapabilities(): Promise<void> {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const stored = await browser.storage.local.get(STORAGE_KEY_TOOL_USE);
@@ -348,7 +379,9 @@ async function checkOrPromptPermission(
   }
 
   const allowed = await requestPermissionFromUser(requestId, domain, url);
-  await storeDomainPermission(domain, allowed ? DP.Allowed : DP.Blocked);
+  const perm = allowed ? DP.Allowed : DP.Blocked;
+  await storeDomainPermission(domain, perm);
+  sendDomainUpdate(domain, perm);
   if (!allowed) {
     throw new Error(`User denied access to ${domain}`);
   }
