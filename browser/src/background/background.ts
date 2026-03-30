@@ -344,13 +344,16 @@ async function setToolUse(enabled: boolean): Promise<void> {
   broadcastToSidebar({ type: RuntimeMessageType.ToolUseState, enabled });
 }
 
-function sendToolResponse(requestId: string, result?: string, error?: string): void {
+function sendToolResponse(
+  requestId: string, result?: string, error?: string, image?: string,
+): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({
     type: WsOutgoingType.ToolResponse,
     request_id: requestId,
     result,
     error,
+    image,
   }));
 }
 
@@ -362,7 +365,7 @@ async function handleToolRequest(request: WsIncomingToolRequestPayload): Promise
   try {
     if (tool === "browse_url") {
       const result = await executeBrowseUrl(request_id, args);
-      sendToolResponse(request_id, result);
+      sendToolResponse(request_id, result.text, undefined, result.image);
     } else {
       sendToolResponse(request_id, undefined, `Unknown tool: ${tool}`);
     }
@@ -375,7 +378,7 @@ async function handleToolRequest(request: WsIncomingToolRequestPayload): Promise
 async function executeBrowseUrl(
   _requestId: string,
   args: Record<string, unknown>,
-): Promise<string> {
+): Promise<{ text: string; image: string }> {
   const url = args.url as string;
   if (!url) throw new Error("Missing required argument: url");
   return await browseUrl(url);
@@ -409,8 +412,8 @@ browser.runtime.onConnect.addListener(async (port) => {
 globalThis.debugBrowseUrl = (url: string): void => {
   browseUrl(url).then(
     (result) => {
-      console.log(`[debug] ${result.length} chars`);
-      console.log(result);
+      console.log(`[debug] ${result.text.length} chars, image: ${result.image || "none"}`);
+      console.log(result.text);
     },
     (err) => console.error("[debug] ERROR:", err),
   );

@@ -15,29 +15,30 @@ interface PageData {
   title: string;
   url: string;
   text: string;
+  image: string;
   ready: boolean;
 }
 
 const MAX_TAB_ATTEMPTS = 3;
 
-export async function browseUrl(url: string): Promise<string> {
+export async function browseUrl(url: string): Promise<BrowseResult> {
   for (let attempt = 1; attempt <= MAX_TAB_ATTEMPTS; attempt++) {
     console.log(`[browse_url] opening: ${url} (attempt ${attempt}/${MAX_TAB_ATTEMPTS})`);
     const tab = await openHiddenTab(url);
     try {
       await waitForTabLoad(tab.id!);
       const pageData = await pollForContent(tab.id!);
-      return formatResult(pageData);
+      return await formatResult(pageData);
     } catch (err) {
       console.warn(`[browse_url] attempt ${attempt} failed:`, err);
       if (attempt === MAX_TAB_ATTEMPTS) {
-        return `Failed to read ${url}: ${err}`;
+        return { text: `Failed to read ${url}: ${err}`, image: "" };
       }
     } finally {
       await closeTab(tab.id!);
     }
   }
-  return `Failed to read ${url}`;
+  return { text: `Failed to read ${url}`, image: "" };
 }
 
 async function pollForContent(tabId: number): Promise<PageData> {
@@ -120,6 +121,33 @@ async function closeTab(tabId: number): Promise<void> {
   }
 }
 
-function formatResult(data: PageData): string {
-  return `Title: ${data.title}\nURL: ${data.url}\n\n${data.text}`;
+interface BrowseResult {
+  text: string;
+  image: string;
+}
+
+async function formatResult(data: PageData): Promise<BrowseResult> {
+  const image = data.image ? await downloadImageAsDataUri(data.image) : "";
+  console.log(`[browse_url] image: ${image ? `${image.length} chars` : "none"}`);
+  return {
+    text: `Title: ${data.title}\nURL: ${data.url}\n\n${data.text}`,
+    image,
+  };
+}
+
+async function downloadImageAsDataUri(url: string): Promise<string> {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return "";
+    const blob = await resp.blob();
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    const b64 = btoa(binary);
+    return `data:${blob.type};base64,${b64}`;
+  } catch {
+    console.warn("[browse_url] failed to download image:", url);
+    return "";
+  }
 }

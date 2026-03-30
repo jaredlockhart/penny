@@ -243,28 +243,26 @@ class MessageChannel(ABC):
         recipient: str,
         content: str,
         parent_id: int | None,
-        image_prompt: str,
+        image_prompt: str = "",
         attachments: list[str] | None = None,
         quote_message: MessageLog | None = None,
         thought_id: int | None = None,
     ) -> int | None:
         """
-        Log and send an outgoing message with an image attachment.
+        Log and send an outgoing message with optional image attachments.
 
         Args:
             recipient: Identifier for the recipient
             content: Message content
             parent_id: Parent message ID for thread linking
-            image_prompt: Search query for image attachment (max 300 chars)
-            attachments: Optional list of base64-encoded attachments
+            image_prompt: Deprecated — previously used for Serper image search
+            attachments: Optional list of base64-encoded image attachments
             quote_message: Optional message to quote-reply to
             thought_id: Optional FK to the thought that triggered this message
 
         Returns:
             Database message ID if send was successful, None otherwise
         """
-        image_prompt = image_prompt[: self.MAX_IMAGE_PROMPT_LENGTH]
-
         if not attachments and image_prompt:
             attachments = await self._resolve_image(image_prompt, attachments)
         elif not attachments:

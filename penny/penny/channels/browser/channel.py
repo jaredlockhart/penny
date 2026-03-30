@@ -111,7 +111,7 @@ class BrowserChannel(MessageChannel):
         self._port = port
         self._server: Server | None = None
         self._connections: dict[str, ConnectionInfo] = {}
-        self._pending_requests: dict[str, asyncio.Future[str]] = {}
+        self._pending_requests: dict[str, asyncio.Future[tuple[str, str | None]]] = {}
         self._pending_permissions: dict[str, asyncio.Future[bool]] = {}
         self._channel_manager: MessageChannel | None = None
 
@@ -414,10 +414,15 @@ class BrowserChannel(MessageChannel):
             logger.warning("No pending request for id: %s", response.request_id)
             return
 
+        logger.debug(
+            "Tool response: result=%d chars, image=%s",
+            len(response.result or ""),
+            f"{len(response.image)} chars" if response.image else "none",
+        )
         if response.error:
             future.set_exception(RuntimeError(response.error))
         else:
-            future.set_result(response.result or "")
+            future.set_result((response.result or "", response.image))
 
     async def _handle_thoughts_request(self, ws: ServerConnection) -> None:
         """Query recent thoughts and send them to the browser."""
@@ -626,11 +631,16 @@ class BrowserChannel(MessageChannel):
 
     # --- Tool requests ---
 
-    async def send_tool_request(self, tool: str, arguments: dict) -> str:
-        """Send a tool request to a connected browser and await the sanitized response.
+    async def send_tool_request(
+        self,
+        tool: str,
+        arguments: dict,
+    ) -> tuple[str, str | None]:
+        """Send a tool request to a connected browser and await the response.
 
-        Checks domain permission server-side before dispatching. If the domain
-        is unknown, prompts all connected addons and Signal for a decision.
+        Returns (result_text, image_url). Checks domain permission server-side
+        before dispatching. If the domain is unknown, prompts all connected
+        addons and Signal for a decision.
         """
         if tool == "browse_url" and "url" in arguments:
             await self._check_domain_permission(arguments["url"])
@@ -640,7 +650,7 @@ class BrowserChannel(MessageChannel):
             raise RuntimeError("No browser with tool-use enabled is connected")
 
         request_id = str(uuid.uuid4())
-        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[tuple[str, str | None]] = asyncio.get_event_loop().create_future()
         self._pending_requests[request_id] = future
 
         request = BrowserToolRequest(
