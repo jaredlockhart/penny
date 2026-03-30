@@ -21,6 +21,8 @@ BROWSER_MSG_TYPE_REGISTER = "register"
 BROWSER_MSG_TYPE_CAPABILITIES_UPDATE = "capabilities_update"
 BROWSER_MSG_TYPE_DOMAIN_UPDATE = "domain_update"
 BROWSER_MSG_TYPE_DOMAIN_DELETE = "domain_delete"
+BROWSER_MSG_TYPE_PERMISSION_REQUEST = "permission_request"
+BROWSER_MSG_TYPE_PERMISSION_DECISION = "permission_decision"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -31,6 +33,8 @@ BROWSER_RESP_TYPE_THOUGHTS = "thoughts_response"
 BROWSER_RESP_TYPE_PREFERENCES = "preferences_response"
 BROWSER_RESP_TYPE_CONFIG = "config_response"
 BROWSER_RESP_TYPE_DOMAIN_PERMISSIONS = "domain_permissions_sync"
+BROWSER_RESP_TYPE_PERMISSION_PROMPT = "permission_prompt"
+BROWSER_RESP_TYPE_PERMISSION_DISMISS = "permission_dismiss"
 
 
 class BrowserIncoming(BaseModel):
@@ -140,3 +144,36 @@ class BrowserDomainPermissionsSync(BaseModel):
 
     type: str = BROWSER_RESP_TYPE_DOMAIN_PERMISSIONS
     permissions: list[DomainPermissionRecord]
+
+
+class BrowserPermissionRequest(BaseModel):
+    """Addon reports it needs a domain permission decision."""
+
+    type: str
+    request_id: str
+    domain: str
+    url: str
+
+
+class BrowserPermissionDecision(BaseModel):
+    """Addon or Signal user decided on a domain permission."""
+
+    type: str
+    request_id: str
+    allowed: bool
+
+
+class BrowserPermissionPrompt(BaseModel):
+    """Server asks an addon to show a permission dialog."""
+
+    type: str = BROWSER_RESP_TYPE_PERMISSION_PROMPT
+    request_id: str
+    domain: str
+    url: str
+
+
+class BrowserPermissionDismiss(BaseModel):
+    """Server tells addons to close a pending permission dialog."""
+
+    type: str = BROWSER_RESP_TYPE_PERMISSION_DISMISS
+    request_id: str

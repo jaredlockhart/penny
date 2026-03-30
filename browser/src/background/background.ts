@@ -8,7 +8,6 @@ import {
   type ConnectionState,
   ConnectionState as CS,
   type DomainAllowlist,
-  DomainPermission as DP,
   type DomainPermissionEntry,
   MAX_PAGE_CONTEXT_CHARS,
   type PageContext,
@@ -26,12 +25,6 @@ import {
   WsIncomingType as WsIn,
   WsOutgoingType,
 } from "../protocol.js";
-import {
-  checkDomainPermission,
-  extractDomain,
-  requestPermissionFromUser,
-  storeDomainPermission,
-} from "./permissions.js";
 import { browseUrl } from "./tools/browse_url.js";
 
 let ws: WebSocket | null = null;
@@ -165,6 +158,8 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     sendDomainUpdate(message.domain, message.permission);
   } else if (message.type === RuntimeMessageType.DomainDelete) {
     sendDomainDelete(message.domain);
+  } else if (message.type === RuntimeMessageType.PermissionResponse) {
+    sendPermissionDecision(message.request_id, message.allowed);
   }
 }
 
@@ -226,6 +221,13 @@ function connect(): void {
       broadcastToSidebar({
         type: RuntimeMessageType.DomainPermissionsSync,
         permissions: data.permissions,
+      });
+    } else if (data.type === WsIn.PermissionPrompt) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.PermissionRequest,
+        request_id: data.request_id,
+        domain: data.domain,
+        url: data.url,
       });
     }
   });
@@ -311,6 +313,11 @@ function sendDomainUpdate(domain: string, permission: string): void {
   ws.send(JSON.stringify({ type: WsOutgoingType.DomainUpdate, domain, permission }));
 }
 
+function sendPermissionDecision(requestId: string, allowed: boolean): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.PermissionDecision, request_id: requestId, allowed }));
+}
+
 function sendDomainDelete(domain: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.DomainDelete, domain }));
@@ -365,49 +372,12 @@ async function handleToolRequest(request: WsIncomingToolRequestPayload): Promise
   }
 }
 
-// Serialize permission prompts so concurrent tool requests don't clobber the dialog
-let permissionQueue: Promise<void> = Promise.resolve();
-
-async function checkOrPromptPermission(
-  requestId: string, domain: string, url: string,
-): Promise<void> {
-  // Re-check inside the queue — a prior prompt may have already resolved this domain
-  const permission = await checkDomainPermission(domain);
-  if (permission === "allowed") return;
-  if (permission === "blocked") {
-    throw new Error(`Domain ${domain} is blocked by user`);
-  }
-
-  const allowed = await requestPermissionFromUser(requestId, domain, url);
-  const perm = allowed ? DP.Allowed : DP.Blocked;
-  await storeDomainPermission(domain, perm);
-  sendDomainUpdate(domain, perm);
-  if (!allowed) {
-    throw new Error(`User denied access to ${domain}`);
-  }
-}
-
 async function executeBrowseUrl(
-  requestId: string,
+  _requestId: string,
   args: Record<string, unknown>,
 ): Promise<string> {
   const url = args.url as string;
   if (!url) throw new Error("Missing required argument: url");
-
-  const domain = extractDomain(url);
-  const permission = await checkDomainPermission(domain);
-
-  if (permission === "blocked") {
-    throw new Error(`Domain ${domain} is blocked by user`);
-  }
-
-  if (permission === "unknown") {
-    // Queue the prompt so only one dialog shows at a time
-    const prompt = permissionQueue.then(() => checkOrPromptPermission(requestId, domain, url));
-    permissionQueue = prompt.catch(() => {});
-    await prompt;
-  }
-
   return await browseUrl(url);
 }
 

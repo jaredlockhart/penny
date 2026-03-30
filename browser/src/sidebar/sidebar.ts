@@ -423,6 +423,8 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     document.getElementById("tool-use-icon")?.classList.toggle("hidden", !message.enabled);
   } else if (message.type === RuntimeMessageType.DomainPermissionsSync) {
     renderDomains(message.permissions);
+    // A sync means the server resolved a permission — dismiss any open dialog
+    document.getElementById("permission-dialog")?.classList.add("hidden");
   }
 }
 

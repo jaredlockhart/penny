@@ -31,7 +31,8 @@ export type WsOutgoingType =
   | "register"
   | "capabilities_update"
   | "domain_update"
-  | "domain_delete";
+  | "domain_delete"
+  | "permission_decision";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -47,6 +48,7 @@ export const WsOutgoingType = {
   CapabilitiesUpdate: "capabilities_update",
   DomainUpdate: "domain_update",
   DomainDelete: "domain_delete",
+  PermissionDecision: "permission_decision",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
@@ -113,7 +115,9 @@ export type WsIncomingType =
   | "thoughts_response"
   | "preferences_response"
   | "config_response"
-  | "domain_permissions_sync";
+  | "domain_permissions_sync"
+  | "permission_prompt"
+  | "permission_dismiss";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
@@ -123,6 +127,8 @@ export const WsIncomingType = {
   PreferencesResponse: "preferences_response",
   ConfigResponse: "config_response",
   DomainPermissionsSync: "domain_permissions_sync",
+  PermissionPrompt: "permission_prompt",
+  PermissionDismiss: "permission_dismiss",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -199,6 +205,18 @@ export interface WsIncomingDomainPermissionsPayload {
   permissions: DomainPermissionEntry[];
 }
 
+export interface WsIncomingPermissionPromptPayload {
+  type: typeof WsIncomingType.PermissionPrompt;
+  request_id: string;
+  domain: string;
+  url: string;
+}
+
+export interface WsIncomingPermissionDismissPayload {
+  type: typeof WsIncomingType.PermissionDismiss;
+  request_id: string;
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
@@ -207,7 +225,9 @@ export type WsIncomingPayload =
   | WsIncomingThoughtsPayload
   | WsIncomingPreferencesPayload
   | WsIncomingConfigPayload
-  | WsIncomingDomainPermissionsPayload;
+  | WsIncomingDomainPermissionsPayload
+  | WsIncomingPermissionPromptPayload
+  | WsIncomingPermissionDismissPayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
