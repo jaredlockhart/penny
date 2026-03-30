@@ -6,7 +6,7 @@
     "watch": "concurrently \"tsc --watch\" \"npm:watch:content\"",
     "watch:content": "node build-content.mjs",
     "dev": "npm run build && concurrently \"npm:watch\" \"npm:ext\"",
-    "ext": "web-ext run --firefox=/Applications/Firefox.app/Contents/MacOS/firefox --firefox-profile=default-release --keep-profile-changes --source-dir=."
+    "ext": "web-ext run --firefox=/Applications/Firefox.app/Contents/MacOS/firefox --firefox-profile=penny-release --keep-profile-changes --source-dir=."
   },
   "devDependencies": {
     "@types/firefox-webext-browser": "^143.0.0",
