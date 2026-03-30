@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from penny.channels.browser.channel import BrowserChannel
+from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
 from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.migrate import migrate
@@ -500,10 +500,10 @@ class TestBrowserRegister:
 
     @pytest.mark.asyncio
     async def test_register_populates_connections(self, tmp_path):
-        """After register, has_tool_connection is True and _connections has the device."""
+        """After register, _connections has the device."""
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
-        assert not channel.has_tool_connection
+        assert len(channel._connections) == 0
 
         ws = _MockWs()
         label = await channel._process_raw_message(
@@ -513,8 +513,8 @@ class TestBrowserRegister:
         )
 
         assert label == "firefox-macbook"
-        assert channel.has_tool_connection
         assert "firefox-macbook" in channel._connections
+        assert channel._connections["firefox-macbook"].ws is ws
 
     @pytest.mark.asyncio
     async def test_register_creates_device_in_db(self, tmp_path):
@@ -535,7 +535,7 @@ class TestBrowserRegister:
 
     @pytest.mark.asyncio
     async def test_tool_request_works_after_register_without_chat(self, tmp_path):
-        """Tool requests succeed after register even if no chat message was sent."""
+        """Tool requests succeed after register + capabilities even if no chat message was sent."""
         import asyncio
 
         db = _make_db(tmp_path)
@@ -546,6 +546,11 @@ class TestBrowserRegister:
             ws,  # ty: ignore[invalid-argument-type]
             json.dumps({"type": "register", "sender": "firefox-macbook"}),
             None,
+        )
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "capabilities_update", "tool_use_enabled": True}),
+            "firefox-macbook",
         )
 
         # Simulate a tool response arriving after we send the request
@@ -560,6 +565,81 @@ class TestBrowserRegister:
         asyncio.create_task(fake_tool_response())
         result = await channel.send_tool_request("browse_url", {"url": "https://example.com"})
         assert result == "page content here"
+
+
+class TestCapabilitiesAndToolRouting:
+    """Tool-use toggle and smart routing based on capabilities."""
+
+    async def _register(self, channel, label, ws=None):
+        """Register a browser connection by device label."""
+        ws = ws or _MockWs()
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "register", "sender": label}),
+            None,
+        )
+        return ws
+
+    async def _set_capabilities(self, channel, label, ws, tool_use_enabled):
+        """Send a capabilities_update for a registered connection."""
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "capabilities_update", "tool_use_enabled": tool_use_enabled}),
+            label,
+        )
+
+    @pytest.mark.asyncio
+    async def test_capabilities_update_sets_tool_use(self, tmp_path):
+        """capabilities_update toggles tool_use_enabled on the connection."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+        ws = await self._register(channel, "firefox-1")
+        assert not channel._connections["firefox-1"].tool_use_enabled
+
+        await self._set_capabilities(channel, "firefox-1", ws, True)
+        assert channel._connections["firefox-1"].tool_use_enabled
+
+        await self._set_capabilities(channel, "firefox-1", ws, False)
+        assert not channel._connections["firefox-1"].tool_use_enabled
+
+    @pytest.mark.asyncio
+    async def test_has_tool_connection_requires_tool_use_enabled(self, tmp_path):
+        """has_tool_connection is False when connections exist but none have tool_use enabled."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+        ws = await self._register(channel, "firefox-1")
+        assert not channel.has_tool_connection
+
+        await self._set_capabilities(channel, "firefox-1", ws, True)
+        assert channel.has_tool_connection
+
+    @pytest.mark.asyncio
+    async def test_get_tool_connection_picks_enabled_addon(self, tmp_path):
+        """Smart routing picks the tool-enabled connection, not the first one."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+        await self._register(channel, "firefox-personal")
+        ws_penny = await self._register(channel, "firefox-penny")
+
+        # Only enable tool use on the second one
+        await self._set_capabilities(channel, "firefox-penny", ws_penny, True)
+
+        routed = channel._get_tool_connection()
+        assert routed is ws_penny
+
+    @pytest.mark.asyncio
+    async def test_get_tool_connection_none_when_all_disabled(self, tmp_path):
+        """Returns None when no connections have tool_use enabled."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+        await self._register(channel, "firefox-1")
+        await self._register(channel, "firefox-2")
+
+        assert channel._get_tool_connection() is None
 
 
 class TestBrowserThoughtReaction:
@@ -691,7 +771,7 @@ class TestMakeHandleKwargs:
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         ws = _MockWs()
-        cast(dict, channel._connections)["browser-user"] = ws
+        cast(dict, channel._connections)["browser-user"] = ConnectionInfo(ws=ws)  # ty: ignore[invalid-argument-type]
 
         await channel._send_tool_status("browser-user", "Searching for stuff")
 

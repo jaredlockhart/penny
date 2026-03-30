@@ -18,6 +18,7 @@ BROWSER_MSG_TYPE_HEARTBEAT = "heartbeat"
 BROWSER_MSG_TYPE_CONFIG_REQUEST = "config_request"
 BROWSER_MSG_TYPE_CONFIG_UPDATE = "config_update"
 BROWSER_MSG_TYPE_REGISTER = "register"
+BROWSER_MSG_TYPE_CAPABILITIES_UPDATE = "capabilities_update"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -100,3 +101,10 @@ class BrowserRegister(BaseModel):
 
     type: str
     sender: str
+
+
+class BrowserCapabilitiesUpdate(BaseModel):
+    """Addon declares its tool-use capability."""
+
+    type: str
+    tool_use_enabled: bool

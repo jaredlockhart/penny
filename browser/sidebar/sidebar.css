@@ -813,6 +813,16 @@ body {
   padding: 10px 16px 6px;
 }
 
+.config-toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
 .config-item {
   padding: 8px 16px 10px;
   border-top: 1px solid var(--border);
