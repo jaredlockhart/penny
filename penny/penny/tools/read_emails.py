@@ -47,7 +47,6 @@ class ReadEmailsTool(Tool):
     ) -> None:
         self._client = email_client
         self._ollama_client = ollama_client
-        self._ollama_client = ollama_client
         self._user_query = user_query
 
     async def execute(self, **kwargs: Any) -> str:
