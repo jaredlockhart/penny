@@ -23,6 +23,8 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_CAPABILITIES_UPDATE,
     BROWSER_MSG_TYPE_CONFIG_REQUEST,
     BROWSER_MSG_TYPE_CONFIG_UPDATE,
+    BROWSER_MSG_TYPE_DOMAIN_DELETE,
+    BROWSER_MSG_TYPE_DOMAIN_UPDATE,
     BROWSER_MSG_TYPE_HEARTBEAT,
     BROWSER_MSG_TYPE_MESSAGE,
     BROWSER_MSG_TYPE_PREFERENCE_ADD,
@@ -40,6 +42,9 @@ from penny.channels.browser.models import (
     BROWSER_RESP_TYPE_TYPING,
     BrowserCapabilitiesUpdate,
     BrowserConfigUpdate,
+    BrowserDomainDelete,
+    BrowserDomainPermissionsSync,
+    BrowserDomainUpdate,
     BrowserIncoming,
     BrowserOutgoing,
     BrowserPreferenceAdd,
@@ -48,6 +53,7 @@ from penny.channels.browser.models import (
     BrowserRegister,
     BrowserToolRequest,
     BrowserToolResponse,
+    DomainPermissionRecord,
 )
 from penny.constants import ChannelType, PennyConstants
 from penny.serper.client import search_image_url
@@ -162,7 +168,9 @@ class BrowserChannel(MessageChannel):
         msg_type = data.get("type", "")
 
         if msg_type == BROWSER_MSG_TYPE_REGISTER:
-            return self._handle_register(ws, data)
+            label = self._handle_register(ws, data)
+            await self._sync_domain_permissions()
+            return label
 
         if msg_type == BROWSER_MSG_TYPE_TOOL_RESPONSE:
             self._handle_tool_response(data)
@@ -197,6 +205,14 @@ class BrowserChannel(MessageChannel):
 
         if msg_type == BROWSER_MSG_TYPE_CAPABILITIES_UPDATE:
             self._handle_capabilities_update(data, device_label)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_DOMAIN_UPDATE:
+            await self._handle_domain_update(data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_DOMAIN_DELETE:
+            await self._handle_domain_delete(data)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_CONFIG_REQUEST:
@@ -239,6 +255,28 @@ class BrowserChannel(MessageChannel):
         self._auto_register_device(device_label)
         logger.info("Browser registered: %s", device_label)
         return device_label
+
+    # --- Domain permissions ---
+
+    async def _handle_domain_update(self, data: dict) -> None:
+        """Add or update a domain permission, then sync to all addons."""
+        msg = BrowserDomainUpdate(**data)
+        self._db.domain_permissions.set_permission(msg.domain, msg.permission)
+        await self._sync_domain_permissions()
+
+    async def _handle_domain_delete(self, data: dict) -> None:
+        """Delete a domain permission, then sync to all addons."""
+        msg = BrowserDomainDelete(**data)
+        self._db.domain_permissions.delete(msg.domain)
+        await self._sync_domain_permissions()
+
+    async def _sync_domain_permissions(self) -> None:
+        """Broadcast the full domain permissions list to all connected addons."""
+        rows = self._db.domain_permissions.get_all()
+        records = [DomainPermissionRecord(domain=r.domain, permission=r.permission) for r in rows]
+        msg = BrowserDomainPermissionsSync(permissions=records)
+        for conn in self._connections.values():
+            await self._send_ws(conn.ws, msg)
 
     def _handle_tool_response(self, data: dict) -> None:
         """Resolve a pending tool request future."""

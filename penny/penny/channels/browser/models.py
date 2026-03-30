@@ -19,6 +19,8 @@ BROWSER_MSG_TYPE_CONFIG_REQUEST = "config_request"
 BROWSER_MSG_TYPE_CONFIG_UPDATE = "config_update"
 BROWSER_MSG_TYPE_REGISTER = "register"
 BROWSER_MSG_TYPE_CAPABILITIES_UPDATE = "capabilities_update"
+BROWSER_MSG_TYPE_DOMAIN_UPDATE = "domain_update"
+BROWSER_MSG_TYPE_DOMAIN_DELETE = "domain_delete"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -28,6 +30,7 @@ BROWSER_RESP_TYPE_TOOL_REQUEST = "tool_request"
 BROWSER_RESP_TYPE_THOUGHTS = "thoughts_response"
 BROWSER_RESP_TYPE_PREFERENCES = "preferences_response"
 BROWSER_RESP_TYPE_CONFIG = "config_response"
+BROWSER_RESP_TYPE_DOMAIN_PERMISSIONS = "domain_permissions_sync"
 
 
 class BrowserIncoming(BaseModel):
@@ -108,3 +111,32 @@ class BrowserCapabilitiesUpdate(BaseModel):
 
     type: str
     tool_use_enabled: bool
+
+
+class BrowserDomainUpdate(BaseModel):
+    """A request to add or update a domain permission."""
+
+    type: str
+    domain: str
+    permission: str
+
+
+class BrowserDomainDelete(BaseModel):
+    """A request to delete a domain permission."""
+
+    type: str
+    domain: str
+
+
+class DomainPermissionRecord(BaseModel):
+    """A single domain permission entry for sync payloads."""
+
+    domain: str
+    permission: str
+
+
+class BrowserDomainPermissionsSync(BaseModel):
+    """Full domain permissions list sent to all connected addons."""
+
+    type: str = BROWSER_RESP_TYPE_DOMAIN_PERMISSIONS
+    permissions: list[DomainPermissionRecord]

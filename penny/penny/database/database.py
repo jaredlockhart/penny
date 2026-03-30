@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlmodel import Session, SQLModel, create_engine
 
 from penny.database.device_store import DeviceStore
+from penny.database.domain_permission_store import DomainPermissionStore
 from penny.database.history_store import HistoryStore
 from penny.database.message_store import MessageStore
 from penny.database.preference_store import PreferenceStore
@@ -21,6 +22,7 @@ class Database:
 
     Stores:
         devices: Device registration and lookup
+        domain_permissions: Domain access permissions for browser tools
         history: Conversation topic summaries for long-term context
         messages: Message/prompt/command logging, threading, queries
         preferences: User preference CRUD and dedup
@@ -35,6 +37,7 @@ class Database:
         self.engine = create_engine(f"sqlite:///{db_path}")
 
         self.devices = DeviceStore(self.engine)
+        self.domain_permissions = DomainPermissionStore(self.engine)
         self.history = HistoryStore(self.engine)
         self.messages = MessageStore(self.engine)
         self.preferences = PreferenceStore(self.engine)

@@ -155,7 +155,7 @@ function activateSettingsTab(tab: SettingsTab): void {
   } else if (tab === "dislikes") {
     browser.runtime.sendMessage({ type: RuntimeMessageType.PreferencesRequest, valence: "negative" });
   } else if (tab === "domains") {
-    loadAndRenderDomains();
+    loadDomainsFromCache();
   } else if (tab === "config") {
     browser.runtime.sendMessage({ type: RuntimeMessageType.ConfigRequest });
   }
@@ -221,19 +221,20 @@ function setupPrefsAdd(valence: string, prefix: string): void {
 
 // --- Domains UI ---
 
-async function loadAndRenderDomains(): Promise<void> {
+async function loadDomainsFromCache(): Promise<void> {
   const stored = await browser.storage.local.get(STORAGE_KEY_DOMAIN_ALLOWLIST);
   const allowlist: DomainAllowlist = (stored[STORAGE_KEY_DOMAIN_ALLOWLIST] as DomainAllowlist) ?? {};
-  renderDomains(allowlist);
+  const permissions = Object.entries(allowlist).map(([domain, permission]) => ({ domain, permission }));
+  renderDomains(permissions);
 }
 
-function renderDomains(allowlist: DomainAllowlist): void {
+function renderDomains(permissions: { domain: string; permission: string }[]): void {
   const listEl = document.getElementById("domains-list")!;
   listEl.innerHTML = "";
 
-  const entries = Object.entries(allowlist).sort(([a], [b]) => a.localeCompare(b));
+  const sorted = [...permissions].sort((a, b) => a.domain.localeCompare(b.domain));
 
-  if (entries.length === 0) {
+  if (sorted.length === 0) {
     const empty = document.createElement("div");
     empty.className = "prefs-empty";
     empty.textContent = "No domains saved yet.";
@@ -241,7 +242,7 @@ function renderDomains(allowlist: DomainAllowlist): void {
     return;
   }
 
-  for (const [domain, permission] of entries) {
+  for (const { domain, permission } of sorted) {
     const row = document.createElement("div");
     row.className = "domain-row";
 
@@ -253,17 +254,17 @@ function renderDomains(allowlist: DomainAllowlist): void {
     status.className = `domain-status ${permission}`;
     status.textContent = permission === DP.Allowed ? "Allowed" : "Blocked";
     status.title = "Click to toggle";
-    status.addEventListener("click", async () => {
+    status.addEventListener("click", () => {
       const next = permission === DP.Allowed ? DP.Blocked : DP.Allowed;
-      await updateDomainPermission(domain, next);
+      browser.runtime.sendMessage({ type: RuntimeMessageType.DomainUpdate, domain, permission: next });
     });
 
     const del = document.createElement("button");
     del.className = "pref-delete";
     del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
     del.setAttribute("aria-label", `Remove ${domain}`);
-    del.addEventListener("click", async () => {
-      await deleteDomainPermission(domain);
+    del.addEventListener("click", () => {
+      browser.runtime.sendMessage({ type: RuntimeMessageType.DomainDelete, domain });
     });
 
     row.appendChild(name);
@@ -273,34 +274,21 @@ function renderDomains(allowlist: DomainAllowlist): void {
   }
 }
 
-async function updateDomainPermission(domain: string, permission: string): Promise<void> {
-  const stored = await browser.storage.local.get(STORAGE_KEY_DOMAIN_ALLOWLIST);
-  const allowlist: DomainAllowlist = (stored[STORAGE_KEY_DOMAIN_ALLOWLIST] as DomainAllowlist) ?? {};
-  allowlist[domain] = permission as DomainAllowlist[string];
-  await browser.storage.local.set({ [STORAGE_KEY_DOMAIN_ALLOWLIST]: allowlist });
-  await loadAndRenderDomains();
-}
-
-async function deleteDomainPermission(domain: string): Promise<void> {
-  const stored = await browser.storage.local.get(STORAGE_KEY_DOMAIN_ALLOWLIST);
-  const allowlist: DomainAllowlist = (stored[STORAGE_KEY_DOMAIN_ALLOWLIST] as DomainAllowlist) ?? {};
-  delete allowlist[domain];
-  await browser.storage.local.set({ [STORAGE_KEY_DOMAIN_ALLOWLIST]: allowlist });
-  await loadAndRenderDomains();
-}
-
 function setupDomainsAdd(): void {
   const input = document.getElementById("domains-input") as HTMLInputElement;
   const select = document.getElementById("domains-permission") as HTMLSelectElement;
   const btn = document.getElementById("domains-add-btn")!;
 
-  async function add(): Promise<void> {
+  function add(): void {
     const raw = input.value.trim().toLowerCase();
     if (!raw) return;
-    // Strip protocol and path — store just the hostname
     const domain = raw.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
     if (!domain) return;
-    await updateDomainPermission(domain, select.value);
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.DomainUpdate,
+      domain,
+      permission: select.value,
+    });
     input.value = "";
   }
 
@@ -433,6 +421,8 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     const toggle = document.getElementById("tool-use-toggle") as HTMLInputElement | null;
     if (toggle) toggle.checked = message.enabled;
     document.getElementById("tool-use-icon")?.classList.toggle("hidden", !message.enabled);
+  } else if (message.type === RuntimeMessageType.DomainPermissionsSync) {
+    renderDomains(message.permissions);
   }
 }
 

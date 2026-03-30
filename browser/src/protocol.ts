@@ -29,7 +29,9 @@ export type WsOutgoingType =
   | "config_request"
   | "config_update"
   | "register"
-  | "capabilities_update";
+  | "capabilities_update"
+  | "domain_update"
+  | "domain_delete";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -43,6 +45,8 @@ export const WsOutgoingType = {
   ConfigUpdate: "config_update",
   Register: "register",
   CapabilitiesUpdate: "capabilities_update",
+  DomainUpdate: "domain_update",
+  DomainDelete: "domain_delete",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
@@ -108,7 +112,8 @@ export type WsIncomingType =
   | "tool_request"
   | "thoughts_response"
   | "preferences_response"
-  | "config_response";
+  | "config_response"
+  | "domain_permissions_sync";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
@@ -117,6 +122,7 @@ export const WsIncomingType = {
   ThoughtsResponse: "thoughts_response",
   PreferencesResponse: "preferences_response",
   ConfigResponse: "config_response",
+  DomainPermissionsSync: "domain_permissions_sync",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -183,6 +189,16 @@ export interface WsIncomingConfigPayload {
   params: RuntimeConfigParam[];
 }
 
+export interface DomainPermissionEntry {
+  domain: string;
+  permission: DomainPermission;
+}
+
+export interface WsIncomingDomainPermissionsPayload {
+  type: typeof WsIncomingType.DomainPermissionsSync;
+  permissions: DomainPermissionEntry[];
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
@@ -190,7 +206,8 @@ export type WsIncomingPayload =
   | WsIncomingToolRequestPayload
   | WsIncomingThoughtsPayload
   | WsIncomingPreferencesPayload
-  | WsIncomingConfigPayload;
+  | WsIncomingConfigPayload
+  | WsIncomingDomainPermissionsPayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
@@ -214,7 +231,10 @@ export type RuntimeMessageType =
   | "config_response"
   | "config_update"
   | "tool_use_toggle"
-  | "tool_use_state";
+  | "tool_use_state"
+  | "domain_update"
+  | "domain_delete"
+  | "domain_permissions_sync";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -237,6 +257,9 @@ export const RuntimeMessageType = {
   ConfigUpdate: "config_update",
   ToolUseToggle: "tool_use_toggle",
   ToolUseState: "tool_use_state",
+  DomainUpdate: "domain_update",
+  DomainDelete: "domain_delete",
+  DomainPermissionsSync: "domain_permissions_sync",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -370,6 +393,25 @@ export interface RuntimeToolUseState {
   enabled: boolean;
 }
 
+/** Sidebar → background: add or update a domain permission */
+export interface RuntimeDomainUpdate {
+  type: typeof RuntimeMessageType.DomainUpdate;
+  domain: string;
+  permission: DomainPermission;
+}
+
+/** Sidebar → background: delete a domain permission */
+export interface RuntimeDomainDelete {
+  type: typeof RuntimeMessageType.DomainDelete;
+  domain: string;
+}
+
+/** Background → sidebar: full domain permissions list */
+export interface RuntimeDomainPermissionsSync {
+  type: typeof RuntimeMessageType.DomainPermissionsSync;
+  permissions: DomainPermissionEntry[];
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -390,7 +432,10 @@ export type RuntimeMessage =
   | RuntimeConfigResponse
   | RuntimeConfigUpdate
   | RuntimeToolUseToggle
-  | RuntimeToolUseState;
+  | RuntimeToolUseState
+  | RuntimeDomainUpdate
+  | RuntimeDomainDelete
+  | RuntimeDomainPermissionsSync;
 
 // --- Domain permissions ---
 
