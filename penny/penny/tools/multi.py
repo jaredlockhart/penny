@@ -113,6 +113,7 @@ class MultiTool(Tool):
 
         sections: list[str] = []
         all_urls: list[str] = []
+        first_image: str | None = None
         for (kind, value, _), result in zip(tasks, results, strict=True):
             label = f"{kind}: {value}"
             if isinstance(result, Exception):
@@ -121,10 +122,16 @@ class MultiTool(Tool):
             elif isinstance(result, SearchResult):
                 all_urls.extend(result.urls)
                 sections.append(f"## {label}\n{result.text}")
+                if not first_image and result.image_base64:
+                    first_image = result.image_base64
             else:
                 sections.append(f"## {label}\n{result}")
 
-        return SearchResult(text="\n\n---\n\n".join(sections), urls=all_urls)
+        return SearchResult(
+            text="\n\n---\n\n".join(sections),
+            urls=all_urls,
+            image_base64=first_image,
+        )
 
     async def _dispatch_search(self, query: str) -> Any:
         """Run a single search query."""

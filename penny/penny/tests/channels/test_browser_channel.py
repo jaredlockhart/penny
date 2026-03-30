@@ -183,31 +183,114 @@ class TestBrowseUrlTool:
     """BrowseUrlTool passes through pre-sanitized content from the channel."""
 
     @pytest.mark.asyncio
-    async def test_returns_channel_content_directly(self):
-        """Tool returns whatever the channel's request_fn provides — no summarization."""
+    async def test_returns_channel_content_as_search_result(self):
+        """Tool returns a SearchResult with the channel content."""
         from unittest.mock import AsyncMock
 
         from penny.tools.browse_url import BrowseUrlTool
+        from penny.tools.models import SearchResult
 
-        request_fn = AsyncMock(return_value="Pre-sanitized page content from channel.")
+        request_fn = AsyncMock(
+            return_value=("Title: Example\nURL: https://example.com\n\nPage content.", None)
+        )
         tool = BrowseUrlTool(request_fn=request_fn)
         result = await tool.execute(url="https://example.com")
 
-        assert result == "Pre-sanitized page content from channel."
+        assert isinstance(result, SearchResult)
+        assert "Page content." in result.text
         request_fn.assert_called_once_with(BrowseUrlTool.name, {"url": "https://example.com"})
 
     @pytest.mark.asyncio
-    async def test_returns_no_content_message_for_empty(self):
-        """Tool returns a message when the channel returns empty content."""
+    async def test_image_url_from_response(self):
+        """Tool passes through image URL from the tool response tuple."""
         from unittest.mock import AsyncMock
 
         from penny.tools.browse_url import BrowseUrlTool
+        from penny.tools.models import SearchResult
 
-        request_fn = AsyncMock(return_value="  ")
+        request_fn = AsyncMock(
+            return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", "https://ex.com/og.jpg")
+        )
         tool = BrowseUrlTool(request_fn=request_fn)
         result = await tool.execute(url="https://example.com")
 
-        assert "no content" in result.lower()
+        assert isinstance(result, SearchResult)
+        assert result.image_base64 == "https://ex.com/og.jpg"
+
+    @pytest.mark.asyncio
+    async def test_no_image_returns_none(self):
+        """SearchResult.image_base64 is None when response has no image."""
+        from unittest.mock import AsyncMock
+
+        from penny.tools.browse_url import BrowseUrlTool
+        from penny.tools.models import SearchResult
+
+        request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
+        tool = BrowseUrlTool(request_fn=request_fn)
+        result = await tool.execute(url="https://example.com")
+
+        assert isinstance(result, SearchResult)
+        assert result.image_base64 is None
+
+    @pytest.mark.asyncio
+    async def test_returns_no_content_message_for_empty(self):
+        """Tool returns a SearchResult with no-content message when channel returns empty."""
+        from unittest.mock import AsyncMock
+
+        from penny.tools.browse_url import BrowseUrlTool
+        from penny.tools.models import SearchResult
+
+        request_fn = AsyncMock(return_value=("  ", None))
+        tool = BrowseUrlTool(request_fn=request_fn)
+        result = await tool.execute(url="https://example.com")
+
+        assert isinstance(result, SearchResult)
+        assert "no content" in result.text.lower()
+
+
+class TestMultiToolImagePassthrough:
+    """MultiTool passes the first browse_url image through to the combined result."""
+
+    @pytest.mark.asyncio
+    async def test_image_from_browse_url_propagates(self):
+        """Image from a browse_url sub-call appears on the combined SearchResult."""
+        from unittest.mock import AsyncMock
+
+        from penny.tools.models import SearchResult
+        from penny.tools.multi import MultiTool
+
+        browse_result = SearchResult(
+            text="Title: Ex\nURL: https://ex.com\nImage: https://ex.com/img.jpg\n\nContent.",
+            image_base64="https://ex.com/img.jpg",
+        )
+        mock_browse_tool = AsyncMock()
+        mock_browse_tool.execute = AsyncMock(return_value=browse_result)
+
+        tool = MultiTool(search_tool=None)
+        tool.set_browse_url_provider(lambda: mock_browse_tool)
+
+        result = await tool.execute(queries=["https://ex.com"])
+        assert isinstance(result, SearchResult)
+        assert result.image_base64 == "https://ex.com/img.jpg"
+
+    @pytest.mark.asyncio
+    async def test_no_image_when_browse_has_none(self):
+        """Combined SearchResult has no image when browse_url returns none."""
+        from unittest.mock import AsyncMock
+
+        from penny.tools.models import SearchResult
+        from penny.tools.multi import MultiTool
+
+        browse_result = SearchResult(text="Title: Ex\nURL: https://ex.com\n\nContent.")
+        mock_browse_tool = AsyncMock()
+        mock_browse_tool.execute = AsyncMock(return_value=browse_result)
+
+        tool = MultiTool(search_tool=None)
+        tool.set_browse_url_provider(lambda: mock_browse_tool)
+
+        result = await tool.execute(queries=["https://ex.com"])
+        assert isinstance(result, SearchResult)
+        assert result.image_base64 is None
 
 
 class _MockWs:
@@ -562,12 +645,12 @@ class TestBrowserRegister:
             # Find the pending request and resolve it
             for _req_id, future in channel._pending_requests.items():
                 if not future.done():
-                    future.set_result("page content here")
+                    future.set_result(("page content here", None))
                     break
 
         asyncio.create_task(fake_tool_response())
         result = await channel.send_tool_request("browse_url", {"url": "https://example.com"})
-        assert result == "page content here"
+        assert result == ("page content here", None)
 
 
 class TestCapabilitiesAndToolRouting:
@@ -677,12 +760,12 @@ class TestServerSideDomainPermissions:
             await asyncio.sleep(0.05)
             for _id, future in channel._pending_requests.items():
                 if not future.done():
-                    future.set_result("page content")
+                    future.set_result(("page content", None))
                     break
 
         asyncio.create_task(fake_tool_response())
         result = await channel.send_tool_request("browse_url", {"url": "https://example.com/page"})
-        assert result == "page content"
+        assert result == ("page content", None)
 
     @pytest.mark.asyncio
     async def test_blocked_domain_raises(self, tmp_path):
@@ -720,13 +803,13 @@ class TestServerSideDomainPermissions:
             await asyncio.sleep(0.15)
             for _id, future in channel._pending_requests.items():
                 if not future.done():
-                    future.set_result("page content")
+                    future.set_result(("page content", None))
                     break
 
         asyncio.create_task(approve_after_delay())
         asyncio.create_task(fake_tool_response())
         result = await channel.send_tool_request("browse_url", {"url": "https://newsite.com/"})
-        assert result == "page content"
+        assert result == ("page content", None)
 
         # Both addons should have received the prompt
         prompts_ws1 = [m for m in ws.sent if m.get("type") == "permission_prompt"]
@@ -766,13 +849,13 @@ class TestServerSideDomainPermissions:
             await asyncio.sleep(0.15)
             for _id, future in channel._pending_requests.items():
                 if not future.done():
-                    future.set_result("content")
+                    future.set_result(("content", None))
                     break
 
         asyncio.create_task(send_decision_after_delay())
         asyncio.create_task(fake_tool_response())
         result = await channel.send_tool_request("browse_url", {"url": "https://newdomain.org/"})
-        assert result == "content"
+        assert result == ("content", None)
         assert db.domain_permissions.check_domain("newdomain.org") == "allowed"
 
     @pytest.mark.asyncio
@@ -793,7 +876,7 @@ class TestServerSideDomainPermissions:
             await asyncio.sleep(0.15)
             for _id, future in list(channel._pending_requests.items()):
                 if not future.done():
-                    future.set_result("content")
+                    future.set_result(("content", None))
 
         asyncio.create_task(approve_after_delay())
         asyncio.create_task(fake_tool_responses())
@@ -802,7 +885,7 @@ class TestServerSideDomainPermissions:
             channel.send_tool_request("browse_url", {"url": "https://dedup.com/page1"}),
             channel.send_tool_request("browse_url", {"url": "https://dedup.com/page2"}),
         )
-        assert all(r == "content" for r in results)
+        assert all(r == ("content", None) for r in results)
 
         # Only one prompt should have been sent (not two)
         prompts = [m for m in ws.sent if m.get("type") == "permission_prompt"]
@@ -831,12 +914,12 @@ class TestServerSideDomainPermissions:
             await asyncio.sleep(0.05)
             for _id, future in channel._pending_requests.items():
                 if not future.done():
-                    future.set_result("result")
+                    future.set_result(("result", None))
                     break
 
         asyncio.create_task(fake_tool_response())
         result = await channel.send_tool_request("some_other_tool", {"url": "https://unknown.com"})
-        assert result == "result"
+        assert result == ("result", None)
         # No permission prompts should have been sent
         prompts = [m for m in ws.sent if m.get("type") == "permission_prompt"]
         assert len(prompts) == 0

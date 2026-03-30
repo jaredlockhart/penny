@@ -53,6 +53,7 @@ class BrowserToolResponse(BaseModel):
     request_id: str
     result: str | None = None
     error: str | None = None
+    image: str | None = None
 
 
 class BrowserOutgoing(BaseModel):

@@ -562,6 +562,7 @@ class Agent:
         tool_call_records: list[ToolCallRecord],
     ) -> ControllerResponse:
         """Build the ControllerResponse from the model's final (non-tool) answer."""
+        logger.debug("Building final response with %d attachments", len(attachments))
         content = response.content.strip()
 
         if not content:
@@ -736,7 +737,6 @@ class Agent:
             record.failed = _is_tool_result_failed(result_str)
             logger.debug("Tool result: %s", result_str[:200])
             return result_str, record, urls, image
-
         result_str = self._truncate_tool_result(str(tool_result.result))
         record.failed = _is_tool_result_failed(result_str)
         logger.debug("Tool result: %s", result_str[:200])
