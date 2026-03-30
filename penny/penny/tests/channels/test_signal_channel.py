@@ -475,3 +475,97 @@ def test_extract_reaction_sets_channel_type():
     assert msg.channel_type == ChannelType.SIGNAL
     assert msg.device_identifier == TEST_SENDER
     assert msg.is_reaction is True
+
+
+def test_reaction_callback_fires_and_consumes_reaction():
+    """A registered reaction callback fires on matching timestamp and returns None."""
+    from unittest.mock import MagicMock
+
+    channel = SignalChannel(
+        api_url="http://localhost:8080",
+        phone_number="+15551234567",
+        message_agent=MagicMock(),
+        db=MagicMock(),
+    )
+
+    captured = []
+    channel.register_reaction_callback("1234567889", lambda emoji: captured.append(emoji))
+
+    raw = {
+        "account": "+15551234567",
+        "envelope": {
+            "source": TEST_SENDER,
+            "sourceNumber": TEST_SENDER,
+            "sourceUuid": "test-uuid",
+            "sourceName": "Test",
+            "sourceDevice": 1,
+            "timestamp": 1234567890,
+            "serverReceivedTimestamp": 1234567891,
+            "serverDeliveredTimestamp": 1234567892,
+            "dataMessage": {
+                "timestamp": 1234567890,
+                "message": None,
+                "expiresInSeconds": 0,
+                "viewOnce": False,
+                "reaction": {
+                    "emoji": "\U0001f44d",
+                    "targetAuthor": "+15551234567",
+                    "targetAuthorNumber": "+15551234567",
+                    "targetSentTimestamp": 1234567889,
+                    "isRemove": False,
+                },
+            },
+        },
+    }
+
+    msg = channel.extract_message(raw)
+    assert msg is None, "Reaction should be consumed by callback"
+    assert captured == ["\U0001f44d"]
+    assert "1234567889" not in channel._reaction_callbacks, "Callback should be one-shot"
+
+
+def test_reaction_without_callback_returns_normal_message():
+    """Reactions without a registered callback return normal IncomingMessage."""
+    from unittest.mock import MagicMock
+
+    channel = SignalChannel(
+        api_url="http://localhost:8080",
+        phone_number="+15551234567",
+        message_agent=MagicMock(),
+        db=MagicMock(),
+    )
+
+    # Register callback for a DIFFERENT timestamp
+    channel.register_reaction_callback("9999999999", lambda emoji: None)
+
+    raw = {
+        "account": "+15551234567",
+        "envelope": {
+            "source": TEST_SENDER,
+            "sourceNumber": TEST_SENDER,
+            "sourceUuid": "test-uuid",
+            "sourceName": "Test",
+            "sourceDevice": 1,
+            "timestamp": 1234567890,
+            "serverReceivedTimestamp": 1234567891,
+            "serverDeliveredTimestamp": 1234567892,
+            "dataMessage": {
+                "timestamp": 1234567890,
+                "message": None,
+                "expiresInSeconds": 0,
+                "viewOnce": False,
+                "reaction": {
+                    "emoji": "\U0001f44e",
+                    "targetAuthor": "+15551234567",
+                    "targetAuthorNumber": "+15551234567",
+                    "targetSentTimestamp": 1234567889,
+                    "isRemove": False,
+                },
+            },
+        },
+    }
+
+    msg = channel.extract_message(raw)
+    assert msg is not None
+    assert msg.is_reaction is True
+    assert msg.content == "\U0001f44e"

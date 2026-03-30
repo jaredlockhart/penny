@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import socket
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -73,6 +74,7 @@ class SignalChannel(MessageChannel):
         self.http_client = httpx.AsyncClient(timeout=30.0)
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self._reaction_callbacks: dict[str, Callable[[str], None]] = {}
         logger.info("Initialized Signal channel: url=%s, number=%s", api_url, phone_number)
 
     @property
@@ -428,6 +430,18 @@ class SignalChannel(MessageChannel):
 
         return None
 
+    async def delete_message(self, recipient: str, timestamp: int) -> None:
+        """Delete a sent message for everyone (remote delete)."""
+        url = f"{self.api_url}/v1/remote-delete/{self.phone_number}"
+        try:
+            response = await self.http_client.request(
+                "DELETE", url, json={"recipient": recipient, "timestamp": timestamp}
+            )
+            response.raise_for_status()
+            logger.info("Deleted Signal message: recipient=%s, timestamp=%d", recipient, timestamp)
+        except httpx.HTTPError as e:
+            logger.warning("Failed to delete Signal message: %s", e)
+
     def _handle_send_response(
         self, response: httpx.Response, recipient: str, message: str
     ) -> int | None:
@@ -507,6 +521,10 @@ class SignalChannel(MessageChannel):
 
         return self._extract_data_message(sender, envelope.envelope.dataMessage)
 
+    def register_reaction_callback(self, external_id: str, callback: Callable[[str], None]) -> None:
+        """Register a one-shot callback for a reaction to a specific message."""
+        self._reaction_callbacks[external_id] = callback
+
     def _extract_reaction(self, sender: str, reaction: Reaction) -> IncomingMessage | None:
         """Extract a reaction message, or None if it's a removal."""
         if reaction.isRemove:
@@ -515,6 +533,14 @@ class SignalChannel(MessageChannel):
 
         # Handle both string and ReactionEmoji object formats
         emoji = reaction.emoji if isinstance(reaction.emoji, str) else reaction.emoji.value
+
+        # Check for registered callbacks (e.g., permission prompts)
+        target_id = str(reaction.targetSentTimestamp)
+        callback = self._reaction_callbacks.pop(target_id, None)
+        if callback:
+            logger.info("Reaction callback fired for %s: %s", target_id, emoji)
+            callback(emoji)
+            return None
 
         logger.info(
             "Extracted reaction - sender: %s, emoji: %s, target: %s",
@@ -528,7 +554,7 @@ class SignalChannel(MessageChannel):
             channel_type=ChannelType.SIGNAL,
             device_identifier=sender,
             is_reaction=True,
-            reacted_to_external_id=str(reaction.targetSentTimestamp),
+            reacted_to_external_id=target_id,
         )
 
     def _extract_data_message(
