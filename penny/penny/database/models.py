@@ -154,6 +154,18 @@ class Preference(SQLModel, table=True):
     source: str = Field(default="extracted", index=True)  # PreferenceSource enum value
 
 
+class DomainPermission(SQLModel, table=True):
+    """A domain access permission for browser tool execution."""
+
+    __tablename__ = "domain_permission"
+
+    id: int | None = Field(default=None, primary_key=True)
+    domain: str = Field(unique=True, index=True)
+    permission: str  # "allowed" or "blocked"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class Device(SQLModel, table=True):
     """A registered device (channel endpoint) for the single user."""
 
