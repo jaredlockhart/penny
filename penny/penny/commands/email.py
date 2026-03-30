@@ -51,7 +51,7 @@ class EmailCommand(Command):
         try:
             tools: list[Tool] = [
                 SearchEmailsTool(jmap_client),
-                ReadEmailsTool(jmap_client, context.model_client, prompt),
+                ReadEmailsTool(jmap_client),
             ]
 
             agent = Agent(
