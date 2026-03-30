@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from penny.tools.base import Tool
-from penny.tools.models import BrowseUrlArgs
+from penny.tools.models import BrowseUrlArgs, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +42,16 @@ class BrowseUrlTool(Tool):
         url = arguments.get("url", "")
         return f"Reading {url}" if url else "Reading page"
 
-    def __init__(self, request_fn: Callable[[str, dict], Awaitable[str]]):
+    def __init__(self, request_fn: Callable[[str, dict], Awaitable[tuple[str, str | None]]]):
         self._request_fn = request_fn
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> SearchResult:
         """Fetch the page via the browser. Content arrives pre-summarized."""
         args = BrowseUrlArgs(**kwargs)
         logger.info("browse_url: requesting %s", args.url)
 
-        result = await self._request_fn("browse_url", {"url": args.url})
-        if not result.strip():
-            return f"Page at {args.url} returned no content."
+        text, image_url = await self._request_fn("browse_url", {"url": args.url})
+        if not text.strip():
+            return SearchResult(text=f"Page at {args.url} returned no content.")
 
-        return result
+        return SearchResult(text=text, image_base64=image_url)
