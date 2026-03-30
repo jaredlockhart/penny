@@ -553,6 +553,9 @@ class TestBrowserRegister:
             "firefox-macbook",
         )
 
+        # Pre-allow the domain so the permission check passes
+        db.domain_permissions.set_permission("example.com", "allowed")
+
         # Simulate a tool response arriving after we send the request
         async def fake_tool_response():
             await asyncio.sleep(0.05)
@@ -640,6 +643,203 @@ class TestCapabilitiesAndToolRouting:
         await self._register(channel, "firefox-2")
 
         assert channel._get_tool_connection() is None
+
+
+class TestServerSideDomainPermissions:
+    """Server-side domain permission check, prompt broadcast, and dedup."""
+
+    async def _setup_channel(self, tmp_path):
+        """Create a channel with a registered, tool-enabled connection."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        ws = _MockWs()
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "register", "sender": "firefox-penny"}),
+            None,
+        )
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "capabilities_update", "tool_use_enabled": True}),
+            "firefox-penny",
+        )
+        return channel, db, ws
+
+    @pytest.mark.asyncio
+    async def test_allowed_domain_passes(self, tmp_path):
+        """Tool request proceeds when domain is already allowed."""
+        import asyncio
+
+        channel, db, ws = await self._setup_channel(tmp_path)
+        db.domain_permissions.set_permission("example.com", "allowed")
+
+        async def fake_tool_response():
+            await asyncio.sleep(0.05)
+            for _id, future in channel._pending_requests.items():
+                if not future.done():
+                    future.set_result("page content")
+                    break
+
+        asyncio.create_task(fake_tool_response())
+        result = await channel.send_tool_request("browse_url", {"url": "https://example.com/page"})
+        assert result == "page content"
+
+    @pytest.mark.asyncio
+    async def test_blocked_domain_raises(self, tmp_path):
+        """Tool request fails immediately when domain is blocked."""
+        channel, db, _ws = await self._setup_channel(tmp_path)
+        db.domain_permissions.set_permission("blocked.com", "blocked")
+
+        with pytest.raises(RuntimeError, match="blocked by user"):
+            await channel.send_tool_request("browse_url", {"url": "https://blocked.com/"})
+
+    @pytest.mark.asyncio
+    async def test_unknown_domain_broadcasts_prompt(self, tmp_path):
+        """Unknown domain sends permission_prompt to all connected addons."""
+        import asyncio
+
+        channel, db, ws = await self._setup_channel(tmp_path)
+
+        # Add a second addon
+        ws2 = _MockWs()
+        await channel._process_raw_message(
+            ws2,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "register", "sender": "firefox-personal"}),
+            None,
+        )
+
+        # Simulate a decision arriving after the prompt is sent
+        async def approve_after_delay():
+            await asyncio.sleep(0.1)
+            for req_id, future in channel._pending_permissions.items():
+                if not future.done() and not req_id.startswith("domain:"):
+                    future.set_result(True)
+                    break
+
+        async def fake_tool_response():
+            await asyncio.sleep(0.15)
+            for _id, future in channel._pending_requests.items():
+                if not future.done():
+                    future.set_result("page content")
+                    break
+
+        asyncio.create_task(approve_after_delay())
+        asyncio.create_task(fake_tool_response())
+        result = await channel.send_tool_request("browse_url", {"url": "https://newsite.com/"})
+        assert result == "page content"
+
+        # Both addons should have received the prompt
+        prompts_ws1 = [m for m in ws.sent if m.get("type") == "permission_prompt"]
+        prompts_ws2 = [m for m in ws2.sent if m.get("type") == "permission_prompt"]
+        assert len(prompts_ws1) == 1
+        assert len(prompts_ws2) == 1
+        assert prompts_ws1[0]["domain"] == "newsite.com"
+
+        # Domain should be stored as allowed
+        assert db.domain_permissions.check_domain("newsite.com") == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_permission_decision_resolves_future(self, tmp_path):
+        """permission_decision message from addon resolves the pending future."""
+        import asyncio
+
+        channel, db, ws = await self._setup_channel(tmp_path)
+
+        async def send_decision_after_delay():
+            await asyncio.sleep(0.1)
+            # Find the request_id from the prompt sent to the addon
+            prompts = [m for m in ws.sent if m.get("type") == "permission_prompt"]
+            if prompts:
+                await channel._process_raw_message(
+                    ws,  # ty: ignore[invalid-argument-type]
+                    json.dumps(
+                        {
+                            "type": "permission_decision",
+                            "request_id": prompts[0]["request_id"],
+                            "allowed": True,
+                        }
+                    ),
+                    "firefox-penny",
+                )
+
+        async def fake_tool_response():
+            await asyncio.sleep(0.15)
+            for _id, future in channel._pending_requests.items():
+                if not future.done():
+                    future.set_result("content")
+                    break
+
+        asyncio.create_task(send_decision_after_delay())
+        asyncio.create_task(fake_tool_response())
+        result = await channel.send_tool_request("browse_url", {"url": "https://newdomain.org/"})
+        assert result == "content"
+        assert db.domain_permissions.check_domain("newdomain.org") == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_same_domain_deduplicates(self, tmp_path):
+        """Multiple concurrent requests for the same unknown domain share one prompt."""
+        import asyncio
+
+        channel, db, ws = await self._setup_channel(tmp_path)
+
+        async def approve_after_delay():
+            await asyncio.sleep(0.1)
+            for req_id, future in channel._pending_permissions.items():
+                if not future.done() and not req_id.startswith("domain:"):
+                    future.set_result(True)
+                    break
+
+        async def fake_tool_responses():
+            await asyncio.sleep(0.15)
+            for _id, future in list(channel._pending_requests.items()):
+                if not future.done():
+                    future.set_result("content")
+
+        asyncio.create_task(approve_after_delay())
+        asyncio.create_task(fake_tool_responses())
+
+        results = await asyncio.gather(
+            channel.send_tool_request("browse_url", {"url": "https://dedup.com/page1"}),
+            channel.send_tool_request("browse_url", {"url": "https://dedup.com/page2"}),
+        )
+        assert all(r == "content" for r in results)
+
+        # Only one prompt should have been sent (not two)
+        prompts = [m for m in ws.sent if m.get("type") == "permission_prompt"]
+        assert len(prompts) == 1
+
+    @pytest.mark.asyncio
+    async def test_domain_extracted_from_url_correctly(self, tmp_path):
+        """Domain is extracted via urlparse, not string splitting."""
+        channel, db, _ws = await self._setup_channel(tmp_path)
+        db.domain_permissions.set_permission("example.com", "blocked")
+
+        with pytest.raises(RuntimeError, match="blocked"):
+            await channel.send_tool_request(
+                "browse_url", {"url": "https://example.com:8080/path?q=1"}
+            )
+
+    @pytest.mark.asyncio
+    async def test_non_browse_url_skips_permission_check(self, tmp_path):
+        """Non-browse_url tool requests skip the domain permission check."""
+        import asyncio
+
+        channel, db, ws = await self._setup_channel(tmp_path)
+        # Don't set any permissions — unknown domain would trigger prompt for browse_url
+
+        async def fake_tool_response():
+            await asyncio.sleep(0.05)
+            for _id, future in channel._pending_requests.items():
+                if not future.done():
+                    future.set_result("result")
+                    break
+
+        asyncio.create_task(fake_tool_response())
+        result = await channel.send_tool_request("some_other_tool", {"url": "https://unknown.com"})
+        assert result == "result"
+        # No permission prompts should have been sent
+        prompts = [m for m in ws.sent if m.get("type") == "permission_prompt"]
+        assert len(prompts) == 0
 
 
 class TestBrowserThoughtReaction:
