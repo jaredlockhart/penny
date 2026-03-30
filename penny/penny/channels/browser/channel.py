@@ -10,6 +10,8 @@ import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import websockets
@@ -18,6 +20,7 @@ from websockets.asyncio.server import Server, ServerConnection
 
 from penny.channels.base import IncomingMessage, MessageChannel, PageContext
 from penny.channels.browser.models import (
+    BROWSER_MSG_TYPE_CAPABILITIES_UPDATE,
     BROWSER_MSG_TYPE_CONFIG_REQUEST,
     BROWSER_MSG_TYPE_CONFIG_UPDATE,
     BROWSER_MSG_TYPE_HEARTBEAT,
@@ -35,6 +38,7 @@ from penny.channels.browser.models import (
     BROWSER_RESP_TYPE_STATUS,
     BROWSER_RESP_TYPE_THOUGHTS,
     BROWSER_RESP_TYPE_TYPING,
+    BrowserCapabilitiesUpdate,
     BrowserConfigUpdate,
     BrowserIncoming,
     BrowserOutgoing,
@@ -70,6 +74,15 @@ def _attachment_to_src(attachment: str) -> str | None:
     return None
 
 
+@dataclass
+class ConnectionInfo:
+    """Metadata about a connected browser extension."""
+
+    ws: ServerConnection
+    tool_use_enabled: bool = False
+    last_heartbeat: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
 class BrowserChannel(MessageChannel):
     """WebSocket server channel for the browser extension sidebar."""
 
@@ -85,7 +98,7 @@ class BrowserChannel(MessageChannel):
         self._host = host
         self._port = port
         self._server: Server | None = None
-        self._connections: dict[str, ServerConnection] = {}
+        self._connections: dict[str, ConnectionInfo] = {}
         self._pending_requests: dict[str, asyncio.Future[str]] = {}
 
     @property
@@ -95,8 +108,8 @@ class BrowserChannel(MessageChannel):
 
     @property
     def has_tool_connection(self) -> bool:
-        """Whether any browser is connected for tool execution."""
-        return len(self._connections) > 0
+        """Whether any browser with tool-use enabled is connected."""
+        return any(c.tool_use_enabled for c in self._connections.values())
 
     # --- WebSocket server ---
 
@@ -179,7 +192,11 @@ class BrowserChannel(MessageChannel):
             return await self._handle_chat_message(ws, data, device_label)
 
         if msg_type == BROWSER_MSG_TYPE_HEARTBEAT:
-            self._handle_heartbeat()
+            self._handle_heartbeat(device_label)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_CAPABILITIES_UPDATE:
+            self._handle_capabilities_update(data, device_label)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_CONFIG_REQUEST:
@@ -192,16 +209,33 @@ class BrowserChannel(MessageChannel):
 
         return device_label
 
-    def _handle_heartbeat(self) -> None:
-        """Reset the idle timer when the browser reports active browsing."""
+    def _handle_heartbeat(self, device_label: str | None) -> None:
+        """Reset the idle timer and update heartbeat timestamp."""
         if self._scheduler:
             self._scheduler.notify_activity()
+        if device_label:
+            conn = self._connections.get(device_label)
+            if conn:
+                conn.last_heartbeat = datetime.now(UTC)
+
+    def _handle_capabilities_update(self, data: dict, device_label: str | None) -> None:
+        """Update a connection's tool-use capability."""
+        update = BrowserCapabilitiesUpdate(**data)
+        if device_label:
+            conn = self._connections.get(device_label)
+            if conn:
+                conn.tool_use_enabled = update.tool_use_enabled
+                logger.info("Browser %s tool_use_enabled=%s", device_label, update.tool_use_enabled)
 
     def _handle_register(self, ws: ServerConnection, data: dict) -> str:
         """Register a browser connection by device label."""
         msg = BrowserRegister(**data)
         device_label = msg.sender
-        self._connections[device_label] = ws
+        existing = self._connections.get(device_label)
+        if existing:
+            existing.ws = ws
+        else:
+            self._connections[device_label] = ConnectionInfo(ws=ws)
         self._auto_register_device(device_label)
         logger.info("Browser registered: %s", device_label)
         return device_label
@@ -412,7 +446,11 @@ class BrowserChannel(MessageChannel):
             return device_label
 
         device_label = msg.sender or "browser-user"
-        self._connections[device_label] = ws
+        existing = self._connections.get(device_label)
+        if existing:
+            existing.ws = ws
+        else:
+            self._connections[device_label] = ConnectionInfo(ws=ws)
         self._auto_register_device(device_label)
 
         envelope: dict = {"browser_sender": device_label, "content": msg.content}
@@ -435,7 +473,7 @@ class BrowserChannel(MessageChannel):
         """
         ws = self._get_tool_connection()
         if ws is None:
-            raise RuntimeError("No browser connected for tool execution")
+            raise RuntimeError("No browser with tool-use enabled is connected")
 
         request_id = str(uuid.uuid4())
         future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
@@ -458,10 +496,15 @@ class BrowserChannel(MessageChannel):
             self._pending_requests.pop(request_id, None)
 
     def _get_tool_connection(self) -> ServerConnection | None:
-        """Get the first available browser connection for tool execution."""
-        if self._connections:
-            return next(iter(self._connections.values()))
-        return None
+        """Get the best browser connection for tool execution.
+
+        Filters to tool-use-enabled connections, picks the one with
+        the most recent heartbeat.
+        """
+        candidates = [c for c in self._connections.values() if c.tool_use_enabled]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda c: c.last_heartbeat).ws
 
     # --- Device registration ---
 
@@ -497,12 +540,14 @@ class BrowserChannel(MessageChannel):
         quote_message: MessageLog | None = None,
     ) -> int | None:
         """Send a message to a browser client by device label."""
-        ws = self._connections.get(recipient)
-        if not ws:
+        conn = self._connections.get(recipient)
+        if not conn:
             logger.warning("No browser connection for device: %s", recipient)
             return None
         content = self._prepend_images(message, attachments)
-        await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_MESSAGE, content=content))
+        await self._send_ws(
+            conn.ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_MESSAGE, content=content)
+        )
         return 1
 
     @staticmethod
@@ -519,10 +564,10 @@ class BrowserChannel(MessageChannel):
 
     async def send_typing(self, recipient: str, typing: bool) -> bool:
         """Send a typing indicator to a browser client."""
-        ws = self._connections.get(recipient)
-        if not ws:
+        conn = self._connections.get(recipient)
+        if not conn:
             return False
-        await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=typing))
+        await self._send_ws(conn.ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=typing))
         return True
 
     def _make_handle_kwargs(self, message: IncomingMessage) -> dict:
@@ -553,11 +598,11 @@ class BrowserChannel(MessageChannel):
 
     async def _send_tool_status(self, recipient: str, text: str) -> None:
         """Update the typing indicator with a tool status message."""
-        ws = self._connections.get(recipient)
-        if not ws:
+        conn = self._connections.get(recipient)
+        if not conn:
             return
         await self._send_ws(
-            ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=True, content=text)
+            conn.ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=True, content=text)
         )
 
     def make_background_tool_callback(

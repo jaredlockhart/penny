@@ -28,7 +28,8 @@ export type WsOutgoingType =
   | "heartbeat"
   | "config_request"
   | "config_update"
-  | "register";
+  | "register"
+  | "capabilities_update";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -41,6 +42,7 @@ export const WsOutgoingType = {
   ConfigRequest: "config_request",
   ConfigUpdate: "config_update",
   Register: "register",
+  CapabilitiesUpdate: "capabilities_update",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
@@ -83,13 +85,19 @@ export interface WsOutgoingHeartbeat {
   type: typeof WsOutgoingType.Heartbeat;
 }
 
+export interface WsOutgoingCapabilitiesUpdate {
+  type: typeof WsOutgoingType.CapabilitiesUpdate;
+  tool_use_enabled: boolean;
+}
+
 export type WsOutgoing =
   | WsOutgoingMessage
   | WsOutgoingToolResponse
   | WsOutgoingPreferencesRequest
   | WsOutgoingPreferenceAdd
   | WsOutgoingPreferenceDelete
-  | WsOutgoingHeartbeat;
+  | WsOutgoingHeartbeat
+  | WsOutgoingCapabilitiesUpdate;
 
 // --- WebSocket: incoming (server → browser) ---
 
@@ -204,7 +212,9 @@ export type RuntimeMessageType =
   | "preference_delete"
   | "config_request"
   | "config_response"
-  | "config_update";
+  | "config_update"
+  | "tool_use_toggle"
+  | "tool_use_state";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -225,6 +235,8 @@ export const RuntimeMessageType = {
   ConfigRequest: "config_request",
   ConfigResponse: "config_response",
   ConfigUpdate: "config_update",
+  ToolUseToggle: "tool_use_toggle",
+  ToolUseState: "tool_use_state",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -346,6 +358,18 @@ export interface RuntimeConfigUpdate {
   value: string;
 }
 
+/** Sidebar → background: toggle tool-use capability */
+export interface RuntimeToolUseToggle {
+  type: typeof RuntimeMessageType.ToolUseToggle;
+  enabled: boolean;
+}
+
+/** Background → sidebar: current tool-use state */
+export interface RuntimeToolUseState {
+  type: typeof RuntimeMessageType.ToolUseState;
+  enabled: boolean;
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -364,7 +388,9 @@ export type RuntimeMessage =
   | RuntimePreferenceDelete
   | RuntimeConfigRequest
   | RuntimeConfigResponse
-  | RuntimeConfigUpdate;
+  | RuntimeConfigUpdate
+  | RuntimeToolUseToggle
+  | RuntimeToolUseState;
 
 // --- Domain permissions ---
 
@@ -417,6 +443,7 @@ export const MAX_STORED_MESSAGES = 200;
 export const STORAGE_KEY_DEVICE_LABEL = "deviceLabel";
 export const STORAGE_KEY_CHAT_HISTORY = "chatHistory";
 export const STORAGE_KEY_DOMAIN_ALLOWLIST = "domainAllowlist";
+export const STORAGE_KEY_TOOL_USE = "toolUseEnabled";
 
 // --- UI constants ---
 

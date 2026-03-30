@@ -130,6 +130,7 @@ async function showChat(): Promise<void> {
   setupPrefsAdd("positive", "likes");
   setupPrefsAdd("negative", "dislikes");
   setupDomainsAdd();
+  setupToolUseToggle();
 
   await rehydrateHistory();
   listenToBackground();
@@ -309,10 +310,19 @@ function setupDomainsAdd(): void {
   });
 }
 
+// --- Tool use toggle ---
+
+function setupToolUseToggle(): void {
+  const toggle = document.getElementById("tool-use-toggle") as HTMLInputElement;
+  toggle.addEventListener("change", () => {
+    browser.runtime.sendMessage({ type: RuntimeMessageType.ToolUseToggle, enabled: toggle.checked });
+  });
+}
+
 // --- Config UI ---
 
 function renderConfig(params: RuntimeConfigParam[]): void {
-  const panel = document.getElementById("stab-config")!;
+  const panel = document.getElementById("config-list")!;
   panel.innerHTML = "";
 
   const groups = new Map<string, RuntimeConfigParam[]>();
@@ -419,6 +429,9 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
       pendingConfigSave = false;
       showToast("Saved");
     }
+  } else if (message.type === RuntimeMessageType.ToolUseState) {
+    const toggle = document.getElementById("tool-use-toggle") as HTMLInputElement | null;
+    if (toggle) toggle.checked = message.enabled;
   }
 }
 

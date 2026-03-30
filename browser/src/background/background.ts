@@ -16,6 +16,7 @@ import {
   RuntimeMessageType,
   SERVER_URL,
   STORAGE_KEY_DEVICE_LABEL,
+  STORAGE_KEY_TOOL_USE,
   type WsIncomingPayload,
   WsIncomingType,
   type WsIncomingToolRequestPayload,
@@ -155,6 +156,8 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     requestConfig();
   } else if (message.type === RuntimeMessageType.ConfigUpdate) {
     sendConfigUpdate(message.key, message.value);
+  } else if (message.type === RuntimeMessageType.ToolUseToggle) {
+    setToolUse(message.enabled);
   }
 }
 
@@ -190,6 +193,7 @@ function connect(): void {
     if (data.type === WsIncomingType.Status && data.connected) {
       setConnectionState(CS.Connected);
       sendRegister();
+      sendCapabilities();
       requestThoughts();
       setInterval(requestThoughts, THOUGHTS_POLL_INTERVAL_MS);
     } else if (data.type === WsIncomingType.Message) {
@@ -289,6 +293,19 @@ function sendConfigUpdate(key: string, value: string): void {
   ws.send(JSON.stringify({ type: WsOutgoingType.ConfigUpdate, key, value }));
 }
 
+async function sendCapabilities(): Promise<void> {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const stored = await browser.storage.local.get(STORAGE_KEY_TOOL_USE);
+  const enabled = (stored[STORAGE_KEY_TOOL_USE] as boolean) ?? false;
+  ws.send(JSON.stringify({ type: WsOutgoingType.CapabilitiesUpdate, tool_use_enabled: enabled }));
+}
+
+async function setToolUse(enabled: boolean): Promise<void> {
+  await browser.storage.local.set({ [STORAGE_KEY_TOOL_USE]: enabled });
+  await sendCapabilities();
+  broadcastToSidebar({ type: RuntimeMessageType.ToolUseState, enabled });
+}
+
 function sendToolResponse(requestId: string, result?: string, error?: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({
@@ -363,10 +380,12 @@ async function executeBrowseUrl(
 
 // --- Sidebar state sync ---
 
-browser.runtime.onConnect.addListener((port) => {
+browser.runtime.onConnect.addListener(async (port) => {
   if (port.name === "sidebar") {
     port.postMessage({ type: RuntimeMessageType.ConnectionState, state: connectionState });
-    // Send current page info so the toggle is populated immediately
+    const stored = await browser.storage.local.get(STORAGE_KEY_TOOL_USE);
+    const enabled = (stored[STORAGE_KEY_TOOL_USE] as boolean) ?? false;
+    port.postMessage({ type: RuntimeMessageType.ToolUseState, enabled });
     if (currentPageContext) {
       port.postMessage({
         type: RuntimeMessageType.PageInfo,
