@@ -113,6 +113,10 @@ class BrowserChannel(MessageChannel):
         self._connections: dict[str, ConnectionInfo] = {}
         self._pending_requests: dict[str, asyncio.Future[tuple[str, str | None]]] = {}
         self._pending_permissions: dict[str, asyncio.Future[bool]] = {}
+        self._permission_queue: asyncio.Queue[tuple[str, str, asyncio.Future[bool | None]]] = (
+            asyncio.Queue()
+        )
+        self._permission_worker_started = False
         self._channel_manager: MessageChannel | None = None
 
     @property
@@ -307,39 +311,64 @@ class BrowserChannel(MessageChannel):
         """Check domain permission, prompting all devices if unknown.
 
         Raises RuntimeError if the domain is blocked or the user denies access.
-        Deduplicates concurrent prompts for the same domain.
+        Unknown domains are queued — only one prompt shows at a time.
         """
         parsed = urlparse(url)
         domain = parsed.hostname
         if not domain:
             return
 
+        # Fast path for known domains
         permission = self._db.domain_permissions.check_domain(domain)
         if permission == "allowed":
             return
         if permission == "blocked":
             raise RuntimeError(f"Domain {domain} is blocked by user")
 
-        # Check if a prompt is already pending for this domain
-        pending_key = f"domain:{domain}"
-        existing_future = self._pending_permissions.get(pending_key)
-        if existing_future and not existing_future.done():
-            allowed = await existing_future
-        else:
-            allowed = await self._prompt_all_devices(domain, url, pending_key)
-            perm = "allowed" if allowed else "blocked"
-            self._db.domain_permissions.set_permission(domain, perm)
-            await self._sync_domain_permissions()
+        # Unknown — enqueue and wait for the worker to process it
+        result_future: asyncio.Future[bool | None] = asyncio.get_event_loop().create_future()
+        await self._permission_queue.put((domain, url, result_future))
+        self._ensure_permission_worker()
 
+        allowed = await result_future
+        if allowed is None:
+            raise RuntimeError(f"Permission prompt timed out for {domain}")
         if not allowed:
             raise RuntimeError(f"User denied access to {domain}")
 
-    async def _prompt_all_devices(self, domain: str, url: str, pending_key: str) -> bool:
+    def _ensure_permission_worker(self) -> None:
+        """Start the permission queue worker if not already running."""
+        if not self._permission_worker_started:
+            self._permission_worker_started = True
+            asyncio.create_task(self._permission_worker())
+
+    async def _permission_worker(self) -> None:
+        """Process permission requests one at a time from the queue."""
+        while True:
+            domain, url, result_future = await self._permission_queue.get()
+
+            # Re-check — a prior prompt may have resolved this domain
+            permission = self._db.domain_permissions.check_domain(domain)
+            if permission == "allowed":
+                result_future.set_result(True)
+                continue
+            if permission == "blocked":
+                result_future.set_result(False)
+                continue
+
+            allowed = await self._prompt_all_devices(domain, url)
+            if allowed is not None:
+                perm = "allowed" if allowed else "blocked"
+                self._db.domain_permissions.set_permission(domain, perm)
+                await self._sync_domain_permissions()
+
+            result_future.set_result(allowed)
+
+    async def _prompt_all_devices(self, domain: str, url: str) -> bool | None:
         """Broadcast a permission prompt to all addons and Signal. First response wins."""
         request_id = str(uuid.uuid4())
         future: asyncio.Future[bool] = asyncio.get_event_loop().create_future()
         self._pending_permissions[request_id] = future
-        self._pending_permissions[pending_key] = future
 
         # Prompt all connected addons
         prompt = BrowserPermissionPrompt(request_id=request_id, domain=domain, url=url)
@@ -347,24 +376,29 @@ class BrowserChannel(MessageChannel):
             await self._send_ws(conn.ws, prompt)
 
         # Prompt via Signal if available
-        signal_task = self._send_signal_permission_prompt(request_id, domain)
+        signal_task = self._send_signal_permission_prompt(request_id, domain, future)
         if signal_task:
             asyncio.create_task(signal_task)
 
         try:
-            return await asyncio.wait_for(future, timeout=120.0)
+            return await asyncio.wait_for(future, timeout=PennyConstants.PERMISSION_PROMPT_TIMEOUT)
         except TimeoutError:
-            return False
+            return None
         finally:
             self._pending_permissions.pop(request_id, None)
-            self._pending_permissions.pop(pending_key, None)
+            # Cancel the future so _prompt_and_listen can clean up Signal message
+            if not future.done():
+                future.cancel()
             # Dismiss prompt on all addons
             dismiss = BrowserPermissionDismiss(request_id=request_id)
             for conn in self._connections.values():
                 await self._send_ws(conn.ws, dismiss)
 
     def _send_signal_permission_prompt(
-        self, request_id: str, domain: str
+        self,
+        request_id: str,
+        domain: str,
+        perm_future: asyncio.Future[bool],
     ) -> Coroutine[None, None, None] | None:
         """Send a permission prompt via Signal and listen for emoji reaction."""
         if not self._channel_manager:
@@ -385,19 +419,16 @@ class BrowserChannel(MessageChannel):
 
             # Register a reaction callback
             def on_reaction(emoji: str) -> None:
-                future = self._pending_permissions.get(request_id)
-                if future and not future.done():
+                if not perm_future.done():
                     allowed = emoji in PennyConstants.POSITIVE_REACTION_EMOJIS
-                    future.set_result(allowed)
+                    perm_future.set_result(allowed)
 
             signal_ch.register_reaction_callback(str(external_id), on_reaction)
 
-            # Wait for resolution, then delete the prompt message
-            future = self._pending_permissions.get(request_id)
-            if future:
-                with contextlib.suppress(Exception):
-                    await future
-                await signal_ch.delete_message(primary, external_id)
+            # Wait for resolution (or cancellation on timeout), then delete
+            with contextlib.suppress(asyncio.CancelledError):
+                await perm_future
+            await signal_ch.delete_message(primary, external_id)
 
         return _prompt_and_listen()
 

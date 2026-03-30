@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
+from penny.channels.browser.models import BrowserPermissionDismiss, BrowserPermissionPrompt
 from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.migrate import migrate
@@ -859,27 +860,26 @@ class TestServerSideDomainPermissions:
         assert db.domain_permissions.check_domain("newdomain.org") == "allowed"
 
     @pytest.mark.asyncio
-    async def test_concurrent_same_domain_deduplicates(self, tmp_path):
-        """Multiple concurrent requests for the same unknown domain share one prompt."""
+    async def test_concurrent_same_domain_serializes(self, tmp_path):
+        """Multiple concurrent requests for the same unknown domain produce one prompt."""
         import asyncio
 
         channel, db, ws = await self._setup_channel(tmp_path)
 
-        async def approve_after_delay():
+        async def approve_and_resolve():
             await asyncio.sleep(0.1)
-            for req_id, future in channel._pending_permissions.items():
-                if not future.done() and not req_id.startswith("domain:"):
+            # Approve the permission prompt
+            for _req_id, future in channel._pending_permissions.items():
+                if not future.done():
                     future.set_result(True)
                     break
-
-        async def fake_tool_responses():
-            await asyncio.sleep(0.15)
+            # Resolve tool requests
+            await asyncio.sleep(0.05)
             for _id, future in list(channel._pending_requests.items()):
                 if not future.done():
                     future.set_result(("content", None))
 
-        asyncio.create_task(approve_after_delay())
-        asyncio.create_task(fake_tool_responses())
+        asyncio.create_task(approve_and_resolve())
 
         results = await asyncio.gather(
             channel.send_tool_request("browse_url", {"url": "https://dedup.com/page1"}),
@@ -887,7 +887,7 @@ class TestServerSideDomainPermissions:
         )
         assert all(r == ("content", None) for r in results)
 
-        # Only one prompt should have been sent (not two)
+        # Only one prompt — the second request sees the domain already allowed after lock
         prompts = [m for m in ws.sent if m.get("type") == "permission_prompt"]
         assert len(prompts) == 1
 
@@ -923,6 +923,153 @@ class TestServerSideDomainPermissions:
         # No permission prompts should have been sent
         prompts = [m for m in ws.sent if m.get("type") == "permission_prompt"]
         assert len(prompts) == 0
+
+
+class TestPermissionTimeout:
+    """Permission prompt timeout does not store domain and dismisses dialogs."""
+
+    async def _setup_channel(self, tmp_path):
+        """Create a channel with a registered, tool-enabled connection."""
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        ws = _MockWs()
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "register", "sender": "firefox-penny"}),
+            None,
+        )
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "capabilities_update", "tool_use_enabled": True}),
+            "firefox-penny",
+        )
+        return channel, db, ws
+
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_store_domain(self, tmp_path):
+        """When permission prompt times out, the domain is NOT stored as blocked."""
+        from unittest.mock import patch
+
+        channel, db, ws = await self._setup_channel(tmp_path)
+
+        # Patch timeout to 0.1s so the test doesn't wait 120s
+        with patch.object(channel, "_prompt_all_devices") as mock_prompt:
+            mock_prompt.return_value = None  # simulate timeout
+
+            with pytest.raises(RuntimeError, match="timed out"):
+                await channel.send_tool_request(
+                    "browse_url", {"url": "https://timeout-test.com/page"}
+                )
+
+        # Domain should NOT be in the DB
+        assert db.domain_permissions.check_domain("timeout-test.com") is None
+
+    @pytest.mark.asyncio
+    async def test_denial_stores_blocked(self, tmp_path):
+        """When user denies, the domain IS stored as blocked."""
+        from unittest.mock import patch
+
+        channel, db, ws = await self._setup_channel(tmp_path)
+
+        with patch.object(channel, "_prompt_all_devices") as mock_prompt:
+            mock_prompt.return_value = False  # user denied
+
+            with pytest.raises(RuntimeError, match="denied"):
+                await channel.send_tool_request(
+                    "browse_url", {"url": "https://denied-test.com/page"}
+                )
+
+        assert db.domain_permissions.check_domain("denied-test.com") == "blocked"
+
+    @pytest.mark.asyncio
+    async def test_dismiss_sent_on_timeout(self, tmp_path):
+        """Permission dismiss is sent to all addons after timeout."""
+        import asyncio
+
+        channel, db, ws = await self._setup_channel(tmp_path)
+
+        # Use a very short timeout by monkeypatching _prompt_all_devices
+        # to simulate what happens: prompt sent, then timeout, then dismiss
+        async def fast_timeout(domain, url):
+            # Send prompts like the real method
+            request_id = "test-req-id"
+            future: asyncio.Future[bool] = asyncio.get_event_loop().create_future()
+            channel._pending_permissions[request_id] = future
+
+            prompt = BrowserPermissionPrompt(request_id=request_id, domain=domain, url=url)
+            for conn in channel._connections.values():
+                await channel._send_ws(conn.ws, prompt)
+
+            try:
+                return await asyncio.wait_for(future, timeout=0.1)
+            except TimeoutError:
+                return None
+            finally:
+                channel._pending_permissions.pop(request_id, None)
+                if not future.done():
+                    future.cancel()
+                dismiss = BrowserPermissionDismiss(request_id=request_id)
+                for conn in channel._connections.values():
+                    await channel._send_ws(conn.ws, dismiss)
+
+        channel._prompt_all_devices = fast_timeout  # ty: ignore[assignment]
+
+        with pytest.raises(RuntimeError, match="timed out"):
+            await channel.send_tool_request("browse_url", {"url": "https://dismiss-test.com/page"})
+
+        # Should have received prompt then dismiss
+        prompts = [m for m in ws.sent if m.get("type") == "permission_prompt"]
+        dismissals = [m for m in ws.sent if m.get("type") == "permission_dismiss"]
+        assert len(prompts) == 1
+        assert len(dismissals) == 1
+
+    @pytest.mark.asyncio
+    async def test_dismiss_sent_to_all_connected_addons(self, tmp_path):
+        """All connected addons receive both prompt and dismiss on timeout."""
+        import asyncio
+
+        channel, db, ws1 = await self._setup_channel(tmp_path)
+
+        # Add a second addon
+        ws2 = _MockWs()
+        await channel._process_raw_message(
+            ws2,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "register", "sender": "firefox-personal"}),
+            None,
+        )
+
+        async def fast_timeout(domain, url):
+            request_id = "test-multi-dismiss"
+            future: asyncio.Future[bool] = asyncio.get_event_loop().create_future()
+            channel._pending_permissions[request_id] = future
+
+            prompt = BrowserPermissionPrompt(request_id=request_id, domain=domain, url=url)
+            for conn in channel._connections.values():
+                await channel._send_ws(conn.ws, prompt)
+
+            try:
+                return await asyncio.wait_for(future, timeout=0.1)
+            except TimeoutError:
+                return None
+            finally:
+                channel._pending_permissions.pop(request_id, None)
+                if not future.done():
+                    future.cancel()
+                dismiss = BrowserPermissionDismiss(request_id=request_id)
+                for conn in channel._connections.values():
+                    await channel._send_ws(conn.ws, dismiss)
+
+        channel._prompt_all_devices = fast_timeout  # ty: ignore[assignment]
+
+        with pytest.raises(RuntimeError, match="timed out"):
+            await channel.send_tool_request("browse_url", {"url": "https://multi-dismiss.com/page"})
+
+        # Both addons should have received prompt AND dismiss
+        for label, ws in [("ws1", ws1), ("ws2", ws2)]:
+            prompts = [m for m in ws.sent if m.get("type") == "permission_prompt"]
+            dismissals = [m for m in ws.sent if m.get("type") == "permission_dismiss"]
+            assert len(prompts) == 1, f"{label} should have 1 prompt, got {len(prompts)}"
+            assert len(dismissals) == 1, f"{label} should have 1 dismiss, got {len(dismissals)}"
 
 
 class TestBrowserThoughtReaction:
