@@ -159,6 +159,12 @@ body {
   min-height: 0;
 }
 
+#tool-use-icon {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 /* --- Status indicator --- */
 
 #status {

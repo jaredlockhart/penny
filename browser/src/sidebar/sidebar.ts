@@ -432,6 +432,7 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.ToolUseState) {
     const toggle = document.getElementById("tool-use-toggle") as HTMLInputElement | null;
     if (toggle) toggle.checked = message.enabled;
+    document.getElementById("tool-use-icon")?.classList.toggle("hidden", !message.enabled);
   }
 }
 
