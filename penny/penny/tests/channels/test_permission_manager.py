@@ -18,12 +18,16 @@ def _make_db(tmp_path) -> Database:
     return db
 
 
-def _make_manager(db):
-    """Create a PermissionManager with a mock ChannelManager."""
+def _make_manager(db, domain_mode="restrict"):
+    """Create a PermissionManager with a mock ChannelManager and config."""
     channel_manager = MagicMock()
     channel_manager.broadcast_permission_prompt = AsyncMock()
     channel_manager.broadcast_permission_dismiss = AsyncMock()
-    return PermissionManager(db=db, channel_manager=channel_manager), channel_manager
+    channel_manager.sync_domain_permissions = AsyncMock()
+    config = MagicMock()
+    config.runtime = MagicMock()
+    config.runtime.DOMAIN_PERMISSION_MODE = domain_mode
+    return PermissionManager(db=db, channel_manager=channel_manager, config=config), channel_manager
 
 
 class TestDomainCheck:
@@ -245,3 +249,110 @@ class TestSerialization:
         assert cm.broadcast_permission_prompt.call_count == 2
         assert db.domain_permissions.check_domain("site-a.com") == "allowed"
         assert db.domain_permissions.check_domain("site-b.com") == "allowed"
+
+
+class TestAllowAllMode:
+    """allow_all mode auto-approves unknown domains without prompting."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_domain_auto_allowed(self, tmp_path):
+        """Unknown domain is auto-approved and stored without prompting."""
+        db = _make_db(tmp_path)
+        mgr, cm = _make_manager(db, domain_mode="allow_all")
+
+        await mgr.check_domain("https://auto-allowed.com/page")
+
+        assert db.domain_permissions.check_domain("auto-allowed.com") == "allowed"
+        cm.broadcast_permission_prompt.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_blocked_domain_still_enforced(self, tmp_path):
+        """Explicitly blocked domains are still rejected in allow_all mode."""
+        db = _make_db(tmp_path)
+        db.domain_permissions.set_permission("blocked.com", "blocked")
+        mgr, _cm = _make_manager(db, domain_mode="allow_all")
+
+        with pytest.raises(RuntimeError, match="blocked by user"):
+            await mgr.check_domain("https://blocked.com/")
+
+    @pytest.mark.asyncio
+    async def test_allowed_domain_still_passes(self, tmp_path):
+        """Already-allowed domains pass without re-storing."""
+        db = _make_db(tmp_path)
+        db.domain_permissions.set_permission("known.com", "allowed")
+        mgr, cm = _make_manager(db, domain_mode="allow_all")
+
+        await mgr.check_domain("https://known.com/page")
+
+        cm.broadcast_permission_prompt.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_multiple_unknown_domains_all_auto_allowed(self, tmp_path):
+        """Multiple unknown domains are all auto-approved."""
+        db = _make_db(tmp_path)
+        mgr, cm = _make_manager(db, domain_mode="allow_all")
+
+        await mgr.check_domain("https://site-a.com/")
+        await mgr.check_domain("https://site-b.com/")
+        await mgr.check_domain("https://site-c.com/")
+
+        assert db.domain_permissions.check_domain("site-a.com") == "allowed"
+        assert db.domain_permissions.check_domain("site-b.com") == "allowed"
+        assert db.domain_permissions.check_domain("site-c.com") == "allowed"
+        cm.broadcast_permission_prompt.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allow_all_syncs_to_channels(self, tmp_path):
+        """Auto-approved domains trigger a domain permissions sync."""
+        db = _make_db(tmp_path)
+        mgr, cm = _make_manager(db, domain_mode="allow_all")
+
+        await mgr.check_domain("https://synced.com/")
+
+        cm.sync_domain_permissions.assert_called_once()
+
+
+class TestDomainCRUD:
+    """Domain CRUD operations store and sync."""
+
+    @pytest.mark.asyncio
+    async def test_set_permission_stores_and_syncs(self, tmp_path):
+        """set_permission stores in DB and syncs to channels."""
+        db = _make_db(tmp_path)
+        mgr, cm = _make_manager(db)
+
+        await mgr.set_permission("example.com", "allowed")
+
+        assert db.domain_permissions.check_domain("example.com") == "allowed"
+        cm.sync_domain_permissions.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_permission_removes_and_syncs(self, tmp_path):
+        """delete_permission removes from DB and syncs to channels."""
+        db = _make_db(tmp_path)
+        db.domain_permissions.set_permission("example.com", "allowed")
+        mgr, cm = _make_manager(db)
+
+        await mgr.delete_permission("example.com")
+
+        assert db.domain_permissions.check_domain("example.com") is None
+        cm.sync_domain_permissions.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_prompted_approval_syncs(self, tmp_path):
+        """Prompted domain approval syncs to channels."""
+        db = _make_db(tmp_path)
+        mgr, cm = _make_manager(db)
+
+        async def approve_after_delay():
+            await asyncio.sleep(0.05)
+            for _req_id, future in mgr._pending.items():
+                if not future.done():
+                    future.set_result(True)
+                    break
+
+        asyncio.create_task(approve_after_delay())
+        await mgr.check_domain("https://prompted.com/")
+
+        assert db.domain_permissions.check_domain("prompted.com") == "allowed"
+        cm.sync_domain_permissions.assert_called()

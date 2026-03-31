@@ -273,9 +273,9 @@ class Penny:
         )
         self.schedule_executor.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
-        self._wire_browser_tools()
+        self._wire_browser_tools(config)
 
-    def _wire_browser_tools(self) -> None:
+    def _wire_browser_tools(self, config: Config) -> None:
         """Connect browser tools to agents when a browser channel is available."""
         if not isinstance(self.channel, ChannelManager):
             return
@@ -284,7 +284,7 @@ class Penny:
             return
 
         # Wire up permission manager
-        perm_mgr = PermissionManager(db=self.db, channel_manager=self.channel)
+        perm_mgr = PermissionManager(db=self.db, channel_manager=self.channel, config=config)
         browser_ch.set_permission_manager(perm_mgr)
         signal_ch = self.channel.get_channel(ChannelType.SIGNAL)
         if isinstance(signal_ch, SignalChannel):

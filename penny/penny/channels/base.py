@@ -214,6 +214,10 @@ class MessageChannel(ABC):
         """Handle a permission dismiss broadcast. Override in subclasses."""
         return  # no-op default
 
+    async def handle_domain_permissions_changed(self) -> None:
+        """Handle domain permissions update. Override in subclasses."""
+        return  # no-op default
+
     async def _fetch_attachments(self, message: IncomingMessage, raw_data: dict) -> IncomingMessage:
         """
         Fetch attachment data for the message. Override in subclasses.

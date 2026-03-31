@@ -131,6 +131,11 @@ class ChannelManager(MessageChannel):
         for channel in self._channels.values():
             await channel.handle_permission_prompt(request_id, domain, url)
 
+    async def sync_domain_permissions(self) -> None:
+        """Notify all channels that domain permissions have changed."""
+        for channel in self._channels.values():
+            await channel.handle_domain_permissions_changed()
+
     async def broadcast_permission_dismiss(self, request_id: str) -> None:
         """Broadcast a permission dismiss to all channels."""
         for channel in self._channels.values():

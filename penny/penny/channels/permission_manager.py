@@ -13,10 +13,12 @@ import uuid
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from penny.config_params import DOMAIN_MODE_ALLOW_ALL
 from penny.constants import DomainPermissionValue, PennyConstants
 
 if TYPE_CHECKING:
     from penny.channels.manager import ChannelManager
+    from penny.config import Config
     from penny.database import Database
 
 logger = logging.getLogger(__name__)
@@ -30,9 +32,10 @@ class PermissionManager:
     the result, and moves on.
     """
 
-    def __init__(self, db: Database, channel_manager: ChannelManager):
+    def __init__(self, db: Database, channel_manager: ChannelManager, config: Config):
         self._db = db
         self._channel_manager = channel_manager
+        self._config = config
         self._pending: dict[str, asyncio.Future[bool]] = {}
         self._queue: asyncio.Queue[tuple[str, str, asyncio.Future[bool | None]]] = asyncio.Queue()
         self._worker_started = False
@@ -55,6 +58,12 @@ class PermissionManager:
         if permission == DomainPermissionValue.BLOCKED:
             raise RuntimeError(f"Domain {domain} is blocked by user")
 
+        # Unknown domain — check mode
+        if str(self._config.runtime.DOMAIN_PERMISSION_MODE) == DOMAIN_MODE_ALLOW_ALL:
+            self._db.domain_permissions.set_permission(domain, DomainPermissionValue.ALLOWED)
+            await self._channel_manager.sync_domain_permissions()
+            return
+
         result_future: asyncio.Future[bool | None] = asyncio.get_event_loop().create_future()
         await self._queue.put((domain, url, result_future))
         self._ensure_worker()
@@ -70,6 +79,16 @@ class PermissionManager:
         future = self._pending.get(request_id)
         if future and not future.done():
             future.set_result(allowed)
+
+    async def set_permission(self, domain: str, permission: str) -> None:
+        """Set a domain permission and sync to all channels."""
+        self._db.domain_permissions.set_permission(domain, permission)
+        await self._channel_manager.sync_domain_permissions()
+
+    async def delete_permission(self, domain: str) -> None:
+        """Delete a domain permission and sync to all channels."""
+        self._db.domain_permissions.delete(domain)
+        await self._channel_manager.sync_domain_permissions()
 
     # --- Worker ---
 
@@ -97,6 +116,7 @@ class PermissionManager:
             if allowed is not None:
                 perm = DomainPermissionValue.ALLOWED if allowed else DomainPermissionValue.BLOCKED
                 self._db.domain_permissions.set_permission(domain, perm)
+                await self._channel_manager.sync_domain_permissions()
 
             result_future.set_result(allowed)
 
