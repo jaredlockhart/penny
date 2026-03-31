@@ -79,7 +79,7 @@ check: $(if $(LOCAL),,build team-build)
 	$(TEAM_RUN) ruff check $(TEAM_RUFF_TARGETS)
 	$(TEAM_RUN) ty check $(TEAM_RUFF_TARGETS)
 	$(TEAM_RUN) pytest $(TEAM_PYTEST_ARGS)
-	cd browser && npx tsc --noEmit
+	cd browser && npm install --silent && npx tsc --noEmit
 
 pytest: $(if $(LOCAL),,build team-build)
 	$(RUN) pytest $(PYTEST_ARGS)
