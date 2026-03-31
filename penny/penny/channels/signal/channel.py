@@ -35,6 +35,7 @@ _TRANSIENT_ERROR_INDICATORS = ("SocketException", "UnexpectedErrorException")
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
+    from penny.channels.permission_manager import PermissionManager
     from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.database.models import MessageLog
@@ -75,7 +76,13 @@ class SignalChannel(MessageChannel):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self._reaction_callbacks: dict[str, Callable[[str], None]] = {}
+        self._pending_permission_messages: dict[str, tuple[str, int]] = {}
+        self._permission_manager: PermissionManager | None = None
         logger.info("Initialized Signal channel: url=%s, number=%s", api_url, phone_number)
+
+    def set_permission_manager(self, manager: PermissionManager) -> None:
+        """Set the permission manager for resolving reactions."""
+        self._permission_manager = manager
 
     @property
     def sender_id(self) -> str:
@@ -441,6 +448,44 @@ class SignalChannel(MessageChannel):
             logger.info("Deleted Signal message: recipient=%s, timestamp=%d", recipient, timestamp)
         except httpx.HTTPError as e:
             logger.warning("Failed to delete Signal message: %s", e)
+
+    # --- Permission prompts ---
+
+    async def handle_permission_prompt(
+        self,
+        request_id: str,
+        domain: str,
+        url: str,
+    ) -> None:
+        """Send a permission prompt and register a reaction callback."""
+        primary = self._db.users.get_primary_sender()
+        if not primary:
+            return
+
+        text = f"Penny wants to visit {domain} — react 👍 to allow, 👎 to block"
+        external_id = await self.send_message(primary, text)
+        if external_id is None:
+            return
+
+        # Store for cleanup on dismiss
+        self._pending_permission_messages[request_id] = (primary, external_id)
+
+        # Find the permission manager to resolve the future on reaction
+        manager = self._permission_manager
+
+        def on_reaction(emoji: str) -> None:
+            if manager:
+                allowed = emoji in PennyConstants.POSITIVE_REACTION_EMOJIS
+                manager.handle_decision(request_id, allowed)
+
+        self.register_reaction_callback(str(external_id), on_reaction)
+
+    async def handle_permission_dismiss(self, request_id: str) -> None:
+        """Delete the Signal permission prompt message."""
+        entry = self._pending_permission_messages.pop(request_id, None)
+        if entry:
+            recipient, timestamp = entry
+            await self.delete_message(recipient, timestamp)
 
     def _handle_send_response(
         self, response: httpx.Response, recipient: str, message: str

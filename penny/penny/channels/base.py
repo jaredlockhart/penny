@@ -199,6 +199,21 @@ class MessageChannel(ABC):
         """Close the channel and cleanup resources."""
         pass
 
+    # --- Permission prompts (overridden by channels that support them) ---
+
+    async def handle_permission_prompt(
+        self,
+        request_id: str,
+        domain: str,
+        url: str,
+    ) -> None:
+        """Handle a permission prompt broadcast. Override in subclasses."""
+        return  # no-op default
+
+    async def handle_permission_dismiss(self, request_id: str) -> None:
+        """Handle a permission dismiss broadcast. Override in subclasses."""
+        return  # no-op default
+
     async def _fetch_attachments(self, message: IncomingMessage, raw_data: dict) -> IncomingMessage:
         """
         Fetch attachment data for the message. Override in subclasses.
