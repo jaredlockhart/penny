@@ -20,6 +20,21 @@ interface PageData {
   ready: boolean;
 }
 
+/** Domain-specific readiness locators. For JS-rendered pages, Defuddle may
+ *  extract too early and get page chrome instead of content. These selectors
+ *  gate extraction — if the selector isn't present yet, we return ready=false
+ *  so pollForContent retries until the real content has rendered. */
+const READINESS_LOCATORS: [match: (hostname: string) => boolean, selector: string][] = [
+  [(h) => h.includes("kagi.com"), ".search-result"],
+];
+
+function findReadinessSelector(): string | null {
+  for (const [match, selector] of READINESS_LOCATORS) {
+    if (match(location.hostname)) return selector;
+  }
+  return null;
+}
+
 function extractWithDefuddle(): string | null {
   const clone = document.cloneNode(true) as Document;
   const result = new Defuddle(clone, { url: location.href }).parse();
@@ -47,6 +62,11 @@ function extractMetaImage(): string {
 }
 
 function extract(): PageData {
+  const readinessSelector = findReadinessSelector();
+  if (readinessSelector && !document.querySelector(readinessSelector)) {
+    return { title: document.title, url: location.href, text: "", image: "", ready: false };
+  }
+
   const text = extractWithDefuddle() ?? "Failed to extract page content";
 
   return {
