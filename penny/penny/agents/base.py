@@ -888,14 +888,14 @@ class Agent:
     def _instructions_section(self, override: str | None = None) -> str:
         """## Instructions — agent-specific prompt with tool descriptions."""
         prompt = override or self.system_prompt
-        fmt: dict = {}
+        format_args: dict = {}
         if "{tools}" in prompt:
-            fmt["tools"] = self._build_tool_summary()
+            format_args["tools"] = self._build_tool_summary()
         if "{max_tool_calls}" in prompt:
             assert self._multi_tool is not None, "{max_tool_calls} in prompt but no multi_tool"
-            fmt["max_tool_calls"] = self._multi_tool._max_calls
-        if fmt:
-            prompt = prompt.format(**fmt)
+            format_args["max_tool_calls"] = self._multi_tool._max_calls
+        if format_args:
+            prompt = prompt.format(**format_args)
         return f"## Instructions\n{prompt}"
 
     @staticmethod
