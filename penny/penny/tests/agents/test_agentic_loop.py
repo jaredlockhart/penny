@@ -674,9 +674,9 @@ class TestEmptyContentAfterToolCalls:
 
     @pytest.mark.asyncio
     async def test_retry_counter_resets_after_tool_calls(self, test_db, mock_ollama):
-        """empty_retries resets after tool calls so synthesis step gets a retry."""
+        """After nudge fires, tools are stripped so model must synthesize."""
         agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=5)
-        # Mock tool executor so tool calls don't fail (this test checks retry counter)
+        # Mock tool executor so tool calls don't fail
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(tool="search", result="search result")
         )
@@ -687,11 +687,9 @@ class TestEmptyContentAfterToolCalls:
             if count == 2:
                 return mock_ollama._make_tool_call_response(request, "search", {"query": "second"})
             if count == 3:
+                # Empty content triggers nudge — tools stripped on next call
                 return mock_ollama._make_text_response(request, "")
-            if count == 4:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "third"})
-            if count == 5:
-                return mock_ollama._make_text_response(request, "")
+            # count 4: tools stripped, model must produce text
             return mock_ollama._make_text_response(request, "synthesized answer")
 
         mock_ollama.set_response_handler(handler)

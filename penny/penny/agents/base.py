@@ -357,11 +357,13 @@ class Agent:
         empty_retries: int = 0
         refusal_retries: int = 0
 
+        force_no_tools = False
+
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
 
             is_final_step = step == steps - 1
-            strip_tools = is_final_step and not self._keep_tools_on_final_step
+            strip_tools = force_no_tools or (is_final_step and not self._keep_tools_on_final_step)
             step_tools = [] if strip_tools else tools
             if strip_tools:
                 logger.debug("Final step — tools removed, model must produce text")
@@ -438,6 +440,7 @@ class Agent:
                 else:
                     nudge = "Please provide your response."
                 messages.append({"role": MessageRole.USER, "content": nudge})
+                force_no_tools = True
                 if not is_final_step:
                     continue
                 # On the final step, retry directly — can't extend a for-range loop
