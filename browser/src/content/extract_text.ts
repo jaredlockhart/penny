@@ -1,11 +1,13 @@
 /**
- * Content script — extracts main content from the current page using Defuddle.
- * Falls back to CSS heuristics if Defuddle returns insufficient content.
+ * Content script — extracts main content from the current page.
+ * Uses Defuddle for article extraction, then Turndown for HTML → Markdown.
  * Bundled with esbuild (not compiled by tsc) since content scripts can't use imports.
  */
 
-import { Defuddle } from "defuddle";
-import { extractKagiResults } from "./extractors/kagi";
+import Defuddle from "defuddle";
+import TurndownService from "turndown";
+
+const turndown = new TurndownService({ headingStyle: "atx" });
 
 const MIN_CONTENT_LENGTH = 200;
 const MAX_CHARS = 50_000;
@@ -19,81 +21,16 @@ interface PageData {
 }
 
 function extractWithDefuddle(): string | null {
-  try {
-    const clone = document.cloneNode(true) as Document;
-    const result = new Defuddle(clone, { url: location.href }).parse();
-    const text = result.content
-      ? stripHtmlTags(result.content)
-      : null;
-    if (text && text.length >= MIN_CONTENT_LENGTH) {
-      return text;
-    }
-  } catch {
-    // Defuddle failed — fall through to heuristics
+  const clone = document.cloneNode(true) as Document;
+  const result = new Defuddle(clone, { url: location.href }).parse();
+  if (!result.content) return null;
+  const text = turndown.turndown(result.content);
+  if (text && text.length >= MIN_CONTENT_LENGTH) {
+    return text;
   }
   return null;
 }
 
-function extractWithHeuristics(): string | null {
-  const selectors = [
-    "article",
-    "main",
-    '[role="main"]',
-    "#content",
-    ".post-content",
-    ".article-content",
-    ".entry-content",
-  ];
-
-  for (const selector of selectors) {
-    const el = document.querySelector(selector);
-    if (el) {
-      const text = (el as HTMLElement).innerText?.trim();
-      if (text && text.length >= MIN_CONTENT_LENGTH) {
-        return text;
-      }
-    }
-  }
-  return null;
-}
-
-function extractAllVisibleText(): string {
-  const SKIP_TAGS = new Set([
-    "SCRIPT", "STYLE", "NOSCRIPT", "SVG", "IFRAME",
-    "NAV", "ASIDE", "FOOTER", "HEADER",
-  ]);
-
-  const chunks: string[] = [];
-  const walker = document.createTreeWalker(
-    document.body,
-    NodeFilter.SHOW_TEXT,
-    {
-      acceptNode(node: Text): number {
-        const parent = node.parentElement;
-        if (!parent) return NodeFilter.FILTER_REJECT;
-        if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
-        const style = window.getComputedStyle(parent);
-        if (style.display === "none" || style.visibility === "hidden") {
-          return NodeFilter.FILTER_REJECT;
-        }
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    },
-  );
-
-  let node: Text | null;
-  while ((node = walker.nextNode() as Text | null)) {
-    const text = node.textContent?.trim();
-    if (text) chunks.push(text);
-  }
-  return chunks.join("\n");
-}
-
-function stripHtmlTags(html: string): string {
-  const div = document.createElement("div");
-  div.innerHTML = html;
-  return div.innerText || div.textContent || "";
-}
 
 function extractMetaImage(): string {
   const selectors = [
@@ -110,24 +47,7 @@ function extractMetaImage(): string {
 }
 
 function extract(): PageData {
-  // Kagi pages must use the Kagi extractor — no fallbacks.
-  // Returns ready=false when results haven't rendered yet;
-  // pollForContent re-injects until ready.
-  if (location.hostname.includes("kagi.com")) {
-    const kagi = extractKagiResults();
-    return {
-      title: document.title,
-      url: location.href,
-      text: kagi ? kagi.slice(0, MAX_CHARS) : "",
-      image: "",
-      ready: kagi !== null,
-    };
-  }
-
-  const text =
-    extractWithDefuddle() ??
-    extractWithHeuristics() ??
-    extractAllVisibleText();
+  const text = extractWithDefuddle() ?? "Failed to extract page content";
 
   return {
     title: document.title,
