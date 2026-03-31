@@ -238,6 +238,7 @@ export type RuntimeMessageType =
   | "connection_state"
   | "permission_request"
   | "permission_response"
+  | "permission_dismiss"
   | "page_info"
   | "thoughts_request"
   | "thoughts_response"
@@ -263,6 +264,7 @@ export const RuntimeMessageType = {
   ConnectionState: "connection_state",
   PermissionRequest: "permission_request",
   PermissionResponse: "permission_response",
+  PermissionDismiss: "permission_dismiss",
   PageInfo: "page_info",
   ThoughtsRequest: "thoughts_request",
   ThoughtsResponse: "thoughts_response",
@@ -321,6 +323,11 @@ export interface RuntimePermissionResponse {
   type: typeof RuntimeMessageType.PermissionResponse;
   request_id: string;
   allowed: boolean;
+}
+
+/** Background → sidebar: dismiss any open permission dialog */
+export interface RuntimePermissionDismiss {
+  type: typeof RuntimeMessageType.PermissionDismiss;
 }
 
 /** Background → sidebar: current page info for the context toggle */
@@ -439,6 +446,7 @@ export type RuntimeMessage =
   | RuntimeConnectionState
   | RuntimePermissionRequest
   | RuntimePermissionResponse
+  | RuntimePermissionDismiss
   | RuntimePageInfo
   | RuntimeThoughtsRequest
   | RuntimeThoughtsResponse

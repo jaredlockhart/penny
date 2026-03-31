@@ -229,6 +229,8 @@ function connect(): void {
         domain: data.domain,
         url: data.url,
       });
+    } else if (data.type === WsIn.PermissionDismiss) {
+      broadcastToSidebar({ type: RuntimeMessageType.PermissionDismiss });
     }
   });
 

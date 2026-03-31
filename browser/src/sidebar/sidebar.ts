@@ -404,6 +404,8 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.PermissionRequest) {
     if (activeView === "settings") showView("chat");
     showPermissionDialog(message.request_id, message.domain, message.url);
+  } else if (message.type === RuntimeMessageType.PermissionDismiss) {
+    document.getElementById("permission-dialog")?.classList.add("hidden");
   } else if (message.type === RuntimeMessageType.ThoughtCount) {
     const countEl = document.getElementById("nav-thoughts-count");
     if (countEl) countEl.textContent = message.count > 0 ? ` (${message.count})` : "";
