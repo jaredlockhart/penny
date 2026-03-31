@@ -41,7 +41,6 @@ from penny.startup import get_restart_message
 from penny.tools import SearchTool
 from penny.tools.browse_url import BrowseUrlTool
 from penny.tools.fetch_news import FetchNewsTool
-from penny.tools.multi import MultiTool
 from penny.tools.news import NewsTool
 from penny.zoho.models import ZohoCredentials
 
@@ -109,17 +108,6 @@ class Penny:
             db=db,
         )
 
-    def _create_multi_tool(
-        self, search_tool: SearchTool | None, max_calls: int | None = None
-    ) -> MultiTool:
-        """Build a MultiTool wrapper for the given search tool."""
-        calls = max_calls or int(self.config.runtime.MESSAGE_MAX_TOOL_CALLS)
-        return MultiTool(
-            search_tool=search_tool,
-            news_tool=self._news_tool,
-            max_calls=calls,
-        )
-
     def _create_chat_agent(self, db: Database) -> ChatAgent:
         """Factory for creating ChatAgent with a given database.
 
@@ -134,10 +122,11 @@ class Penny:
             retry_delay=self.config.ollama_retry_delay,
         )
         search_tool = self._create_search_tool(db)
-        multi_tool = self._create_multi_tool(search_tool)
         return ChatAgent(
             system_prompt=Prompt.CONVERSATION_PROMPT,
-            multi_tool=multi_tool,
+            search_tool=search_tool,
+            news_tool=self._news_tool,
+            max_queries_key="CHAT_MAX_QUERIES",
             model_client=client,
             tools=[],
             db=db,
@@ -157,10 +146,11 @@ class Penny:
         """Create message agent and background processing agents."""
         self._shared_search_tool = self._create_search_tool(self.db)
         self._news_tool = self._create_news_tool(config)
-        self._multi_tool = self._create_multi_tool(self._shared_search_tool)
         self.chat_agent = ChatAgent(
             system_prompt=Prompt.CONVERSATION_PROMPT,
-            multi_tool=self._multi_tool,
+            search_tool=self._shared_search_tool,
+            news_tool=self._news_tool,
+            max_queries_key="CHAT_MAX_QUERIES",
             model_client=self.model_client,
             tools=[],
             db=self.db,
@@ -197,9 +187,10 @@ class Penny:
         """Create monologue, history, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
         thinking_search_tool = self._create_search_tool(self.db)
-        self._thinking_multi_tool = self._create_multi_tool(thinking_search_tool, max_calls=1)
         self.thinking_agent = ThinkingAgent(
-            multi_tool=self._thinking_multi_tool,
+            search_tool=thinking_search_tool,
+            news_tool=self._news_tool,
+            max_queries_key="INNER_MONOLOGUE_MAX_QUERIES",
             embedding_model_client=self.embedding_model_client,
             **kwargs,
         )
@@ -290,7 +281,7 @@ class Penny:
         if isinstance(signal_ch, SignalChannel):
             signal_ch.set_permission_manager(perm_mgr)
 
-        # Chat agent uses MultiTool — give it a provider checked at dispatch time.
+        # Browse tool provider — agents build fresh MultiTools each cycle.
         def browse_tool_provider() -> BrowseUrlTool | None:
             if not browser_ch.has_tool_connection:
                 return None
@@ -299,8 +290,8 @@ class Penny:
                 permission_manager=perm_mgr,
             )
 
-        self._multi_tool.set_browse_url_provider(browse_tool_provider)
-        self._thinking_multi_tool.set_browse_url_provider(browse_tool_provider)
+        self.chat_agent._browse_url_provider = browse_tool_provider
+        self.thinking_agent._browse_url_provider = browse_tool_provider
         self.thinking_agent._on_tool_start_factory = browser_ch.make_background_tool_callback
 
     def _init_scheduler(self, config: Config) -> None:

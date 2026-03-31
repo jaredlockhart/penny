@@ -353,7 +353,7 @@ class TestMultiToolImagePassthrough:
         mock_browse_tool = AsyncMock()
         mock_browse_tool.execute = AsyncMock(return_value=browse_result)
 
-        tool = MultiTool(search_tool=None)
+        tool = MultiTool(max_calls=3, search_tool=None)
         tool.set_browse_url_provider(lambda: mock_browse_tool)
 
         result = await tool.execute(queries=["https://ex.com"])
@@ -372,7 +372,7 @@ class TestMultiToolImagePassthrough:
         mock_browse_tool = AsyncMock()
         mock_browse_tool.execute = AsyncMock(return_value=browse_result)
 
-        tool = MultiTool(search_tool=None)
+        tool = MultiTool(max_calls=3, search_tool=None)
         tool.set_browse_url_provider(lambda: mock_browse_tool)
 
         result = await tool.execute(queries=["https://ex.com"])

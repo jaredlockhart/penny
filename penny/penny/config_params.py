@@ -139,6 +139,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="CHAT_MAX_QUERIES",
+    description="Max parallel queries per chat tool call",
+    type=int,
+    default=3,
+    validator=_validate_positive_int,
+    group=GROUP_GLOBAL,
+)
+
+ConfigParam(
     key="IMAGE_DOWNLOAD_TIMEOUT",
     description="Timeout in seconds for image downloads",
     type=float,
@@ -260,6 +269,15 @@ ConfigParam(
     description="Max thinking loop steps per inner monologue cycle",
     type=int,
     default=5,
+    validator=_validate_positive_int,
+    group=GROUP_INNER_MONOLOGUE,
+)
+
+ConfigParam(
+    key="INNER_MONOLOGUE_MAX_QUERIES",
+    description="Max parallel queries per thinking tool call",
+    type=int,
+    default=3,
     validator=_validate_positive_int,
     group=GROUP_INNER_MONOLOGUE,
 )
