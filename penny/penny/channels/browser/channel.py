@@ -275,16 +275,16 @@ class BrowserChannel(MessageChannel):
     # --- Domain permissions ---
 
     async def _handle_domain_update(self, data: dict) -> None:
-        """Add or update a domain permission, then sync to all addons."""
+        """Route domain update to the permission manager."""
         msg = BrowserDomainUpdate(**data)
-        self._db.domain_permissions.set_permission(msg.domain, msg.permission)
-        await self._sync_domain_permissions()
+        if self._permission_manager:
+            await self._permission_manager.set_permission(msg.domain, msg.permission)
 
     async def _handle_domain_delete(self, data: dict) -> None:
-        """Delete a domain permission, then sync to all addons."""
+        """Route domain delete to the permission manager."""
         msg = BrowserDomainDelete(**data)
-        self._db.domain_permissions.delete(msg.domain)
-        await self._sync_domain_permissions()
+        if self._permission_manager:
+            await self._permission_manager.delete_permission(msg.domain)
 
     async def _sync_domain_permissions(self) -> None:
         """Broadcast the full domain permissions list to all connected addons."""
@@ -307,6 +307,10 @@ class BrowserChannel(MessageChannel):
         dismiss = BrowserPermissionDismiss(request_id=request_id)
         for conn in self._connections.values():
             await self._send_ws(conn.ws, dismiss)
+
+    async def handle_domain_permissions_changed(self) -> None:
+        """Sync the full domain permissions list to all connected addons."""
+        await self._sync_domain_permissions()
 
     def _handle_tool_response(self, data: dict) -> None:
         """Resolve a pending tool request future."""
