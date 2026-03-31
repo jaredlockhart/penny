@@ -656,6 +656,46 @@ async def test_get_top_thoughts_skips_recently_notified_topics(
         assert None not in pref_ids, "free thought should be excluded (recently notified)"
 
 
+@pytest.mark.asyncio
+async def test_get_top_thoughts_sorts_mix_of_notified_and_never_notified(
+    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+):
+    """Sorting works when some eligible topics have prior notifications and others don't.
+
+    Regression: last_notified.get(pid) returned datetime for known topics and the
+    fallback was "" (str), causing TypeError on comparison.
+    """
+    config = make_config(notify_candidates=5)
+
+    async with running_penny(config) as penny:
+        pref_a = penny.db.preferences.add(
+            user=TEST_SENDER, content="guitar pedals", valence="positive"
+        )
+        pref_b = penny.db.preferences.add(user=TEST_SENDER, content="prog rock", valence="positive")
+
+        # pref_a has an old notified thought — backdate notified_at past the 24h cooldown
+        old_a = penny.db.thoughts.add(TEST_SENDER, "old pedal thought", preference_id=pref_a.id)
+        penny.db.thoughts.mark_notified(old_a.id)
+        two_days_ago = datetime(2020, 1, 1)
+        with penny.db.thoughts._session() as session:
+            t = session.get(Thought, old_a.id)
+            t.notified_at = two_days_ago
+            session.add(t)
+            session.commit()
+
+        # Both prefs have unnotified thoughts (eligible candidates)
+        penny.db.thoughts.add(TEST_SENDER, "new pedal thought", preference_id=pref_a.id)
+        penny.db.thoughts.add(TEST_SENDER, "prog thought", preference_id=pref_b.id)
+
+        # This triggers sorting with mixed types: pref_a is in last_notified (datetime),
+        # pref_b is not (was falling back to "" before fix)
+        top = penny.notify_agent._get_top_thoughts(TEST_SENDER, 5)
+        pref_ids = [t.preference_id for t in top]
+
+        assert pref_a.id in pref_ids
+        assert pref_b.id in pref_ids
+
+
 # ── Thought context variants ────────────────────────────────────────────
 
 
