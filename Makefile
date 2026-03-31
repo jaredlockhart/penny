@@ -4,17 +4,17 @@ PYTEST_ARGS = penny/tests/ -v
 TEAM_RUFF_TARGETS = penny_team/
 TEAM_PYTEST_ARGS = tests/ -v
 
-.PHONY: up prod kill build team-build fmt lint fix typecheck check pytest token migrate-test migrate-validate
+.PHONY: up prod kill build team-build browser-build fmt lint fix typecheck check pytest token migrate-test migrate-validate
 
 # --- Docker Compose ---
 
-up:
+up: browser-build
 	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
 	GIT_COMMIT_MESSAGE=$$(git log -1 --pretty=%B 2>/dev/null | tr '\n' ' ' | sed 's/ *$$//' || echo unknown) \
 	SNAPSHOT=1 \
 	docker compose --profile team up --build
 
-prod:
+prod: browser-build
 	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
 	GIT_COMMIT_MESSAGE=$$(git log -1 --pretty=%B 2>/dev/null | tr '\n' ' ' | sed 's/ *$$//' || echo unknown) \
 	SNAPSHOT=1 \
@@ -30,6 +30,9 @@ build:
 
 team-build:
 	docker compose build team
+
+browser-build:
+	cd browser && npm install && npm run build
 
 # Print a GitHub App installation token for use with gh CLI
 # Usage: GH_TOKEN=$(make token) gh pr create ...
@@ -66,7 +69,7 @@ typecheck: $(if $(LOCAL),,build team-build)
 	$(RUN) ty check $(RUFF_TARGETS)
 	$(TEAM_RUN) ty check $(TEAM_RUFF_TARGETS)
 
-check: $(if $(LOCAL),,build team-build)
+check: $(if $(LOCAL),,build team-build) browser-build
 	$(RUN) ruff format --check $(RUFF_TARGETS)
 	$(RUN) ruff check $(RUFF_TARGETS)
 	$(RUN) ty check $(RUFF_TARGETS)

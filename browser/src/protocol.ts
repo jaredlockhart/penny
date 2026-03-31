@@ -485,8 +485,6 @@ export interface PageContext {
   image: string;
 }
 
-export const MAX_PAGE_CONTEXT_CHARS = 5_000;
-
 // --- Tool constants ---
 
 export const THOUGHTS_POLL_INTERVAL_MS = 300_000;

@@ -612,6 +612,7 @@ function setTyping(active: boolean, content?: string): void {
   } else if (active && indicator && content) {
     indicator.className = isToolStatus ? "typing tool-status" : "typing";
     indicator.innerHTML = typingHTML(text);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   } else if (!active && indicator) {
     indicator.remove();
   }
