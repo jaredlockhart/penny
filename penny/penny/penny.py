@@ -197,7 +197,10 @@ class Penny:
         """Create monologue, history, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
         thinking_search_tool = self._create_search_tool(self.db)
-        self._thinking_multi_tool = self._create_multi_tool(thinking_search_tool, max_calls=1)
+        thinking_max_queries = int(config.runtime.INNER_MONOLOGUE_MAX_QUERIES)
+        self._thinking_multi_tool = self._create_multi_tool(
+            thinking_search_tool, max_calls=thinking_max_queries
+        )
         self.thinking_agent = ThinkingAgent(
             multi_tool=self._thinking_multi_tool,
             embedding_model_client=self.embedding_model_client,

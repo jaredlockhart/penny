@@ -265,6 +265,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="INNER_MONOLOGUE_MAX_QUERIES",
+    description="Max queries/URLs per thinking agent tool call",
+    type=int,
+    default=1,
+    validator=_validate_positive_int,
+    group=GROUP_INNER_MONOLOGUE,
+)
+
+ConfigParam(
     key="THOUGHT_DEDUP_EMBEDDING_THRESHOLD",
     description="Embedding similarity threshold for thought title deduplication (0-1)",
     type=float,
