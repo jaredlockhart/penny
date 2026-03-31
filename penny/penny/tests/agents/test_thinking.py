@@ -157,17 +157,20 @@ You have tools available:
 - **fetch**: Look things up. Pass up to 1 query and/or URL.
 
 Go DEEP, not wide:
-- Explore the topic using your tools, then pick the single most interesting result
-- Do follow-up lookups to learn more about that specific thing
+1. SEARCH first to discover what's out there on the topic
+2. Pick the single most interesting result, then READ the actual page \
+by passing its URL back to your tool
+3. Do follow-up reads to learn more about that specific thing
 - Do NOT explore a different subtopic on each step
 - Do NOT repeat the same query you already ran
+- Do NOT summarize from search snippets — always read the actual page
 
 When you receive 'dig deeper', that means: learn more about what \
 you already found. More detail on the same thing, not a new thing.
 
 Check your recent thoughts to avoid repeating what you already explored.
 
-All information in your responses must come from your tool results. \
+All information in your responses must come from pages you read. \
 If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
@@ -296,17 +299,20 @@ You have tools available:
 - **fetch**: Look things up. Pass up to 1 query and/or URL.
 
 Go DEEP, not wide:
-- Explore the topic using your tools, then pick the single most interesting result
-- Do follow-up lookups to learn more about that specific thing
+1. SEARCH first to discover what's out there on the topic
+2. Pick the single most interesting result, then READ the actual page \
+by passing its URL back to your tool
+3. Do follow-up reads to learn more about that specific thing
 - Do NOT explore a different subtopic on each step
 - Do NOT repeat the same query you already ran
+- Do NOT summarize from search snippets — always read the actual page
 
 When you receive 'dig deeper', that means: learn more about what \
 you already found. More detail on the same thing, not a new thing.
 
 Check your recent thoughts to avoid repeating what you already explored.
 
-All information in your responses must come from your tool results. \
+All information in your responses must come from pages you read. \
 If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
@@ -422,17 +428,20 @@ You have tools available:
 - **fetch**: Look things up. Pass up to 1 query and/or URL.
 
 Go DEEP, not wide:
-- Explore the topic using your tools, then pick the single most interesting result
-- Do follow-up lookups to learn more about that specific thing
+1. SEARCH first to discover what's out there on the topic
+2. Pick the single most interesting result, then READ the actual page \
+by passing its URL back to your tool
+3. Do follow-up reads to learn more about that specific thing
 - Do NOT explore a different subtopic on each step
 - Do NOT repeat the same query you already ran
+- Do NOT summarize from search snippets — always read the actual page
 
 When you receive 'dig deeper', that means: learn more about what \
 you already found. More detail on the same thing, not a new thing.
 
 Check your recent thoughts to avoid repeating what you already explored.
 
-All information in your responses must come from your tool results. \
+All information in your responses must come from pages you read. \
 If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
