@@ -569,7 +569,7 @@ class NotifyAgent(Agent):
             for pid, thoughts in by_pref.items()
             if not self._topic_on_cooldown(pid, last_notified, cutoff, cooldown)
         }
-        ranked = sorted(eligible.keys(), key=lambda pid: last_notified.get(pid) or "")
+        ranked = sorted(eligible.keys(), key=lambda pid: last_notified.get(pid) or datetime.min)
         slots = n - len(result)
         for pref_id in ranked[:slots]:
             result.append(eligible[pref_id][-1])  # most recent unnotified
