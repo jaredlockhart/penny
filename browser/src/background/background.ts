@@ -9,7 +9,6 @@ import {
   ConnectionState as CS,
   type DomainAllowlist,
   type DomainPermissionEntry,
-  MAX_PAGE_CONTEXT_CHARS,
   type PageContext,
   RECONNECT_DELAY_MS,
   THOUGHTS_POLL_INTERVAL_MS,
@@ -103,7 +102,7 @@ async function extractFromActiveTab(): Promise<void> {
       currentPageContext = {
         title: data.title,
         url: data.url,
-        text: data.text.slice(0, MAX_PAGE_CONTEXT_CHARS),
+        text: data.text,
         image: data.image,
       };
       broadcastPageInfo(data.title, data.url, favicon, data.image, true);
@@ -229,6 +228,8 @@ function connect(): void {
         domain: data.domain,
         url: data.url,
       });
+    } else if (data.type === WsIn.PermissionDismiss) {
+      broadcastToSidebar({ type: RuntimeMessageType.PermissionDismiss });
     }
   });
 

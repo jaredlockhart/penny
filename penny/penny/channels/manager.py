@@ -119,6 +119,28 @@ class ChannelManager(MessageChannel):
             logger.info("Closing channel: %s", channel_type)
             await channel.close()
 
+    # --- Permission prompt broadcasting ---
+
+    async def broadcast_permission_prompt(
+        self,
+        request_id: str,
+        domain: str,
+        url: str,
+    ) -> None:
+        """Broadcast a permission prompt to all channels."""
+        for channel in self._channels.values():
+            await channel.handle_permission_prompt(request_id, domain, url)
+
+    async def sync_domain_permissions(self) -> None:
+        """Notify all channels that domain permissions have changed."""
+        for channel in self._channels.values():
+            await channel.handle_domain_permissions_changed()
+
+    async def broadcast_permission_dismiss(self, request_id: str) -> None:
+        """Broadcast a permission dismiss to all channels."""
+        for channel in self._channels.values():
+            await channel.handle_permission_dismiss(request_id)
+
     # --- Delegation to all channels ---
 
     def set_scheduler(self, scheduler: BackgroundScheduler) -> None:

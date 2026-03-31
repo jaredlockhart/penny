@@ -9,11 +9,10 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
 
 import websockets
 from pydantic import BaseModel
@@ -60,7 +59,7 @@ from penny.channels.browser.models import (
     BrowserToolResponse,
     DomainPermissionRecord,
 )
-from penny.channels.signal.channel import SignalChannel
+from penny.channels.permission_manager import PermissionManager
 from penny.constants import ChannelType, PennyConstants
 from penny.serper.client import search_image_url
 from penny.tools.base import Tool
@@ -112,17 +111,16 @@ class BrowserChannel(MessageChannel):
         self._server: Server | None = None
         self._connections: dict[str, ConnectionInfo] = {}
         self._pending_requests: dict[str, asyncio.Future[tuple[str, str | None]]] = {}
-        self._pending_permissions: dict[str, asyncio.Future[bool]] = {}
-        self._channel_manager: MessageChannel | None = None
+        self._permission_manager: PermissionManager | None = None
 
     @property
     def sender_id(self) -> str:
         """Identifier for outgoing browser messages."""
         return "penny"
 
-    def set_channel_manager(self, manager: MessageChannel) -> None:
-        """Set the channel manager for cross-channel communication (e.g., Signal prompts)."""
-        self._channel_manager = manager
+    def set_permission_manager(self, manager: PermissionManager) -> None:
+        """Set the permission manager for routing addon permission decisions."""
+        self._permission_manager = manager
 
     @property
     def has_tool_connection(self) -> bool:
@@ -189,7 +187,9 @@ class BrowserChannel(MessageChannel):
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_PERMISSION_DECISION:
-            self._handle_permission_decision(data)
+            msg = BrowserPermissionDecision(**data)
+            if self._permission_manager:
+                self._permission_manager.handle_decision(msg.request_id, msg.allowed)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_THOUGHTS_REQUEST:
@@ -275,16 +275,16 @@ class BrowserChannel(MessageChannel):
     # --- Domain permissions ---
 
     async def _handle_domain_update(self, data: dict) -> None:
-        """Add or update a domain permission, then sync to all addons."""
+        """Route domain update to the permission manager."""
         msg = BrowserDomainUpdate(**data)
-        self._db.domain_permissions.set_permission(msg.domain, msg.permission)
-        await self._sync_domain_permissions()
+        if self._permission_manager:
+            await self._permission_manager.set_permission(msg.domain, msg.permission)
 
     async def _handle_domain_delete(self, data: dict) -> None:
-        """Delete a domain permission, then sync to all addons."""
+        """Route domain delete to the permission manager."""
         msg = BrowserDomainDelete(**data)
-        self._db.domain_permissions.delete(msg.domain)
-        await self._sync_domain_permissions()
+        if self._permission_manager:
+            await self._permission_manager.delete_permission(msg.domain)
 
     async def _sync_domain_permissions(self) -> None:
         """Broadcast the full domain permissions list to all connected addons."""
@@ -294,112 +294,23 @@ class BrowserChannel(MessageChannel):
         for conn in self._connections.values():
             await self._send_ws(conn.ws, msg)
 
-    # --- Permission prompts ---
+    # --- Permission prompts (called by ChannelManager) ---
 
-    def _handle_permission_decision(self, data: dict) -> None:
-        """Resolve a pending permission future from any addon."""
-        msg = BrowserPermissionDecision(**data)
-        future = self._pending_permissions.get(msg.request_id)
-        if future and not future.done():
-            future.set_result(msg.allowed)
-
-    async def _check_domain_permission(self, url: str) -> None:
-        """Check domain permission, prompting all devices if unknown.
-
-        Raises RuntimeError if the domain is blocked or the user denies access.
-        Deduplicates concurrent prompts for the same domain.
-        """
-        parsed = urlparse(url)
-        domain = parsed.hostname
-        if not domain:
-            return
-
-        permission = self._db.domain_permissions.check_domain(domain)
-        if permission == "allowed":
-            return
-        if permission == "blocked":
-            raise RuntimeError(f"Domain {domain} is blocked by user")
-
-        # Check if a prompt is already pending for this domain
-        pending_key = f"domain:{domain}"
-        existing_future = self._pending_permissions.get(pending_key)
-        if existing_future and not existing_future.done():
-            allowed = await existing_future
-        else:
-            allowed = await self._prompt_all_devices(domain, url, pending_key)
-            perm = "allowed" if allowed else "blocked"
-            self._db.domain_permissions.set_permission(domain, perm)
-            await self._sync_domain_permissions()
-
-        if not allowed:
-            raise RuntimeError(f"User denied access to {domain}")
-
-    async def _prompt_all_devices(self, domain: str, url: str, pending_key: str) -> bool:
-        """Broadcast a permission prompt to all addons and Signal. First response wins."""
-        request_id = str(uuid.uuid4())
-        future: asyncio.Future[bool] = asyncio.get_event_loop().create_future()
-        self._pending_permissions[request_id] = future
-        self._pending_permissions[pending_key] = future
-
-        # Prompt all connected addons
+    async def handle_permission_prompt(self, request_id: str, domain: str, url: str) -> None:
+        """Send a permission prompt to all connected browser addons."""
         prompt = BrowserPermissionPrompt(request_id=request_id, domain=domain, url=url)
         for conn in self._connections.values():
             await self._send_ws(conn.ws, prompt)
 
-        # Prompt via Signal if available
-        signal_task = self._send_signal_permission_prompt(request_id, domain)
-        if signal_task:
-            asyncio.create_task(signal_task)
+    async def handle_permission_dismiss(self, request_id: str) -> None:
+        """Dismiss the permission dialog on all connected browser addons."""
+        dismiss = BrowserPermissionDismiss(request_id=request_id)
+        for conn in self._connections.values():
+            await self._send_ws(conn.ws, dismiss)
 
-        try:
-            return await asyncio.wait_for(future, timeout=120.0)
-        except TimeoutError:
-            return False
-        finally:
-            self._pending_permissions.pop(request_id, None)
-            self._pending_permissions.pop(pending_key, None)
-            # Dismiss prompt on all addons
-            dismiss = BrowserPermissionDismiss(request_id=request_id)
-            for conn in self._connections.values():
-                await self._send_ws(conn.ws, dismiss)
-
-    def _send_signal_permission_prompt(
-        self, request_id: str, domain: str
-    ) -> Coroutine[None, None, None] | None:
-        """Send a permission prompt via Signal and listen for emoji reaction."""
-        if not self._channel_manager:
-            return None
-        manager = self._channel_manager
-        signal_ch = getattr(manager, "get_channel", lambda _: None)(ChannelType.SIGNAL)
-        if not isinstance(signal_ch, SignalChannel):
-            return None
-
-        async def _prompt_and_listen() -> None:
-            primary = self._db.users.get_primary_sender()
-            if not primary:
-                return
-            text = f"Penny wants to visit {domain} — react 👍 to allow, 👎 to block"
-            external_id = await signal_ch.send_message(primary, text)
-            if external_id is None:
-                return
-
-            # Register a reaction callback
-            def on_reaction(emoji: str) -> None:
-                future = self._pending_permissions.get(request_id)
-                if future and not future.done():
-                    allowed = emoji in PennyConstants.POSITIVE_REACTION_EMOJIS
-                    future.set_result(allowed)
-
-            signal_ch.register_reaction_callback(str(external_id), on_reaction)
-
-            # Wait for resolution, then delete the prompt message
-            future = self._pending_permissions.get(request_id)
-            if future:
-                with contextlib.suppress(Exception):
-                    await future
-                await signal_ch.delete_message(primary, external_id)
-
-        return _prompt_and_listen()
+    async def handle_domain_permissions_changed(self) -> None:
+        """Sync the full domain permissions list to all connected addons."""
+        await self._sync_domain_permissions()
 
     def _handle_tool_response(self, data: dict) -> None:
         """Resolve a pending tool request future."""
@@ -638,13 +549,8 @@ class BrowserChannel(MessageChannel):
     ) -> tuple[str, str | None]:
         """Send a tool request to a connected browser and await the response.
 
-        Returns (result_text, image_url). Checks domain permission server-side
-        before dispatching. If the domain is unknown, prompts all connected
-        addons and Signal for a decision.
+        Returns (result_text, image_url).
         """
-        if tool == "browse_url" and "url" in arguments:
-            await self._check_domain_permission(arguments["url"])
-
         ws = self._get_tool_connection()
         if ws is None:
             raise RuntimeError("No browser with tool-use enabled is connected")

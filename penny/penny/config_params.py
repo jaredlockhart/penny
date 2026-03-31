@@ -92,6 +92,19 @@ def _validate_non_empty_string(value: str) -> str:
     return stripped
 
 
+DOMAIN_MODE_RESTRICT = "restrict"
+DOMAIN_MODE_ALLOW_ALL = "allow_all"
+_VALID_DOMAIN_MODES = {DOMAIN_MODE_RESTRICT, DOMAIN_MODE_ALLOW_ALL}
+
+
+def _validate_domain_mode(value: str) -> str:
+    """Validate domain permission mode."""
+    stripped = value.strip().lower()
+    if stripped not in _VALID_DOMAIN_MODES:
+        raise ValueError(f"must be one of: {', '.join(sorted(_VALID_DOMAIN_MODES))}")
+    return stripped
+
+
 def _validate_unit_float(value: str) -> float:
     """Validate float in (0.0, 1.0] range for similarity thresholds."""
     try:
@@ -167,6 +180,15 @@ ConfigParam(
     type=int,
     default=50,
     validator=_validate_positive_int,
+    group=GROUP_GLOBAL,
+)
+
+ConfigParam(
+    key="DOMAIN_PERMISSION_MODE",
+    description="Domain mode: restrict (prompt) or allow_all (auto-allow unknown)",
+    type=str,
+    default=DOMAIN_MODE_RESTRICT,
+    validator=_validate_domain_mode,
     group=GROUP_GLOBAL,
 )
 

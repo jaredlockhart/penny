@@ -12,6 +12,13 @@ class ChannelType(StrEnum):
     BROWSER = "browser"
 
 
+class DomainPermissionValue(StrEnum):
+    """Domain access permission states."""
+
+    ALLOWED = "allowed"
+    BLOCKED = "blocked"
+
+
 class PennyConstants:
     """All constants for the Penny agent."""
 
@@ -132,4 +139,5 @@ class PennyConstants:
 
     # Browser channel constants
     TOOL_REQUEST_TIMEOUT = 60.0
+    PERMISSION_PROMPT_TIMEOUT = 60.0
     MAX_PAGE_CONTENT_CHARS = 100_000
