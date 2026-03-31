@@ -19,6 +19,8 @@ from penny.agents import (
 from penny.channels import MessageChannel, create_channel_manager
 from penny.channels.browser import BrowserChannel
 from penny.channels.manager import ChannelManager
+from penny.channels.permission_manager import PermissionManager
+from penny.channels.signal.channel import SignalChannel
 from penny.commands import create_command_registry
 from penny.config import Config, setup_logging
 from penny.constants import ChannelType, PennyConstants
@@ -281,15 +283,24 @@ class Penny:
         if not isinstance(browser_ch, BrowserChannel):
             return
 
+        # Wire up permission manager
+        perm_mgr = PermissionManager(db=self.db, channel_manager=self.channel)
+        browser_ch.set_permission_manager(perm_mgr)
+        signal_ch = self.channel.get_channel(ChannelType.SIGNAL)
+        if isinstance(signal_ch, SignalChannel):
+            signal_ch.set_permission_manager(perm_mgr)
+
         # Chat agent uses MultiTool — give it a provider checked at dispatch time.
         def browse_tool_provider() -> BrowseUrlTool | None:
             if not browser_ch.has_tool_connection:
                 return None
-            return BrowseUrlTool(request_fn=browser_ch.send_tool_request)
+            return BrowseUrlTool(
+                request_fn=browser_ch.send_tool_request,
+                permission_manager=perm_mgr,
+            )
 
         self._multi_tool.set_browse_url_provider(browse_tool_provider)
         self._thinking_multi_tool.set_browse_url_provider(browse_tool_provider)
-        browser_ch.set_channel_manager(self.channel)
         self.thinking_agent._on_tool_start_factory = browser_ch.make_background_tool_callback
 
     def _init_scheduler(self, config: Config) -> None:
