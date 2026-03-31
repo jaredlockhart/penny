@@ -69,7 +69,7 @@ typecheck: $(if $(LOCAL),,build team-build)
 	$(RUN) ty check $(RUFF_TARGETS)
 	$(TEAM_RUN) ty check $(TEAM_RUFF_TARGETS)
 
-check: $(if $(LOCAL),,build team-build) browser-build
+check: $(if $(LOCAL),,build team-build)
 	$(RUN) ruff format --check $(RUFF_TARGETS)
 	$(RUN) ruff check $(RUFF_TARGETS)
 	$(RUN) ty check $(RUFF_TARGETS)
@@ -79,6 +79,7 @@ check: $(if $(LOCAL),,build team-build) browser-build
 	$(TEAM_RUN) ruff check $(TEAM_RUFF_TARGETS)
 	$(TEAM_RUN) ty check $(TEAM_RUFF_TARGETS)
 	$(TEAM_RUN) pytest $(TEAM_PYTEST_ARGS)
+	cd browser && npx tsc --noEmit
 
 pytest: $(if $(LOCAL),,build team-build)
 	$(RUN) pytest $(PYTEST_ARGS)
