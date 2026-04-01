@@ -383,7 +383,7 @@ class Agent:
                 tool_call_records.extend(result.records)
                 source_urls.extend(result.source_urls)
                 attachments.extend(result.attachments)
-                await self.after_step(result.records, messages)
+                await self.after_step(result.records, result.messages)
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
                     break
