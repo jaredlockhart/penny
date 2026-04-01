@@ -630,7 +630,8 @@ class Agent:
         """Build a fresh BrowseTool from config, updating self._browse_tool."""
         assert self._max_queries_key is not None
         max_calls = int(getattr(self.config.runtime, self._max_queries_key))
-        tool = BrowseTool(max_calls=max_calls)
+        search_url = str(self.config.runtime.SEARCH_URL)
+        tool = BrowseTool(max_calls=max_calls, search_url=search_url)
         if self._browse_provider:
             tool.set_browse_provider(self._browse_provider)
         self._browse_tool = tool

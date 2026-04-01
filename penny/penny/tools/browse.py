@@ -40,8 +40,9 @@ class BrowseTool(Tool):
 
     name = "browse"
 
-    def __init__(self, max_calls: int):
+    def __init__(self, max_calls: int, search_url: str = "https://kagi.com/search?q="):
         self._max_calls = max_calls
+        self._search_url = search_url
         self._browse_provider: Callable[[], tuple[RequestFn, PermissionManager] | None] | None = (
             None
         )
@@ -103,8 +104,8 @@ class BrowseTool(Tool):
             if _URL_PATTERN.match(q):
                 tasks.append(("browse", q, self._read_page(q)))
             else:
-                kagi_url = f"https://kagi.com/search?q={urllib.parse.quote(q)}"
-                tasks.append(("search", q, self._read_page(kagi_url)))
+                search_url = self._search_url + urllib.parse.quote(q)
+                tasks.append(("search", q, self._read_page(search_url)))
 
         results = await asyncio.gather(*[coro for _, _, coro in tasks], return_exceptions=True)
 

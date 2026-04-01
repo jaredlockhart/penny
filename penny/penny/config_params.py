@@ -148,6 +148,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="SEARCH_URL",
+    description="Base URL for text searches (encoded query is appended)",
+    type=str,
+    default="https://kagi.com/search?q=",
+    validator=_validate_non_empty_string,
+    group=GROUP_GLOBAL,
+)
+
+ConfigParam(
     key="EMAIL_BODY_MAX_LENGTH",
     description="Max character length for email body content",
     type=int,
