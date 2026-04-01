@@ -151,7 +151,7 @@ ConfigParam(
     key="SEARCH_URL",
     description="Base URL for text searches (encoded query is appended)",
     type=str,
-    default="https://kagi.com/search?q=",
+    default="https://duckduckgo.com/?q=",
     validator=_validate_non_empty_string,
     group=GROUP_GLOBAL,
 )

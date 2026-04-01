@@ -603,7 +603,7 @@ class TestParallelToolCalls:
 
         assert len(browsed_urls) == 1
         search_url = list(browsed_urls.keys())[0]
-        assert search_url.startswith("https://kagi.com/search?q=")
+        assert search_url.startswith("https://duckduckgo.com/?q=")
         assert "best%20pizza%20toronto" in search_url
 
     @pytest.mark.asyncio

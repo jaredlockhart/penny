@@ -41,7 +41,7 @@ class BrowseTool(Tool):
 
     name = "browse"
 
-    def __init__(self, max_calls: int, search_url: str = "https://kagi.com/search?q="):
+    def __init__(self, max_calls: int, search_url: str = "https://duckduckgo.com/?q="):
         self._max_calls = max_calls
         self._search_url = search_url
         self._browse_provider: Callable[[], tuple[RequestFn, PermissionManager] | None] | None = (
