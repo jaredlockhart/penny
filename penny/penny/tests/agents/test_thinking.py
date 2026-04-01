@@ -154,7 +154,7 @@ creative work, technical deep-dives, or discoveries. Avoid \
 troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
-- **fetch**: Look things up. Pass up to 1 query and/or URL.
+- **fetch**: Look things up. Pass up to 3 queries and/or URLs.
 
 Go DEEP, not wide:
 1. SEARCH first to discover what's out there on the topic
@@ -296,7 +296,7 @@ creative work, technical deep-dives, or discoveries. Avoid \
 troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
-- **fetch**: Look things up. Pass up to 1 query and/or URL.
+- **fetch**: Look things up. Pass up to 3 queries and/or URLs.
 
 Go DEEP, not wide:
 1. SEARCH first to discover what's out there on the topic
@@ -425,7 +425,7 @@ creative work, technical deep-dives, or discoveries. Avoid \
 troubleshooting guides, bug reports, and support articles.
 
 You have tools available:
-- **fetch**: Look things up. Pass up to 1 query and/or URL.
+- **fetch**: Look things up. Pass up to 3 queries and/or URLs.
 
 Go DEEP, not wide:
 1. SEARCH first to discover what's out there on the topic
