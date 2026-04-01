@@ -580,7 +580,7 @@ class TestParallelToolCalls:
         browse_mock = AsyncMock(side_effect=fake_execute)
         browse_tool = type("B", (), {"execute": browse_mock})()
 
-        multi = MultiTool(search_tool=None, news_tool=None, max_calls=5)  # type: ignore[arg-type]
+        multi = MultiTool(max_calls=5, search_tool=None, news_tool=None)  # type: ignore[arg-type]
         multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
         await multi.execute(queries=["best pizza toronto"])
@@ -604,7 +604,7 @@ class TestParallelToolCalls:
         search_mock = AsyncMock(side_effect=fake_execute)
         search_tool = type("S", (), {"execute": search_mock})()
 
-        multi = MultiTool(search_tool=search_tool, news_tool=None, max_calls=5)  # ty: ignore[invalid-argument-type]
+        multi = MultiTool(max_calls=5, search_tool=search_tool, news_tool=None)  # ty: ignore[invalid-argument-type]
 
         await multi.execute(queries=["best pizza toronto"])
 
@@ -625,7 +625,7 @@ class TestParallelToolCalls:
         browse_mock = AsyncMock(side_effect=fake_execute)
         browse_tool = type("B", (), {"execute": browse_mock})()
 
-        multi = MultiTool(search_tool=None, news_tool=None, max_calls=5)  # type: ignore[arg-type]
+        multi = MultiTool(max_calls=5, search_tool=None, news_tool=None)  # type: ignore[arg-type]
         multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
         await multi.execute(queries=["https://example.com/page", "https://other.com"])
