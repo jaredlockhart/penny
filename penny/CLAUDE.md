@@ -9,9 +9,9 @@ flowchart TD
     subgraph Foreground["Foreground (ChatAgent)"]
         Channel -->|extract| CA[ChatAgent]
         CA -->|"prompt + tools"| FG_Ollama["Ollama<br>Ollama"]
-        FG_Ollama -->|tool call| Fetch[MultiTool]
-        Fetch -->|"browse_url"| Browser[Browser Extension]
-        Fetch -->|"Kagi search"| Browser
+        FG_Ollama -->|tool call| Browse[BrowseTool]
+        Browse -->|"read page"| Browser[Browser Extension]
+        Browse -->|"Kagi search"| Browser
         Browser -.->|results| FG_Ollama
         FG_Ollama -->|response| CA
     end
@@ -94,8 +94,7 @@ penny/
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult, and per-tool arg models
-    multi.py          — MultiTool: single tool call that fans out queries to browse_url/Kagi
-    browse_url.py     — BrowseUrlTool: reads web pages via browser extension
+    browse.py         — BrowseTool: searches via Kagi and reads web pages via browser extension
     search_emails.py  — SearchEmailsTool (Fastmail JMAP)
     read_emails.py    — ReadEmailTool (Fastmail JMAP)
   jmap/
@@ -175,7 +174,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 ### Specialized Agents
 
 **ChatAgent** (`agents/chat.py`)
-- Handles incoming user messages with tools (browse_url via MultiTool)
+- Handles incoming user messages with tools (BrowseTool for search and page reading)
 - Prompt: identity + profile + history + notified thoughts + conversation instructions
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the Ollama
 
@@ -347,7 +346,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 
 ## Key Design Decisions
 
-- **Browser-based search**: All web access (search, page reading) goes through the browser extension via MultiTool → browse_url. Text queries are converted to Kagi search URLs. No third-party search APIs
+- **Browser-based search**: All web access (search, page reading) goes through the browser extension via BrowseTool. Text queries are converted to Kagi search URLs. No third-party search APIs
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages

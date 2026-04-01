@@ -17,14 +17,8 @@ class SearchResult(BaseModel):
         return f"SearchResult(text={self.text}, urls={self.urls}, image_base64={image_summary})"
 
 
-class BrowseUrlArgs(BaseModel):
-    """Validated arguments for the browse_url tool."""
-
-    url: str
-
-
-class MultiToolArgs(BaseModel):
-    """Validated arguments for the multi-tool."""
+class BrowseArgs(BaseModel):
+    """Validated arguments for the browse tool."""
 
     queries: list[str] = Field(default_factory=list)
     reasoning: str | None = None

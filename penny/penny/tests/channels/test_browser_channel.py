@@ -2,7 +2,7 @@
 
 import json
 from typing import cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -10,7 +10,7 @@ from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
 from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.migrate import migrate
-from penny.tools.browse_url import BrowseUrlTool
+from penny.tools.browse import BrowseTool
 from penny.tools.read_emails import ReadEmailsTool
 from penny.tools.search_emails import SearchEmailsTool
 
@@ -177,40 +177,48 @@ class TestBrowserImageHandling:
         assert result.endswith("text")
 
 
-class TestBrowseUrlTool:
-    """BrowseUrlTool passes through pre-sanitized content from the channel."""
+class TestBrowseTool:
+    """BrowseTool passes through pre-sanitized content from the channel."""
+
+    @staticmethod
+    def _make_tool(request_fn, permission_manager=None):
+        """Create a BrowseTool wired to a mock browse provider."""
+        from penny.tools.browse import BrowseTool
+
+        perm = permission_manager or MagicMock(check_domain=AsyncMock())
+        tool = BrowseTool(max_calls=3)
+        tool.set_browse_provider(lambda: (request_fn, perm))
+        return tool
 
     @pytest.mark.asyncio
     async def test_returns_channel_content_as_search_result(self):
         """Tool returns a SearchResult with the channel content."""
         from unittest.mock import AsyncMock
 
-        from penny.tools.browse_url import BrowseUrlTool
         from penny.tools.models import SearchResult
 
         request_fn = AsyncMock(
             return_value=("Title: Example\nURL: https://example.com\n\nPage content.", None)
         )
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
         assert "Page content." in result.text
-        request_fn.assert_called_once_with(BrowseUrlTool.name, {"url": "https://example.com"})
+        request_fn.assert_called_once_with("browse_url", {"url": "https://example.com"})
 
     @pytest.mark.asyncio
     async def test_image_url_from_response(self):
         """Tool passes through image URL from the tool response tuple."""
         from unittest.mock import AsyncMock
 
-        from penny.tools.browse_url import BrowseUrlTool
         from penny.tools.models import SearchResult
 
         request_fn = AsyncMock(
             return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", "https://ex.com/og.jpg")
         )
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
         assert result.image_base64 == "https://ex.com/og.jpg"
@@ -220,7 +228,6 @@ class TestBrowseUrlTool:
         """Tool strips Kagi proxy images, empty links, and image grid sections."""
         from unittest.mock import AsyncMock
 
-        from penny.tools.browse_url import BrowseUrlTool
         from penny.tools.models import SearchResult
 
         kagi_content = (
@@ -251,8 +258,8 @@ class TestBrowseUrlTool:
             "A useful snippet about the second result."
         )
         request_fn = AsyncMock(return_value=(kagi_content, None))
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://kagi.com/search?q=test")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://kagi.com/search?q=test"])
 
         assert isinstance(result, SearchResult)
         # Signal preserved
@@ -274,12 +281,11 @@ class TestBrowseUrlTool:
         """SearchResult.image_base64 is None when response has no image."""
         from unittest.mock import AsyncMock
 
-        from penny.tools.browse_url import BrowseUrlTool
         from penny.tools.models import SearchResult
 
         request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
         assert result.image_base64 is None
@@ -289,12 +295,11 @@ class TestBrowseUrlTool:
         """Tool returns a SearchResult with no-content message when channel returns empty."""
         from unittest.mock import AsyncMock
 
-        from penny.tools.browse_url import BrowseUrlTool
         from penny.tools.models import SearchResult
 
         request_fn = AsyncMock(return_value=("  ", None))
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
         assert "no content" in result.text.lower()
@@ -304,55 +309,51 @@ class TestBrowseUrlTool:
         """Tool calls permission_manager.check_domain before requesting the page."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from penny.tools.browse_url import BrowseUrlTool
-
         mock_perm = MagicMock()
         mock_perm.check_domain = AsyncMock()
         request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
-        tool = BrowseUrlTool(request_fn=request_fn, permission_manager=mock_perm)
-        await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn, permission_manager=mock_perm)
+        await tool.execute(queries=["https://example.com"])
 
         mock_perm.check_domain.assert_called_once_with("https://example.com")
         request_fn.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_permission_denied_raises_before_browse(self):
-        """Tool raises without browsing when permission is denied."""
+    async def test_permission_denied_reports_error_in_result(self):
+        """Permission denial appears as error in result, request_fn not called."""
         from unittest.mock import AsyncMock, MagicMock
-
-        from penny.tools.browse_url import BrowseUrlTool
 
         mock_perm = MagicMock()
         mock_perm.check_domain = AsyncMock(side_effect=RuntimeError("blocked"))
         request_fn = AsyncMock()
-        tool = BrowseUrlTool(request_fn=request_fn, permission_manager=mock_perm)
+        tool = self._make_tool(request_fn, permission_manager=mock_perm)
 
-        with pytest.raises(RuntimeError, match="blocked"):
-            await tool.execute(url="https://blocked.com")
+        result = await tool.execute(queries=["https://blocked.com"])
 
+        assert "Error: blocked" in result.text
         request_fn.assert_not_called()
 
 
-class TestMultiToolImagePassthrough:
-    """MultiTool passes the first browse_url image through to the combined result."""
+class TestBrowseToolImagePassthrough:
+    """BrowseTool passes the first browse image through to the combined result."""
 
     @pytest.mark.asyncio
-    async def test_image_from_browse_url_propagates(self):
-        """Image from a browse_url sub-call appears on the combined SearchResult."""
+    async def test_image_from_browse_propagates(self):
+        """Image from a browse sub-call appears on the combined SearchResult."""
         from unittest.mock import AsyncMock
 
+        from penny.tools.browse import BrowseTool
         from penny.tools.models import SearchResult
-        from penny.tools.multi import MultiTool
 
-        browse_result = SearchResult(
-            text="Title: Ex\nURL: https://ex.com\nImage: https://ex.com/img.jpg\n\nContent.",
-            image_base64="https://ex.com/img.jpg",
+        request_fn = AsyncMock(
+            return_value=(
+                "Title: Ex\nURL: https://ex.com\nImage: https://ex.com/img.jpg\n\nContent.",
+                "https://ex.com/img.jpg",
+            )
         )
-        mock_browse_tool = AsyncMock()
-        mock_browse_tool.execute = AsyncMock(return_value=browse_result)
-
-        tool = MultiTool(max_calls=3)
-        tool.set_browse_url_provider(lambda: mock_browse_tool)
+        mock_perm = MagicMock(check_domain=AsyncMock())
+        tool = BrowseTool(max_calls=3)
+        tool.set_browse_provider(lambda: (request_fn, mock_perm))
 
         result = await tool.execute(queries=["https://ex.com"])
         assert isinstance(result, SearchResult)
@@ -360,18 +361,16 @@ class TestMultiToolImagePassthrough:
 
     @pytest.mark.asyncio
     async def test_no_image_when_browse_has_none(self):
-        """Combined SearchResult has no image when browse_url returns none."""
+        """Combined SearchResult has no image when browse returns none."""
         from unittest.mock import AsyncMock
 
+        from penny.tools.browse import BrowseTool
         from penny.tools.models import SearchResult
-        from penny.tools.multi import MultiTool
 
-        browse_result = SearchResult(text="Title: Ex\nURL: https://ex.com\n\nContent.")
-        mock_browse_tool = AsyncMock()
-        mock_browse_tool.execute = AsyncMock(return_value=browse_result)
-
-        tool = MultiTool(max_calls=3)
-        tool.set_browse_url_provider(lambda: mock_browse_tool)
+        request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
+        mock_perm = MagicMock(check_domain=AsyncMock())
+        tool = BrowseTool(max_calls=3)
+        tool.set_browse_provider(lambda: (request_fn, mock_perm))
 
         result = await tool.execute(queries=["https://ex.com"])
         assert isinstance(result, SearchResult)
@@ -934,15 +933,21 @@ class TestBrowserThoughtReaction:
 class TestFormatToolStatus:
     """_format_tool_status produces human-readable labels for each tool."""
 
-    def test_browse_url_with_url(self):
+    def test_browse_with_url_query(self):
         result = BrowserChannel._format_tool_status(
-            BrowseUrlTool.name, {"url": "https://example.com"}
+            BrowseTool.name, {"queries": ["https://example.com"]}
         )
-        assert result == "Reading https://example.com"
+        assert result == "Reading example.com"
 
-    def test_browse_url_without_url(self):
-        result = BrowserChannel._format_tool_status(BrowseUrlTool.name, {})
-        assert result == "Reading page"
+    def test_browse_with_text_query(self):
+        result = BrowserChannel._format_tool_status(
+            BrowseTool.name, {"queries": ["best guitar amps"]}
+        )
+        assert result == 'Searching "best guitar amps"'
+
+    def test_browse_without_queries(self):
+        result = BrowserChannel._format_tool_status(BrowseTool.name, {})
+        assert result == "Looking up..."
 
     def test_search_emails(self):
         result = BrowserChannel._format_tool_status(SearchEmailsTool.name, {"text": "invoice"})
@@ -986,7 +991,7 @@ class TestMakeHandleKwargs:
 
         message = IncomingMessage(sender="firefox-macbook", content="hello")
         kwargs = channel._make_handle_kwargs(message)
-        await kwargs["on_tool_start"]([("fetch", {"queries": ["test query"]})])
+        await kwargs["on_tool_start"]([("browse", {"queries": ["test query"]})])
 
         channel._send_tool_status.assert_called_once()
         recipient, text = channel._send_tool_status.call_args.args

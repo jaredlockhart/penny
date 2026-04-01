@@ -439,15 +439,15 @@ def test_page_context_injected_as_synthetic_tool_call():
     ChatAgent._inject_page_context(messages, page_context)
 
     assert len(messages) == 4
-    # Assistant tool call uses MultiTool format (name="fetch", URL in queries)
+    # Assistant tool call uses BrowseTool format (name="browse", URL in queries)
     assert messages[2]["role"] == "assistant"
-    assert messages[2]["tool_calls"][0]["function"]["name"] == "fetch"
+    assert messages[2]["tool_calls"][0]["function"]["name"] == "browse"
     assert messages[2]["tool_calls"][0]["function"]["arguments"]["queries"] == [
         "https://example.com/product"
     ]
     # Tool result
     assert messages[3]["role"] == "tool"
-    assert messages[3]["tool_name"] == "fetch"
+    assert messages[3]["tool_name"] == "browse"
     assert "$49.99" in messages[3]["content"]
     assert "Example Product Page" in messages[3]["content"]
 

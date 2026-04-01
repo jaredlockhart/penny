@@ -324,7 +324,7 @@ class MessageChannel(ABC):
     def _extract_image_prompt(response) -> str | None:
         """Extract a short image search query from the agent's tool calls."""
         for tc in response.tool_calls or []:
-            if tc.tool == "fetch":
+            if tc.tool == "browse":
                 for q in tc.arguments.get("queries", []):
                     if not q.startswith("http"):
                         return q

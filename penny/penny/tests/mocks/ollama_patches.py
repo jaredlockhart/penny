@@ -53,12 +53,12 @@ class MockOllamaAsyncClient:
 
         Args:
             final_response: Final text response
-            search_query: Query for the fetch tool call
+            search_query: Query for the browse tool call
         """
 
         def handler(request: dict, count: int) -> dict:
             if count == 1:
-                return self._make_tool_call_response(request, "fetch", {"queries": [search_query]})
+                return self._make_tool_call_response(request, "browse", {"queries": [search_query]})
             return self._make_text_response(request, final_response)
 
         self._response_handler = handler

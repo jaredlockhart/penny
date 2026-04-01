@@ -142,7 +142,7 @@ recent conversation history, relevant knowledge, recent events, \
 and your own recent thoughts.
 
 You have tools available:
-- **fetch**: Look things up. Pass up to 3 queries and/or URLs.
+- **browse**: Look things up. Pass up to 3 queries and/or URLs.
 
 Every tool call has a `reasoning` field — use it to think out loud. \
 Explain what you're looking for, what you already know, \

@@ -178,7 +178,7 @@ You are reaching out to a friend proactively — sharing something \
 interesting you've been thinking about or found in the news.
 
 You have tools available:
-- **fetch**: Look things up. Pass up to {max_q} queries and/or URLs.
+- **browse**: Look things up. Pass up to {max_q} queries and/or URLs.
 
 If your context includes 'Your Latest Thought', share it with the \
 user. Start with a casual greeting, then tell them the whole thing \
@@ -337,7 +337,7 @@ You are reaching out to a friend proactively — sharing something \
 interesting you've been thinking about or found in the news.
 
 You have tools available:
-- **fetch**: Look things up. Pass up to {max_q} queries and/or URLs.
+- **browse**: Look things up. Pass up to {max_q} queries and/or URLs.
 
 If your context includes 'Your Latest Thought', share it with the \
 user. Start with a casual greeting, then tell them the whole thing \

@@ -547,8 +547,8 @@ class TestParallelToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_large_multi_tool_results_not_truncated(self, test_db, mock_ollama):
-        """Two large tool results from MultiTool both survive into the model context."""
+    async def test_large_browse_tool_results_not_truncated(self, test_db, mock_ollama):
+        """Two large tool results from BrowseTool both survive into the model context."""
         agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
 
         page_a = "A" * 15000  # 15k chars — realistic extracted web page
@@ -556,7 +556,7 @@ class TestParallelToolCalls:
 
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(
-                tool="fetch",
+                tool="browse",
                 result=SearchResult(text=f"## page A\n{page_a}\n\n---\n\n## page B\n{page_b}"),
             )
         )
@@ -564,7 +564,7 @@ class TestParallelToolCalls:
         def handler(request, count):
             if count == 1:
                 return mock_ollama._make_tool_call_response(
-                    request, "fetch", {"queries": ["https://a.com", "https://b.com"]}
+                    request, "browse", {"queries": ["https://a.com", "https://b.com"]}
                 )
             # Verify both pages present in the tool message
             messages = request["messages"]
@@ -582,61 +582,66 @@ class TestParallelToolCalls:
 
     @pytest.mark.asyncio
     async def test_text_queries_route_to_kagi_when_browser_connected(self, test_db, mock_ollama):
-        """When a browser is connected, text queries go to Kagi via browse_url."""
-        from penny.tools.multi import MultiTool
+        """When a browser is connected, text queries go to Kagi via BrowseTool."""
+        from unittest.mock import MagicMock
 
-        browse_results: dict[str, str] = {}
+        from penny.tools.browse import BrowseTool
 
-        async def fake_execute(**kw):
-            browse_results[kw["url"]] = f"Results for {kw['url']}"
-            return browse_results[kw["url"]]
+        browsed_urls: dict[str, str] = {}
 
-        browse_mock = AsyncMock(side_effect=fake_execute)
-        browse_tool = type("B", (), {"execute": browse_mock})()
+        async def fake_request(command, params):
+            url = params["url"]
+            browsed_urls[url] = f"Results for {url}"
+            return (browsed_urls[url], None)
 
-        multi = MultiTool(max_calls=5)
-        multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        request_fn = AsyncMock(side_effect=fake_request)
+        mock_perm = MagicMock(check_domain=AsyncMock())
 
-        await multi.execute(queries=["best pizza toronto"])
+        tool = BrowseTool(max_calls=5)
+        tool.set_browse_provider(lambda: (request_fn, mock_perm))
 
-        assert len(browse_results) == 1
-        kagi_url = list(browse_results.keys())[0]
+        await tool.execute(queries=["best pizza toronto"])
+
+        assert len(browsed_urls) == 1
+        kagi_url = list(browsed_urls.keys())[0]
         assert kagi_url.startswith("https://kagi.com/search?q=")
         assert "best%20pizza%20toronto" in kagi_url
 
     @pytest.mark.asyncio
     async def test_text_queries_fail_without_browser(self, test_db, mock_ollama):
         """Without a browser, text queries return a 'no browser' message."""
-        from penny.tools.multi import MultiTool
+        from penny.tools.browse import BrowseTool
 
-        multi = MultiTool(max_calls=5)
+        tool = BrowseTool(max_calls=5)
 
-        result = await multi.execute(queries=["best pizza toronto"])
+        result = await tool.execute(queries=["best pizza toronto"])
 
         assert "No browser connected" in result.text
 
     @pytest.mark.asyncio
     async def test_urls_always_route_to_browse(self, test_db, mock_ollama):
-        """URLs always go to browse_url regardless of browser connection."""
-        from penny.tools.multi import MultiTool
+        """URLs always go to BrowseTool regardless of browser connection."""
+        from unittest.mock import MagicMock
 
-        browse_urls: list[str] = []
+        from penny.tools.browse import BrowseTool
 
-        async def fake_execute(**kw):
-            browse_urls.append(kw["url"])
-            return f"Page content from {kw['url']}"
+        browsed_urls: list[str] = []
 
-        browse_mock = AsyncMock(side_effect=fake_execute)
-        browse_tool = type("B", (), {"execute": browse_mock})()
+        async def fake_request(command, params):
+            browsed_urls.append(params["url"])
+            return (f"Page content from {params['url']}", None)
 
-        multi = MultiTool(max_calls=5)
-        multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        request_fn = AsyncMock(side_effect=fake_request)
+        mock_perm = MagicMock(check_domain=AsyncMock())
 
-        await multi.execute(queries=["https://example.com/page", "https://other.com"])
+        tool = BrowseTool(max_calls=5)
+        tool.set_browse_provider(lambda: (request_fn, mock_perm))
 
-        assert len(browse_urls) == 2
-        assert "https://example.com/page" in browse_urls
-        assert "https://other.com" in browse_urls
+        await tool.execute(queries=["https://example.com/page", "https://other.com"])
+
+        assert len(browsed_urls) == 2
+        assert "https://example.com/page" in browsed_urls
+        assert "https://other.com" in browsed_urls
 
 
 class TestEmptyContentAfterToolCalls:

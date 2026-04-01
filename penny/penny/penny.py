@@ -38,7 +38,6 @@ from penny.scheduler import (
 )
 from penny.scheduler.schedule_runner import ScheduleExecutor
 from penny.startup import get_restart_message
-from penny.tools.browse_url import BrowseUrlTool
 from penny.zoho.models import ZohoCredentials
 
 logger = logging.getLogger(__name__)
@@ -252,17 +251,14 @@ class Penny:
         if isinstance(signal_ch, SignalChannel):
             signal_ch.set_permission_manager(perm_mgr)
 
-        # Browse tool provider — agents build fresh MultiTools each cycle.
-        def browse_tool_provider() -> BrowseUrlTool | None:
+        # Browse provider — agents build fresh BrowseTools each cycle.
+        def browse_provider():
             if not browser_ch.has_tool_connection:
                 return None
-            return BrowseUrlTool(
-                request_fn=browser_ch.send_tool_request,
-                permission_manager=perm_mgr,
-            )
+            return browser_ch.send_tool_request, perm_mgr
 
-        self.chat_agent._browse_url_provider = browse_tool_provider
-        self.thinking_agent._browse_url_provider = browse_tool_provider
+        self.chat_agent._browse_provider = browse_provider
+        self.thinking_agent._browse_provider = browse_provider
         self.thinking_agent._on_tool_start_factory = browser_ch.make_background_tool_callback
 
     def _init_scheduler(self, config: Config) -> None:

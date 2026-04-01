@@ -622,7 +622,7 @@ class NotifyAgent(Agent):
     def _extract_search_query(tool_calls: list[ToolCallRecord]) -> str | None:
         """Extract a search query from tool calls for use as image prompt."""
         for tc in tool_calls:
-            if tc.tool != "fetch":
+            if tc.tool != "browse":
                 continue
             for q in tc.arguments.get("queries", []):
                 if not q.startswith("http"):

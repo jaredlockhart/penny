@@ -1,8 +1,8 @@
-"""MultiTool — dispatches heterogeneous parallel lookups via a single tool call.
+"""BrowseTool — searches and reads web pages via the browser extension.
 
-Works around single-tool-call-per-turn limitations in models like gpt-oss:20b.
-The model packs everything into a single queries array; the server detects URLs
-and routes them to browse_url while plain text goes to Kagi search.
+The model packs everything into a single queries array; the tool detects URLs
+and reads them directly, while plain text is converted to Kagi search URLs.
+Queries are dispatched in parallel.
 """
 
 from __future__ import annotations
@@ -11,34 +11,40 @@ import asyncio
 import logging
 import re
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from penny.tools.base import Tool
-from penny.tools.models import MultiToolArgs, SearchResult
+from penny.tools.content_cleaning import clean_browser_content
+from penny.tools.models import BrowseArgs, SearchResult
 
 if TYPE_CHECKING:
-    from penny.tools.browse_url import BrowseUrlTool
+    from penny.channels.permission_manager import PermissionManager
 
 logger = logging.getLogger(__name__)
 
 _URL_PATTERN = re.compile(r"^https?://")
 
+# Type alias for the browser request function
+RequestFn = Callable[[str, dict], Awaitable[tuple[str, str | None]]]
 
-class MultiTool(Tool):
-    """Single tool call that fans out queries to browse_url.
+
+class BrowseTool(Tool):
+    """Search the web and read pages via the browser extension.
 
     The model emits one tool call with a queries array:
       {"queries": ["topic", "https://example.com", "another topic"]}
-    URLs are routed to browse_url directly; plain text is converted
-    to a Kagi search URL and browsed.
+    URLs are read directly; plain text is converted to a Kagi search URL.
+    All queries are dispatched in parallel.
     """
 
-    name = "fetch"
+    name = "browse"
 
     def __init__(self, max_calls: int):
         self._max_calls = max_calls
-        self._browse_url_provider: Callable[[], BrowseUrlTool | None] | None = None
+        self._browse_provider: Callable[[], tuple[RequestFn, PermissionManager] | None] | None = (
+            None
+        )
 
     @property
     def description(self) -> str:  # type: ignore[override]
@@ -68,9 +74,12 @@ class MultiTool(Tool):
             "required": ["queries"],
         }
 
-    def set_browse_url_provider(self, provider: Callable[[], BrowseUrlTool | None]) -> None:
-        """Set a provider that returns the current BrowseUrlTool (or None if disconnected)."""
-        self._browse_url_provider = provider
+    def set_browse_provider(
+        self,
+        provider: Callable[[], tuple[RequestFn, PermissionManager] | None],
+    ) -> None:
+        """Set a provider that returns (request_fn, permission_manager) or None."""
+        self._browse_provider = provider
 
     @classmethod
     def to_action_str(cls, arguments: dict) -> str:
@@ -85,17 +94,17 @@ class MultiTool(Tool):
         return "<br>".join(parts) if parts else "Looking up..."
 
     async def execute(self, **kwargs: Any) -> SearchResult:
-        """Dispatch all lookups in parallel — URLs and text queries to browse_url."""
-        args = MultiToolArgs(**kwargs)
+        """Dispatch all lookups in parallel via the browser extension."""
+        args = BrowseArgs(**kwargs)
 
         cap = self._max_calls
         tasks: list[tuple[str, str, Any]] = []
         for q in args.queries[:cap]:
             if _URL_PATTERN.match(q):
-                tasks.append(("browse_url", q, self._dispatch_browse(q)))
+                tasks.append(("browse", q, self._read_page(q)))
             else:
                 kagi_url = f"https://kagi.com/search?q={urllib.parse.quote(q)}"
-                tasks.append(("search", q, self._dispatch_browse(kagi_url)))
+                tasks.append(("search", q, self._read_page(kagi_url)))
 
         results = await asyncio.gather(*[coro for _, _, coro in tasks], return_exceptions=True)
 
@@ -105,7 +114,7 @@ class MultiTool(Tool):
         for (kind, value, _), result in zip(tasks, results, strict=True):
             label = f"{kind}: {value}"
             if isinstance(result, Exception):
-                logger.warning("MultiTool sub-call failed (%s): %s", label, result)
+                logger.warning("Browse sub-call failed (%s): %s", label, result)
                 sections.append(f"## {label}\nError: {result}")
             elif isinstance(result, SearchResult):
                 all_urls.extend(result.urls)
@@ -121,9 +130,18 @@ class MultiTool(Tool):
             image_base64=first_image,
         )
 
-    async def _dispatch_browse(self, url: str) -> Any:
-        """Read a single URL."""
-        browse_tool = self._browse_url_provider() if self._browse_url_provider else None
-        if not browse_tool:
+    async def _read_page(self, url: str) -> SearchResult | str:
+        """Read a single URL via the browser extension."""
+        connection = self._browse_provider() if self._browse_provider else None
+        if not connection:
             return f"No browser connected — cannot read {url}."
-        return await browse_tool.execute(url=url)
+
+        request_fn, permission_manager = connection
+        await permission_manager.check_domain(url)
+
+        text, image_url = await request_fn("browse_url", {"url": url})
+        if not text.strip():
+            return SearchResult(text=f"Page at {url} returned no content.")
+
+        text = clean_browser_content(text)
+        return SearchResult(text=text, image_base64=image_url)
