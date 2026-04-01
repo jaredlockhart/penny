@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from penny.tools.base import Tool
+from penny.tools.content_cleaning import clean_browser_content
 from penny.tools.models import BrowseUrlArgs, SearchResult
 
 if TYPE_CHECKING:
@@ -65,4 +66,5 @@ class BrowseUrlTool(Tool):
         if not text.strip():
             return SearchResult(text=f"Page at {args.url} returned no content.")
 
+        text = clean_browser_content(text)
         return SearchResult(text=text, image_base64=image_url)
