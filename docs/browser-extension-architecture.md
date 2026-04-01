@@ -135,7 +135,7 @@ The background script continuously extracts visible text from the active tab usi
 - `screenshot_page` — capture current page for vision model
 - `get_current_tab` — what the user is looking at right now (partially implemented via active tab context)
 
-The thinking agent uses browser tools autonomously when a browser is connected. All web access (search via Kagi, page reading) goes through the browser extension. Tools are registered dynamically via `set_browser_tools_provider()` — available only when a browser has an active connection.
+The thinking agent uses browser tools autonomously when a browser is connected. All web access (search, page reading) goes through the browser extension. Tools are registered dynamically via `set_browser_tools_provider()` — available only when a browser has an active connection.
 
 ## Tool Request Protocol (implemented)
 

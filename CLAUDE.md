@@ -2,7 +2,7 @@
 
 ## What Is Penny
 
-Penny is a local-first AI agent that communicates via Signal, Discord, or a Firefox browser extension. Users send messages, Penny searches the web via Kagi (through the browser extension), reasons using Ollama (local LLM), and replies in a casual, relaxed style. It runs in Docker with host networking.
+Penny is a local-first AI agent that communicates via Signal, Discord, or a Firefox browser extension. Users send messages, Penny searches the web through the browser extension, reasons using Ollama (local LLM), and replies in a casual, relaxed style. It runs in Docker with host networking.
 
 Penny is single-user — a personal assistant deployed locally for one person. Multiple devices (Signal phone, browser instances) connect as different devices of the same user, sharing a single conversation history.
 

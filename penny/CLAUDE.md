@@ -11,7 +11,7 @@ flowchart TD
         CA -->|"prompt + tools"| FG_Ollama["Ollama<br>Ollama"]
         FG_Ollama -->|tool call| Browse[BrowseTool]
         Browse -->|"read page"| Browser[Browser Extension]
-        Browse -->|"Kagi search"| Browser
+        Browse -->|"web search"| Browser
         Browser -.->|results| FG_Ollama
         FG_Ollama -->|response| CA
     end
@@ -42,7 +42,7 @@ flowchart TD
 - **Vision**: Optional vision model (e.g., qwen3-vl) for processing image attachments from Signal
 - **Image Generation**: Optional image model (e.g., x/z-image-turbo) for generating images via `/draw` command
 - **Embedding Model**: Optional dedicated embedding model (e.g., embeddinggemma) for preference deduplication and history embeddings
-- **Browser Extension**: Web search via Kagi and page reading via browse_url — all web access goes through the connected browser
+- **Browser Extension**: Web search and page reading — all web access goes through the connected browser
 - **SQLite**: Logs all prompts and messages; stores preferences, thoughts, and conversation history
 
 ## Directory Structure
@@ -94,7 +94,7 @@ penny/
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult, and per-tool arg models
-    browse.py         — BrowseTool: searches via Kagi and reads web pages via browser extension
+    browse.py         — BrowseTool: web search and page reading via browser extension
     search_emails.py  — SearchEmailsTool (Fastmail JMAP)
     read_emails.py    — ReadEmailTool (Fastmail JMAP)
   jmap/
@@ -346,7 +346,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 
 ## Key Design Decisions
 
-- **Browser-based search**: All web access (search, page reading) goes through the browser extension via BrowseTool. Text queries are converted to Kagi search URLs. No third-party search APIs
+- **Browser-based search**: All web access (search, page reading) goes through the browser extension via BrowseTool. Text queries are converted to search URLs (configurable via `SEARCH_URL`). No third-party search APIs
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages

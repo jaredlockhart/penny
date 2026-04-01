@@ -167,7 +167,7 @@ See [docs/browser-extension-architecture.md](docs/browser-extension-architecture
 1. **For Signal**: [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) running on host (port 8080)
 2. **For Discord**: Discord bot token and channel ID
 3. **[Ollama](https://ollama.com)** running on host (port 11434)
-4. **Browser extension** (for web search via Kagi and page reading)
+4. **Browser extension** (for web search and page reading)
 5. Docker & Docker Compose installed
 
 ### Quick Start

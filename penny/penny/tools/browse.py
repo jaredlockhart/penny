@@ -1,7 +1,7 @@
 """BrowseTool — searches and reads web pages via the browser extension.
 
 The model packs everything into a single queries array; the tool detects URLs
-and reads them directly, while plain text is converted to Kagi search URLs.
+and reads them directly, while plain text is converted to search URLs.
 Queries are dispatched in parallel.
 """
 
@@ -35,7 +35,7 @@ class BrowseTool(Tool):
 
     The model emits one tool call with a queries array:
       {"queries": ["topic", "https://example.com", "another topic"]}
-    URLs are read directly; plain text is converted to a Kagi search URL.
+    URLs are read directly; plain text is converted to a search URL.
     All queries are dispatched in parallel.
     """
 

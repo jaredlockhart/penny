@@ -581,8 +581,10 @@ class TestParallelToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_text_queries_route_to_kagi_when_browser_connected(self, test_db, mock_ollama):
-        """When a browser is connected, text queries go to Kagi via BrowseTool."""
+    async def test_text_queries_route_to_search_url_when_browser_connected(
+        self, test_db, mock_ollama
+    ):
+        """When a browser is connected, text queries become search URLs via BrowseTool."""
         from unittest.mock import MagicMock
 
         from penny.tools.browse import BrowseTool
@@ -603,9 +605,9 @@ class TestParallelToolCalls:
         await tool.execute(queries=["best pizza toronto"])
 
         assert len(browsed_urls) == 1
-        kagi_url = list(browsed_urls.keys())[0]
-        assert kagi_url.startswith("https://kagi.com/search?q=")
-        assert "best%20pizza%20toronto" in kagi_url
+        search_url = list(browsed_urls.keys())[0]
+        assert search_url.startswith("https://kagi.com/search?q=")
+        assert "best%20pizza%20toronto" in search_url
 
     @pytest.mark.asyncio
     async def test_text_queries_fail_without_browser(self, test_db, mock_ollama):
