@@ -218,6 +218,60 @@ class TestBrowseUrlTool:
         assert result.image_base64 == "https://ex.com/og.jpg"
 
     @pytest.mark.asyncio
+    async def test_cleans_kagi_cruft_from_content(self):
+        """Tool strips Kagi proxy images, empty links, and image grid sections."""
+        from unittest.mock import AsyncMock
+
+        from penny.tools.browse_url import BrowseUrlTool
+        from penny.tools.models import SearchResult
+
+        kagi_content = (
+            "### Best guitar amps 2026\n"
+            "\n"
+            "![Favicon of  guitarworld.com](https://p.kagi.com/proxy/favicons?c=abc)\n"
+            "\n"
+            "[](https://www.guitarworld.com/best-amps)\n"
+            "\n"
+            "[guitarworld.com/best-amps](https://www.guitarworld.com/best-amps)\n"
+            "\n"
+            "Jan 27, 2026 The Catalyst 200 is based on 6 amp models.\n"
+            "\n"
+            "[Images](https://kagi.com/images?q=guitar+amps)\n"
+            "\n"
+            "[![](https://p.kagi.com/proxy/OIP.abc)](https://p.kagi.com/proxy/img.jpg)\n"
+            "\n"
+            "[www.example.com](https://www.example.com/page)\n"
+            "\n"
+            "1920 x 1080\n"
+            "\n"
+            " Loading source... Made with [Openverse](https://openverse.org/)\n"
+            "\n"
+            "### Second result title\n"
+            "\n"
+            "[example.org/page](https://example.org/page)\n"
+            "\n"
+            "A useful snippet about the second result."
+        )
+        request_fn = AsyncMock(return_value=(kagi_content, None))
+        tool = BrowseUrlTool(request_fn=request_fn)
+        result = await tool.execute(url="https://kagi.com/search?q=test")
+
+        assert isinstance(result, SearchResult)
+        # Signal preserved
+        assert "### Best guitar amps 2026" in result.text
+        assert "Jan 27, 2026 The Catalyst 200" in result.text
+        assert "[guitarworld.com/best-amps]" in result.text
+        assert "### Second result title" in result.text
+        assert "A useful snippet" in result.text
+        # Cruft removed
+        assert "![Favicon" not in result.text
+        assert "p.kagi.com/proxy" not in result.text
+        assert "[](https://" not in result.text
+        assert "1920 x 1080" not in result.text
+        assert "Openverse" not in result.text
+        assert "[www.example.com]" not in result.text
+
+    @pytest.mark.asyncio
     async def test_no_image_returns_none(self):
         """SearchResult.image_base64 is None when response has no image."""
         from unittest.mock import AsyncMock
