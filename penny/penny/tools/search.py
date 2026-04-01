@@ -125,7 +125,7 @@ class SearchTool(Tool):
         error = e.body.get("error")  # ty: ignore[invalid-argument-type]
         if not isinstance(error, dict):
             return False
-        return error.get("type") == "insufficient_quota"  # ty: ignore[invalid-argument-type]
+        return error.get("type") == "insufficient_quota"
 
     async def _call_perplexity(self, query: str):
         """Call Perplexity API."""
