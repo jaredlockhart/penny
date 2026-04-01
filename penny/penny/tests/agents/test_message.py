@@ -145,7 +145,7 @@ recent conversation history, relevant knowledge, recent events, \
 and your own recent thoughts.
 
 You have tools available:
-- **fetch**: Look things up. Pass up to 5 queries and/or URLs.
+- **fetch**: Look things up. Pass up to 3 queries and/or URLs.
 
 Every tool call has a `reasoning` field — use it to think out loud. \
 Explain what you're looking for, what you already know, \
@@ -162,7 +162,7 @@ or anything ambiguous, they mean the Current Browser Page — not something \
 from earlier in the conversation.
 
 Work in two phases — search, then read:
-1. SEARCH: Go wide. Pack up to 5 search queries into a single \
+1. SEARCH: Go wide. Pack up to 3 search queries into a single \
 tool call to discover relevant pages across different facets of the question.
 2. READ: Pick the 3–5 most promising URLs from your search results and pass \
 them back to your tool to read the actual pages. You can mix URLs and new \

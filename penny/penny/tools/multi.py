@@ -39,14 +39,27 @@ class MultiTool(Tool):
 
     def __init__(
         self,
+        max_calls: int,
         search_tool: SearchTool | None = None,
         news_tool: FetchNewsTool | None = None,
-        max_calls: int = 5,
     ):
-        n = max_calls
+        self._search_tool = search_tool
+        self._news_tool = news_tool
+        self._max_calls = max_calls
+        self._browse_url_provider: Callable[[], BrowseUrlTool | None] | None = None
+
+    @property
+    def description(self) -> str:  # type: ignore[override]
+        """Dynamic description reflecting current max_calls."""
+        n = self._max_calls
         items = "query and/or URL" if n == 1 else "queries and/or URLs"
-        self.description = f"Look things up. Pass up to {n} {items}."
-        self.parameters = {
+        return f"Look things up. Pass up to {n} {items}."
+
+    @property
+    def parameters(self) -> dict[str, Any]:  # type: ignore[override]
+        """Dynamic parameters reflecting current max_calls."""
+        n = self._max_calls
+        return {
             "type": "object",
             "properties": {
                 "reasoning": {
@@ -62,10 +75,6 @@ class MultiTool(Tool):
             },
             "required": ["queries"],
         }
-        self._search_tool = search_tool
-        self._news_tool = news_tool
-        self._max_calls = max_calls
-        self._browse_url_provider: Callable[[], BrowseUrlTool | None] | None = None
 
     def set_browse_url_provider(self, provider: Callable[[], BrowseUrlTool | None]) -> None:
         """Set a provider that returns the current BrowseUrlTool (or None if disconnected)."""

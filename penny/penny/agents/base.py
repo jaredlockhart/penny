@@ -9,6 +9,7 @@ import urllib.parse as _urlparse
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
@@ -20,6 +21,10 @@ from penny.responses import PennyResponse
 from penny.tools import SearchTool, Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.models import SearchResult
 from penny.tools.multi import MultiTool
+
+if TYPE_CHECKING:
+    from penny.tools.browse_url import BrowseUrlTool
+    from penny.tools.fetch_news import FetchNewsTool
 
 logger = logging.getLogger(__name__)
 
@@ -193,9 +198,9 @@ class Agent:
         vision_model_client: OllamaClient | None = None,
         embedding_model_client: OllamaClient | None = None,
         allow_repeat_tools: bool = False,
-        search_tool: Tool | None = None,
-        news_tool: Tool | None = None,
-        multi_tool: MultiTool | None = None,
+        search_tool: SearchTool | None = None,
+        news_tool: FetchNewsTool | None = None,
+        max_queries_key: str | None = None,
     ):
         self.config = config
         self.system_prompt = system_prompt
@@ -209,7 +214,9 @@ class Agent:
 
         self._search_tool = search_tool
         self._news_tool = news_tool
-        self._multi_tool = multi_tool
+        self._max_queries_key = max_queries_key
+        self._multi_tool: MultiTool | None = None
+        self._browse_url_provider: Callable[[], BrowseUrlTool | None] | None = None
         self._browser_tools_provider: Callable[[], list[Tool]] | None = None
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
@@ -626,10 +633,11 @@ class Agent:
     def get_tools(self, user: str) -> list[Tool]:
         """Build tool list for this agent.
 
-        Returns MultiTool if configured, otherwise individual tools.
+        When max_queries_key is set, builds a fresh MultiTool each cycle
+        so runtime config changes take effect immediately.
         """
-        if self._multi_tool is not None:
-            return [self._multi_tool]
+        if self._max_queries_key is not None:
+            return [self._build_multi_tool()]
         tools: list[Tool] = []
         if self._search_tool:
             tools.append(self._search_tool)
@@ -638,6 +646,20 @@ class Agent:
         if self._browser_tools_provider:
             tools.extend(self._browser_tools_provider())
         return tools
+
+    def _build_multi_tool(self) -> MultiTool:
+        """Build a fresh MultiTool from config, updating self._multi_tool."""
+        assert self._max_queries_key is not None
+        max_calls = int(getattr(self.config.runtime, self._max_queries_key))
+        tool = MultiTool(
+            max_calls=max_calls,
+            search_tool=self._search_tool,
+            news_tool=self._news_tool,
+        )
+        if self._browse_url_provider:
+            tool.set_browse_url_provider(self._browse_url_provider)
+        self._multi_tool = tool
+        return tool
 
     def _install_tools(self, tools: list[Tool]) -> None:
         """Replace the agent's tool registry and executor."""
@@ -866,9 +888,14 @@ class Agent:
     def _instructions_section(self, override: str | None = None) -> str:
         """## Instructions — agent-specific prompt with tool descriptions."""
         prompt = override or self.system_prompt
-        if "{tools}" in prompt or "{max_tool_calls}" in prompt:
-            max_tool_calls = int(self.config.runtime.MESSAGE_MAX_TOOL_CALLS) if self.config else 5
-            prompt = prompt.format(tools=self._build_tool_summary(), max_tool_calls=max_tool_calls)
+        format_args: dict = {}
+        if "{tools}" in prompt:
+            format_args["tools"] = self._build_tool_summary()
+        if "{max_tool_calls}" in prompt:
+            assert self._multi_tool is not None, "{max_tool_calls} in prompt but no multi_tool"
+            format_args["max_tool_calls"] = self._multi_tool._max_calls
+        if format_args:
+            prompt = prompt.format(**format_args)
         return f"## Instructions\n{prompt}"
 
     @staticmethod
