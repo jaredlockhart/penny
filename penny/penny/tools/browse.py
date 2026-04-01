@@ -14,6 +14,7 @@ import urllib.parse
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from penny.constants import PennyConstants
 from penny.tools.base import Tool
 from penny.tools.content_cleaning import clean_browser_content
 from penny.tools.models import BrowseArgs, SearchResult
@@ -131,22 +132,18 @@ class BrowseTool(Tool):
             image_base64=first_image,
         )
 
-    # Retry settings for transient browser disconnections
-    BROWSE_RETRIES = 2
-    BROWSE_RETRY_DELAY = 1.0
-
     async def _read_page(self, url: str) -> SearchResult | str:
         """Read a single URL via the browser extension, retrying on disconnect."""
-        for attempt in range(1 + self.BROWSE_RETRIES):
+        for attempt in range(1 + PennyConstants.BROWSE_RETRIES):
             connection = self._browse_provider() if self._browse_provider else None
             if not connection:
-                if attempt < self.BROWSE_RETRIES:
+                if attempt < PennyConstants.BROWSE_RETRIES:
                     logger.info(
                         "No browser connection, retrying in %.0fs (%s)",
-                        self.BROWSE_RETRY_DELAY,
+                        PennyConstants.BROWSE_RETRY_DELAY,
                         url,
                     )
-                    await asyncio.sleep(self.BROWSE_RETRY_DELAY)
+                    await asyncio.sleep(PennyConstants.BROWSE_RETRY_DELAY)
                     continue
                 return f"No browser connected — cannot read {url}."
 
@@ -156,11 +153,13 @@ class BrowseTool(Tool):
             try:
                 text, image_url = await request_fn("browse_url", {"url": url})
             except ConnectionError:
-                if attempt < self.BROWSE_RETRIES:
+                if attempt < PennyConstants.BROWSE_RETRIES:
                     logger.info(
-                        "Browser disconnected, retrying in %.0fs (%s)", self.BROWSE_RETRY_DELAY, url
+                        "Browser disconnected, retrying in %.0fs (%s)",
+                        PennyConstants.BROWSE_RETRY_DELAY,
+                        url,
                     )
-                    await asyncio.sleep(self.BROWSE_RETRY_DELAY)
+                    await asyncio.sleep(PennyConstants.BROWSE_RETRY_DELAY)
                     continue
                 raise
 
