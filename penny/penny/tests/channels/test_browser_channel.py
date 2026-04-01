@@ -11,9 +11,7 @@ from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.tools.browse_url import BrowseUrlTool
-from penny.tools.fetch_news import FetchNewsTool
 from penny.tools.read_emails import ReadEmailsTool
-from penny.tools.search import SearchTool
 from penny.tools.search_emails import SearchEmailsTool
 
 
@@ -353,7 +351,7 @@ class TestMultiToolImagePassthrough:
         mock_browse_tool = AsyncMock()
         mock_browse_tool.execute = AsyncMock(return_value=browse_result)
 
-        tool = MultiTool(max_calls=3, search_tool=None)
+        tool = MultiTool(max_calls=3)
         tool.set_browse_url_provider(lambda: mock_browse_tool)
 
         result = await tool.execute(queries=["https://ex.com"])
@@ -372,7 +370,7 @@ class TestMultiToolImagePassthrough:
         mock_browse_tool = AsyncMock()
         mock_browse_tool.execute = AsyncMock(return_value=browse_result)
 
-        tool = MultiTool(max_calls=3, search_tool=None)
+        tool = MultiTool(max_calls=3)
         tool.set_browse_url_provider(lambda: mock_browse_tool)
 
         result = await tool.execute(queries=["https://ex.com"])
@@ -936,14 +934,6 @@ class TestBrowserThoughtReaction:
 class TestFormatToolStatus:
     """_format_tool_status produces human-readable labels for each tool."""
 
-    def test_search_single_query(self):
-        result = BrowserChannel._format_tool_status(SearchTool.name, {"query": "firefox memory"})
-        assert result == 'Searching for "firefox memory"'
-
-    def test_search_invalid_args(self):
-        result = BrowserChannel._format_tool_status(SearchTool.name, {})
-        assert result == "Searching"
-
     def test_browse_url_with_url(self):
         result = BrowserChannel._format_tool_status(
             BrowseUrlTool.name, {"url": "https://example.com"}
@@ -953,14 +943,6 @@ class TestFormatToolStatus:
     def test_browse_url_without_url(self):
         result = BrowserChannel._format_tool_status(BrowseUrlTool.name, {})
         assert result == "Reading page"
-
-    def test_fetch_news_with_topic(self):
-        result = BrowserChannel._format_tool_status(FetchNewsTool.name, {"topic": "climate change"})
-        assert result == "Fetching news about climate change"
-
-    def test_fetch_news_default_topic(self):
-        result = BrowserChannel._format_tool_status(FetchNewsTool.name, {})
-        assert result == "Fetching news about top news"
 
     def test_search_emails(self):
         result = BrowserChannel._format_tool_status(SearchEmailsTool.name, {"text": "invoice"})
@@ -1004,12 +986,12 @@ class TestMakeHandleKwargs:
 
         message = IncomingMessage(sender="firefox-macbook", content="hello")
         kwargs = channel._make_handle_kwargs(message)
-        await kwargs["on_tool_start"]([(SearchTool.name, {"query": "test query"})])
+        await kwargs["on_tool_start"]([("fetch", {"queries": ["test query"]})])
 
         channel._send_tool_status.assert_called_once()
         recipient, text = channel._send_tool_status.call_args.args
         assert recipient == "firefox-macbook"
-        assert '"test query"' in text
+        assert "test query" in text
 
     @pytest.mark.asyncio
     async def test_send_tool_status_sends_typing_with_content(self, tmp_path):

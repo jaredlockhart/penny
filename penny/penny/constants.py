@@ -35,7 +35,6 @@ class PennyConstants:
         PENNY_ENRICHMENT = "penny_enrichment"
 
     # Search tool constants
-    PERPLEXITY_PRESET = "pro-search"
     URL_BLOCKLIST_DOMAINS = (
         "play.google.com",
         "apps.apple.com",

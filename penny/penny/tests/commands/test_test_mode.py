@@ -10,14 +10,11 @@ from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 @pytest.mark.asyncio
-async def test_test_mode_basic_flow(
-    signal_server, mock_ollama, test_config, _mock_search, running_penny
-):
+async def test_test_mode_basic_flow(signal_server, mock_ollama, test_config, running_penny):
     """
     Test that /test command uses test database and prepends [TEST] to response.
     """
     mock_ollama.set_default_flow(
-        search_query="test search query",
         final_response="here's what i found about your question! 🌟",
     )
 
@@ -47,7 +44,7 @@ async def test_test_mode_basic_flow(
 
 @pytest.mark.asyncio
 async def test_test_mode_rejects_nested_commands(
-    signal_server, mock_ollama, test_config, _mock_search, running_penny
+    signal_server, mock_ollama, test_config, running_penny
 ):
     """
     Test that /test rejects nested commands like /test /debug.
@@ -71,9 +68,7 @@ async def test_test_mode_rejects_nested_commands(
 
 
 @pytest.mark.asyncio
-async def test_test_mode_rejects_threading(
-    signal_server, mock_ollama, test_config, _mock_search, running_penny
-):
+async def test_test_mode_rejects_threading(signal_server, mock_ollama, test_config, running_penny):
     """
     Test that /test rejects threaded messages (blocked at channel layer like all commands).
     """
@@ -98,13 +93,12 @@ async def test_test_mode_rejects_threading(
 
 @pytest.mark.asyncio
 async def test_test_mode_uses_real_external_services(
-    signal_server, mock_ollama, test_config, _mock_search, running_penny
+    signal_server, mock_ollama, test_config, running_penny
 ):
     """
     Test that /test mode uses real external services (Ollama, Perplexity).
     """
     mock_ollama.set_default_flow(
-        search_query="test search query",
         final_response="here's what i found! 🌟",
     )
 
@@ -122,14 +116,12 @@ async def test_test_mode_uses_real_external_services(
         # Verify Ollama was called (real service usage)
         assert len(mock_ollama.requests) >= 1, "Ollama should be called in test mode"
 
-        # Verify search tool was invoked
-        # The mock_search fixture tracks search calls globally
-        # In test mode, the search tool should still execute
+        # Verify Ollama processed the message with tools available
 
 
 @pytest.mark.asyncio
 async def test_test_mode_blocks_threading_to_test_responses(
-    signal_server, mock_ollama, test_config, _mock_search, running_penny
+    signal_server, mock_ollama, test_config, running_penny
 ):
     """
     Test that threading/replying to a test mode response is rejected.
@@ -141,7 +133,6 @@ async def test_test_mode_blocks_threading_to_test_responses(
     4. Penny: "Threading is not supported for test mode responses."
     """
     mock_ollama.set_default_flow(
-        search_query="test search query",
         final_response="here's what i found! 🌟",
     )
 
@@ -215,13 +206,12 @@ async def test_test_mode_snapshot_created_at_startup(test_config, running_penny)
 
 @pytest.mark.asyncio
 async def test_test_mode_shows_typing_indicator(
-    signal_server, mock_ollama, test_config, _mock_search, running_penny
+    signal_server, mock_ollama, test_config, running_penny
 ):
     """
     Test that /test command shows typing indicator while processing.
     """
     mock_ollama.set_default_flow(
-        search_query="test search query",
         final_response="here's what i found! 🌟",
     )
 

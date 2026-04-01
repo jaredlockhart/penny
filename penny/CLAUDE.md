@@ -9,18 +9,15 @@ flowchart TD
     subgraph Foreground["Foreground (ChatAgent)"]
         Channel -->|extract| CA[ChatAgent]
         CA -->|"prompt + tools"| FG_Ollama["Ollama<br>Ollama"]
-        FG_Ollama -->|tool call| Search[SearchTool]
-        FG_Ollama -->|tool call| News[FetchNewsTool]
-        Search -->|text| Perplexity[Perplexity API]
-        News -->|articles| TheNewsAPI[TheNewsAPI.com]
-        Search -.->|results| FG_Ollama
-        News -.->|results| FG_Ollama
+        FG_Ollama -->|tool call| Fetch[MultiTool]
+        Fetch -->|"browse_url"| Browser[Browser Extension]
+        Fetch -->|"Kagi search"| Browser
+        Browser -.->|results| FG_Ollama
         FG_Ollama -->|response| CA
     end
 
-    CA -->|reply + image| Channel -->|send| User
+    CA -->|reply| Channel -->|send| User
     CA -->|log| DB[(SQLite)]
-    Search -->|log| DB
 
     subgraph Scheduler["Background Scheduler (when idle)"]
         direction TB
@@ -34,7 +31,6 @@ flowchart TD
         History -.->|"topic summaries<br>+ preferences"| DB
 
         Notify[NotifyAgent] -->|"thoughts, news,<br>check-ins"| FG_Ollama5["Ollama<br>Ollama"]
-        Notify -.->|"image search"| Serper[Serper API]
     end
 
     Notify -->|proactive message| Channel
@@ -46,9 +42,8 @@ flowchart TD
 - **Vision**: Optional vision model (e.g., qwen3-vl) for processing image attachments from Signal
 - **Image Generation**: Optional image model (e.g., x/z-image-turbo) for generating images via `/draw` command
 - **Embedding Model**: Optional dedicated embedding model (e.g., embeddinggemma) for preference deduplication and history embeddings
-- **Perplexity**: Web search — Penny always searches before answering, never uses model knowledge alone
-- **Serper**: Image search (Google Images) — standalone module used by NotifyAgent to attach images to notifications
-- **SQLite**: Logs all prompts, searches, and messages; stores preferences, thoughts, and conversation history
+- **Browser Extension**: Web search via Kagi and page reading via browse_url — all web access goes through the connected browser
+- **SQLite**: Logs all prompts and messages; stores preferences, thoughts, and conversation history
 
 ## Directory Structure
 
@@ -98,15 +93,11 @@ penny/
     email.py          — /email: search Fastmail email via JMAP (optional)
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
-    models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult, and per-tool arg models (SearchArgs, FetchNewsArgs, etc.)
-    search.py         — SearchTool: Perplexity text search (no images)
-    news.py           — NewsTool: TheNewsAPI.com client (optional, requires NEWS_API_KEY)
-    fetch_news.py     — FetchNewsTool: tool wrapper for NewsTool (used by chat + thinking)
+    models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult, and per-tool arg models
+    multi.py          — MultiTool: single tool call that fans out queries to browse_url/Kagi
+    browse_url.py     — BrowseUrlTool: reads web pages via browser extension
     search_emails.py  — SearchEmailsTool (Fastmail JMAP)
     read_emails.py    — ReadEmailTool (Fastmail JMAP)
-  serper/
-    client.py         — search_image(): async Serper image search, returns base64 data URI
-    models.py         — SerperImageResult, SerperImageResponse Pydantic models
   jmap/
     client.py         — JmapClient: Fastmail JMAP API client (httpx)
     models.py         — JmapSession, EmailAddress, EmailSummary, EmailDetail
@@ -122,7 +113,6 @@ penny/
   database/
     database.py       — Database facade: thin wrapper creating domain stores
     message_store.py  — MessageStore: log_message, log_prompt, log_command, threads
-    search_store.py   — SearchStore: log, get, mark_extracted
     thought_store.py  — ThoughtStore: inner monologue persistence
     history_store.py  — HistoryStore: daily/weekly conversation topic summaries
     preference_store.py — PreferenceStore: add, query, dedup, embedding management
@@ -141,7 +131,6 @@ penny/
     mocks/
       signal_server.py  — Mock Signal WebSocket + REST server (aiohttp)
       ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
-      search_patches.py — Perplexity + Serper image search monkeypatches
     agents/           — Per-agent integration tests
       test_message.py, test_thinking.py, test_agentic_loop.py,
       test_context.py, test_history.py, test_notify.py
@@ -157,8 +146,7 @@ penny/
     jmap/             — JMAP client tests
       test_client.py
     tools/            — Tool tests
-      test_search_redaction.py, test_tool_timeout.py, test_tool_not_found.py,
-      test_missing_tool_params.py, test_tool_reasoning.py, test_news_tool.py
+      test_tool_timeout.py, test_tool_not_found.py, test_tool_reasoning.py
 Dockerfile            — Python 3.12-slim
 pyproject.toml        — Dependencies and project metadata
 ```
@@ -187,7 +175,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 ### Specialized Agents
 
 **ChatAgent** (`agents/chat.py`)
-- Handles incoming user messages with tools (search, news)
+- Handles incoming user messages with tools (browse_url via MultiTool)
 - Prompt: identity + profile + history + notified thoughts + conversation instructions
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the Ollama
 
@@ -325,7 +313,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 All tables defined in `database/models.py` as SQLModel classes:
 
 - **PromptLog**: Every Ollama call — `model`, `messages` (JSON), `response` (JSON), `thinking`, `duration_ms`
-- **SearchLog**: Every Perplexity search — `query`, `response`, `trigger` (user_message/penny_enrichment), `extracted` flag
+- **SearchLog**: Legacy table (no longer written to) — historical search logs
 - **MessageLog**: Every user/agent message — `direction`, `sender`, `content`, `parent_id` (thread chain), `external_id` (platform ID), `is_reaction`, `thought_id` FK (notification source)
 - **UserInfo**: User profile — `name`, `location`, `timezone` (IANA), `date_of_birth`
 - **CommandLog**: Command invocations — `command_name`, `command_args`, `response`, `error`
@@ -359,10 +347,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 
 ## Key Design Decisions
 
-- **Always search**: System prompt forces search on every message — no hallucinated answers
-- **One search per message**: System prompt tells model it only gets one search, so it combines everything into a single comprehensive query
-- **Separated search and images**: `SearchTool` handles Perplexity text search only. Image search (`serper/`) is a standalone module used by NotifyAgent for notification attachments, not part of the search tool chain
-- **URL extraction**: URLs extracted from Perplexity results, appended as Sources list so the model can pick the most relevant one
+- **Browser-based search**: All web access (search, page reading) goes through the browser extension via MultiTool → browse_url. Text queries are converted to Kagi search URLs. No third-party search APIs
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
@@ -382,7 +367,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 
 ## Dependencies
 
-- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `ollama`, `perplexityai`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`
+- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `ollama`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`
 - Dev: `ruff` (lint/format), `ty` (type check), `pytest`, `pytest-asyncio`, `aiohttp` (mock Signal server)
 - Python 3.12+
 
@@ -424,8 +409,6 @@ Strongly prefer end-to-end integration tests over unit tests. Test through publi
 **Mocks** (in `tests/mocks/`):
 - `MockSignalServer`: WebSocket + REST server using aiohttp, captures outgoing messages and typing events
 - `MockOllamaAsyncClient`: Monkeypatches `ollama.AsyncClient`, configurable responses via `set_default_flow()` or `set_response_handler()`
-- `MockPerplexity`: Monkeypatches Perplexity SDK; `search_image` mocked via AsyncMock
-
 **Fixtures** (in `tests/conftest.py`):
 - `TEST_SENDER`: Standard test phone number constant
 - `signal_server`: Starts mock Signal server on random port

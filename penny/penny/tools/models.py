@@ -5,12 +5,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-class SearchArgs(BaseModel):
-    """Validated arguments for the search tool."""
-
-    query: str
-
-
 class SearchResult(BaseModel):
     """Result from a search tool containing text and optional image."""
 
@@ -21,12 +15,6 @@ class SearchResult(BaseModel):
     def __str__(self) -> str:
         image_summary = f"<image {len(self.image_base64)} chars>" if self.image_base64 else "None"
         return f"SearchResult(text={self.text}, urls={self.urls}, image_base64={image_summary})"
-
-
-class FetchNewsArgs(BaseModel):
-    """Validated arguments for the fetch_news tool."""
-
-    topic: str = "top news"
 
 
 class BrowseUrlArgs(BaseModel):

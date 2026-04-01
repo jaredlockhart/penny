@@ -18,13 +18,12 @@ from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
-from penny.tools import SearchTool, Tool, ToolCall, ToolExecutor, ToolRegistry
+from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.models import SearchResult
 from penny.tools.multi import MultiTool
 
 if TYPE_CHECKING:
     from penny.tools.browse_url import BrowseUrlTool
-    from penny.tools.fetch_news import FetchNewsTool
 
 logger = logging.getLogger(__name__)
 
@@ -111,10 +110,9 @@ def _strip_think_tags(content: str) -> tuple[str, str | None]:
 # Checked after tool execution to mark ToolCallRecord.failed = True.
 _TOOL_FAILURE_PREFIXES = (
     "Error: ",
-    "No recent news found",
     PennyResponse.NO_RESULTS_TEXT,
-    PennyResponse.SEARCH_QUOTA_EXCEEDED[:40],
     "Failed to search:",
+    "No browser connected",
 )
 
 
@@ -198,8 +196,6 @@ class Agent:
         vision_model_client: OllamaClient | None = None,
         embedding_model_client: OllamaClient | None = None,
         allow_repeat_tools: bool = False,
-        search_tool: SearchTool | None = None,
-        news_tool: FetchNewsTool | None = None,
         max_queries_key: str | None = None,
     ):
         self.config = config
@@ -212,8 +208,6 @@ class Agent:
         self._vision_model_client = vision_model_client
         self._embedding_model_client = embedding_model_client
 
-        self._search_tool = search_tool
-        self._news_tool = news_tool
         self._max_queries_key = max_queries_key
         self._multi_tool: MultiTool | None = None
         self._browse_url_provider: Callable[[], BrowseUrlTool | None] | None = None
@@ -639,10 +633,6 @@ class Agent:
         if self._max_queries_key is not None:
             return [self._build_multi_tool()]
         tools: list[Tool] = []
-        if self._search_tool:
-            tools.append(self._search_tool)
-        if self._news_tool:
-            tools.append(self._news_tool)
         if self._browser_tools_provider:
             tools.extend(self._browser_tools_provider())
         return tools
@@ -651,11 +641,7 @@ class Agent:
         """Build a fresh MultiTool from config, updating self._multi_tool."""
         assert self._max_queries_key is not None
         max_calls = int(getattr(self.config.runtime, self._max_queries_key))
-        tool = MultiTool(
-            max_calls=max_calls,
-            search_tool=self._search_tool,
-            news_tool=self._news_tool,
-        )
+        tool = MultiTool(max_calls=max_calls)
         if self._browse_url_provider:
             tool.set_browse_url_provider(self._browse_url_provider)
         self._multi_tool = tool
@@ -906,21 +892,12 @@ class Agent:
             return None
         return "## Context\n" + "\n\n".join(parts)
 
-    def _profile_section(self, sender: str, content: str | None = None) -> str | None:
-        """### User Profile — user name and search redaction config."""
+    def _profile_section(self, sender: str) -> str | None:
+        """### User Profile — user name."""
         try:
             user_info = self.db.users.get_info(sender)
             if not user_info:
                 return None
-
-            if content is not None:
-                name = user_info.name
-                user_said_name = bool(re.search(rf"\b{re.escape(name)}\b", content, re.IGNORECASE))
-                redact = [] if user_said_name else [name]
-                if self._multi_tool is not None:
-                    self._multi_tool.redact_terms = redact
-                elif self._search_tool and isinstance(self._search_tool, SearchTool):
-                    self._search_tool.redact_terms = redact
 
             logger.debug("Built profile context for %s", sender)
             return f"### User Profile\nThe user's name is {user_info.name}."

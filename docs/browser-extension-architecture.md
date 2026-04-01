@@ -135,7 +135,7 @@ The background script continuously extracts visible text from the active tab usi
 - `screenshot_page` — capture current page for vision model
 - `get_current_tab` — what the user is looking at right now (partially implemented via active tab context)
 
-The thinking agent uses browser tools autonomously when a browser is connected, falling back to Perplexity when it's not. Tools are registered dynamically via `set_browser_tools_provider()` — available only when a browser has an active connection.
+The thinking agent uses browser tools autonomously when a browser is connected. All web access (search via Kagi, page reading) goes through the browser extension. Tools are registered dynamically via `set_browser_tools_provider()` — available only when a browser has an active connection.
 
 ## Tool Request Protocol (implemented)
 
@@ -226,7 +226,7 @@ The primary threat: malicious web pages embedding instructions in content that P
 
 The feed page realizes the shift from interruption-based notifications to a browsable discovery feed:
 
-- **Card grid**: each thought rendered as a card with image (from serper, stored at creation time), title, seed topic byline, date, and truncated content
+- **Card grid**: each thought rendered as a card with image (if available), title, seed topic byline, date, and truncated content
 - **New / Archive tabs**: unnotified thoughts in New, notified in Archive (paginated, 12 per page)
 - **Modal viewer**: click a card to see full content with image header
 - **Reactions**: thumbs up/down buttons on cards and modal. Clicking one:
@@ -237,7 +237,7 @@ The feed page realizes the shift from interruption-based notifications to a brow
   - Fades the card out of the New tab
 - **Unnotified count**: sidebar nav shows `Thoughts (N)` with the count of new thoughts, polled every 5 minutes
 - **Content rendering**: thought content processed through `prepare_outgoing()` server-side (markdown → HTML), rendered directly — no client-side duplication
-- **Image URLs**: stored on the `Thought` model at creation time (one serper call per thought). Startup backfill populates existing thoughts in parallel batches
+- **Image URLs**: stored on the `Thought` model (legacy field, no longer auto-populated)
 - Both models coexist: feed for passive browsing, Signal for high-priority discoveries
 
 ## Technology
@@ -277,7 +277,7 @@ The feed page realizes the shift from interruption-based notifications to a brow
 - `web-ext` dev setup with auto-reload
 - Thoughts feed page with new/archive tabs, card grid, modal viewer
 - Thought reactions (thumbs up/down) feeding preference extraction pipeline
-- Image URLs stored on thoughts at creation time (serper search, startup backfill)
+- Image URLs on thought model (legacy field, no longer auto-populated)
 - Seed topic bylines on thought cards (from preference FK)
 - Unnotified thought count in sidebar nav (5-minute polling)
 - Penny logo: SVG traced from PNG, rendered to crisp PNGs at all icon sizes

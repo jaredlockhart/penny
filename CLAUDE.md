@@ -2,7 +2,7 @@
 
 ## What Is Penny
 
-Penny is a local-first AI agent that communicates via Signal, Discord, or a Firefox browser extension. Users send messages, Penny searches the web via Perplexity, reasons using Ollama (local LLM), and replies in a casual, relaxed style. It runs in Docker with host networking.
+Penny is a local-first AI agent that communicates via Signal, Discord, or a Firefox browser extension. Users send messages, Penny searches the web via Kagi (through the browser extension), reasons using Ollama (local LLM), and replies in a casual, relaxed style. It runs in Docker with host networking.
 
 Penny is single-user — a personal assistant deployed locally for one person. Multiple devices (Signal phone, browser instances) connect as different devices of the same user, sharing a single conversation history.
 
@@ -132,7 +132,7 @@ On the host, dev tool commands run via `docker compose run --rm` in a temporary 
 
 `make prod` starts the penny service only (skips `docker-compose.override.yml` and the `team` profile). The watcher container handles auto-deploy when running the full stack via `make up`.
 
-Prerequisites: signal-cli-rest-api on :8080 (for Signal), Ollama on :11434, Perplexity API key in .env.
+Prerequisites: signal-cli-rest-api on :8080 (for Signal), Ollama on :11434, browser extension for web search.
 
 ## CI
 
@@ -167,14 +167,11 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 
 **API Keys**:
-- `PERPLEXITY_API_KEY`: API key for web search
-- `SERPER_API_KEY`: API key for Serper image search (optional; if unset, notifications won't include images)
 - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
 - `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email` command)
 - `ZOHO_API_ID`: Zoho OAuth client ID (optional, enables `/zoho` command)
 - `ZOHO_API_SECRET`: Zoho OAuth client secret (optional, enables `/zoho` command)
 - `ZOHO_REFRESH_TOKEN`: Zoho OAuth refresh token (optional, enables `/zoho` command) — obtain via [OAuth flow](https://www.zoho.com/mail/help/api/using-oauth-2.html)
-- `NEWS_API_KEY`: API key for TheNewsAPI.com (optional; enables news search tool for chat and thinking agents)
 **GitHub App** (required for agent containers and `/bug` command):
 - `GITHUB_APP_ID`: GitHub App ID for authenticated API access
 - `GITHUB_APP_PRIVATE_KEY_PATH`: Path to GitHub App private key file

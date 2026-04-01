@@ -31,7 +31,7 @@ def _insert_message(penny, sender, content, direction, timestamp, **kwargs):
 
 @pytest.mark.asyncio
 async def test_summarize_today_creates_history_entry(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """HistoryAgent summarizes today's messages and stores a history entry."""
     config = make_config(history_interval=99999.0)
@@ -80,7 +80,7 @@ Return ONLY the bullet list, one topic per line, prefixed with "- "."""
 
 @pytest.mark.asyncio
 async def test_summarize_today_skips_when_already_rolled_up(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """HistoryAgent skips summarization when history is already up-to-date."""
     config = make_config(history_interval=99999.0)
@@ -129,7 +129,7 @@ async def test_summarize_today_skips_when_already_rolled_up(
 
 @pytest.mark.asyncio
 async def test_backfill_summarizes_past_days(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """HistoryAgent backfills past days even when today already has an entry.
 
@@ -178,7 +178,7 @@ async def test_backfill_summarizes_past_days(
 
 @pytest.mark.asyncio
 async def test_backfill_skips_empty_days_without_consuming_budget(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Days with no messages must not consume max_days budget.
 
@@ -228,7 +228,7 @@ async def test_backfill_skips_empty_days_without_consuming_budget(
 
 @pytest.mark.asyncio
 async def test_summarize_uses_only_user_messages(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """HistoryAgent summarizes only user messages, not Penny's responses."""
     config = make_config(history_interval=99999.0)
@@ -270,7 +270,7 @@ async def test_summarize_uses_only_user_messages(
 
 @pytest.mark.asyncio
 async def test_preference_extraction_stores_preferences(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """HistoryAgent extracts and stores user preferences from conversation."""
     config = make_config(history_interval=99999.0)
@@ -320,7 +320,7 @@ async def test_preference_extraction_stores_preferences(
 
 @pytest.mark.asyncio
 async def test_existing_preference_mention_increments_count(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """When LLM identifies a known preference was discussed, mention_count goes up."""
     config = make_config(history_interval=99999.0)
@@ -373,7 +373,7 @@ async def test_existing_preference_mention_increments_count(
 
 @pytest.mark.asyncio
 async def test_preference_extraction_marks_messages_processed(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Messages are marked processed after preference extraction, preventing re-bumps."""
     config = make_config(history_interval=99999.0)
@@ -430,7 +430,7 @@ async def test_preference_extraction_marks_messages_processed(
 
 @pytest.mark.asyncio
 async def test_failed_extraction_does_not_mark_processed(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """When preference extraction fails, messages stay unprocessed for retry."""
     config = make_config(history_interval=99999.0)
@@ -496,7 +496,7 @@ async def test_failed_extraction_does_not_mark_processed(
 
 @pytest.mark.asyncio
 async def test_reactions_to_regular_messages_create_no_preferences(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Reactions to regular Penny messages are marked processed with no preference created."""
     config = make_config(history_interval=99999.0)
@@ -528,7 +528,7 @@ async def test_reactions_to_regular_messages_create_no_preferences(
 
 @pytest.mark.asyncio
 async def test_reaction_without_parent_is_marked_processed(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Reactions without a parent message are still marked processed."""
     config = make_config(history_interval=99999.0)
@@ -557,7 +557,7 @@ async def test_reaction_without_parent_is_marked_processed(
 
 @pytest.mark.asyncio
 async def test_thought_reaction_sets_valence_not_preference(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Reactions to thought notification messages set valence on the thought, not preferences."""
     config = make_config(history_interval=99999.0)
@@ -623,7 +623,7 @@ def test_reaction_emoji_classification():
 
 @pytest.mark.asyncio
 async def test_known_preferences_context(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """_build_known_preferences_context formats existing preferences for dedup."""
     config = make_config(history_interval=99999.0)
@@ -654,7 +654,7 @@ async def test_known_preferences_context(
 
 @pytest.mark.asyncio
 async def test_no_messages_produces_no_history(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """HistoryAgent does nothing when there are no messages to summarize."""
     config = make_config(history_interval=99999.0)
@@ -694,7 +694,7 @@ def _seed_daily_entries(penny, user, monday):
 
 @pytest.mark.asyncio
 async def test_weekly_rollup_creates_entry_from_daily_entries(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Weekly rollup summarizes a completed week's daily entries into a weekly entry.
 
@@ -735,7 +735,7 @@ async def test_weekly_rollup_creates_entry_from_daily_entries(
 
 @pytest.mark.asyncio
 async def test_weekly_rollup_skips_incomplete_week(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Weekly rollup does not create an entry for the current (incomplete) week."""
     config = make_config(history_interval=99999.0)
@@ -770,7 +770,7 @@ async def test_weekly_rollup_skips_incomplete_week(
 
 @pytest.mark.asyncio
 async def test_history_context_includes_weekly_entries(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """_history_section includes both weekly and daily entries."""
     config = make_config(history_interval=99999.0)

@@ -6,7 +6,22 @@ from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
 from penny.ollama import OllamaClient
-from penny.tools.search import SearchTool
+from penny.tools.base import Tool
+
+
+class StubSearchTool(Tool):
+    """Minimal stub tool for testing tool-not-found handling."""
+
+    name = "search"
+    description = "Search for information"
+    parameters = {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "Search query"}},
+        "required": ["query"],
+    }
+
+    async def execute(self, **kwargs):
+        return "Mock search results for testing"
 
 
 class TestToolNotFound:
@@ -26,11 +41,10 @@ class TestToolNotFound:
             discord_channel_id=None,
             ollama_api_url="http://localhost:11434",
             ollama_model="test-model",
-            perplexity_api_key=None,
             log_level="DEBUG",
             db_path=test_db,
         )
-        search_tool = SearchTool(perplexity_api_key="test-key", db=db)
+        search_tool = StubSearchTool()
 
         client = OllamaClient(
             api_url="http://localhost:11434",

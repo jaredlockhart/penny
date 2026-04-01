@@ -13,7 +13,7 @@ async def test_startup_announcement_with_commit(
 ):
     """Test that Penny sends startup announcement with restart message from git commit."""
     # First run: populate database with a sender
-    mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
+    mock_ollama.set_default_flow(final_response="test response 🌟")
 
     async with running_penny(test_config) as penny:
         # Create user profile before messaging (required for chat dispatch)
@@ -72,7 +72,7 @@ async def test_startup_announcement_fallback_no_git(
 ):
     """Test that Penny falls back to 'I just restarted!' when git commit message unavailable."""
     # First run: populate database
-    mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
+    mock_ollama.set_default_flow(final_response="test response 🌟")
 
     async with running_penny(test_config) as penny:
         # Create user profile before messaging (required for chat dispatch)
@@ -112,7 +112,7 @@ async def test_startup_announcement_fallback_llm_error(
 ):
     """Test that Penny falls back when LLM transformation fails."""
     # First run: populate database
-    mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
+    mock_ollama.set_default_flow(final_response="test response 🌟")
 
     async with running_penny(test_config) as penny:
         # Create user profile before messaging (required for chat dispatch)
@@ -184,7 +184,7 @@ async def test_startup_announcement_multiple_devices(
     Penny is single-user: messages from any device resolve to the same user.
     Startup announcements go to all known senders in the message log.
     """
-    mock_ollama.set_default_flow(search_query="test", final_response="test response 🌟")
+    mock_ollama.set_default_flow(final_response="test response 🌟")
 
     async with running_penny(test_config) as penny:
         penny.db.users.save_info(

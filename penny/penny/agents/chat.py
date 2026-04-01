@@ -161,7 +161,7 @@ class ChatAgent(Agent):
             for s in [
                 self._identity_section(),
                 self._context_block(
-                    self._profile_section(user, content),
+                    self._profile_section(user),
                     self._history_section(user),
                     self._thought_section(user),
                     self._page_hint_section(),

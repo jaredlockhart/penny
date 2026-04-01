@@ -15,6 +15,7 @@ import pytest
 from penny.constants import PennyConstants
 from penny.prompts import Prompt
 from penny.tests.conftest import TEST_SENDER
+from penny.tools.models import SearchResult
 
 
 async def _fake_embed(vec):
@@ -70,7 +71,6 @@ async def test_seeded_thinking_full_loop(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -114,6 +114,11 @@ async def test_seeded_thinking_full_loop(
     async with running_penny(config) as penny:
         _seed_thinking(penny)
         _add_dislike(penny)
+
+        # Mock browse_url so MultiTool can dispatch text queries
+        mock_browse = AsyncMock(return_value=SearchResult(text="Mock search results"))
+        mock_browse_tool = type("B", (), {"execute": mock_browse})()
+        penny.thinking_agent._browse_url_provider = lambda: mock_browse_tool
 
         # Pre-seed a thought with matching preference_id for context
         penny.db.thoughts.add(TEST_SENDER, "Previous thought about gravity", preference_id=1)
@@ -218,7 +223,6 @@ async def test_free_thinking_full_loop(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -352,7 +356,6 @@ async def test_news_thinking_full_loop(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -362,11 +365,9 @@ async def test_news_thinking_full_loop(
     # random.random used for: (1) empty-pool fallback in _should_think_free,
     # (2) news/free coin flip in _pick_free_prompt — 0.0 < 1.0 → news wins
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
-    monkeypatch.setattr("penny.tools.news.NewsTool.search", AsyncMock(return_value=[]))
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
-        news_api_key="fake-key",
         free_thinking_probability=0.0,
         news_thinking_probability=1.0,
     )
@@ -460,7 +461,6 @@ async def test_news_browsing_full_loop(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -518,7 +518,6 @@ async def test_preference_rotation_via_last_thought_at(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -583,7 +582,6 @@ async def test_extracted_preference_below_threshold_skipped(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -630,7 +628,6 @@ async def test_extracted_preference_at_threshold_used(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -673,7 +670,7 @@ async def test_extracted_preference_at_threshold_used(
 
 @pytest.mark.asyncio
 async def test_scheduler_runs_history_before_thinking(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """History is scheduled before thinking so context is fresh."""
     config = make_config()
@@ -692,7 +689,6 @@ async def test_distribution_steers_toward_underrepresented_type(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
 ):
@@ -729,7 +725,7 @@ async def test_distribution_steers_toward_underrepresented_type(
 
 @pytest.mark.asyncio
 async def test_thinking_skips_when_too_many_unnotified(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Thinking agent skips cycle when unnotified thoughts reach the cap."""
     config = make_config(
@@ -766,7 +762,7 @@ async def test_thinking_skips_when_too_many_unnotified(
 
 @pytest.mark.asyncio
 async def test_empty_monologue_skips_storage(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """No thought stored when the model produces empty content."""
     config = make_config(
@@ -792,7 +788,6 @@ async def test_seeded_duplicate_thought_skips_storage(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -851,7 +846,6 @@ async def test_free_duplicate_thought_skips_storage(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -907,7 +901,6 @@ async def test_novel_thought_is_stored(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -965,7 +958,6 @@ async def test_preference_filter_inactive_without_qualifying_prefs(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -1013,7 +1005,6 @@ async def test_preference_filter_rejects_disliked_content(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -1080,7 +1071,6 @@ async def test_preference_filter_active_with_only_negative_prefs(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,

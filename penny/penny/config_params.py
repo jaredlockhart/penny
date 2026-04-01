@@ -148,24 +148,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="IMAGE_DOWNLOAD_TIMEOUT",
-    description="Timeout in seconds for image downloads",
-    type=float,
-    default=15.0,
-    validator=_validate_positive_float,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="IMAGE_MAX_RESULTS",
-    description="Max image search results to return",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
     key="EMAIL_BODY_MAX_LENGTH",
     description="Max character length for email body content",
     type=int,

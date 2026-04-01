@@ -167,7 +167,7 @@ See [docs/browser-extension-architecture.md](docs/browser-extension-architecture
 1. **For Signal**: [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) running on host (port 8080)
 2. **For Discord**: Discord bot token and channel ID
 3. **[Ollama](https://ollama.com)** running on host (port 11434)
-4. **[Perplexity API key](https://www.perplexity.ai)** (for web search)
+4. **Browser extension** (for web search via Kagi and page reading)
 5. Docker & Docker Compose installed
 
 ### Quick Start
@@ -228,9 +228,6 @@ BROWSER_PORT=9090
 OLLAMA_API_URL="http://host.docker.internal:11434"
 OLLAMA_MODEL="gpt-oss:20b"               # Single model for all agents
 
-# Perplexity Configuration
-PERPLEXITY_API_KEY="your-api-key"
-
 # Database & Logging
 DB_PATH="/penny/data/penny/penny.db"
 LOG_LEVEL="INFO"
@@ -268,9 +265,6 @@ Penny auto-detects which channel to use based on configured credentials:
 - `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
 
 **API Keys:**
-- `PERPLEXITY_API_KEY`: API key for web search
-- `SERPER_API_KEY`: API key for Serper image search (optional; if unset, notifications won't include images)
-- `NEWS_API_KEY`: API key for TheNewsAPI.com (optional; enables news search tool)
 - `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email`)
 
 **GitHub App** (optional, enables `/bug` and `/feature`; required for agent containers):

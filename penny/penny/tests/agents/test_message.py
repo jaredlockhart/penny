@@ -2,7 +2,7 @@
 
 Test organization:
 1. Full integration (happy path) — comprehensive end-to-end message flow
-2. Special success cases — no tool call, privacy redaction, anti-refusal
+2. Special success cases — no tool call, anti-refusal
 3. Error / edge cases — XML leak regression, short response warning, delivery failure
 """
 
@@ -12,7 +12,7 @@ import pytest
 from sqlmodel import select
 
 from penny.constants import PennyConstants
-from penny.database.models import MessageLog, SearchLog
+from penny.database.models import MessageLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 # ── 1. Full integration (happy path) ─────────────────────────────────────
@@ -23,25 +23,22 @@ async def test_basic_message_flow(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
-    mock_serper_image,
 ):
     """
     Test the complete message flow:
     1. User sends a message via Signal
     2. Penny receives and processes it
-    3. Ollama returns a tool call (search)
-    4. Search tool executes (mocked)
+    3. Ollama returns a tool call (fetch)
+    4. Fetch tool executes (mocked)
     5. Ollama returns final response
     6. Penny sends reply via Signal
     """
-    config = make_config(serper_api_key="test-key")
+    config = make_config()
 
-    # Configure Ollama to return search tool call, then final response
+    # Configure Ollama to return fetch tool call, then final response
     mock_ollama.set_default_flow(
-        search_query="test search query",
         final_response="here's what i found about your question! 🌟",
     )
 
@@ -205,12 +202,6 @@ source URL so the user can follow up."""
         assert incoming_messages[0].device_id == test_device.id
         assert outgoing[0].device_id == test_device.id
 
-        # Verify search logs have default trigger
-        with penny.db.get_session() as session:
-            search_logs = list(session.exec(select(SearchLog)).all())
-        if search_logs:
-            assert search_logs[0].trigger == "user_message"
-
         # No conversation echo thoughts should be logged
         # (old _log_conversation_thought is removed; thoughts come from tool reasoning only)
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
@@ -219,22 +210,13 @@ source URL so the user can follow up."""
         ]
         assert len(conversation_echoes) == 0, "Conversation echo thoughts should not be logged"
 
-        # Serper image search should use the model's search query, not full content
-        mock_serper_image.assert_called_once()
-        image_query = mock_serper_image.call_args[0][0]
-        assert image_query == "test search query"
-        assert len(image_query) <= 300
-
-        # Outgoing message should have an image attachment
-        assert response.get("base64_attachments"), "Response should include an image attachment"
-
 
 # ── 2. Special success cases ──────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_message_without_tool_call(
-    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, test_config, test_user_info, running_penny
 ):
     """Test handling a message where Ollama doesn't call a tool."""
 
@@ -260,89 +242,14 @@ async def test_message_without_tool_call(
 
 
 @pytest.mark.asyncio
-async def test_profile_context_excludes_dob_and_redacts_name_from_search(
-    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
-):
-    """
-    Test privacy protections for user profile data:
-    1. DOB is not included in the profile context sent to Ollama
-    2. User name is redacted from search queries before reaching Perplexity
-    """
-    # The test user is "Test User" from conftest — have the model generate
-    # a search query that includes the user's name
-    mock_ollama.set_default_flow(
-        search_query="Test User Toronto weather forecast",
-        final_response="here's the weather! 🌤️",
-    )
-
-    async with running_penny(test_config) as penny:
-        await signal_server.push_message(
-            sender=TEST_SENDER,
-            content="what's the weather?",
-        )
-        await signal_server.wait_for_message(timeout=10.0)
-
-        # Verify DOB is NOT in the Ollama prompt messages
-        first_request = mock_ollama.requests[0]
-        messages = first_request.get("messages", [])
-        all_text = " ".join(m.get("content", "") for m in messages)
-        assert "1990-01-01" not in all_text, "DOB should not be in profile context"
-        assert "born" not in all_text.lower(), "DOB field should not be in profile context"
-
-        # Verify profile context IS present (name only, not location)
-        assert "Test User" in all_text, "Name should be in profile context"
-        assert "Seattle" not in all_text, "Location should not be in profile context"
-
-        # Verify user name was redacted from the search query logged to DB
-        with penny.db.get_session() as session:
-            search_logs = list(session.exec(select(SearchLog)).all())
-        assert len(search_logs) >= 1, "Search should have been logged"
-        logged_query = search_logs[0].query
-        assert "Test User" not in logged_query, "User name should be redacted from search query"
-        assert "Toronto weather forecast" in logged_query, "Rest of query should be preserved"
-
-
-@pytest.mark.asyncio
-async def test_name_not_redacted_when_user_says_it(
-    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
-):
-    """
-    When the user's message contains their own name (e.g. searching for
-    a celebrity with the same name), the name should NOT be redacted from
-    the search query.
-    """
-    # Model echoes the name back in the search query
-    mock_ollama.set_default_flow(
-        search_query="Test User celebrity gossip",
-        final_response="here's what i found! 🌟",
-    )
-
-    async with running_penny(test_config) as penny:
-        # User explicitly typed their own name in the message
-        await signal_server.push_message(
-            sender=TEST_SENDER,
-            content="search for Test User celebrity gossip",
-        )
-        await signal_server.wait_for_message(timeout=10.0)
-
-        # Name should be preserved in the search query since the user said it
-        with penny.db.get_session() as session:
-            search_logs = list(session.exec(select(SearchLog)).all())
-        assert len(search_logs) >= 1, "Search should have been logged"
-        logged_query = search_logs[0].query
-        assert "Test User" in logged_query, "Name should NOT be redacted when user said it"
-
-
-@pytest.mark.asyncio
 async def test_conversation_prompt_includes_antirefusal_instruction(
-    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, test_config, test_user_info, running_penny
 ):
     """
     Regression test for #775: CONVERSATION_PROMPT must include an explicit instruction
     to never refuse a request, so the model always provides something useful.
     """
     mock_ollama.set_default_flow(
-        search_query="vegan restaurants downtown",
         final_response="here are some vegan options! 🌱",
     )
 
@@ -379,7 +286,6 @@ async def test_xml_tool_call_not_leaked_to_user(
     signal_server,
     mock_ollama,
     test_config,
-    _mock_search,
     test_user_info,
     running_penny,
 ):
@@ -415,7 +321,7 @@ async def test_xml_tool_call_not_leaked_to_user(
 
 @pytest.mark.asyncio
 async def test_short_response_logged_as_warning(
-    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny, caplog
+    signal_server, mock_ollama, test_config, test_user_info, running_penny, caplog
 ):
     """
     Regression test for #775: short/apologetic responses should be logged as warnings.
@@ -451,7 +357,7 @@ async def test_short_response_logged_as_warning(
 
 @pytest.mark.asyncio
 async def test_delivery_failure_sends_notice(
-    signal_server, mock_ollama, test_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, test_config, test_user_info, running_penny
 ):
     """Test that a delivery failure notice is sent to the user when all send retries fail.
 
@@ -460,7 +366,6 @@ async def test_delivery_failure_sends_notice(
     should detect this and send a brief failure notice so the user knows to retry.
     """
     mock_ollama.set_default_flow(
-        search_query="test query",
         final_response="my answer to your question",
     )
 

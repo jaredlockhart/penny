@@ -46,14 +46,14 @@ class MockOllamaAsyncClient:
         self._response_handler = handler
 
     def set_default_flow(
-        self, search_query: str = "test query", final_response: str = "test response"
+        self, final_response: str = "test response", search_query: str = "test query"
     ) -> None:
         """
         Set up default two-step flow: tool call then final response.
 
         Args:
-            search_query: Query for the search tool call
             final_response: Final text response
+            search_query: Query for the fetch tool call
         """
 
         def handler(request: dict, count: int) -> dict:

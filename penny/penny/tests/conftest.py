@@ -5,7 +5,6 @@ import contextlib
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,13 +12,8 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.penny import Penny
 
-# Re-export mock fixtures so they can be used directly in tests
+# Re-export Ollama mock fixture so it can be used directly in tests
 from penny.tests.mocks.ollama_patches import mock_ollama  # noqa: F401
-from penny.tests.mocks.search_patches import (
-    mock_search,  # noqa: F401
-    mock_search_with_results,  # noqa: F401
-)
-from penny.tests.mocks.search_patches import mock_search as _mock_search  # noqa: F401
 from penny.tests.mocks.signal_server import MockSignalServer
 
 # Configure pytest-asyncio
@@ -36,7 +30,6 @@ DEFAULT_TEST_CONFIG = {
     "discord_channel_id": None,
     "ollama_api_url": "http://localhost:11434",
     "ollama_model": "test-model",
-    "perplexity_api_key": "test-api-key",
     "log_level": "DEBUG",
     "tool_timeout": 60.0,
     # Fast scheduler ticks for tests
@@ -173,17 +166,6 @@ def test_user_info(test_config):
     return db
 
 
-FAKE_IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUg=="  # Tiny valid base64
-
-
-@pytest.fixture
-def mock_serper_image(monkeypatch):
-    """Mock Serper image search at the channel level. Returns a fake base64 image."""
-    mock = AsyncMock(return_value=FAKE_IMAGE_BASE64)
-    monkeypatch.setattr("penny.serper.client.search_image", mock)
-    return mock
-
-
 @pytest.fixture
 def running_penny(signal_server) -> Callable[[Config], AbstractAsyncContextManager[Penny]]:
     """
@@ -224,16 +206,15 @@ def setup_ollama_flow(mock_ollama):  # noqa: F811
 
     Usage:
         setup_ollama_flow(
-            search_query="weather forecast",
             message_response="here's the weather! 🌤️",
             background_response="background task response (optional)",
         )
     """
 
     def _setup(
-        search_query: str,
         message_response: str,
         background_response: str = "",
+        search_query: str = "test query",
     ) -> None:
         request_count = [0]
 

@@ -10,8 +10,23 @@ from penny.config_params import RuntimeParams
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.responses import PennyResponse
+from penny.tools.base import Tool
 from penny.tools.models import SearchResult, ToolResult
-from penny.tools.search import SearchTool
+
+
+class StubSearchTool(Tool):
+    """Minimal stub tool for agentic loop testing."""
+
+    name = "search"
+    description = "Search for information"
+    parameters = {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "Search query"}},
+        "required": ["query"],
+    }
+
+    async def execute(self, **kwargs):
+        return "Mock search results for testing"
 
 
 def _make_agent(test_db, mock_ollama, *, max_steps=3, runtime_overrides=None):
@@ -30,12 +45,11 @@ def _make_agent(test_db, mock_ollama, *, max_steps=3, runtime_overrides=None):
         discord_channel_id=None,
         ollama_api_url="http://localhost:11434",
         ollama_model="test-model",
-        perplexity_api_key=None,
         log_level="DEBUG",
         db_path=test_db,
         runtime=RuntimeParams(db=db, env_overrides=runtime_overrides or {}),
     )
-    search_tool = SearchTool(perplexity_api_key="test-key", db=db)
+    stub_tool = StubSearchTool()
     client = OllamaClient(
         api_url="http://localhost:11434",
         model="test-model",
@@ -46,7 +60,7 @@ def _make_agent(test_db, mock_ollama, *, max_steps=3, runtime_overrides=None):
     agent = Agent(
         system_prompt="test",
         model_client=client,
-        tools=[search_tool],
+        tools=[stub_tool],
         db=db,
         config=config,
     )
@@ -580,7 +594,7 @@ class TestParallelToolCalls:
         browse_mock = AsyncMock(side_effect=fake_execute)
         browse_tool = type("B", (), {"execute": browse_mock})()
 
-        multi = MultiTool(max_calls=5, search_tool=None, news_tool=None)  # type: ignore[arg-type]
+        multi = MultiTool(max_calls=5)
         multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
         await multi.execute(queries=["best pizza toronto"])
@@ -591,25 +605,15 @@ class TestParallelToolCalls:
         assert "best%20pizza%20toronto" in kagi_url
 
     @pytest.mark.asyncio
-    async def test_text_queries_fall_back_to_search_without_browser(self, test_db, mock_ollama):
-        """Without a browser, text queries go to the search tool."""
+    async def test_text_queries_fail_without_browser(self, test_db, mock_ollama):
+        """Without a browser, text queries return a 'no browser' message."""
         from penny.tools.multi import MultiTool
 
-        search_queries: list[str] = []
+        multi = MultiTool(max_calls=5)
 
-        async def fake_execute(**kw):
-            search_queries.append(kw["query"])
-            return SearchResult(text="search results")
+        result = await multi.execute(queries=["best pizza toronto"])
 
-        search_mock = AsyncMock(side_effect=fake_execute)
-        search_tool = type("S", (), {"execute": search_mock})()
-
-        multi = MultiTool(max_calls=5, search_tool=search_tool, news_tool=None)  # ty: ignore[invalid-argument-type]
-
-        await multi.execute(queries=["best pizza toronto"])
-
-        assert len(search_queries) == 1
-        assert search_queries[0] == "best pizza toronto"
+        assert "No browser connected" in result.text
 
     @pytest.mark.asyncio
     async def test_urls_always_route_to_browse(self, test_db, mock_ollama):
@@ -625,7 +629,7 @@ class TestParallelToolCalls:
         browse_mock = AsyncMock(side_effect=fake_execute)
         browse_tool = type("B", (), {"execute": browse_mock})()
 
-        multi = MultiTool(max_calls=5, search_tool=None, news_tool=None)  # type: ignore[arg-type]
+        multi = MultiTool(max_calls=5)
         multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
         await multi.execute(queries=["https://example.com/page", "https://other.com"])
@@ -784,7 +788,6 @@ class TestStrongNudgeUsesLastQuestion:
         self,
         test_db,
         mock_ollama,
-        _mock_search,
     ):
         """When the agentic loop exhausts tool calls and fires a strong nudge,
         the nudge must reference the latest user question — not an earlier one
