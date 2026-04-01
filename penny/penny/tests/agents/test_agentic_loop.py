@@ -358,6 +358,36 @@ class TestAfterStepHook:
 
         await agent.close()
 
+    @pytest.mark.asyncio
+    async def test_tool_result_text_no_duplicates_across_steps(self, test_db, mock_ollama):
+        """Each step's tool result should appear exactly once in _tool_result_text."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=4)
+        agent._tool_executor.execute = AsyncMock(
+            side_effect=[
+                ToolResult(tool="search", result="result_A"),
+                ToolResult(tool="search", result="result_B"),
+                ToolResult(tool="search", result="result_C"),
+            ]
+        )
+
+        def handler(request, count):
+            if count <= 3:
+                return mock_ollama._make_tool_call_response(
+                    request, "search", {"query": f"query_{count}"}
+                )
+            return mock_ollama._make_text_response(request, "done")
+
+        mock_ollama.set_response_handler(handler)
+        agent.allow_repeat_tools = True
+
+        await agent.run("test", max_steps=max_steps)
+
+        # 3 tool calls → exactly 3 entries, no duplicates from re-scanning history
+        assert len(agent._tool_result_text) == 3
+        assert agent._tool_result_text == ["result_A", "result_B", "result_C"]
+
+        await agent.close()
+
 
 class TestEmptyContentRetry:
     """Test that empty content responses trigger a retry with a follow-up prompt."""
