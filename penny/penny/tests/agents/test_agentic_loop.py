@@ -1,6 +1,6 @@
 """Tests for agentic loop changes: reasoning, last step, and after_step hook."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,6 +11,7 @@ from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.responses import PennyResponse
 from penny.tools.base import Tool
+from penny.tools.browse import BrowseTool
 from penny.tools.models import SearchResult, ToolResult
 
 
@@ -585,10 +586,6 @@ class TestParallelToolCalls:
         self, test_db, mock_ollama
     ):
         """When a browser is connected, text queries become search URLs via BrowseTool."""
-        from unittest.mock import MagicMock
-
-        from penny.tools.browse import BrowseTool
-
         browsed_urls: dict[str, str] = {}
 
         async def fake_request(command, params):
@@ -612,8 +609,6 @@ class TestParallelToolCalls:
     @pytest.mark.asyncio
     async def test_text_queries_fail_without_browser(self, test_db, mock_ollama):
         """Without a browser, text queries return a 'no browser' message."""
-        from penny.tools.browse import BrowseTool
-
         tool = BrowseTool(max_calls=5)
 
         result = await tool.execute(queries=["best pizza toronto"])
@@ -623,10 +618,6 @@ class TestParallelToolCalls:
     @pytest.mark.asyncio
     async def test_urls_always_route_to_browse(self, test_db, mock_ollama):
         """URLs always go to BrowseTool regardless of browser connection."""
-        from unittest.mock import MagicMock
-
-        from penny.tools.browse import BrowseTool
-
         browsed_urls: list[str] = []
 
         async def fake_request(command, params):
@@ -759,10 +750,6 @@ class TestEmptyContentAfterToolCalls:
     @pytest.mark.asyncio
     async def test_tool_result_truncated_at_source(self, test_db, mock_ollama):
         """Tool results exceeding MAX_TOOL_RESULT_CHARS are truncated."""
-        from unittest.mock import patch
-
-        from penny.tools.models import ToolResult
-
         agent, db, max_steps = _make_agent(test_db, mock_ollama)
         large_result = "x" * (Agent.MAX_TOOL_RESULT_CHARS + 500)
 
@@ -985,10 +972,6 @@ class TestMalformedUrlCleaning:
     @pytest.mark.asyncio
     async def test_source_url_appended_after_malformed_url_stripped(self, test_db, mock_ollama):
         """When a malformed URL is stripped, source URL fallback appends a real URL."""
-        from unittest.mock import patch
-
-        from penny.tools.models import SearchResult, ToolResult
-
         agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
 
         def handler(request, count):

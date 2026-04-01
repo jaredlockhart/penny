@@ -1,16 +1,22 @@
 """Tests for BrowserChannel message extraction and device registration."""
 
+import asyncio
 import json
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlmodel import Session, select
 
+from penny.channels.base import IncomingMessage
 from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
+from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.migrate import migrate
+from penny.database.models import RuntimeConfig
 from penny.tools.browse import BrowseTool
+from penny.tools.models import SearchResult
 from penny.tools.read_emails import ReadEmailsTool
 from penny.tools.search_emails import SearchEmailsTool
 
@@ -183,8 +189,6 @@ class TestBrowseTool:
     @staticmethod
     def _make_tool(request_fn, permission_manager=None):
         """Create a BrowseTool wired to a mock browse provider."""
-        from penny.tools.browse import BrowseTool
-
         perm = permission_manager or MagicMock(check_domain=AsyncMock())
         tool = BrowseTool(max_calls=3)
         tool.set_browse_provider(lambda: (request_fn, perm))
@@ -193,10 +197,6 @@ class TestBrowseTool:
     @pytest.mark.asyncio
     async def test_returns_channel_content_as_search_result(self):
         """Tool returns a SearchResult with the channel content."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(
             return_value=("Title: Example\nURL: https://example.com\n\nPage content.", None)
         )
@@ -210,10 +210,6 @@ class TestBrowseTool:
     @pytest.mark.asyncio
     async def test_image_url_from_response(self):
         """Tool passes through image URL from the tool response tuple."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(
             return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", "https://ex.com/og.jpg")
         )
@@ -226,10 +222,6 @@ class TestBrowseTool:
     @pytest.mark.asyncio
     async def test_cleans_kagi_cruft_from_content(self):
         """Tool strips Kagi proxy images, empty links, and image grid sections."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.models import SearchResult
-
         kagi_content = (
             "### Best guitar amps 2026\n"
             "\n"
@@ -279,10 +271,6 @@ class TestBrowseTool:
     @pytest.mark.asyncio
     async def test_no_image_returns_none(self):
         """SearchResult.image_base64 is None when response has no image."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
         tool = self._make_tool(request_fn)
         result = await tool.execute(queries=["https://example.com"])
@@ -293,10 +281,6 @@ class TestBrowseTool:
     @pytest.mark.asyncio
     async def test_returns_no_content_message_for_empty(self):
         """Tool returns a SearchResult with no-content message when channel returns empty."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(return_value=("  ", None))
         tool = self._make_tool(request_fn)
         result = await tool.execute(queries=["https://example.com"])
@@ -307,8 +291,6 @@ class TestBrowseTool:
     @pytest.mark.asyncio
     async def test_checks_permission_before_browsing(self):
         """Tool calls permission_manager.check_domain before requesting the page."""
-        from unittest.mock import AsyncMock, MagicMock
-
         mock_perm = MagicMock()
         mock_perm.check_domain = AsyncMock()
         request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
@@ -321,8 +303,6 @@ class TestBrowseTool:
     @pytest.mark.asyncio
     async def test_permission_denied_reports_error_in_result(self):
         """Permission denial appears as error in result, request_fn not called."""
-        from unittest.mock import AsyncMock, MagicMock
-
         mock_perm = MagicMock()
         mock_perm.check_domain = AsyncMock(side_effect=RuntimeError("blocked"))
         request_fn = AsyncMock()
@@ -340,11 +320,6 @@ class TestBrowseToolImagePassthrough:
     @pytest.mark.asyncio
     async def test_image_from_browse_propagates(self):
         """Image from a browse sub-call appears on the combined SearchResult."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.browse import BrowseTool
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(
             return_value=(
                 "Title: Ex\nURL: https://ex.com\nImage: https://ex.com/img.jpg\n\nContent.",
@@ -362,11 +337,6 @@ class TestBrowseToolImagePassthrough:
     @pytest.mark.asyncio
     async def test_no_image_when_browse_has_none(self):
         """Combined SearchResult has no image when browse returns none."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.browse import BrowseTool
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
         mock_perm = MagicMock(check_domain=AsyncMock())
         tool = BrowseTool(max_calls=3)
@@ -502,10 +472,6 @@ class TestBrowserConfigHandlers:
     """config_request and config_update handlers send and persist correctly."""
 
     def _channel(self, tmp_path) -> tuple[BrowserChannel, Database]:
-        from unittest.mock import MagicMock
-
-        from penny.config_params import RuntimeParams
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         # Give channel a real RuntimeParams so DB lookups work after updates
@@ -517,8 +483,6 @@ class TestBrowserConfigHandlers:
     @pytest.mark.asyncio
     async def test_config_request_returns_all_params(self, tmp_path):
         """config_request sends a config_response containing every registered param."""
-        from penny.config_params import RUNTIME_CONFIG_PARAMS
-
         channel, _ = self._channel(tmp_path)
         ws = _MockWs()
         await channel._handle_config_request(ws)  # ty: ignore[invalid-argument-type]
@@ -546,10 +510,6 @@ class TestBrowserConfigHandlers:
     @pytest.mark.asyncio
     async def test_config_update_persists_value(self, tmp_path):
         """config_update writes the validated value to the runtime_config table."""
-        from sqlmodel import Session, select
-
-        from penny.database.models import RuntimeConfig
-
         channel, db = self._channel(tmp_path)
         ws = _MockWs()
         await channel._handle_config_update(
@@ -638,8 +598,6 @@ class TestBrowserHeartbeat:
 
     @pytest.mark.asyncio
     async def test_heartbeat_calls_notify_activity(self, tmp_path):
-        from unittest.mock import MagicMock
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         scheduler = MagicMock()
@@ -703,8 +661,6 @@ class TestBrowserRegister:
     @pytest.mark.asyncio
     async def test_tool_request_works_after_register_without_chat(self, tmp_path):
         """Tool requests succeed after register + capabilities even if no chat message was sent."""
-        import asyncio
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
 
@@ -968,8 +924,6 @@ class TestMakeHandleKwargs:
     @pytest.mark.asyncio
     async def test_returns_on_tool_start_key(self, tmp_path):
         """_make_handle_kwargs always returns a dict with an on_tool_start callable."""
-        from penny.channels.base import IncomingMessage
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         message = IncomingMessage(sender="browser-user", content="hello")
@@ -981,10 +935,6 @@ class TestMakeHandleKwargs:
     @pytest.mark.asyncio
     async def test_callback_sends_tool_status(self, tmp_path):
         """Callback calls _send_tool_status with the sender and formatted text."""
-        from unittest.mock import AsyncMock
-
-        from penny.channels.base import IncomingMessage
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         channel._send_tool_status = AsyncMock()  # ty: ignore[invalid-assignment]
