@@ -34,7 +34,7 @@ def _seed_notify(penny):
 
 @pytest.mark.asyncio
 async def test_notify_blocked_when_no_channel(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Notification is blocked when no channel is set."""
     config = make_config()
@@ -47,7 +47,7 @@ async def test_notify_blocked_when_no_channel(
 
 @pytest.mark.asyncio
 async def test_notify_blocked_when_muted(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Notification is blocked when user is muted."""
     config = make_config()
@@ -60,7 +60,7 @@ async def test_notify_blocked_when_muted(
 
 @pytest.mark.asyncio
 async def test_notify_blocked_when_no_thoughts(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Notification is blocked when user has no un-notified thoughts."""
     config = make_config()
@@ -74,7 +74,7 @@ async def test_notify_blocked_when_no_thoughts(
 
 @pytest.mark.asyncio
 async def test_notify_eligible_with_thoughts_and_channel(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Notification is eligible when all conditions are met."""
     config = make_config()
@@ -89,7 +89,7 @@ async def test_notify_eligible_with_thoughts_and_channel(
 
 @pytest.mark.asyncio
 async def test_cooldown_elapsed_when_no_prior_autonomous(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Cooldown is always elapsed when no prior autonomous messages exist."""
     config = make_config()
@@ -106,14 +106,12 @@ async def test_send_notify_thought_candidate(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
-    mock_serper_image,
 ):
-    """Thought candidate generates and sends a message with image attachment."""
-    config = make_config(notify_candidates=1, serper_api_key="test-key")
+    """Thought candidate generates and sends a message."""
+    config = make_config(notify_candidates=1)
 
     # Force thought candidate path (not checkin, not news)
     monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
@@ -144,12 +142,6 @@ async def test_send_notify_thought_candidate(
         unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
         assert unnotified is None
 
-        # Serper image search should have been called with the message content
-        mock_serper_image.assert_called_once()
-        image_query = mock_serper_image.call_args[0][0]
-        assert "quantum computing" in image_query.lower()
-        assert response.get("base64_attachments"), "Notification should include an image"
-
         # Full system prompt structure assertion
         system_text = [
             m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
@@ -157,7 +149,8 @@ async def test_send_notify_thought_candidate(
         lines = system_text.split("\n")
         assert lines[0].startswith("Current date and time: ")
         rest = "\n".join(lines[1:])
-        expected = """\
+        max_q = int(penny.config.runtime.CHAT_MAX_QUERIES)
+        expected = f"""\
 
 ## Identity
 You are Penny. You and the user are friends who text regularly. \
@@ -185,7 +178,7 @@ You are reaching out to a friend proactively — sharing something \
 interesting you've been thinking about or found in the news.
 
 You have tools available:
-- **search**: Search the web for current information.
+- **browse**: Look things up. Pass up to {max_q} queries and/or URLs.
 
 If your context includes 'Your Latest Thought', share it with the \
 user. Start with a casual greeting, then tell them the whole thing \
@@ -202,17 +195,14 @@ async def test_multiple_candidates_scored_by_embedding(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
-    mock_serper_image,
 ):
     """Multiple thoughts scored by cached embedding; only winner
     goes through the model and gets sent."""
     config = make_config(
         notify_candidates=3,
-        serper_api_key="test-key",
         ollama_embedding_model="test-embedding",
     )
 
@@ -264,9 +254,6 @@ async def test_multiple_candidates_scored_by_embedding(
         # -- 1 embed call: the outgoing message (at send time), not during scoring
         assert len(mock_ollama.embed_requests) == 1
 
-        # -- Image search was called for the winner
-        mock_serper_image.assert_called_once()
-
         # -- Notification was sent via Signal
         msg = signal_server.outgoing_messages[-1]
         assert msg["message"]
@@ -286,14 +273,12 @@ async def test_send_notify_news(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
-    mock_serper_image,
 ):
-    """News mode generates and sends a news message with image."""
-    config = make_config(serper_api_key="test-key")
+    """News mode generates and sends a news message."""
+    config = make_config()
 
     # Force news path (not checkin)
     monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.0)
@@ -319,12 +304,6 @@ async def test_send_notify_news(
         response = signal_server.outgoing_messages[-1]
         assert response["message"]
 
-        # Image search should use the first bold headline
-        mock_serper_image.assert_called_once()
-        image_query = mock_serper_image.call_args[0][0]
-        assert image_query == "AI Breakthrough"
-        assert response.get("base64_attachments"), "News should include an image"
-
         # Full system prompt structure assertion
         system_text = [
             m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
@@ -332,7 +311,8 @@ async def test_send_notify_news(
         lines = system_text.split("\n")
         assert lines[0].startswith("Current date and time: ")
         rest = "\n".join(lines[1:])
-        expected = """\
+        max_q = int(penny.config.runtime.CHAT_MAX_QUERIES)
+        expected = f"""\
 
 ## Identity
 You are Penny. You and the user are friends who text regularly. \
@@ -357,7 +337,7 @@ You are reaching out to a friend proactively — sharing something \
 interesting you've been thinking about or found in the news.
 
 You have tools available:
-
+- **browse**: Look things up. Pass up to {max_q} queries and/or URLs.
 
 If your context includes 'Your Latest Thought', share it with the \
 user. Start with a casual greeting, then tell them the whole thing \
@@ -374,14 +354,12 @@ async def test_send_notify_checkin(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
-    mock_serper_image,
 ):
-    """Check-in sends a message with cat meme image."""
-    config = make_config(serper_api_key="test-key")
+    """Check-in sends a message."""
+    config = make_config()
 
     requests_seen: list[dict] = []
 
@@ -402,12 +380,6 @@ async def test_send_notify_checkin(
         response = signal_server.outgoing_messages[-1]
         assert response["message"]
 
-        # Image search should use the check-in image prompt config
-        mock_serper_image.assert_called_once()
-        image_query = mock_serper_image.call_args[0][0]
-        assert image_query == "funny cat meme"
-        assert response.get("base64_attachments"), "Check-in should include an image"
-
         # Full system prompt structure assertion
         system_text = [
             m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
@@ -452,64 +424,7 @@ Every fact and detail in your message must come from your context."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
 
-@pytest.mark.asyncio
-async def test_image_uses_thought_content_for_search(
-    signal_server,
-    mock_ollama,
-    make_config,
-    _mock_search,
-    test_user_info,
-    running_penny,
-    monkeypatch,
-    mock_serper_image,
-):
-    """Thought with bold title uses title for image search; plain text falls back to content."""
-    config = make_config(notify_candidates=1, serper_api_key="test-key")
-
-    monkeypatch.setattr("penny.agents.notify.random.random", lambda: 0.99)
-
-    def handler(request, count):
-        return mock_ollama._make_text_response(
-            request, "hey, did you know nitrous oxide lifetimes are shrinking?"
-        )
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
-        )
-        penny.db.thoughts.add(
-            TEST_SENDER,
-            "Hey! I just found the Bad Cat Era 30, a hand-wired EL84 head.",
-        )
-        monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
-        monkeypatch.setattr(penny.notify_agent, "_cooldown_elapsed", lambda user: True)
-
-        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
-        assert result is True
-
-        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
-
-        # Image search uses first N chars of thought content
-        mock_serper_image.assert_called_once()
-        image_query = mock_serper_image.call_args[0][0]
-        assert "Bad Cat Era 30" in image_query
-        assert len(image_query) <= 300
-
-
-# ── Image prompt extraction ──────────────────────────────────────────────
-
-
-def test_extract_search_query_from_search_tool():
-    """_extract_search_query extracts query from search tool calls."""
-    from penny.agents.models import ToolCallRecord
-
-    records = [
-        ToolCallRecord(tool="search", arguments={"query": "latest space news"}),
-    ]
-    result = NotifyAgent._extract_search_query(records)
-    assert result == "latest space news"
+# ── Headline extraction ─────────────────────────────────────────────────
 
 
 def test_extract_search_query_returns_none_when_empty():
@@ -620,7 +535,7 @@ def test_topic_on_cooldown_free_thought():
 
 @pytest.mark.asyncio
 async def test_get_top_thoughts_skips_recently_notified_topics(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Topics notified in the last 24h are excluded from candidate selection."""
     config = make_config(notify_candidates=5)
@@ -658,7 +573,7 @@ async def test_get_top_thoughts_skips_recently_notified_topics(
 
 @pytest.mark.asyncio
 async def test_get_top_thoughts_sorts_mix_of_notified_and_never_notified(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Sorting works when some eligible topics have prior notifications and others don't.
 
@@ -701,7 +616,7 @@ async def test_get_top_thoughts_sorts_mix_of_notified_and_never_notified(
 
 @pytest.mark.asyncio
 async def test_chat_thought_context_shows_notified_only(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """ChatAgent chat mode only shows thoughts that have been shared with the user."""
     config = make_config()
@@ -722,7 +637,7 @@ async def test_chat_thought_context_shows_notified_only(
 
 @pytest.mark.asyncio
 async def test_notify_thought_context_shows_specific_thought(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """NotifyAgent shows the specific thought being shared."""
     config = make_config()
@@ -758,7 +673,6 @@ async def test_disqualified_candidates_excluded(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -815,7 +729,6 @@ async def test_news_tools_unavailable_sends_message(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,
@@ -853,7 +766,6 @@ async def test_thought_tools_unavailable_sends_message(
     signal_server,
     mock_ollama,
     make_config,
-    _mock_search,
     test_user_info,
     running_penny,
     monkeypatch,

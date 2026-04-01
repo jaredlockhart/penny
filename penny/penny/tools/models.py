@@ -5,12 +5,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-class SearchArgs(BaseModel):
-    """Validated arguments for the search tool."""
-
-    query: str
-
-
 class SearchResult(BaseModel):
     """Result from a search tool containing text and optional image."""
 
@@ -23,20 +17,8 @@ class SearchResult(BaseModel):
         return f"SearchResult(text={self.text}, urls={self.urls}, image_base64={image_summary})"
 
 
-class FetchNewsArgs(BaseModel):
-    """Validated arguments for the fetch_news tool."""
-
-    topic: str = "top news"
-
-
-class BrowseUrlArgs(BaseModel):
-    """Validated arguments for the browse_url tool."""
-
-    url: str
-
-
-class MultiToolArgs(BaseModel):
-    """Validated arguments for the multi-tool."""
+class BrowseArgs(BaseModel):
+    """Validated arguments for the browse tool."""
 
     queries: list[str] = Field(default_factory=list)
     reasoning: str | None = None

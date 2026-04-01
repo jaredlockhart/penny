@@ -99,8 +99,6 @@ def _collect_env_vars(channel_type: str) -> dict:
         "ollama_vision_model": os.getenv("OLLAMA_VISION_MODEL"),
         "ollama_image_model": os.getenv("OLLAMA_IMAGE_MODEL"),
         "ollama_embedding_model": os.getenv("OLLAMA_EMBEDDING_MODEL"),
-        "perplexity_api_key": os.getenv("PERPLEXITY_API_KEY"),
-        "serper_api_key": os.getenv("SERPER_API_KEY"),
         "github_app_id": os.getenv("GITHUB_APP_ID"),
         "github_app_private_key_path": os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
         "github_app_installation_id": os.getenv("GITHUB_APP_INSTALLATION_ID"),
@@ -147,9 +145,6 @@ class Config:
     ollama_api_url: str
     ollama_model: str  # Text model for all agents
 
-    # API keys
-    perplexity_api_key: str | None
-
     # Logging configuration
     log_level: str
 
@@ -163,7 +158,6 @@ class Config:
     ollama_vision_model: str | None = None  # Vision model for image understanding
     ollama_image_model: str | None = None  # Image generation model (e.g., x/z-image-turbo)
     ollama_embedding_model: str | None = None  # Embedding model (e.g., nomic-embed-text)
-    serper_api_key: str | None = None  # Serper API key for image search
 
     # GitHub App Configuration (optional, needed for /bug command)
     github_app_id: str | None = None
@@ -185,9 +179,6 @@ class Config:
 
     # Max agent steps for email commands
     email_max_steps: int = 5
-
-    # News API configuration (optional, enables news search tool for agents)
-    news_api_key: str | None = None
 
     # Browser extension server (runs alongside primary channel)
     browser_enabled: bool = False

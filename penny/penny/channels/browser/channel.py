@@ -61,7 +61,6 @@ from penny.channels.browser.models import (
 )
 from penny.channels.permission_manager import PermissionManager
 from penny.constants import ChannelType, PennyConstants
-from penny.serper.client import search_image_url
 from penny.tools.base import Tool
 
 if TYPE_CHECKING:
@@ -727,23 +726,6 @@ class BrowserChannel(MessageChannel):
                 )
 
         return on_tool_start, cleanup
-
-    # --- Image handling ---
-
-    async def _resolve_image(
-        self, image_prompt: str, attachments: list[str] | None
-    ) -> list[str] | None:
-        """Search for an image URL and inline it as an <img> tag (no base64 download)."""
-        serper_key = self._config.serper_api_key if self._config else None
-        url = await search_image_url(
-            image_prompt,
-            api_key=serper_key,
-            max_results=int(self._config.runtime.IMAGE_MAX_RESULTS) if self._config else 5,
-            timeout=self._config.runtime.IMAGE_DOWNLOAD_TIMEOUT if self._config else 10.0,
-        )
-        if url:
-            return (attachments or []) + [url]
-        return attachments
 
     # --- Markdown to HTML formatting ---
 

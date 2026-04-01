@@ -78,7 +78,6 @@ class TestToolTimeout:
             discord_channel_id=None,
             ollama_api_url="http://localhost:11434",
             ollama_model="test-model",
-            perplexity_api_key=None,
             log_level="DEBUG",
             db_path=test_db,
         )

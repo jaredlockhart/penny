@@ -1,6 +1,6 @@
 """Tests for agentic loop changes: reasoning, last step, and after_step hook."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -10,8 +10,24 @@ from penny.config_params import RuntimeParams
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.responses import PennyResponse
+from penny.tools.base import Tool
+from penny.tools.browse import BrowseTool
 from penny.tools.models import SearchResult, ToolResult
-from penny.tools.search import SearchTool
+
+
+class StubSearchTool(Tool):
+    """Minimal stub tool for agentic loop testing."""
+
+    name = "search"
+    description = "Search for information"
+    parameters = {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "Search query"}},
+        "required": ["query"],
+    }
+
+    async def execute(self, **kwargs):
+        return "Mock search results for testing"
 
 
 def _make_agent(test_db, mock_ollama, *, max_steps=3, runtime_overrides=None):
@@ -30,12 +46,11 @@ def _make_agent(test_db, mock_ollama, *, max_steps=3, runtime_overrides=None):
         discord_channel_id=None,
         ollama_api_url="http://localhost:11434",
         ollama_model="test-model",
-        perplexity_api_key=None,
         log_level="DEBUG",
         db_path=test_db,
         runtime=RuntimeParams(db=db, env_overrides=runtime_overrides or {}),
     )
-    search_tool = SearchTool(perplexity_api_key="test-key", db=db)
+    stub_tool = StubSearchTool()
     client = OllamaClient(
         api_url="http://localhost:11434",
         model="test-model",
@@ -46,7 +61,7 @@ def _make_agent(test_db, mock_ollama, *, max_steps=3, runtime_overrides=None):
     agent = Agent(
         system_prompt="test",
         model_client=client,
-        tools=[search_tool],
+        tools=[stub_tool],
         db=db,
         config=config,
     )
@@ -533,8 +548,8 @@ class TestParallelToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_large_multi_tool_results_not_truncated(self, test_db, mock_ollama):
-        """Two large tool results from MultiTool both survive into the model context."""
+    async def test_large_browse_tool_results_not_truncated(self, test_db, mock_ollama):
+        """Two large tool results from BrowseTool both survive into the model context."""
         agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
 
         page_a = "A" * 15000  # 15k chars — realistic extracted web page
@@ -542,7 +557,7 @@ class TestParallelToolCalls:
 
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(
-                tool="fetch",
+                tool="browse",
                 result=SearchResult(text=f"## page A\n{page_a}\n\n---\n\n## page B\n{page_b}"),
             )
         )
@@ -550,7 +565,7 @@ class TestParallelToolCalls:
         def handler(request, count):
             if count == 1:
                 return mock_ollama._make_tool_call_response(
-                    request, "fetch", {"queries": ["https://a.com", "https://b.com"]}
+                    request, "browse", {"queries": ["https://a.com", "https://b.com"]}
                 )
             # Verify both pages present in the tool message
             messages = request["messages"]
@@ -567,72 +582,59 @@ class TestParallelToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_text_queries_route_to_kagi_when_browser_connected(self, test_db, mock_ollama):
-        """When a browser is connected, text queries go to Kagi via browse_url."""
-        from penny.tools.multi import MultiTool
+    async def test_text_queries_route_to_search_url_when_browser_connected(
+        self, test_db, mock_ollama
+    ):
+        """When a browser is connected, text queries become search URLs via BrowseTool."""
+        browsed_urls: dict[str, str] = {}
 
-        browse_results: dict[str, str] = {}
+        async def fake_request(command, params):
+            url = params["url"]
+            browsed_urls[url] = f"Results for {url}"
+            return (browsed_urls[url], None)
 
-        async def fake_execute(**kw):
-            browse_results[kw["url"]] = f"Results for {kw['url']}"
-            return browse_results[kw["url"]]
+        request_fn = AsyncMock(side_effect=fake_request)
+        mock_perm = MagicMock(check_domain=AsyncMock())
 
-        browse_mock = AsyncMock(side_effect=fake_execute)
-        browse_tool = type("B", (), {"execute": browse_mock})()
+        tool = BrowseTool(max_calls=5)
+        tool.set_browse_provider(lambda: (request_fn, mock_perm))
 
-        multi = MultiTool(max_calls=5, search_tool=None, news_tool=None)  # type: ignore[arg-type]
-        multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        await tool.execute(queries=["best pizza toronto"])
 
-        await multi.execute(queries=["best pizza toronto"])
-
-        assert len(browse_results) == 1
-        kagi_url = list(browse_results.keys())[0]
-        assert kagi_url.startswith("https://kagi.com/search?q=")
-        assert "best%20pizza%20toronto" in kagi_url
+        assert len(browsed_urls) == 1
+        search_url = list(browsed_urls.keys())[0]
+        assert search_url.startswith("https://duckduckgo.com/?q=")
+        assert "best%20pizza%20toronto" in search_url
 
     @pytest.mark.asyncio
-    async def test_text_queries_fall_back_to_search_without_browser(self, test_db, mock_ollama):
-        """Without a browser, text queries go to the search tool."""
-        from penny.tools.multi import MultiTool
+    async def test_text_queries_fail_without_browser(self, test_db, mock_ollama):
+        """Without a browser, text queries return a 'no browser' message."""
+        tool = BrowseTool(max_calls=5)
 
-        search_queries: list[str] = []
+        result = await tool.execute(queries=["best pizza toronto"])
 
-        async def fake_execute(**kw):
-            search_queries.append(kw["query"])
-            return SearchResult(text="search results")
-
-        search_mock = AsyncMock(side_effect=fake_execute)
-        search_tool = type("S", (), {"execute": search_mock})()
-
-        multi = MultiTool(max_calls=5, search_tool=search_tool, news_tool=None)  # ty: ignore[invalid-argument-type]
-
-        await multi.execute(queries=["best pizza toronto"])
-
-        assert len(search_queries) == 1
-        assert search_queries[0] == "best pizza toronto"
+        assert "No browser connected" in result.text
 
     @pytest.mark.asyncio
     async def test_urls_always_route_to_browse(self, test_db, mock_ollama):
-        """URLs always go to browse_url regardless of browser connection."""
-        from penny.tools.multi import MultiTool
+        """URLs always go to BrowseTool regardless of browser connection."""
+        browsed_urls: list[str] = []
 
-        browse_urls: list[str] = []
+        async def fake_request(command, params):
+            browsed_urls.append(params["url"])
+            return (f"Page content from {params['url']}", None)
 
-        async def fake_execute(**kw):
-            browse_urls.append(kw["url"])
-            return f"Page content from {kw['url']}"
+        request_fn = AsyncMock(side_effect=fake_request)
+        mock_perm = MagicMock(check_domain=AsyncMock())
 
-        browse_mock = AsyncMock(side_effect=fake_execute)
-        browse_tool = type("B", (), {"execute": browse_mock})()
+        tool = BrowseTool(max_calls=5)
+        tool.set_browse_provider(lambda: (request_fn, mock_perm))
 
-        multi = MultiTool(max_calls=5, search_tool=None, news_tool=None)  # type: ignore[arg-type]
-        multi.set_browse_url_provider(lambda: browse_tool)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        await tool.execute(queries=["https://example.com/page", "https://other.com"])
 
-        await multi.execute(queries=["https://example.com/page", "https://other.com"])
-
-        assert len(browse_urls) == 2
-        assert "https://example.com/page" in browse_urls
-        assert "https://other.com" in browse_urls
+        assert len(browsed_urls) == 2
+        assert "https://example.com/page" in browsed_urls
+        assert "https://other.com" in browsed_urls
 
 
 class TestEmptyContentAfterToolCalls:
@@ -748,10 +750,6 @@ class TestEmptyContentAfterToolCalls:
     @pytest.mark.asyncio
     async def test_tool_result_truncated_at_source(self, test_db, mock_ollama):
         """Tool results exceeding MAX_TOOL_RESULT_CHARS are truncated."""
-        from unittest.mock import patch
-
-        from penny.tools.models import ToolResult
-
         agent, db, max_steps = _make_agent(test_db, mock_ollama)
         large_result = "x" * (Agent.MAX_TOOL_RESULT_CHARS + 500)
 
@@ -784,7 +782,6 @@ class TestStrongNudgeUsesLastQuestion:
         self,
         test_db,
         mock_ollama,
-        _mock_search,
     ):
         """When the agentic loop exhausts tool calls and fires a strong nudge,
         the nudge must reference the latest user question — not an earlier one
@@ -975,10 +972,6 @@ class TestMalformedUrlCleaning:
     @pytest.mark.asyncio
     async def test_source_url_appended_after_malformed_url_stripped(self, test_db, mock_ollama):
         """When a malformed URL is stripped, source URL fallback appends a real URL."""
-        from unittest.mock import patch
-
-        from penny.tools.models import SearchResult, ToolResult
-
         agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
 
         def handler(request, count):

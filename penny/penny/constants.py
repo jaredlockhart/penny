@@ -34,12 +34,13 @@ class PennyConstants:
         USER_MESSAGE = "user_message"
         PENNY_ENRICHMENT = "penny_enrichment"
 
-    # Search tool constants
-    PERPLEXITY_PRESET = "pro-search"
+    # Browse tool constants
     URL_BLOCKLIST_DOMAINS = (
         "play.google.com",
         "apps.apple.com",
     )
+    BROWSE_RETRIES = 2
+    BROWSE_RETRY_DELAY = 1.0
 
     # Email command constants
     JMAP_SESSION_URL = "https://api.fastmail.com/jmap/session"

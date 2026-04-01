@@ -9,7 +9,7 @@ import urllib.parse as _urlparse
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import Any
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
@@ -18,13 +18,9 @@ from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
-from penny.tools import SearchTool, Tool, ToolCall, ToolExecutor, ToolRegistry
+from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
+from penny.tools.browse import BrowseTool
 from penny.tools.models import SearchResult
-from penny.tools.multi import MultiTool
-
-if TYPE_CHECKING:
-    from penny.tools.browse_url import BrowseUrlTool
-    from penny.tools.fetch_news import FetchNewsTool
 
 logger = logging.getLogger(__name__)
 
@@ -111,10 +107,9 @@ def _strip_think_tags(content: str) -> tuple[str, str | None]:
 # Checked after tool execution to mark ToolCallRecord.failed = True.
 _TOOL_FAILURE_PREFIXES = (
     "Error: ",
-    "No recent news found",
     PennyResponse.NO_RESULTS_TEXT,
-    PennyResponse.SEARCH_QUOTA_EXCEEDED[:40],
     "Failed to search:",
+    "No browser connected",
 )
 
 
@@ -198,8 +193,6 @@ class Agent:
         vision_model_client: OllamaClient | None = None,
         embedding_model_client: OllamaClient | None = None,
         allow_repeat_tools: bool = False,
-        search_tool: SearchTool | None = None,
-        news_tool: FetchNewsTool | None = None,
         max_queries_key: str | None = None,
     ):
         self.config = config
@@ -212,12 +205,9 @@ class Agent:
         self._vision_model_client = vision_model_client
         self._embedding_model_client = embedding_model_client
 
-        self._search_tool = search_tool
-        self._news_tool = news_tool
         self._max_queries_key = max_queries_key
-        self._multi_tool: MultiTool | None = None
-        self._browse_url_provider: Callable[[], BrowseUrlTool | None] | None = None
-        self._browser_tools_provider: Callable[[], list[Tool]] | None = None
+        self._browse_tool: BrowseTool | None = None
+        self._browse_provider: Callable[[], Any] | None = None
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
 
@@ -626,39 +616,25 @@ class Agent:
 
     # ── Tool management ──────────────────────────────────────────────────
 
-    def set_browser_tools_provider(self, provider: Callable[[], list[Tool]]) -> None:
-        """Set a callback that provides browser tools when a browser is connected."""
-        self._browser_tools_provider = provider
-
     def get_tools(self, user: str) -> list[Tool]:
         """Build tool list for this agent.
 
-        When max_queries_key is set, builds a fresh MultiTool each cycle
+        When max_queries_key is set, builds a fresh BrowseTool each cycle
         so runtime config changes take effect immediately.
         """
         if self._max_queries_key is not None:
-            return [self._build_multi_tool()]
-        tools: list[Tool] = []
-        if self._search_tool:
-            tools.append(self._search_tool)
-        if self._news_tool:
-            tools.append(self._news_tool)
-        if self._browser_tools_provider:
-            tools.extend(self._browser_tools_provider())
-        return tools
+            return [self._build_browse_tool()]
+        return []
 
-    def _build_multi_tool(self) -> MultiTool:
-        """Build a fresh MultiTool from config, updating self._multi_tool."""
+    def _build_browse_tool(self) -> BrowseTool:
+        """Build a fresh BrowseTool from config, updating self._browse_tool."""
         assert self._max_queries_key is not None
         max_calls = int(getattr(self.config.runtime, self._max_queries_key))
-        tool = MultiTool(
-            max_calls=max_calls,
-            search_tool=self._search_tool,
-            news_tool=self._news_tool,
-        )
-        if self._browse_url_provider:
-            tool.set_browse_url_provider(self._browse_url_provider)
-        self._multi_tool = tool
+        search_url = str(self.config.runtime.SEARCH_URL)
+        tool = BrowseTool(max_calls=max_calls, search_url=search_url)
+        if self._browse_provider:
+            tool.set_browse_provider(self._browse_provider)
+        self._browse_tool = tool
         return tool
 
     def _install_tools(self, tools: list[Tool]) -> None:
@@ -892,8 +868,8 @@ class Agent:
         if "{tools}" in prompt:
             format_args["tools"] = self._build_tool_summary()
         if "{max_tool_calls}" in prompt:
-            assert self._multi_tool is not None, "{max_tool_calls} in prompt but no multi_tool"
-            format_args["max_tool_calls"] = self._multi_tool._max_calls
+            assert self._browse_tool is not None, "{max_tool_calls} in prompt but no browse_tool"
+            format_args["max_tool_calls"] = self._browse_tool._max_calls
         if format_args:
             prompt = prompt.format(**format_args)
         return f"## Instructions\n{prompt}"
@@ -906,21 +882,12 @@ class Agent:
             return None
         return "## Context\n" + "\n\n".join(parts)
 
-    def _profile_section(self, sender: str, content: str | None = None) -> str | None:
-        """### User Profile — user name and search redaction config."""
+    def _profile_section(self, sender: str) -> str | None:
+        """### User Profile — user name."""
         try:
             user_info = self.db.users.get_info(sender)
             if not user_info:
                 return None
-
-            if content is not None:
-                name = user_info.name
-                user_said_name = bool(re.search(rf"\b{re.escape(name)}\b", content, re.IGNORECASE))
-                redact = [] if user_said_name else [name]
-                if self._multi_tool is not None:
-                    self._multi_tool.redact_terms = redact
-                elif self._search_tool and isinstance(self._search_tool, SearchTool):
-                    self._search_tool.redact_terms = redact
 
             logger.debug("Built profile context for %s", sender)
             return f"### User Profile\nThe user's name is {user_info.name}."

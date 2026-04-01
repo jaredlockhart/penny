@@ -96,15 +96,6 @@ class Penny:
             else None
         )
 
-    def _create_search_tool(self, db: Database) -> SearchTool | None:
-        """Build a search tool for a given database."""
-        if not self.config.perplexity_api_key:
-            return None
-        return SearchTool(
-            perplexity_api_key=self.config.perplexity_api_key,
-            db=db,
-        )
-
     def _create_chat_agent(self, db: Database) -> ChatAgent:
         """Factory for creating ChatAgent with a given database.
 
@@ -118,11 +109,8 @@ class Penny:
             max_retries=self.config.ollama_max_retries,
             retry_delay=self.config.ollama_retry_delay,
         )
-        search_tool = self._create_search_tool(db)
         return ChatAgent(
             system_prompt=Prompt.CONVERSATION_PROMPT,
-            search_tool=search_tool,
-            news_tool=self._news_tool,
             max_queries_key="CHAT_MAX_QUERIES",
             model_client=client,
             tools=[],
@@ -133,20 +121,10 @@ class Penny:
             embedding_model_client=self.embedding_model_client,
         )
 
-    def _create_news_tool(self, config: Config) -> FetchNewsTool | None:
-        """Create FetchNewsTool if NEWS_API_KEY is configured."""
-        if not config.news_api_key:
-            return None
-        return FetchNewsTool(news_tool=NewsTool(api_key=config.news_api_key))
-
     def _init_agents(self, config: Config) -> None:
         """Create message agent and background processing agents."""
-        self._shared_search_tool = self._create_search_tool(self.db)
-        self._news_tool = self._create_news_tool(config)
         self.chat_agent = ChatAgent(
             system_prompt=Prompt.CONVERSATION_PROMPT,
-            search_tool=self._shared_search_tool,
-            news_tool=self._news_tool,
             max_queries_key="CHAT_MAX_QUERIES",
             model_client=self.model_client,
             tools=[],
@@ -157,9 +135,8 @@ class Penny:
             embedding_model_client=self.embedding_model_client,
         )
         self.notify_agent = NotifyAgent(
-            search_tool=self._shared_search_tool,
-            news_tool=self._news_tool,
             system_prompt=Prompt.NOTIFY_SYSTEM_PROMPT,
+            max_queries_key="CHAT_MAX_QUERIES",
             model_client=self.model_client,
             tools=[],
             db=self.db,
@@ -183,10 +160,7 @@ class Penny:
     def _init_background_agents(self, config: Config) -> None:
         """Create monologue, history, and schedule agents."""
         kwargs = self._background_agent_kwargs(config)
-        thinking_search_tool = self._create_search_tool(self.db)
         self.thinking_agent = ThinkingAgent(
-            search_tool=thinking_search_tool,
-            news_tool=self._news_tool,
             max_queries_key="INNER_MONOLOGUE_MAX_QUERIES",
             embedding_model_client=self.embedding_model_client,
             **kwargs,
@@ -272,17 +246,14 @@ class Penny:
         if isinstance(signal_ch, SignalChannel):
             signal_ch.set_permission_manager(perm_mgr)
 
-        # Browse tool provider — agents build fresh MultiTools each cycle.
-        def browse_tool_provider() -> BrowseUrlTool | None:
+        # Browse provider — agents build fresh BrowseTools each cycle.
+        def browse_provider():
             if not browser_ch.has_tool_connection:
                 return None
-            return BrowseUrlTool(
-                request_fn=browser_ch.send_tool_request,
-                permission_manager=perm_mgr,
-            )
+            return browser_ch.send_tool_request, perm_mgr
 
-        self.chat_agent._browse_url_provider = browse_tool_provider
-        self.thinking_agent._browse_url_provider = browse_tool_provider
+        self.chat_agent._browse_provider = browse_provider
+        self.thinking_agent._browse_provider = browse_provider
         self.thinking_agent._on_tool_start_factory = browser_ch.make_background_tool_callback
 
     def _init_scheduler(self, config: Config) -> None:
