@@ -747,7 +747,7 @@ class TestCapabilitiesAndToolRouting:
         """Register a browser connection by device label."""
         ws = ws or _MockWs()
         await channel._process_raw_message(
-            ws,  # ty: ignore[invalid-argument-type]
+            ws,
             json.dumps({"type": "register", "sender": label}),
             None,
         )
@@ -756,7 +756,7 @@ class TestCapabilitiesAndToolRouting:
     async def _set_capabilities(self, channel, label, ws, tool_use_enabled):
         """Send a capabilities_update for a registered connection."""
         await channel._process_raw_message(
-            ws,  # ty: ignore[invalid-argument-type]
+            ws,
             json.dumps({"type": "capabilities_update", "tool_use_enabled": tool_use_enabled}),
             label,
         )
@@ -843,7 +843,7 @@ class TestBrowserPermissionDelegation:
         channel.set_permission_manager(mock_perm_mgr)
 
         await channel._process_raw_message(
-            ws,  # ty: ignore[invalid-argument-type]
+            ws,
             json.dumps({"type": "permission_decision", "request_id": "test-123", "allowed": True}),
             "firefox-penny",
         )
@@ -857,7 +857,7 @@ class TestBrowserPermissionDelegation:
 
         ws2 = _MockWs()
         await channel._process_raw_message(
-            ws2,  # ty: ignore[invalid-argument-type]
+            ws2,
             json.dumps({"type": "register", "sender": "firefox-personal"}),
             None,
         )
@@ -876,7 +876,7 @@ class TestBrowserPermissionDelegation:
 
         ws2 = _MockWs()
         await channel._process_raw_message(
-            ws2,  # ty: ignore[invalid-argument-type]
+            ws2,
             json.dumps({"type": "register", "sender": "firefox-personal"}),
             None,
         )
