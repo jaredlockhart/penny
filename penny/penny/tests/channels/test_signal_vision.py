@@ -14,7 +14,6 @@ FAKE_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 100
 async def test_image_with_text_captions_then_forwards(
     signal_server,
     mock_ollama,
-    _mock_search,
     make_config,
     test_user_info,
     running_penny,
@@ -74,7 +73,6 @@ async def test_image_with_text_captions_then_forwards(
 async def test_image_without_text_captions_then_forwards(
     signal_server,
     mock_ollama,
-    _mock_search,
     make_config,
     test_user_info,
     running_penny,
@@ -127,7 +125,6 @@ async def test_image_without_text_captions_then_forwards(
 async def test_image_without_vision_model_sends_acknowledgment(
     signal_server,
     mock_ollama,
-    _mock_search,
     test_config,
     test_user_info,
     running_penny,
@@ -152,7 +149,6 @@ async def test_image_without_vision_model_sends_acknowledgment(
 async def test_non_image_attachment_ignored(
     signal_server,
     mock_ollama,
-    _mock_search,
     make_config,
     test_user_info,
     running_penny,
@@ -160,7 +156,6 @@ async def test_non_image_attachment_ignored(
     """Non-image attachments (e.g., PDF) don't trigger vision pipeline."""
     config = make_config(ollama_vision_model="test-vision-model")
     mock_ollama.set_default_flow(
-        search_query="document",
         final_response="here's what I found about documents 📄",
     )
 

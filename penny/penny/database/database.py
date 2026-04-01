@@ -10,7 +10,6 @@ from penny.database.domain_permission_store import DomainPermissionStore
 from penny.database.history_store import HistoryStore
 from penny.database.message_store import MessageStore
 from penny.database.preference_store import PreferenceStore
-from penny.database.search_store import SearchStore
 from penny.database.thought_store import ThoughtStore
 from penny.database.user_store import UserStore
 
@@ -26,7 +25,6 @@ class Database:
         history: Conversation topic summaries for long-term context
         messages: Message/prompt/command logging, threading, queries
         preferences: User preference CRUD and dedup
-        searches: SearchLog creation and extraction tracking
         thoughts: Inner monologue persistence (append-only thought log)
         users: UserInfo, sender queries, mute state
     """
@@ -41,7 +39,6 @@ class Database:
         self.history = HistoryStore(self.engine)
         self.messages = MessageStore(self.engine)
         self.preferences = PreferenceStore(self.engine)
-        self.searches = SearchStore(self.engine)
         self.thoughts = ThoughtStore(self.engine)
         self.users = UserStore(self.engine)
 

@@ -28,7 +28,6 @@ from penny.ollama.embeddings import deserialize_embedding
 from penny.ollama.similarity import novelty_score
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
-from penny.tools.models import SearchArgs
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -156,12 +155,10 @@ class CheckinMode(NotificationMode):
 
 
 class NewsMode(NotificationMode):
-    """News: profile + history context, news tool only, URL validation."""
+    """News: profile + history context, browse tools, URL validation."""
 
     def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
-        if agent._news_tool:
-            return [agent._news_tool]
-        return []
+        return agent.get_tools(user)
 
     def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
         return "\n\n".join(
@@ -623,13 +620,13 @@ class NotifyAgent(Agent):
 
     @staticmethod
     def _extract_search_query(tool_calls: list[ToolCallRecord]) -> str | None:
-        """Extract the search query from tool calls for use as image prompt."""
+        """Extract a search query from tool calls for use as image prompt."""
         for tc in tool_calls:
-            if tc.tool != "search":
+            if tc.tool != "browse":
                 continue
-            args = SearchArgs.model_validate(tc.arguments)
-            if args.query:
-                return args.query
+            for q in tc.arguments.get("queries", []):
+                if not q.startswith("http"):
+                    return q
         return None
 
     # Matches **bold text** in markdown (first occurrence)

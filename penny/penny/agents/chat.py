@@ -15,7 +15,7 @@ from penny.channels.base import PageContext
 from penny.constants import PennyConstants
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
-from penny.tools.multi import MultiTool
+from penny.tools.browse import BrowseTool
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class ChatAgent(Agent):
     def _inject_page_context(messages: list[dict], page_context: PageContext) -> None:
         """Inject a synthetic search call + result for page context.
 
-        Uses the MultiTool format so the synthetic history matches the tool
+        Uses the BrowseTool format so the synthetic history matches the tool
         the model actually sees in its tool definitions.
         """
         if not page_context.text:
@@ -129,7 +129,7 @@ class ChatAgent(Agent):
                 "tool_calls": [
                     {
                         "function": {
-                            "name": MultiTool.name,
+                            "name": BrowseTool.name,
                             "arguments": {
                                 "queries": [page_context.url],
                             },
@@ -143,7 +143,7 @@ class ChatAgent(Agent):
             {
                 "role": "tool",
                 "content": page_content,
-                "tool_name": MultiTool.name,
+                "tool_name": BrowseTool.name,
             }
         )
 
@@ -161,7 +161,7 @@ class ChatAgent(Agent):
             for s in [
                 self._identity_section(),
                 self._context_block(
-                    self._profile_section(user, content),
+                    self._profile_section(user),
                     self._history_section(user),
                     self._thought_section(user),
                     self._page_hint_section(),

@@ -148,20 +148,11 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="IMAGE_DOWNLOAD_TIMEOUT",
-    description="Timeout in seconds for image downloads",
-    type=float,
-    default=15.0,
-    validator=_validate_positive_float,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="IMAGE_MAX_RESULTS",
-    description="Max image search results to return",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
+    key="SEARCH_URL",
+    description="Base URL for text searches (encoded query is appended)",
+    type=str,
+    default="https://duckduckgo.com/?q=",
+    validator=_validate_non_empty_string,
     group=GROUP_GLOBAL,
 )
 
