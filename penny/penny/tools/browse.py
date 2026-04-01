@@ -131,18 +131,43 @@ class BrowseTool(Tool):
             image_base64=first_image,
         )
 
+    # Retry settings for transient browser disconnections
+    BROWSE_RETRIES = 2
+    BROWSE_RETRY_DELAY = 1.0
+
     async def _read_page(self, url: str) -> SearchResult | str:
-        """Read a single URL via the browser extension."""
-        connection = self._browse_provider() if self._browse_provider else None
-        if not connection:
-            return f"No browser connected — cannot read {url}."
+        """Read a single URL via the browser extension, retrying on disconnect."""
+        for attempt in range(1 + self.BROWSE_RETRIES):
+            connection = self._browse_provider() if self._browse_provider else None
+            if not connection:
+                if attempt < self.BROWSE_RETRIES:
+                    logger.info(
+                        "No browser connection, retrying in %.0fs (%s)",
+                        self.BROWSE_RETRY_DELAY,
+                        url,
+                    )
+                    await asyncio.sleep(self.BROWSE_RETRY_DELAY)
+                    continue
+                return f"No browser connected — cannot read {url}."
 
-        request_fn, permission_manager = connection
-        await permission_manager.check_domain(url)
+            request_fn, permission_manager = connection
+            await permission_manager.check_domain(url)
 
-        text, image_url = await request_fn("browse_url", {"url": url})
-        if not text.strip():
-            return SearchResult(text=f"Page at {url} returned no content.")
+            try:
+                text, image_url = await request_fn("browse_url", {"url": url})
+            except ConnectionError:
+                if attempt < self.BROWSE_RETRIES:
+                    logger.info(
+                        "Browser disconnected, retrying in %.0fs (%s)", self.BROWSE_RETRY_DELAY, url
+                    )
+                    await asyncio.sleep(self.BROWSE_RETRY_DELAY)
+                    continue
+                raise
 
-        text = clean_browser_content(text)
-        return SearchResult(text=text, image_base64=image_url)
+            if not text.strip():
+                return SearchResult(text=f"Page at {url} returned no content.")
+
+            text = clean_browser_content(text)
+            return SearchResult(text=text, image_base64=image_url)
+
+        return f"No browser connected — cannot read {url}."
