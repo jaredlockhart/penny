@@ -1,10 +1,9 @@
 """NotifyAgent — Penny's notification outreach.
 
-Sends notifications to users when idle: thought candidates,
-news updates, and periodic check-ins. Runs on a schedule via the
-BackgroundScheduler.
+Sends notifications to users when idle: thought candidates and
+periodic check-ins. Runs on a schedule via the BackgroundScheduler.
 
-Each notification mode (checkin, news, thought) is a NotificationMode
+Each notification mode (checkin, thought) is a NotificationMode
 subclass that declares its tools, prompt, context, and image extraction.
 NotifyAgent orchestrates the shared pipeline: install tools, build prompt,
 run model, validate, extract image, send.
@@ -13,8 +12,6 @@ run model, validate, extract image, send.
 from __future__ import annotations
 
 import logging
-import random
-import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -154,43 +151,6 @@ class CheckinMode(NotificationMode):
         agent._pending_thought = None
 
 
-class NewsMode(NotificationMode):
-    """News: profile + history context, browse tools, URL validation."""
-
-    def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
-        return agent.get_tools(user)
-
-    def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
-        return "\n\n".join(
-            s
-            for s in [
-                agent._identity_section(),
-                agent._context_block(
-                    agent._profile_section(user),
-                    agent._history_section(user),
-                ),
-                agent._instructions_section(),
-            ]
-            if s
-        )
-
-    @property
-    def prompt(self) -> str:
-        return Prompt.NOTIFY_NEWS
-
-    def get_max_steps(self) -> int:
-        return PennyConstants.NEWS_NOTIFY_MAX_STEPS
-
-    @property
-    def validate_urls(self) -> bool:
-        return True
-
-    def extract_image_prompt(
-        self, agent: NotifyAgent, response: ControllerResponse, answer: str
-    ) -> str:
-        return NotifyAgent._extract_first_headline(answer) or "latest news"
-
-
 class ThoughtMode(NotificationMode):
     """Thought candidate: profile + thought context, all tools, URL validation."""
 
@@ -250,7 +210,7 @@ class ThoughtMode(NotificationMode):
 
 
 class NotifyAgent(Agent):
-    """Notification outreach agent — sends thoughts, news, and check-ins.
+    """Notification outreach agent — sends thoughts and check-ins.
 
     Uses the template method pattern: each NotificationMode declares what
     varies (tools, prompt, context, image extraction) and _execute_mode()
@@ -261,7 +221,6 @@ class NotifyAgent(Agent):
         Mode     | History | Thought    | Turns | Tools | Steps
         -------- | ------- | ---------- | ----- | ----- | -----
         Checkin  | 7d      | 1 notified | yes   | none  | 1
-        News     | 7d      | -          | -     | news  | 5
         Thought  | 7d      | the thought| -     | all   | 5
 
     All modes include profile (user name).
@@ -351,25 +310,12 @@ class NotifyAgent(Agent):
 
     # ── Notification pipeline ─────────────────────────────────────────
 
-    # 1-in-3 chance of sending news instead of thought candidates
-    NEWS_CHANCE = PennyConstants.NEWS_CHANCE
-
-    def _news_cooldown_elapsed(self) -> bool:
-        """Check if enough time has passed since the last news notification."""
-        last = self.db.messages.get_last_checkin_time(Prompt.NOTIFY_NEWS, hours=48)
-        if last is None:
-            return True
-        elapsed = (datetime.now(UTC).replace(tzinfo=None) - last).total_seconds()
-        return elapsed >= self.config.runtime.NEWS_COOLDOWN
-
     async def _send_notification(self, user: str) -> bool:
-        """Select mode and execute: check-in, news, or thought candidates."""
+        """Select mode and execute: check-in or thought candidates."""
         assert self._channel is not None
         try:
             if self._should_checkin(user):
                 return await self._send_mode(user, CheckinMode())
-            if random.random() < self.NEWS_CHANCE and self._news_cooldown_elapsed():
-                return await self._send_mode(user, NewsMode())
             return await self._send_best_candidate(user)
         except Exception:
             logger.exception("Failed to send notification to %s", user)
@@ -628,15 +574,6 @@ class NotifyAgent(Agent):
                 if not q.startswith("http"):
                     return q
         return None
-
-    # Matches **bold text** in markdown (first occurrence)
-    _BOLD_PATTERN = re.compile(r"\*\*(.+?)\*\*")
-
-    @classmethod
-    def _extract_first_headline(cls, text: str) -> str | None:
-        """Extract the first bold headline from response text for image search."""
-        match = cls._BOLD_PATTERN.search(text)
-        return match.group(1) if match else None
 
     # ── Candidate scoring ─────────────────────────────────────────────
 
