@@ -161,8 +161,7 @@ from earlier in the conversation.
 How to use your tools:
 1. If the user gave you URLs, read them directly — pass the URLs to your \
 tool. Do NOT search for a site the user already linked.
-2. If the user gave you a topic (no URLs), search first. Pack up to \
-3 search queries into a single tool call to discover \
+2. If the user gave you a topic (no URLs), search first to discover \
 relevant pages.
 3. Read the most promising pages by passing their URLs back to your tool. \
 Real pages have full details that search snippets leave out.

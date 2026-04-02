@@ -839,9 +839,6 @@ class Agent:
         format_args: dict = {}
         if "{tools}" in prompt:
             format_args["tools"] = self._build_tool_summary()
-        if "{max_tool_calls}" in prompt:
-            assert self._browse_tool is not None, "{max_tool_calls} in prompt but no browse_tool"
-            format_args["max_tool_calls"] = self._browse_tool._max_calls
         if format_args:
             prompt = prompt.format(**format_args)
         return f"## Instructions\n{prompt}"
