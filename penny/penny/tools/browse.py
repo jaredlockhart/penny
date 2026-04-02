@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from penny.constants import PennyConstants
+from penny.prompts import Prompt
 from penny.tools.base import Tool
 from penny.tools.content_cleaning import clean_browser_content
 from penny.tools.models import BrowseArgs, SearchResult
@@ -27,11 +28,6 @@ logger = logging.getLogger(__name__)
 _URL_PATTERN = re.compile(r"^https?://")
 
 _LINK_RE = re.compile(r"\[([^\]]*)\]\((https?://[^)]+)\)")
-
-_SEARCH_RESULT_HEADER = (
-    "These are search results — titles and links only. "
-    "You must read the actual pages before answering."
-)
 
 # Type alias for the browser request function
 RequestFn = Callable[[str, dict], Awaitable[tuple[str, str | None]]]
@@ -62,7 +58,7 @@ def _trim_search_result(text: str, context_lines: int = 2) -> str:
                 keep.add(idx)
 
     trimmed = "\n".join(lines[i] for i in sorted(keep))
-    return f"{_SEARCH_RESULT_HEADER}\n\n{trimmed}"
+    return f"{Prompt.SEARCH_RESULT_HEADER}\n\n{trimmed}"
 
 
 class BrowseTool(Tool):
