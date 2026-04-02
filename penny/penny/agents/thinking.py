@@ -184,6 +184,7 @@ class ThinkingAgent(Agent):
                     content[:100],
                 )
             else:
+                image = self._tool_result_images[0] if self._tool_result_images else None
                 self.db.thoughts.add(
                     user,
                     content,
@@ -191,6 +192,7 @@ class ThinkingAgent(Agent):
                     embedding=content_embedding,
                     title=title,
                     title_embedding=title_embedding,
+                    image=image,
                 )
                 logger.info(
                     "[inner_monologue] stored thought (seed=%s, title=%s): %s",

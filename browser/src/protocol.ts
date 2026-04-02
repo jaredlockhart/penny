@@ -192,7 +192,7 @@ export interface ThoughtCard {
   id: number;
   title: string;
   content: string;
-  image_url: string;
+  image: string;
   created_at: string;
   notified: boolean;
   seed_topic: string;

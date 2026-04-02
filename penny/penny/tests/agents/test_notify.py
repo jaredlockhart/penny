@@ -338,15 +338,6 @@ Every fact and detail in your message must come from your context."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
 
-# ── Headline extraction ─────────────────────────────────────────────────
-
-
-def test_extract_search_query_returns_none_when_empty():
-    """_extract_search_query returns None when no relevant tool calls."""
-    result = NotifyAgent._extract_search_query([])
-    assert result is None
-
-
 # ── Novelty scoring ──────────────────────────────────────────────────────
 
 

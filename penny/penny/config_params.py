@@ -379,16 +379,6 @@ ConfigParam(
 )
 
 
-ConfigParam(
-    key="CHECKIN_IMAGE_PROMPT",
-    description="Image search query for check-in message attachments",
-    type=str,
-    default="funny cat meme",
-    validator=_validate_non_empty_string,
-    group=GROUP_NOTIFY,
-)
-
-
 class RuntimeParams:
     """Accessor for runtime-configurable parameters.
 
