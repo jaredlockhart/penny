@@ -30,7 +30,7 @@ flowchart TD
         History[HistoryAgent] -->|"summarize + extract<br>preferences"| FG_Ollama4["Ollama<br>Ollama"]
         History -.->|"topic summaries<br>+ preferences"| DB
 
-        Notify[NotifyAgent] -->|"thoughts, news,<br>check-ins"| FG_Ollama5["Ollama<br>Ollama"]
+        Notify[NotifyAgent] -->|"thoughts,<br>check-ins"| FG_Ollama5["Ollama<br>Ollama"]
     end
 
     Notify -->|proactive message| Channel
@@ -61,7 +61,7 @@ penny/
     base.py           — Agent base class: agentic loop, tool execution, Ollama integration
     models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord, GeneratedQuery
     chat.py           — ChatAgent: conversation-mode agent (handles user messages with tools)
-    notify.py         — NotifyAgent: notification outreach (thoughts, news, check-ins)
+    notify.py         — NotifyAgent: notification outreach (thoughts, check-ins)
     thinking.py       — ThinkingAgent: continuous inner monologue loop
     history.py        — HistoryAgent: daily/weekly summarization + preference extraction
   scheduler/
@@ -201,13 +201,12 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the Ollama
 
 **NotifyAgent** (`agents/notify.py`)
-- Notification outreach — sends thoughts, news, and check-ins when users are idle
+- Notification outreach — sends thoughts and check-ins when users are idle
 - Runs on a PeriodicSchedule, separate from ChatAgent
-- Three modes, each a `NotificationMode` subclass (`CheckinMode`, `NewsMode`, `ThoughtMode`):
+- Two modes, each a `NotificationMode` subclass (`CheckinMode`, `ThoughtMode`):
   - Each mode declares its tools, system prompt composition, user prompt, and image extraction
   - `_execute_mode()` orchestrates the shared pipeline: prepare → tools → prompt → run → validate → send
   - Thought candidates: identity + profile + pending thought + instructions
-  - News: identity + profile + history + instructions
   - Check-in: identity + profile + history + notified thought + instructions
 - Candidate scoring: novelty (avoid repeating recent messages) + sentiment (preference alignment)
 - Exponential backoff cooldown between autonomous messages
@@ -217,7 +216,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - No identity or profile — thinking never communicates with the user
 - Runs on a PeriodicSchedule
 - Each cycle picks a random seed topic from positive user preferences to focus on
-- Seeded cycles get scoped thought context; free/news cycles get NO thought context (prevents fixation — the model reads its own previous thoughts and re-searches them)
+- Seeded cycles get scoped thought context; free cycles get NO thought context (prevents fixation — the model reads its own previous thoughts and re-searches them)
 - Tools stay available on final step (`_keep_tools_on_final_step = True`) — no forced text synthesis
 - At the end of each cycle, the raw search results (from `_tool_result_text`) are summarized into a detailed briefing and stored as a thought via ThoughtStore (single summarization step)
 - Stored thought summaries bleed into chat context, giving Penny continuity of inner reasoning
@@ -327,7 +326,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `RuntimeParams` class provides attribute access: `config.runtime.IDLE_SECONDS`
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Groups: Global (max steps, image/email timeouts, embedding batch limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, mention threshold, weekly context limit), Notify (check interval, cooldowns, news cooldown, candidates, check-in image prompt)
+- Groups: Global (max steps, image/email timeouts, embedding batch limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, mention threshold, weekly context limit), Notify (check interval, cooldowns, candidates, check-in image prompt)
 
 ## Data Model
 
