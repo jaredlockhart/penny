@@ -114,10 +114,10 @@ function createCard(thought: ThoughtCard): HTMLElement {
   card.style.cursor = "pointer";
   card.addEventListener("click", () => openModal(thought));
 
-  if (thought.image_url) {
+  if (thought.image) {
     const img = document.createElement("img");
     img.className = "card-image";
-    img.src = thought.image_url;
+    img.src = thought.image;
     img.alt = thought.title;
     img.loading = "lazy";
     img.addEventListener("error", () => {
@@ -209,7 +209,7 @@ function buildByline(thought: ThoughtCard): string {
 
 function openModal(thought: ThoughtCard): void {
   modalThought = thought;
-  modalImage.src = thought.image_url || "";
+  modalImage.src = thought.image || "";
   modalTitle.textContent = thought.title || "Untitled thought";
   modalDate.textContent = buildByline(thought);
   modalText.innerHTML = thought.content;
