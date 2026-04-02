@@ -41,6 +41,7 @@ class PennyConstants:
     )
     BROWSE_RETRIES = 2
     BROWSE_RETRY_DELAY = 1.0
+    DISLIKE_FILTER_THRESHOLD = 0.8
 
     # Email command constants
     JMAP_SESSION_URL = "https://api.fastmail.com/jmap/session"
