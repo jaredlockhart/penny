@@ -648,12 +648,12 @@ class BrowserChannel(MessageChannel):
                     session.exec(
                         select(Schedule)
                         .where(Schedule.user_id == primary)
-                        .order_by(Schedule.created_at)  # type: ignore[arg-type]
+                        .order_by(Schedule.created_at)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                     )
                 )
                 schedules = [
                     ScheduleRecord(
-                        id=s.id,  # type: ignore[arg-type]
+                        id=s.id,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                         timing_description=s.timing_description,
                         prompt_text=s.prompt_text,
                         cron_expression=s.cron_expression,
