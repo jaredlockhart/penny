@@ -55,9 +55,9 @@ class Plugin(ABC):
         """Return LLM-callable tools contributed by this plugin."""
         ...
 
-    @abstractmethod
     async def close(self) -> None:
-        """Clean up any open resources (HTTP clients, etc.)."""
+        """Clean up any open resources (HTTP clients, etc.). Override if needed."""
+        pass
 
 
 def load_plugins(config: Config) -> list[Plugin]:
