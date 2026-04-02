@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import websockets
 from pydantic import BaseModel
+from sqlmodel import Session, select
 from websockets.asyncio.server import Server, ServerConnection
 
 from penny.channels.base import IncomingMessage, MessageChannel, PageContext
@@ -69,7 +70,10 @@ from penny.channels.browser.models import (
     ScheduleRecord,
 )
 from penny.channels.permission_manager import PermissionManager
+from penny.commands.schedule import ScheduleParseResult
 from penny.constants import ChannelType, PennyConstants
+from penny.database.models import Schedule, UserInfo
+from penny.prompts import Prompt
 from penny.tools.base import Tool
 
 if TYPE_CHECKING:
@@ -533,12 +537,6 @@ class BrowserChannel(MessageChannel):
 
     async def _handle_schedule_add(self, ws: ServerConnection, data: dict) -> None:
         """Parse a natural language schedule command and create it."""
-        from sqlmodel import Session, select
-
-        from penny.commands.schedule import ScheduleParseResult
-        from penny.database.models import Schedule, UserInfo
-        from penny.prompts import Prompt
-
         try:
             req = BrowserScheduleAdd(**data)
         except Exception:
@@ -593,10 +591,6 @@ class BrowserChannel(MessageChannel):
 
     async def _handle_schedule_update(self, ws: ServerConnection, data: dict) -> None:
         """Update a schedule's prompt text."""
-        from sqlmodel import Session
-
-        from penny.database.models import Schedule
-
         try:
             req = BrowserScheduleUpdate(**data)
         except Exception:
@@ -615,10 +609,6 @@ class BrowserChannel(MessageChannel):
 
     async def _handle_schedule_delete(self, ws: ServerConnection, data: dict) -> None:
         """Delete a schedule by ID."""
-        from sqlmodel import Session
-
-        from penny.database.models import Schedule
-
         try:
             req = BrowserScheduleDelete(**data)
         except Exception:
@@ -636,10 +626,6 @@ class BrowserChannel(MessageChannel):
 
     async def _send_schedules(self, ws: ServerConnection, error: str | None = None) -> None:
         """Send all schedules for the primary user."""
-        from sqlmodel import Session, select
-
-        from penny.database.models import Schedule
-
         primary = self._db.users.get_primary_sender()
         schedules: list[ScheduleRecord] = []
         if primary:
