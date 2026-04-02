@@ -11,7 +11,7 @@ from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.responses import PennyResponse
 from penny.tools.base import Tool
-from penny.tools.browse import BrowseTool
+from penny.tools.browse import BrowseTool, _trim_search_result
 from penny.tools.models import SearchResult, ToolResult
 
 
@@ -635,6 +635,53 @@ class TestParallelToolCalls:
         assert len(browsed_urls) == 2
         assert "https://example.com/page" in browsed_urls
         assert "https://other.com" in browsed_urls
+
+
+class TestSearchResultTrimming:
+    """Tests for _trim_search_result: strips search pages to links + context."""
+
+    def test_trims_to_lines_near_links(self):
+        """Lines far from markdown links are removed."""
+        content = "\n".join(
+            [
+                "Lots of preamble text here",
+                "More preamble",
+                "Even more preamble",
+                "Still going",
+                "Yet more preamble",
+                "### NASA Article",
+                "[nasa.gov/artemis](https://www.nasa.gov/artemis/)",
+                "Some snippet text",
+                "More snippet",
+                "Filler line 1",
+                "Filler line 2",
+                "Filler line 3",
+                "Filler line 4",
+                "Filler line 5",
+                "### Space.com Article",
+                "[space.com/artemis](https://www.space.com/artemis)",
+                "Another snippet",
+            ]
+        )
+        result = _trim_search_result(content)
+        assert "titles and links only" in result
+        assert "nasa.gov/artemis" in result
+        assert "space.com/artemis" in result
+        assert "### NASA Article" in result
+        assert "Lots of preamble" not in result
+        assert "Filler line 3" not in result
+
+    def test_returns_original_when_no_links(self):
+        """Content with no markdown links passes through unchanged."""
+        content = "Just plain text\nwith no links\nat all"
+        result = _trim_search_result(content)
+        assert result == content
+
+    def test_header_injected(self):
+        """Trimmed results start with the search result header."""
+        content = "### Title\n[example](https://example.com)\nSnippet"
+        result = _trim_search_result(content)
+        assert result.startswith("These are search results")
 
 
 class TestEmptyContentAfterToolCalls:

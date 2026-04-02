@@ -57,6 +57,12 @@ class Prompt:
         "source URL so the user can follow up."
     )
 
+    # Search result header — injected into trimmed search results
+    SEARCH_RESULT_HEADER = (
+        "These are search results — titles and links only. "
+        "You must read the actual pages before answering."
+    )
+
     # Email prompts
     EMAIL_SYSTEM_PROMPT = (
         "You are searching the user's email to answer their question. "
