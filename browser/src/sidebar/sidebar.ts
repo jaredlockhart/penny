@@ -327,9 +327,17 @@ function setupDomainsAdd(): void {
 
 // --- Schedules UI ---
 
+function setScheduleAddEnabled(enabled: boolean): void {
+  const input = document.getElementById("schedules-input") as HTMLInputElement | null;
+  const btn = document.getElementById("schedules-add-btn") as HTMLButtonElement | null;
+  if (input) input.disabled = !enabled;
+  if (btn) btn.disabled = !enabled;
+}
+
 function renderSchedules(schedules: ScheduleItem[], error: string | null): void {
   const listEl = document.getElementById("schedules-list")!;
   listEl.innerHTML = "";
+  setScheduleAddEnabled(true);
 
   if (error) {
     const errEl = document.createElement("div");
@@ -451,6 +459,7 @@ function setupSchedulesAdd(): void {
     if (!command) return;
     browser.runtime.sendMessage({ type: RuntimeMessageType.ScheduleAdd, command });
     input.value = "";
+    setScheduleAddEnabled(false);
 
     const listEl = document.getElementById("schedules-list")!;
     const empty = listEl.querySelector(".schedules-empty");
