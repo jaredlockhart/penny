@@ -318,7 +318,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/draw** (`draw.py`): Generate images via Ollama image model (requires `OLLAMA_IMAGE_MODEL`)
 - **/bug** (`bug.py`): File a bug report on GitHub (requires GitHub App config)
 - **/feature** (`feature.py`): File a feature request on GitHub (requires GitHub App config)
-- **/email** (`email.py`): Search Fastmail email via JMAP (requires `FASTMAIL_API_TOKEN`)
+- **/email** (`email/command.py`): Search email via enabled email provider (requires API credentials in .env)
 
 ### Runtime Configuration
 - `/config` reads and writes to a `RuntimeConfig` table in SQLite
