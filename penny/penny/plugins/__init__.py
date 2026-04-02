@@ -83,9 +83,7 @@ def load_plugins(config: Config) -> list[Plugin]:
             continue
 
         if not plugin_cls.is_configured(config):
-            logger.warning(
-                "Plugin '%s' is not configured (missing credentials), skipping", name
-            )
+            logger.warning("Plugin '%s' is not configured (missing credentials), skipping", name)
             continue
 
         try:

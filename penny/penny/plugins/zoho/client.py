@@ -286,7 +286,7 @@ class ZohoClient:
             ts_int = int(ts)
             dt = datetime.fromtimestamp(ts_int / 1000, tz=UTC)
             return dt.isoformat()
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return str(ts)
 
     @staticmethod
