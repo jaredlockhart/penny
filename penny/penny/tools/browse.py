@@ -26,8 +26,43 @@ logger = logging.getLogger(__name__)
 
 _URL_PATTERN = re.compile(r"^https?://")
 
+_LINK_RE = re.compile(r"\[([^\]]*)\]\((https?://[^)]+)\)")
+
+_SEARCH_RESULT_HEADER = (
+    "These are search results — titles and links only. "
+    "You must read the actual pages before answering."
+)
+
 # Type alias for the browser request function
 RequestFn = Callable[[str, dict], Awaitable[tuple[str, str | None]]]
+
+
+def _trim_search_result(text: str, context_lines: int = 2) -> str:
+    """Trim search result page to lines near markdown links.
+
+    Keeps a few lines of context around each link so the model
+    sees titles and URLs but not full article content.  Prepends a header
+    telling the model these are search results, not pages.
+    """
+    lines = text.split("\n")
+
+    link_lines: set[int] = set()
+    for i, line in enumerate(lines):
+        if _LINK_RE.search(line):
+            link_lines.add(i)
+
+    if not link_lines:
+        return text
+
+    keep: set[int] = set()
+    for line_number in link_lines:
+        for offset in range(-context_lines, context_lines + 1):
+            idx = line_number + offset
+            if 0 <= idx < len(lines):
+                keep.add(idx)
+
+    trimmed = "\n".join(lines[i] for i in sorted(keep))
+    return f"{_SEARCH_RESULT_HEADER}\n\n{trimmed}"
 
 
 class BrowseTool(Tool):
@@ -119,8 +154,11 @@ class BrowseTool(Tool):
                 logger.warning("Browse sub-call failed (%s): %s", label, result)
                 sections.append(f"## {label}\nError: {result}")
             elif isinstance(result, SearchResult):
+                text = result.text
+                if kind == "search":
+                    text = _trim_search_result(text)
                 all_urls.extend(result.urls)
-                sections.append(f"## {label}\n{result.text}")
+                sections.append(f"## {label}\n{text}")
                 if not first_image and result.image_base64:
                     first_image = result.image_base64
             else:
