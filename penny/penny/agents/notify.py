@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
-from penny.agents.models import ControllerResponse, ToolCallRecord
+from penny.agents.models import ControllerResponse
 from penny.constants import PennyConstants
 from penny.database.models import Thought
 from penny.ollama.embeddings import deserialize_embedding
@@ -40,7 +40,6 @@ class NotifyCandidate(BaseModel):
     answer: str
     thought: Thought | None = None
     attachments: list[str] = Field(default_factory=list)
-    image_prompt: str
 
 
 # ── Notification modes ─────────────────────────────────────────────────
@@ -49,12 +48,12 @@ class NotifyCandidate(BaseModel):
 class NotificationMode:
     """Declares what varies per notification mode.
 
-    Each mode specifies its tools, system prompt, user prompt, run
-    parameters, and image-prompt extraction.  The agent orchestrates
-    the shared pipeline around these declarations.
+    Each mode specifies its tools, system prompt, user prompt, and run
+    parameters.  The agent orchestrates the shared pipeline around
+    these declarations.
 
-    Subclasses must override: get_tools, build_system_prompt, prompt,
-    and extract_image_prompt.  Other methods have sensible defaults.
+    Subclasses must override: get_tools, build_system_prompt, and prompt.
+    Other methods have sensible defaults.
     """
 
     def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
@@ -91,12 +90,6 @@ class NotificationMode:
     def extra_source(self) -> str:
         """Additional source text for URL validation."""
         return ""
-
-    def extract_image_prompt(
-        self, agent: NotifyAgent, response: ControllerResponse, answer: str
-    ) -> str:
-        """Extract an image search query from the response."""
-        raise NotImplementedError
 
     def prepare(self, agent: NotifyAgent) -> None:
         """Hook called before generation (e.g., set pending thought)."""
@@ -142,11 +135,6 @@ class CheckinMode(NotificationMode):
     def get_history(self, agent: NotifyAgent, user: str) -> list[tuple[str, str]] | None:
         return agent._build_conversation(user)
 
-    def extract_image_prompt(
-        self, agent: NotifyAgent, response: ControllerResponse, answer: str
-    ) -> str:
-        return str(agent.config.runtime.CHECKIN_IMAGE_PROMPT)
-
     def prepare(self, agent: NotifyAgent) -> None:
         agent._pending_thought = None
 
@@ -188,16 +176,6 @@ class ThoughtMode(NotificationMode):
 
     def extra_source(self) -> str:
         return self._thought.content if self._thought else ""
-
-    def extract_image_prompt(
-        self, agent: NotifyAgent, response: ControllerResponse, answer: str
-    ) -> str:
-        from_tools = NotifyAgent._extract_search_query(response.tool_calls)
-        if from_tools:
-            return from_tools
-        if self._thought:
-            return self._thought.title or self._thought.content[:300]
-        return ""
 
     def prepare(self, agent: NotifyAgent) -> None:
         agent._pending_thought = self._thought
@@ -383,12 +361,13 @@ class NotifyAgent(Agent):
         if mode.check_disqualified and self._is_disqualified(answer):
             logger.info("Disqualified candidate: %s", answer[:60])
             return None
-        image_prompt = mode.extract_image_prompt(self, response, answer)
+        attachments = response.attachments or []
+        if not attachments and self._pending_thought and self._pending_thought.image:
+            attachments = [self._pending_thought.image]
         return NotifyCandidate(
             answer=answer,
             thought=self._pending_thought,
-            attachments=response.attachments or [],
-            image_prompt=image_prompt,
+            attachments=attachments,
         )
 
     # ── URL-validated run ────────────────────────────────────────────
@@ -437,9 +416,7 @@ class NotifyAgent(Agent):
         """Send a tools-unavailable message so the user knows to investigate."""
         assert self._channel is not None
         logger.warning("Sending tools-unavailable notification to %s: %s", user, answer)
-        await self._channel.send_response(
-            user, answer, parent_id=None, image_prompt="", quote_message=None
-        )
+        await self._channel.send_response(user, answer, parent_id=None, quote_message=None)
         return True
 
     @classmethod
@@ -564,17 +541,6 @@ class NotifyAgent(Agent):
 
     # ── Image prompt extraction ──────────────────────────────────────
 
-    @staticmethod
-    def _extract_search_query(tool_calls: list[ToolCallRecord]) -> str | None:
-        """Extract a search query from tool calls for use as image prompt."""
-        for tc in tool_calls:
-            if tc.tool != "browse":
-                continue
-            for q in tc.arguments.get("queries", []):
-                if not q.startswith("http"):
-                    return q
-        return None
-
     # ── Candidate scoring ─────────────────────────────────────────────
 
     async def _pick_best_thought(self, user: str, thoughts: list[Thought]) -> Thought:
@@ -635,7 +601,6 @@ class NotifyAgent(Agent):
             user,
             candidate.answer,
             parent_id=None,
-            image_prompt=candidate.image_prompt,
             attachments=candidate.attachments or None,
             quote_message=None,
             thought_id=thought_id,

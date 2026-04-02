@@ -377,7 +377,7 @@ class BrowserChannel(MessageChannel):
                 "id": t.id,
                 "title": t.title or "",
                 "content": self.prepare_outgoing(t.content),
-                "image_url": t.image_url or "",
+                "image": t.image or "",
                 "created_at": t.created_at.isoformat() if t.created_at else "",
                 "notified": t.notified_at is not None,
                 "seed_topic": seed_topics.get(t.preference_id, ""),

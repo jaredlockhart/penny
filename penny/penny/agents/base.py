@@ -209,6 +209,7 @@ class Agent:
         self._browse_provider: Callable[[], Any] | None = None
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
+        self._tool_result_images: list[str] = []
 
         self._tool_registry = ToolRegistry()
         for tool in self.tools:
@@ -326,6 +327,7 @@ class Agent:
     ) -> ControllerResponse:
         """Run the agentic loop — prompt in, response out."""
         self._tool_result_text = []
+        self._tool_result_images = []
         messages = self._build_messages(prompt, history, system_prompt)
         tools = self._tool_registry.get_ollama_tools()
         return await self._run_agentic_loop(messages, tools, max_steps, on_tool_start)
@@ -375,6 +377,7 @@ class Agent:
                 tool_call_records.extend(result.records)
                 source_urls.extend(result.source_urls)
                 attachments.extend(result.attachments)
+                self._tool_result_images.extend(result.attachments)
                 await self.after_step(result.records, result.messages)
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)

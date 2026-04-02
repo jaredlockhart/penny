@@ -261,7 +261,6 @@ class MessageChannel(ABC):
         recipient: str,
         content: str,
         parent_id: int | None,
-        image_prompt: str = "",
         attachments: list[str] | None = None,
         quote_message: MessageLog | None = None,
         thought_id: int | None = None,
@@ -273,7 +272,6 @@ class MessageChannel(ABC):
             recipient: Identifier for the recipient
             content: Message content
             parent_id: Parent message ID for thread linking
-            image_prompt: Unused (kept for interface compatibility)
             attachments: Optional list of base64-encoded image attachments
             quote_message: Optional message to quote-reply to
             thought_id: Optional FK to the thought that triggered this message
@@ -319,16 +317,6 @@ class MessageChannel(ABC):
                 self._db.messages.update_embedding(message_id, serialize_embedding(vec))
         except Exception:
             logger.debug("Failed to embed message %d", message_id)
-
-    @staticmethod
-    def _extract_image_prompt(response) -> str | None:
-        """Extract a short image search query from the agent's tool calls."""
-        for tc in response.tool_calls or []:
-            if tc.tool == "browse":
-                for q in tc.arguments.get("queries", []):
-                    if not q.startswith("http"):
-                        return q
-        return None
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -483,7 +471,6 @@ class MessageChannel(ABC):
             )
 
             answer = response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
-            image_prompt = self._extract_image_prompt(response) or message.content[:100]
             incoming_log = MessageLog(
                 id=incoming_id,
                 direction=PennyConstants.MessageDirection.INCOMING,
@@ -495,7 +482,6 @@ class MessageChannel(ABC):
                 message.sender,
                 answer,
                 parent_id=incoming_id,
-                image_prompt=image_prompt,
                 attachments=response.attachments or None,
                 quote_message=incoming_log,
             )

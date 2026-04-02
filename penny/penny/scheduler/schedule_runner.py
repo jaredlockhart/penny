@@ -106,12 +106,10 @@ class ScheduleExecutor(Agent):
             return
 
         # Send the response to the user
-        image_prompt = self._channel._extract_image_prompt(response) or schedule.prompt_text[:100]
         await self._channel.send_response(
             schedule.user_id,
             answer,
             parent_id=None,
-            image_prompt=image_prompt,
             attachments=response.attachments or None,
             quote_message=None,
         )
