@@ -238,12 +238,6 @@ Examples:
 
     # Notify prompts (synthetic user messages for outreach)
     NOTIFY_PROMPT = "Hey penny, what have you been thinking about?"
-    NOTIFY_NEWS = (
-        "Hey penny, what's in the news? "
-        "Start with a casual greeting, then list each article as a bullet with "
-        "the title in bold, a 1-sentence description of what it's about, "
-        "and the source URL from the tool results."
-    )
     NOTIFY_CHECKIN = "Ask the user what they've been up to lately."
 
     PREFERENCE_IDENTIFICATION_PROMPT = (
