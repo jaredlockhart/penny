@@ -32,12 +32,17 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_PREFERENCE_DELETE,
     BROWSER_MSG_TYPE_PREFERENCES_REQUEST,
     BROWSER_MSG_TYPE_REGISTER,
+    BROWSER_MSG_TYPE_SCHEDULE_ADD,
+    BROWSER_MSG_TYPE_SCHEDULE_DELETE,
+    BROWSER_MSG_TYPE_SCHEDULE_UPDATE,
+    BROWSER_MSG_TYPE_SCHEDULES_REQUEST,
     BROWSER_MSG_TYPE_THOUGHT_REACTION,
     BROWSER_MSG_TYPE_THOUGHTS_REQUEST,
     BROWSER_MSG_TYPE_TOOL_RESPONSE,
     BROWSER_RESP_TYPE_CONFIG,
     BROWSER_RESP_TYPE_MESSAGE,
     BROWSER_RESP_TYPE_PREFERENCES,
+    BROWSER_RESP_TYPE_SCHEDULES,
     BROWSER_RESP_TYPE_STATUS,
     BROWSER_RESP_TYPE_THOUGHTS,
     BROWSER_RESP_TYPE_TYPING,
@@ -55,9 +60,13 @@ from penny.channels.browser.models import (
     BrowserPreferenceDelete,
     BrowserPreferencesRequest,
     BrowserRegister,
+    BrowserScheduleAdd,
+    BrowserScheduleDelete,
+    BrowserScheduleUpdate,
     BrowserToolRequest,
     BrowserToolResponse,
     DomainPermissionRecord,
+    ScheduleRecord,
 )
 from penny.channels.permission_manager import PermissionManager
 from penny.constants import ChannelType, PennyConstants
@@ -236,6 +245,22 @@ class BrowserChannel(MessageChannel):
 
         if msg_type == BROWSER_MSG_TYPE_CONFIG_UPDATE:
             await self._handle_config_update(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_SCHEDULES_REQUEST:
+            await self._handle_schedules_request(ws)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_SCHEDULE_ADD:
+            await self._handle_schedule_add(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_SCHEDULE_UPDATE:
+            await self._handle_schedule_update(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_SCHEDULE_DELETE:
+            await self._handle_schedule_delete(ws, data)
             return device_label
 
         return device_label
@@ -499,6 +524,150 @@ class BrowserChannel(MessageChannel):
             session.commit()
         logger.info("Config updated via browser: %s = %s", req.key, validated)
         await self._handle_config_request(ws)
+
+    # --- Schedule handlers ---
+
+    async def _handle_schedules_request(self, ws: ServerConnection) -> None:
+        """Query all schedules for the primary user and send them."""
+        await self._send_schedules(ws)
+
+    async def _handle_schedule_add(self, ws: ServerConnection, data: dict) -> None:
+        """Parse a natural language schedule command and create it."""
+        from sqlmodel import Session, select
+
+        from penny.commands.schedule import ScheduleParseResult
+        from penny.database.models import Schedule, UserInfo
+        from penny.prompts import Prompt
+
+        try:
+            req = BrowserScheduleAdd(**data)
+        except Exception:
+            logger.warning("Invalid schedule_add: %s", str(data)[:200])
+            return
+
+        primary = self._db.users.get_primary_sender()
+        if not primary or not req.command.strip():
+            await self._send_schedules(ws, error="No user profile found")
+            return
+
+        with Session(self._db.engine) as session:
+            user_info = session.exec(select(UserInfo).where(UserInfo.sender == primary)).first()
+            if not user_info or not user_info.timezone:
+                await self._send_schedules(ws, error="Set your timezone first via /profile")
+                return
+            user_timezone = user_info.timezone
+
+        prompt = Prompt.SCHEDULE_PARSE_PROMPT.format(
+            timezone=user_timezone, command=req.command.strip()
+        )
+        try:
+            response = await self._model_client.generate(prompt=prompt, format="json")
+            result = ScheduleParseResult.model_validate_json(response.message.content)
+        except Exception as e:
+            logger.warning("Failed to parse schedule from browser: %s", e)
+            await self._send_schedules(ws, error="Could not parse schedule timing")
+            return
+
+        cron_parts = result.cron_expression.split()
+        if len(cron_parts) != 5:
+            await self._send_schedules(ws, error="Invalid cron expression")
+            return
+
+        with Session(self._db.engine) as session:
+            session.add(
+                Schedule(
+                    user_id=primary,
+                    user_timezone=user_timezone,
+                    cron_expression=result.cron_expression,
+                    prompt_text=result.prompt_text,
+                    timing_description=result.timing_description,
+                    created_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+
+        logger.info(
+            "Schedule added via browser: %s — %s", result.timing_description, result.prompt_text
+        )
+        await self._send_schedules(ws)
+
+    async def _handle_schedule_update(self, ws: ServerConnection, data: dict) -> None:
+        """Update a schedule's prompt text."""
+        from sqlmodel import Session
+
+        from penny.database.models import Schedule
+
+        try:
+            req = BrowserScheduleUpdate(**data)
+        except Exception:
+            logger.warning("Invalid schedule_update: %s", str(data)[:200])
+            return
+
+        with Session(self._db.engine) as session:
+            schedule = session.get(Schedule, req.schedule_id)
+            if schedule:
+                schedule.prompt_text = req.prompt_text
+                session.add(schedule)
+                session.commit()
+                logger.info("Schedule %d updated via browser", req.schedule_id)
+
+        await self._send_schedules(ws)
+
+    async def _handle_schedule_delete(self, ws: ServerConnection, data: dict) -> None:
+        """Delete a schedule by ID."""
+        from sqlmodel import Session
+
+        from penny.database.models import Schedule
+
+        try:
+            req = BrowserScheduleDelete(**data)
+        except Exception:
+            logger.warning("Invalid schedule_delete: %s", str(data)[:200])
+            return
+
+        with Session(self._db.engine) as session:
+            schedule = session.get(Schedule, req.schedule_id)
+            if schedule:
+                session.delete(schedule)
+                session.commit()
+                logger.info("Schedule %d deleted via browser", req.schedule_id)
+
+        await self._send_schedules(ws)
+
+    async def _send_schedules(self, ws: ServerConnection, error: str | None = None) -> None:
+        """Send all schedules for the primary user."""
+        from sqlmodel import Session, select
+
+        from penny.database.models import Schedule
+
+        primary = self._db.users.get_primary_sender()
+        schedules: list[ScheduleRecord] = []
+        if primary:
+            with Session(self._db.engine) as session:
+                rows = list(
+                    session.exec(
+                        select(Schedule)
+                        .where(Schedule.user_id == primary)
+                        .order_by(Schedule.created_at)  # type: ignore[arg-type]
+                    )
+                )
+                schedules = [
+                    ScheduleRecord(
+                        id=s.id,  # type: ignore[arg-type]
+                        timing_description=s.timing_description,
+                        prompt_text=s.prompt_text,
+                        cron_expression=s.cron_expression,
+                    )
+                    for s in rows
+                ]
+
+        response = {
+            "type": BROWSER_RESP_TYPE_SCHEDULES,
+            "schedules": [s.model_dump() for s in schedules],
+            "error": error,
+        }
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await ws.send(json.dumps(response))
 
     def _resolve_seed_topics(self, thoughts: list) -> dict[int | None, str]:
         """Build a map of preference_id → preference content for seed topics."""

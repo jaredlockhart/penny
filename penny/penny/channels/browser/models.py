@@ -23,6 +23,10 @@ BROWSER_MSG_TYPE_DOMAIN_UPDATE = "domain_update"
 BROWSER_MSG_TYPE_DOMAIN_DELETE = "domain_delete"
 BROWSER_MSG_TYPE_PERMISSION_REQUEST = "permission_request"
 BROWSER_MSG_TYPE_PERMISSION_DECISION = "permission_decision"
+BROWSER_MSG_TYPE_SCHEDULES_REQUEST = "schedules_request"
+BROWSER_MSG_TYPE_SCHEDULE_ADD = "schedule_add"
+BROWSER_MSG_TYPE_SCHEDULE_UPDATE = "schedule_update"
+BROWSER_MSG_TYPE_SCHEDULE_DELETE = "schedule_delete"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -35,6 +39,7 @@ BROWSER_RESP_TYPE_CONFIG = "config_response"
 BROWSER_RESP_TYPE_DOMAIN_PERMISSIONS = "domain_permissions_sync"
 BROWSER_RESP_TYPE_PERMISSION_PROMPT = "permission_prompt"
 BROWSER_RESP_TYPE_PERMISSION_DISMISS = "permission_dismiss"
+BROWSER_RESP_TYPE_SCHEDULES = "schedules_response"
 
 
 class BrowserIncoming(BaseModel):
@@ -178,3 +183,34 @@ class BrowserPermissionDismiss(BaseModel):
 
     type: str = BROWSER_RESP_TYPE_PERMISSION_DISMISS
     request_id: str
+
+
+class BrowserScheduleAdd(BaseModel):
+    """A request to add a new schedule via natural language."""
+
+    type: str
+    command: str
+
+
+class BrowserScheduleUpdate(BaseModel):
+    """A request to update a schedule's prompt text."""
+
+    type: str
+    schedule_id: int
+    prompt_text: str
+
+
+class BrowserScheduleDelete(BaseModel):
+    """A request to delete a schedule by ID."""
+
+    type: str
+    schedule_id: int
+
+
+class ScheduleRecord(BaseModel):
+    """A single schedule entry for response payloads."""
+
+    id: int
+    timing_description: str
+    prompt_text: str
+    cron_expression: str

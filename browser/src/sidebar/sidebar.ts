@@ -16,6 +16,7 @@ import {
   type RuntimeConfigParam,
   type RuntimeMessage,
   RuntimeMessageType,
+  type ScheduleItem,
   STORAGE_KEY_CHAT_HISTORY,
   STORAGE_KEY_DEVICE_LABEL,
   STORAGE_KEY_DOMAIN_ALLOWLIST,
@@ -47,9 +48,11 @@ function showToast(text: string): void {
 
 // View state
 type View = "register" | "chat" | "settings";
+type MainTab = "conversation" | "schedules";
 type SettingsTab = "likes" | "dislikes" | "domains" | "config";
 
 let activeView: View = "register";
+let activeMainTab: MainTab = "conversation";
 let activeSettingsTab: SettingsTab = "likes";
 let pendingConfigSave = false;
 
@@ -121,6 +124,12 @@ async function showChat(): Promise<void> {
 
   document.getElementById("settings-back")!.addEventListener("click", () => showView("chat"));
 
+  for (const btn of Array.from(document.querySelectorAll(".main-tab"))) {
+    btn.addEventListener("click", () => {
+      activateMainTab(btn.getAttribute("data-mtab") as MainTab);
+    });
+  }
+
   for (const btn of Array.from(document.querySelectorAll(".settings-tab"))) {
     btn.addEventListener("click", () => {
       activateSettingsTab(btn.getAttribute("data-stab") as SettingsTab);
@@ -129,11 +138,29 @@ async function showChat(): Promise<void> {
 
   setupPrefsAdd("positive", "likes");
   setupPrefsAdd("negative", "dislikes");
+  setupSchedulesAdd();
   setupDomainsAdd();
   setupToolUseToggle();
 
   await rehydrateHistory();
   listenToBackground();
+}
+
+// --- Main tab switching (Chat / Schedules) ---
+
+function activateMainTab(tab: MainTab): void {
+  activeMainTab = tab;
+
+  for (const btn of Array.from(document.querySelectorAll(".main-tab"))) {
+    btn.classList.toggle("active", btn.getAttribute("data-mtab") === tab);
+  }
+
+  document.getElementById("conversation-panel")!.classList.toggle("hidden", tab !== "conversation");
+  document.getElementById("schedules-panel")!.classList.toggle("hidden", tab !== "schedules");
+
+  if (tab === "schedules") {
+    browser.runtime.sendMessage({ type: RuntimeMessageType.SchedulesRequest });
+  }
 }
 
 // --- Settings tab switching ---
@@ -298,6 +325,145 @@ function setupDomainsAdd(): void {
   });
 }
 
+// --- Schedules UI ---
+
+function renderSchedules(schedules: ScheduleItem[], error: string | null): void {
+  const listEl = document.getElementById("schedules-list")!;
+  listEl.innerHTML = "";
+
+  if (error) {
+    const errEl = document.createElement("div");
+    errEl.className = "schedule-error";
+    errEl.textContent = error;
+    listEl.appendChild(errEl);
+  }
+
+  if (schedules.length === 0 && !error) {
+    const empty = document.createElement("div");
+    empty.className = "schedules-empty";
+    empty.textContent = "No scheduled tasks yet.";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  for (const schedule of schedules) {
+    listEl.appendChild(createScheduleRow(schedule));
+  }
+}
+
+function createScheduleRow(schedule: ScheduleItem): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "schedule-row";
+
+  const header = document.createElement("div");
+  header.className = "schedule-header";
+
+  const timing = document.createElement("span");
+  timing.className = "schedule-timing";
+  timing.textContent = schedule.timing_description;
+
+  const prompt = document.createElement("span");
+  prompt.className = "schedule-prompt";
+  prompt.textContent = schedule.prompt_text;
+
+  const del = document.createElement("button");
+  del.className = "schedule-delete";
+  del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+  del.setAttribute("aria-label", `Delete schedule: ${schedule.prompt_text}`);
+  del.addEventListener("click", (e) => {
+    e.stopPropagation();
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.ScheduleDelete,
+      schedule_id: schedule.id,
+    });
+  });
+
+  header.appendChild(timing);
+  header.appendChild(prompt);
+  header.appendChild(del);
+
+  const detail = document.createElement("div");
+  detail.className = "schedule-detail";
+
+  const cron = document.createElement("div");
+  cron.className = "schedule-cron";
+  cron.textContent = schedule.cron_expression;
+
+  const editInput = document.createElement("textarea");
+  editInput.className = "schedule-edit-input";
+  editInput.value = schedule.prompt_text;
+  editInput.rows = 2;
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "schedule-save";
+  saveBtn.textContent = "Save";
+  saveBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const newText = editInput.value.trim();
+    if (newText && newText !== schedule.prompt_text) {
+      browser.runtime.sendMessage({
+        type: RuntimeMessageType.ScheduleUpdate,
+        schedule_id: schedule.id,
+        prompt_text: newText,
+      });
+    }
+  });
+
+  detail.appendChild(cron);
+  detail.appendChild(editInput);
+  detail.appendChild(saveBtn);
+
+  row.appendChild(header);
+  row.appendChild(detail);
+
+  header.addEventListener("click", () => {
+    row.classList.toggle("expanded");
+  });
+
+  return row;
+}
+
+function createSkeletonRow(): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "schedule-row schedule-skeleton";
+
+  const header = document.createElement("div");
+  header.className = "schedule-header";
+
+  const timing = document.createElement("span");
+  timing.className = "skeleton-block skeleton-timing";
+
+  const prompt = document.createElement("span");
+  prompt.className = "skeleton-block skeleton-prompt";
+
+  header.appendChild(timing);
+  header.appendChild(prompt);
+  row.appendChild(header);
+  return row;
+}
+
+function setupSchedulesAdd(): void {
+  const input = document.getElementById("schedules-input") as HTMLInputElement;
+  const btn = document.getElementById("schedules-add-btn")!;
+
+  function add(): void {
+    const command = input.value.trim();
+    if (!command) return;
+    browser.runtime.sendMessage({ type: RuntimeMessageType.ScheduleAdd, command });
+    input.value = "";
+
+    const listEl = document.getElementById("schedules-list")!;
+    const empty = listEl.querySelector(".schedules-empty");
+    if (empty) empty.remove();
+    listEl.appendChild(createSkeletonRow());
+  }
+
+  btn.addEventListener("click", add);
+  input.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "Enter") add();
+  });
+}
+
 // --- Tool use toggle ---
 
 function setupToolUseToggle(): void {
@@ -391,6 +557,7 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     setStatus(message.state);
   } else if (message.type === RuntimeMessageType.ChatMessage) {
     if (activeView === "settings") showView("chat");
+    if (activeMainTab !== "conversation") activateMainTab("conversation");
     setTyping(false);
     let content = message.content;
     if (pendingPageRef) {
@@ -403,6 +570,7 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     setTyping(message.active, message.content);
   } else if (message.type === RuntimeMessageType.PermissionRequest) {
     if (activeView === "settings") showView("chat");
+    if (activeMainTab !== "conversation") activateMainTab("conversation");
     showPermissionDialog(message.request_id, message.domain, message.url);
   } else if (message.type === RuntimeMessageType.PermissionDismiss) {
     document.getElementById("permission-dialog")?.classList.add("hidden");
@@ -427,6 +595,8 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
     renderDomains(message.permissions);
     // A sync means the server resolved a permission — dismiss any open dialog
     document.getElementById("permission-dialog")?.classList.add("hidden");
+  } else if (message.type === RuntimeMessageType.SchedulesResponse) {
+    renderSchedules(message.schedules, message.error);
   }
 }
 
