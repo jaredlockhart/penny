@@ -949,11 +949,11 @@ async def test_novel_thought_is_stored(
         assert len(thoughts) == 2
 
 
-# ── 4. Preference filter ─────────────────────────────────────────────────
+# ── 4. Dislike veto filter ────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_preference_filter_inactive_without_qualifying_prefs(
+async def test_dislike_veto_allows_thought_with_no_dislikes(
     signal_server,
     mock_ollama,
     make_config,
@@ -961,12 +961,7 @@ async def test_preference_filter_inactive_without_qualifying_prefs(
     running_penny,
     monkeypatch,
 ):
-    """Filter is inactive when no positive prefs with mention_count > 1 exist.
-
-    Uses embed_text monkeypatch that returns a vector far from any pref — if the
-    filter were active it would reject the thought. Since there are no qualifying
-    prefs the thought must still be stored.
-    """
+    """Thought is stored when user has no dislikes."""
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -992,15 +987,15 @@ async def test_preference_filter_inactive_without_qualifying_prefs(
     async with running_penny(config) as penny:
         _seed_thinking(penny)
         penny.thinking_agent._embedding_model_client = object()
-        # Only mention_count=1 preference exists (from _seed_thinking) — gate inactive
+        # No dislikes exist — thought should be stored
         await penny.thinking_agent.execute()
 
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER)
-        assert len(thoughts) == 1, "Thought should be stored when filter gate is inactive"
+        assert len(thoughts) == 1, "Thought should be stored when no dislikes exist"
 
 
 @pytest.mark.asyncio
-async def test_preference_filter_rejects_disliked_content(
+async def test_dislike_veto_rejects_thought_matching_dislike(
     signal_server,
     mock_ollama,
     make_config,
@@ -1008,7 +1003,7 @@ async def test_preference_filter_rejects_disliked_content(
     running_penny,
     monkeypatch,
 ):
-    """Filter discards a thought when it scores more similar to negative prefs than positive."""
+    """Thought is vetoed when its title embedding is very similar to a dislike."""
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -1017,72 +1012,7 @@ async def test_preference_filter_rejects_disliked_content(
         news_thinking_probability=0.0,
     )
 
-    # embed_text: content gets [0,0,1], prefs get [1,0,0] (positive) / [0,0,1] (negative)
-    embed_calls: list[str] = []
-
-    async def _embed_by_text(_client, text):
-        embed_calls.append(text)
-        # New thought content matches the negative preference vector
-        return [0.0, 0.0, 1.0]
-
-    monkeypatch.setattr("penny.agents.thinking.embed_text", _embed_by_text)
-
-    from penny.ollama.embeddings import serialize_embedding
-
-    pos_vec = serialize_embedding([1.0, 0.0, 0.0])
-    neg_vec = serialize_embedding([0.0, 0.0, 1.0])
-
-    def handler(request, count):
-        if count == 1:
-            return mock_ollama._make_tool_call_response(
-                request, "browse", {"queries": ["test"], "reasoning": "x"}
-            )
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        _seed_thinking(penny)
-        penny.thinking_agent._embedding_model_client = object()
-
-        # Add qualifying positive pref (mention_count=2) pointing away from thought vector
-        pos_pref = penny.db.preferences.add(
-            TEST_SENDER, "Guitar amp tones", "positive", source="extracted", mention_count=2
-        )
-        assert pos_pref
-        penny.db.preferences.update_embedding(pos_pref.id, pos_vec)
-
-        # Add qualifying negative pref (mention_count=2) pointing toward thought vector
-        neg_pref = penny.db.preferences.add(
-            TEST_SENDER, "AI-generated music", "negative", source="extracted", mention_count=2
-        )
-        assert neg_pref
-        penny.db.preferences.update_embedding(neg_pref.id, neg_vec)
-
-        await penny.thinking_agent.execute()
-
-        thoughts = penny.db.thoughts.get_recent(TEST_SENDER)
-        assert len(thoughts) == 0, "Thought should be filtered when score < 0"
-
-
-@pytest.mark.asyncio
-async def test_preference_filter_active_with_only_negative_prefs(
-    signal_server,
-    mock_ollama,
-    make_config,
-    test_user_info,
-    running_penny,
-    monkeypatch,
-):
-    """Filter activates on qualifying negative prefs alone — no positive prefs required."""
-    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
-    config = make_config(
-        inner_monologue_interval=99999.0,
-        inner_monologue_max_steps=2,
-        free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
-    )
-
+    # Title embedding matches the dislike vector exactly (cosine sim = 1.0)
     async def _fixed_embed(_client, _text):
         return [0.0, 0.0, 1.0]
 
@@ -1090,7 +1020,6 @@ async def test_preference_filter_active_with_only_negative_prefs(
 
     from penny.ollama.embeddings import serialize_embedding
 
-    # Negative pref points toward the thought vector — score = 0 - 1 = -1
     neg_vec = serialize_embedding([0.0, 0.0, 1.0])
 
     def handler(request, count):
@@ -1106,9 +1035,8 @@ async def test_preference_filter_active_with_only_negative_prefs(
         _seed_thinking(penny)
         penny.thinking_agent._embedding_model_client = object()
 
-        # Only a qualifying negative pref — no positive prefs at all
         neg_pref = penny.db.preferences.add(
-            TEST_SENDER, "AI-generated music", "negative", source="extracted", mention_count=2
+            TEST_SENDER, "AI-generated music", "negative", source="extracted"
         )
         assert neg_pref
         penny.db.preferences.update_embedding(neg_pref.id, neg_vec)
@@ -1116,7 +1044,60 @@ async def test_preference_filter_active_with_only_negative_prefs(
         await penny.thinking_agent.execute()
 
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER)
-        assert len(thoughts) == 0, "Filter should activate on qualifying negative prefs alone"
+        assert len(thoughts) == 0, "Thought should be vetoed when title matches dislike"
+
+
+@pytest.mark.asyncio
+async def test_dislike_veto_allows_thought_below_threshold(
+    signal_server,
+    mock_ollama,
+    make_config,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Thought is stored when its title is not close to any dislike."""
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=2,
+        free_thinking_probability=0.0,
+        news_thinking_probability=0.0,
+    )
+
+    # Title embedding is orthogonal to the dislike vector (cosine sim = 0.0)
+    async def _fixed_embed(_client, _text):
+        return [1.0, 0.0, 0.0]
+
+    monkeypatch.setattr("penny.agents.thinking.embed_text", _fixed_embed)
+
+    from penny.ollama.embeddings import serialize_embedding
+
+    neg_vec = serialize_embedding([0.0, 0.0, 1.0])
+
+    def handler(request, count):
+        if count == 1:
+            return mock_ollama._make_tool_call_response(
+                request, "browse", {"queries": ["test"], "reasoning": "x"}
+            )
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+        penny.thinking_agent._embedding_model_client = object()
+
+        neg_pref = penny.db.preferences.add(
+            TEST_SENDER, "AI-generated music", "negative", source="extracted"
+        )
+        assert neg_pref
+        penny.db.preferences.update_embedding(neg_pref.id, neg_vec)
+
+        await penny.thinking_agent.execute()
+
+        thoughts = penny.db.thoughts.get_recent(TEST_SENDER)
+        assert len(thoughts) == 1, "Thought should be stored when title is far from dislikes"
 
 
 # ── 5. URL validation (unit tests) ───────────────────────────────────────
