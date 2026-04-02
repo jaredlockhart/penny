@@ -7,7 +7,6 @@ from typing import Any
 
 from penny.email.protocol import EmailClient
 from penny.tools.base import Tool
-from penny.tools.ollama import OllamaClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,25 +37,15 @@ class ReadEmailsTool(Tool):
     def to_action_str(cls, arguments: dict) -> str:
         return "Reading emails"
 
-    def __init__(
-        self,
-        email_client: EmailClient,
-        ollama_client: OllamaClient,
-        user_query: str,
-    ) -> None:
+    def __init__(self, email_client: EmailClient) -> None:
         self._client = email_client
-        self._ollama_client = ollama_client
-        self._user_query = user_query
 
     async def execute(self, **kwargs: Any) -> str:
-        """Read emails and return their content."""
+        """Read emails and return their full content."""
         email_ids = kwargs["email_ids"]
         if not email_ids:
             return NO_EMAILS_TO_READ
         emails = await self._client.read_emails(email_ids)
         if not emails:
             return NO_EMAILS_TO_READ
-
-        # Summarize emails using Ollama
-        summary = await self._ollama_client.summarize_emails(emails, self._user_query)
-        return summary
+        return "\n\n---\n\n".join(str(e) for e in emails)
