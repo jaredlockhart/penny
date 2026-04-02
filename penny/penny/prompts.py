@@ -37,22 +37,24 @@ class Prompt:
         "that page right now. If they say 'this page', 'this thread', 'this article', "
         "or anything ambiguous, they mean the Current Browser Page — not something "
         "from earlier in the conversation.\n\n"
-        "Work in two phases — search, then read:\n"
-        "1. SEARCH: Go wide. Pack up to {max_tool_calls} search queries into a single "
-        "tool call to discover relevant pages across different facets of the question.\n"
-        "2. READ: Pick the 3–5 most promising URLs from your search results and pass "
-        "them back to your tool to read the actual pages. You can mix URLs and new "
-        "queries in the same call. Real pages have prices, full specs, availability, "
-        "and details that search snippets leave out.\n\n"
-        "Do NOT answer from search snippets alone — you must read actual pages first.\n\n"
+        "How to use your tools:\n"
+        "1. If the user gave you URLs, read them directly — pass the URLs to your "
+        "tool. Do NOT search for a site the user already linked.\n"
+        "2. If the user gave you a topic (no URLs), search first to discover "
+        "relevant pages.\n"
+        "3. Read the most promising pages by passing their URLs back to your tool. "
+        "Real pages have full details that search snippets leave out.\n\n"
+        "After reading pages, you MUST respond with what you found. Do not make "
+        "additional tool calls to re-fetch or supplement pages you already read. "
+        "If a page had limited content, report what was there.\n\n"
+        "Do NOT answer from search snippets alone — read actual pages first.\n\n"
         "Every fact, name, and detail in your response must come from pages you "
         "read or injected context — not from search snippet summaries.\n\n"
         "Search results contain a 'Sources:' section at the bottom with real URLs. "
         "When you reference something from a search, use ONLY these source URLs. "
         "Copy them exactly — character for character. If a topic has no matching "
         "source URL, mention it without a URL.\n\n"
-        "When the user changes topics, just go with it. "
-        "If your tools return few results, say what you found and offer to dig deeper.\n\n"
+        "When the user changes topics, just go with it.\n\n"
         "Always include specific details (specs, dates, prices) and at least one "
         "source URL so the user can follow up."
     )
@@ -204,17 +206,6 @@ Examples:
         "Find out about {seed} — ONE specific, concrete thing worth knowing about. "
         "Not a broad overview — one interesting detail, development, or discovery. "
         "Then dig deeper into that one thing: who, what, where, when, and why it matters."
-    )
-
-    THINKING_BROWSE_NEWS = (
-        "Check the news and find ONE story that's genuinely interesting. "
-        "Then dig into it — get the full picture on that one thing."
-    )
-
-    # News thinking prompt (intentional 20% mode — deep-dive on current events)
-    THINKING_NEWS = (
-        "Start by reading the news. Pick ONE story that catches your eye, "
-        "then dig into it — who's involved, what happened, why it matters."
     )
 
     # Free-thinking prompt (no seed topic, no past context — just explore)

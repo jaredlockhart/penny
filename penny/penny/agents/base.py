@@ -179,7 +179,6 @@ class Agent:
 
     THOUGHT_CONTEXT_LIMIT = PennyConstants.THOUGHT_CONTEXT_LIMIT
     PREFERRED_POOL_SIZE = PennyConstants.PREFERRED_POOL_SIZE
-    MAX_TOOL_RESULT_CHARS = PennyConstants.MAX_TOOL_RESULT_CHARS
     name: str = "Agent"
 
     def __init__(
@@ -351,25 +350,21 @@ class Agent:
         source_urls: list[str] = []
         called_tools: set[tuple[str, ...]] = set()
         tool_call_records: list[ToolCallRecord] = []
-        empty_retries: int = 0
-        refusal_retries: int = 0
-
-        force_no_tools = False
 
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
 
             is_final_step = step == steps - 1
-            strip_tools = force_no_tools or (is_final_step and not self._keep_tools_on_final_step)
+            strip_tools = is_final_step and not self._keep_tools_on_final_step
             step_tools = [] if strip_tools else tools
             if strip_tools:
                 logger.debug("Final step — tools removed, model must produce text")
 
-            response = await self._call_model_with_xml_retry(messages, step_tools)
+            response = await self._call_model_validated(
+                messages, step_tools, tool_call_records=tool_call_records
+            )
             if response is None:
                 return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
-
-            self.on_response(response)
 
             if response.has_tool_calls and strip_tools:
                 logger.warning("Model hallucinated tool calls on final step — ignoring")
@@ -384,10 +379,6 @@ class Agent:
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
                     break
-                # If every tool call so far has failed and there have been at least
-                # two, abort early rather than letting the model hallucinate from
-                # nothing. A single failure gets one more chance — the model sees
-                # the error and may produce text or try a different query.
                 if len(tool_call_records) >= PennyConstants.TOOL_FAILURE_ABORT_THRESHOLD and all(
                     r.failed for r in tool_call_records
                 ):
@@ -403,77 +394,10 @@ class Agent:
                         ),
                         tool_calls=tool_call_records,
                     )
-                # Reset empty retry counter so the synthesis step gets a retry even if
-                # a previous intermediate step already consumed it.
-                empty_retries = 0
                 continue
 
             if await self.handle_text_step(response, messages, step, is_final_step):
                 continue
-
-            # Strip think tags before checking emptiness — model may return only
-            # <think>...</think> with no body text, which would bypass the empty check.
-            effective_content, _ = _strip_think_tags(response.content.strip())
-            if not effective_content and empty_retries == 0:
-                empty_retries += 1
-                logger.warning(
-                    "Model returned empty content on step %d/%d; requesting text output",
-                    step + 1,
-                    steps,
-                )
-                messages.append(response.message.to_input_message())
-                if len(tool_call_records) >= _TOOL_RESULT_TRUNCATION_THRESHOLD:
-                    logger.warning(
-                        "Truncating tool results before retry (preceding_tool_calls=%d)",
-                        len(tool_call_records),
-                    )
-                    messages = self._truncate_tool_messages(messages)
-                    nudge = _build_strong_nudge(messages)
-                elif tool_call_records:
-                    nudge = (
-                        "You've completed your research. Please synthesize your findings "
-                        "and provide a helpful response."
-                    )
-                else:
-                    nudge = "Please provide your response."
-                messages.append({"role": MessageRole.USER, "content": nudge})
-                force_no_tools = True
-                if not is_final_step:
-                    continue
-                # On the final step, retry directly — can't extend a for-range loop
-                response = await self._call_model_with_xml_retry(messages, step_tools)
-                if response is None:
-                    return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
-                self.on_response(response)
-
-            if (
-                refusal_retries == 0
-                and response.content.strip()
-                and self._is_refusal(response.content.strip())
-            ):
-                refusal_retries += 1
-                logger.warning(
-                    "Model returned refusal on step %d/%d; nudging for substantive response",
-                    step + 1,
-                    steps,
-                )
-                messages.append(response.message.to_input_message())
-                messages.append(
-                    {
-                        "role": MessageRole.USER,
-                        "content": (
-                            "Please provide a helpful response. "
-                            "Use your search tools or what you know to give a useful answer."
-                        ),
-                    }
-                )
-                if not is_final_step:
-                    continue
-                # On the final step, retry directly
-                response = await self._call_model_with_xml_retry(messages, step_tools)
-                if response is None:
-                    return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
-                self.on_response(response)
 
             return self._build_final_response(response, source_urls, attachments, tool_call_records)
 
@@ -510,33 +434,94 @@ class Agent:
         """Check if the loop should stop early. Override in subclasses."""
         return False
 
-    async def _call_model_with_xml_retry(self, messages: list[dict], tools: list[dict]):
-        """Call the model, retrying if it emits XML markup instead of structured tool calls."""
-        max_xml_retries = PennyConstants.XML_RETRY_LIMIT
-        response = None
-        effective_tools = tools if tools else None
+    async def _call_model_validated(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        tool_call_records: list[ToolCallRecord] | None = None,
+    ):
+        """Call the model, retrying on invalid outputs.
 
-        for xml_attempt in range(max_xml_retries):
+        Checks for (in order): XML markup, empty content, refusal, hallucinated URLs.
+        Each invalid output type gets one retry. Tool call responses are returned
+        immediately without validation.
+        """
+        max_retries = PennyConstants.RESPONSE_VALIDATION_RETRIES
+        effective_tools = tools if tools else None
+        retried: set[str] = set()
+
+        for attempt in range(max_retries):
             try:
                 response = await self._model_client.chat(messages=messages, tools=effective_tools)
-            except Exception as e:
-                logger.error("Error calling Ollama: %s", e)
+            except Exception as exception:
+                logger.error("Error calling Ollama: %s", exception)
                 return None
 
+            # Tool calls are not validated — return immediately
             if response.has_tool_calls:
-                break
+                return response
 
+            self.on_response(response)
             content = response.content.strip()
-            if not _has_xml_tags(content):
-                break
+            reason = self._check_response(content, retried)
+            if reason is None:
+                return response
 
+            retried.add(reason)
             logger.warning(
-                "Model emitted XML markup in content; retrying (attempt %d/%d)",
-                xml_attempt + 1,
-                max_xml_retries,
+                "Invalid response (%s) on attempt %d/%d",
+                reason,
+                attempt + 1,
+                max_retries,
             )
 
+            # Append the bad response so the model sees what it produced
+            messages.append(response.message.to_input_message())
+
+            # Empty content needs special handling: truncate tool context and nudge
+            if reason == "empty":
+                records = tool_call_records or []
+                if len(records) >= _TOOL_RESULT_TRUNCATION_THRESHOLD:
+                    messages = self._truncate_tool_messages(messages)
+                    nudge = _build_strong_nudge(messages)
+                elif records:
+                    nudge = (
+                        "You've completed your research. Please synthesize your findings "
+                        "and provide a helpful response."
+                    )
+                else:
+                    nudge = "Please provide your response."
+                messages.append({"role": MessageRole.USER, "content": nudge})
+
         return response
+
+    def _check_response(self, content: str, already_retried: set[str]) -> str | None:
+        """Check a text response for problems. Returns reason string or None if valid."""
+        if _has_xml_tags(content) and "xml" not in already_retried:
+            return "xml"
+
+        effective_content, _ = _strip_think_tags(content)
+        if not effective_content and "empty" not in already_retried:
+            return "empty"
+
+        if (
+            effective_content
+            and self._is_refusal(effective_content)
+            and "refusal" not in already_retried
+        ):
+            return "refusal"
+
+        source_text = self._get_source_text()
+        if source_text and effective_content:
+            bad_urls = self._find_hallucinated_urls(effective_content, source_text)
+            if bad_urls and "hallucinated_urls" not in already_retried:
+                logger.warning(
+                    "Hallucinated URL(s): %s",
+                    ", ".join(url[:80] for url in bad_urls),
+                )
+                return "hallucinated_urls"
+
+        return None
 
     @staticmethod
     def _truncate_tool_messages(messages: list[dict]) -> list[dict]:
@@ -659,9 +644,8 @@ class Agent:
 
         # Dedup check and on_tool_start are sequential: dedup requires ordered mutation of
         # called_tools, and on_tool_start fires UI status updates before execution begins.
-        max_calls = int(self.config.runtime.MESSAGE_MAX_TOOL_CALLS) if self.config else 5
         pending: list[tuple[str, dict, str | None]] = []
-        for ollama_tool_call in (response.message.tool_calls or [])[:max_calls]:
+        for ollama_tool_call in response.message.tool_calls or []:
             tool_name = ollama_tool_call.function.name
             arguments = ollama_tool_call.function.arguments
 
@@ -734,25 +718,13 @@ class Agent:
 
         if isinstance(tool_result.result, SearchResult):
             result_str, urls, image = self._format_search_result(tool_result.result)
-            result_str = self._truncate_tool_result(result_str)
             record.failed = _is_tool_result_failed(result_str)
             logger.debug("Tool result: %s", result_str[:200])
             return result_str, record, urls, image
-        result_str = self._truncate_tool_result(str(tool_result.result))
+        result_str = str(tool_result.result)
         record.failed = _is_tool_result_failed(result_str)
         logger.debug("Tool result: %s", result_str[:200])
         return result_str, record, [], None
-
-    def _truncate_tool_result(self, result_str: str) -> str:
-        """Truncate tool result to MAX_TOOL_RESULT_CHARS to prevent context saturation."""
-        if len(result_str) <= self.MAX_TOOL_RESULT_CHARS:
-            return result_str
-        logger.warning(
-            "Tool result truncated from %d to %d chars to prevent context saturation",
-            len(result_str),
-            self.MAX_TOOL_RESULT_CHARS,
-        )
-        return result_str[: self.MAX_TOOL_RESULT_CHARS] + " [truncated]"
 
     @staticmethod
     def _make_call_key(tool_name: str, arguments: dict) -> tuple[str, ...]:
@@ -867,9 +839,6 @@ class Agent:
         format_args: dict = {}
         if "{tools}" in prompt:
             format_args["tools"] = self._build_tool_summary()
-        if "{max_tool_calls}" in prompt:
-            assert self._browse_tool is not None, "{max_tool_calls} in prompt but no browse_tool"
-            format_args["max_tool_calls"] = self._browse_tool._max_calls
         if format_args:
             prompt = prompt.format(**format_args)
         return f"## Instructions\n{prompt}"

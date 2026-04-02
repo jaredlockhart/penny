@@ -89,42 +89,25 @@ class ThinkingAgent(Agent):
 
         total = self.db.thoughts.count_unnotified(user)
         if self._should_think_free(user, total):
-            return self._pick_free_prompt(user)
+            return Prompt.THINKING_FREE
         return self._pick_seeded_prompt(user)
 
     def _should_think_free(self, user: str, total_unnotified: int) -> bool:
-        """Decide free vs seeded based on distribution gap, random as tiebreak.
-
-        Free and news both produce preference_id=NULL thoughts, so the
-        target free ratio is FREE + NEWS combined.
-        """
+        """Decide free vs seeded based on distribution gap, random as tiebreak."""
         free_prob = float(self.config.runtime.FREE_THINKING_PROBABILITY)
-        news_prob = float(self.config.runtime.NEWS_THINKING_PROBABILITY)
-        target_free = free_prob + news_prob
         if total_unnotified == 0:
-            return random.random() < target_free
+            return random.random() < free_prob
         free_count = self.db.thoughts.count_unnotified_free(user)
         actual_free_ratio = free_count / total_unnotified
-        return actual_free_ratio < target_free
-
-    def _pick_free_prompt(self, user: str) -> str:
-        """Pick between free thinking and news based on their relative weights."""
-        free_weight = float(self.config.runtime.FREE_THINKING_PROBABILITY)
-        news_weight = float(self.config.runtime.NEWS_THINKING_PROBABILITY)
-        total = free_weight + news_weight
-        if total > 0 and random.random() < news_weight / total:
-            logger.info("News thinking cycle for %s", user)
-            return Prompt.THINKING_NEWS
-        logger.info("Free thinking cycle for %s", user)
-        return Prompt.THINKING_FREE
+        return actual_free_ratio < free_prob
 
     def _pick_seeded_prompt(self, user: str) -> str | None:
-        """Pick a preference-seeded prompt, falling back to news if none available."""
+        """Pick a preference-seeded prompt, falling back to free if none available."""
         threshold = int(self.config.runtime.PREFERENCE_MENTION_THRESHOLD)
         pool = self.db.preferences.get_least_recent_positive(user, mention_threshold=threshold)
         if not pool:
-            logger.info("No preferences for %s, browsing news", user)
-            return Prompt.THINKING_BROWSE_NEWS
+            logger.info("No preferences for %s, free thinking", user)
+            return Prompt.THINKING_FREE
 
         pref = random.choice(pool)
         self._seed_topic = pref.content
@@ -135,7 +118,7 @@ class ThinkingAgent(Agent):
     async def _build_system_prompt(self, user: str) -> str:
         """No identity, no profile — just thoughts (if seeded) + dislikes + instructions.
 
-        Free/news cycles get no thought context — injecting previous free
+        Free cycles get no thought context — injecting previous free
         thoughts primes the model to revisit them. Embedding dedup catches
         true repeats at storage time.
         """

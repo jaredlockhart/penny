@@ -158,15 +158,19 @@ that page right now. If they say 'this page', 'this thread', 'this article', \
 or anything ambiguous, they mean the Current Browser Page — not something \
 from earlier in the conversation.
 
-Work in two phases — search, then read:
-1. SEARCH: Go wide. Pack up to 3 search queries into a single \
-tool call to discover relevant pages across different facets of the question.
-2. READ: Pick the 3–5 most promising URLs from your search results and pass \
-them back to your tool to read the actual pages. You can mix URLs and new \
-queries in the same call. Real pages have prices, full specs, availability, \
-and details that search snippets leave out.
+How to use your tools:
+1. If the user gave you URLs, read them directly — pass the URLs to your \
+tool. Do NOT search for a site the user already linked.
+2. If the user gave you a topic (no URLs), search first to discover \
+relevant pages.
+3. Read the most promising pages by passing their URLs back to your tool. \
+Real pages have full details that search snippets leave out.
 
-Do NOT answer from search snippets alone — you must read actual pages first.
+After reading pages, you MUST respond with what you found. Do not make \
+additional tool calls to re-fetch or supplement pages you already read. \
+If a page had limited content, report what was there.
+
+Do NOT answer from search snippets alone — read actual pages first.
 
 Every fact, name, and detail in your response must come from pages you \
 read or injected context — not from search snippet summaries.
@@ -176,8 +180,7 @@ When you reference something from a search, use ONLY these source URLs. \
 Copy them exactly — character for character. If a topic has no matching \
 source URL, mention it without a URL.
 
-When the user changes topics, just go with it. \
-If your tools return few results, say what you found and offer to dig deeper.
+When the user changes topics, just go with it.
 
 Always include specific details (specs, dates, prices) and at least one \
 source URL so the user can follow up."""
@@ -264,8 +267,8 @@ async def test_conversation_prompt_includes_antirefusal_instruction(
     first_request = mock_ollama.requests[0]
     messages = first_request.get("messages", [])
     system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
-    assert "offer to dig deeper" in system_text.lower(), (
-        "CONVERSATION_PROMPT should instruct the model to always offer help"
+    assert "must respond with what you found" in system_text.lower(), (
+        "CONVERSATION_PROMPT should instruct the model to respond with available results"
     )
 
 
