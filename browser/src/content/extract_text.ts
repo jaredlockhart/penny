@@ -35,6 +35,15 @@ function findReadinessSelector(): string | null {
   return null;
 }
 
+function extractXml(): string | null {
+  const contentType = document.contentType;
+  if (contentType && (contentType.includes("xml") || contentType.includes("rss"))) {
+    const serializer = new XMLSerializer();
+    return serializer.serializeToString(document);
+  }
+  return null;
+}
+
 function extractWithDefuddle(): string | null {
   const clone = document.cloneNode(true) as Document;
   const result = new Defuddle(clone, { url: location.href }).parse();
@@ -67,7 +76,7 @@ function extract(): PageData {
     return { title: document.title, url: location.href, text: "", image: "", ready: false };
   }
 
-  const text = extractWithDefuddle() ?? "Failed to extract page content";
+  const text = extractXml() ?? extractWithDefuddle() ?? "Failed to extract page content";
 
   return {
     title: document.title,

@@ -82,7 +82,6 @@ async def test_seeded_thinking_full_loop(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=3,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
         ollama_embedding_model="test-embedding",
     )
 
@@ -233,7 +232,6 @@ async def test_free_thinking_full_loop(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=3,
         free_thinking_probability=1.0,
-        news_thinking_probability=0.0,
     )
 
     requests_seen: list[dict] = []
@@ -351,7 +349,7 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
 
 
 @pytest.mark.asyncio
-async def test_news_thinking_full_loop(
+async def test_no_preferences_falls_back_to_free_thinking(
     signal_server,
     mock_ollama,
     make_config,
@@ -359,119 +357,13 @@ async def test_news_thinking_full_loop(
     running_penny,
     monkeypatch,
 ):
-    """News thinking: intentional news mode — reads news, picks a story, digs in."""
-    # Force news path: 0% pure-free, 100% news → _pick_free_prompt always picks news
-    # random.random used for: (1) empty-pool fallback in _should_think_free,
-    # (2) news/free coin flip in _pick_free_prompt — 0.0 < 1.0 → news wins
-    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
-    config = make_config(
-        inner_monologue_interval=99999.0,
-        inner_monologue_max_steps=2,
-        free_thinking_probability=0.0,
-        news_thinking_probability=1.0,
-    )
-
-    requests_seen: list[dict] = []
-
-    def handler(request, count):
-        requests_seen.append(request)
-        if count == 1:
-            return mock_ollama._make_tool_call_response(
-                request,
-                "browse",
-                {"queries": ["top news stories 2026"], "reasoning": "Reading the news"},
-            )
-        if count == 2:
-            return mock_ollama._make_text_response(request, "Found a compelling story.")
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
-
-    mock_ollama.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        _seed_thinking(penny)
-        _add_dislike(penny)
-
-        await penny.thinking_agent.execute()
-
-        # Should run and produce a thought
-        assert len(requests_seen) > 0
-        thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
-        assert len(thoughts) == 1
-
-        # Prompt should be the news thinking prompt
-        first_user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
-        assert "news" in first_user_msgs[0]["content"].lower()
-
-        # -- Full system prompt: no identity, no profile, no thoughts, just dislikes
-        system_text = [
-            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
-        ][0]
-        lines = system_text.split("\n")
-        assert lines[0].startswith("Current date and time: ")
-        rest = "\n".join(lines[1:])
-        expected = """\
-
-## Context
-### Topics to Avoid
-- Country music
-
-## Instructions
-You are thinking to yourself. This is your inner monologue — \
-the user cannot see this.
-
-Your goal is to find ONE specific, concrete thing worth knowing about — \
-something the user would enjoy hearing about. Look for new releases, \
-creative work, technical deep-dives, or discoveries. Avoid \
-troubleshooting guides, bug reports, and support articles.
-
-You have tools available:
-- **browse**: Look things up. Pass up to 3 queries and/or URLs.
-
-Go DEEP, not wide:
-1. SEARCH first to discover what's out there on the topic
-2. Pick the single most interesting result, then READ the actual page \
-by passing its URL back to your tool
-3. Do follow-up reads to learn more about that specific thing
-- Do NOT explore a different subtopic on each step
-- Do NOT repeat the same query you already ran
-- Do NOT summarize from search snippets — always read the actual page
-
-When you receive 'dig deeper', that means: learn more about what \
-you already found. More detail on the same thing, not a new thing.
-
-Check your recent thoughts to avoid repeating what you already explored.
-
-All information in your responses must come from pages you read. \
-If nothing interesting comes up, that's fine — quiet cycles are normal."""
-        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
-
-        # -- Tools: browse (BrowseTool) available
-        tools = requests_seen[0].get("tools") or []
-        tool_names = [t["function"]["name"] for t in tools]
-        assert "browse" in tool_names
-
-        # No preference marked (news thinking has no seed preference)
-        pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER)
-        assert all(p.last_thought_at is None for p in pool)
-
-
-@pytest.mark.asyncio
-async def test_news_browsing_full_loop(
-    signal_server,
-    mock_ollama,
-    make_config,
-    test_user_info,
-    running_penny,
-    monkeypatch,
-):
-    """News browsing fallback: when no preferences exist, browses news and stores thought."""
-    # Force seeded path so it hits "no preferences → browse news"
+    """When no preferences exist, seeded path falls back to free thinking."""
+    # Force seeded path so it hits "no preferences → free thinking"
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
     )
 
     requests_seen: list[dict] = []
@@ -482,17 +374,16 @@ async def test_news_browsing_full_loop(
             return mock_ollama._make_tool_call_response(
                 request,
                 "browse",
-                {"queries": ["latest news 2026"], "reasoning": "Browsing news"},
+                {"queries": ["interesting discovery"], "reasoning": "Exploring"},
             )
         if count == 2:
-            # Final step — forced text (ignored, search results summarized in after_run)
-            return mock_ollama._make_text_response(request, "Found some news.")
+            return mock_ollama._make_text_response(request, "Found something cool.")
         return mock_ollama._make_text_response(request, MOCK_REPORT)
 
     mock_ollama.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # User exists but no preferences — triggers news browsing
+        # User exists but no preferences — triggers free thinking fallback
         penny.db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello"
         )
@@ -504,9 +395,9 @@ async def test_news_browsing_full_loop(
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
         assert len(thoughts) == 1
 
-        # Prompt should be the news browsing prompt
+        # Prompt should be the free thinking prompt
         first_user_msgs = [m for m in requests_seen[0]["messages"] if m.get("role") == "user"]
-        assert any("news" in m.get("content", "").lower() for m in first_user_msgs)
+        assert "interesting" in first_user_msgs[0]["content"].lower()
 
 
 # ── 2. Special success cases ─────────────────────────────────────────────
@@ -528,7 +419,6 @@ async def test_preference_rotation_via_last_thought_at(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
     )
 
     def handler(request, count):
@@ -591,7 +481,6 @@ async def test_extracted_preference_below_threshold_skipped(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=1,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
     )
 
     requests_seen: list[dict] = []
@@ -637,7 +526,6 @@ async def test_extracted_preference_at_threshold_used(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=1,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
     )
 
     requests_seen: list[dict] = []
@@ -696,7 +584,6 @@ async def test_distribution_steers_toward_underrepresented_type(
     config = make_config(
         inner_monologue_interval=99999.0,
         free_thinking_probability=0.5,
-        news_thinking_probability=0.0,
     )
 
     async with running_penny(config) as penny:
@@ -798,7 +685,6 @@ async def test_seeded_duplicate_thought_skips_storage(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
     )
 
     duplicate_vec = [1.0, 0.0, 0.0]
@@ -855,7 +741,6 @@ async def test_free_duplicate_thought_skips_storage(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
         free_thinking_probability=1.0,
-        news_thinking_probability=0.0,
     )
 
     duplicate_vec = [1.0, 0.0, 0.0]
@@ -910,7 +795,6 @@ async def test_novel_thought_is_stored(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
     )
 
     call_count = 0
@@ -967,7 +851,6 @@ async def test_dislike_veto_allows_thought_with_no_dislikes(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
     )
 
     async def _fixed_embed(_client, _text):
@@ -1009,7 +892,6 @@ async def test_dislike_veto_rejects_thought_matching_dislike(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
     )
 
     # Title embedding matches the dislike vector exactly (cosine sim = 1.0)
@@ -1062,7 +944,6 @@ async def test_dislike_veto_allows_thought_below_threshold(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=2,
         free_thinking_probability=0.0,
-        news_thinking_probability=0.0,
     )
 
     # Title embedding is orthogonal to the dislike vector (cosine sim = 0.0)

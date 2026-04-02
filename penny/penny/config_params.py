@@ -130,15 +130,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="MESSAGE_MAX_TOOL_CALLS",
-    description="Max parallel tool calls per agent step",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
     key="CHAT_MAX_QUERIES",
     description="Max parallel queries per chat tool call",
     type=int,
@@ -176,7 +167,7 @@ ConfigParam(
 
 ConfigParam(
     key="EMBEDDING_BACKFILL_BATCH_LIMIT",
-    description="Max facts/entities per embedding backfill cycle",
+    description="Max items per embedding backfill cycle (preferences, thoughts, messages)",
     type=int,
     default=50,
     validator=_validate_positive_int,
@@ -305,15 +296,6 @@ ConfigParam(
     description="Target ratio of free-exploration thoughts (0-1, remainder after news is seeded)",
     type=float,
     default=0.2,
-    validator=_validate_unit_float,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
-ConfigParam(
-    key="NEWS_THINKING_PROBABILITY",
-    description="Target ratio of news-browsing thoughts (0-1, remainder after free is seeded)",
-    type=float,
-    default=0.0,
     validator=_validate_unit_float,
     group=GROUP_INNER_MONOLOGUE,
 )
