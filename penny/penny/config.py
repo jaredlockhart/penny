@@ -178,7 +178,7 @@ class Config:
     plugins: list[str] = field(default_factory=list)
 
     # Max agent steps for email commands
-    email_max_steps: int = 5
+    email_max_steps: int = 10
 
     # Browser extension server (runs alongside primary channel)
     browser_enabled: bool = False
