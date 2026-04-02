@@ -130,15 +130,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="MESSAGE_MAX_TOOL_CALLS",
-    description="Max parallel tool calls per agent step",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
     key="CHAT_MAX_QUERIES",
     description="Max parallel queries per chat tool call",
     type=int,
@@ -148,20 +139,11 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="IMAGE_DOWNLOAD_TIMEOUT",
-    description="Timeout in seconds for image downloads",
-    type=float,
-    default=15.0,
-    validator=_validate_positive_float,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="IMAGE_MAX_RESULTS",
-    description="Max image search results to return",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
+    key="SEARCH_URL",
+    description="Base URL for text searches (encoded query is appended)",
+    type=str,
+    default="https://duckduckgo.com/?q=",
+    validator=_validate_non_empty_string,
     group=GROUP_GLOBAL,
 )
 
@@ -185,7 +167,7 @@ ConfigParam(
 
 ConfigParam(
     key="EMBEDDING_BACKFILL_BATCH_LIMIT",
-    description="Max facts/entities per embedding backfill cycle",
+    description="Max items per embedding backfill cycle (preferences, thoughts, messages)",
     type=int,
     default=50,
     validator=_validate_positive_int,
@@ -318,15 +300,6 @@ ConfigParam(
     group=GROUP_INNER_MONOLOGUE,
 )
 
-ConfigParam(
-    key="NEWS_THINKING_PROBABILITY",
-    description="Target ratio of news-browsing thoughts (0-1, remainder after free is seeded)",
-    type=float,
-    default=0.0,
-    validator=_validate_unit_float,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
 
 # ── History ──────────────────────────────────────────────────────────────────
 
@@ -392,15 +365,6 @@ ConfigParam(
     description="Max cooldown in seconds (ceiling for exponential backoff)",
     type=float,
     default=5400.0,
-    validator=_validate_positive_float,
-    group=GROUP_NOTIFY,
-)
-
-ConfigParam(
-    key="NEWS_COOLDOWN",
-    description="Cooldown in seconds between news notifications",
-    type=float,
-    default=3600.0,
     validator=_validate_positive_float,
     group=GROUP_NOTIFY,
 )

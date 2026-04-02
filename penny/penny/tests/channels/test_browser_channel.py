@@ -1,19 +1,23 @@
 """Tests for BrowserChannel message extraction and device registration."""
 
+import asyncio
 import json
 from typing import cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlmodel import Session, select
 
+from penny.channels.base import IncomingMessage
 from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
+from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.migrate import migrate
-from penny.tools.browse_url import BrowseUrlTool
-from penny.tools.fetch_news import FetchNewsTool
+from penny.database.models import RuntimeConfig
+from penny.tools.browse import BrowseTool
+from penny.tools.models import SearchResult
 from penny.tools.read_emails import ReadEmailsTool
-from penny.tools.search import SearchTool
 from penny.tools.search_emails import SearchEmailsTool
 
 
@@ -179,40 +183,38 @@ class TestBrowserImageHandling:
         assert result.endswith("text")
 
 
-class TestBrowseUrlTool:
-    """BrowseUrlTool passes through pre-sanitized content from the channel."""
+class TestBrowseTool:
+    """BrowseTool passes through pre-sanitized content from the channel."""
+
+    @staticmethod
+    def _make_tool(request_fn, permission_manager=None):
+        """Create a BrowseTool wired to a mock browse provider."""
+        perm = permission_manager or MagicMock(check_domain=AsyncMock())
+        tool = BrowseTool(max_calls=3)
+        tool.set_browse_provider(lambda: (request_fn, perm))
+        return tool
 
     @pytest.mark.asyncio
     async def test_returns_channel_content_as_search_result(self):
         """Tool returns a SearchResult with the channel content."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.browse_url import BrowseUrlTool
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(
             return_value=("Title: Example\nURL: https://example.com\n\nPage content.", None)
         )
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
         assert "Page content." in result.text
-        request_fn.assert_called_once_with(BrowseUrlTool.name, {"url": "https://example.com"})
+        request_fn.assert_called_once_with("browse_url", {"url": "https://example.com"})
 
     @pytest.mark.asyncio
     async def test_image_url_from_response(self):
         """Tool passes through image URL from the tool response tuple."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.browse_url import BrowseUrlTool
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(
             return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", "https://ex.com/og.jpg")
         )
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
         assert result.image_base64 == "https://ex.com/og.jpg"
@@ -220,11 +222,6 @@ class TestBrowseUrlTool:
     @pytest.mark.asyncio
     async def test_cleans_kagi_cruft_from_content(self):
         """Tool strips Kagi proxy images, empty links, and image grid sections."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.browse_url import BrowseUrlTool
-        from penny.tools.models import SearchResult
-
         kagi_content = (
             "### Best guitar amps 2026\n"
             "\n"
@@ -253,8 +250,8 @@ class TestBrowseUrlTool:
             "A useful snippet about the second result."
         )
         request_fn = AsyncMock(return_value=(kagi_content, None))
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://kagi.com/search?q=test")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://kagi.com/search?q=test"])
 
         assert isinstance(result, SearchResult)
         # Signal preserved
@@ -274,14 +271,9 @@ class TestBrowseUrlTool:
     @pytest.mark.asyncio
     async def test_no_image_returns_none(self):
         """SearchResult.image_base64 is None when response has no image."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.browse_url import BrowseUrlTool
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
         assert result.image_base64 is None
@@ -289,14 +281,9 @@ class TestBrowseUrlTool:
     @pytest.mark.asyncio
     async def test_returns_no_content_message_for_empty(self):
         """Tool returns a SearchResult with no-content message when channel returns empty."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.browse_url import BrowseUrlTool
-        from penny.tools.models import SearchResult
-
         request_fn = AsyncMock(return_value=("  ", None))
-        tool = BrowseUrlTool(request_fn=request_fn)
-        result = await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn)
+        result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
         assert "no content" in result.text.lower()
@@ -304,57 +291,44 @@ class TestBrowseUrlTool:
     @pytest.mark.asyncio
     async def test_checks_permission_before_browsing(self):
         """Tool calls permission_manager.check_domain before requesting the page."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from penny.tools.browse_url import BrowseUrlTool
-
         mock_perm = MagicMock()
         mock_perm.check_domain = AsyncMock()
         request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
-        tool = BrowseUrlTool(request_fn=request_fn, permission_manager=mock_perm)
-        await tool.execute(url="https://example.com")
+        tool = self._make_tool(request_fn, permission_manager=mock_perm)
+        await tool.execute(queries=["https://example.com"])
 
         mock_perm.check_domain.assert_called_once_with("https://example.com")
         request_fn.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_permission_denied_raises_before_browse(self):
-        """Tool raises without browsing when permission is denied."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from penny.tools.browse_url import BrowseUrlTool
-
+    async def test_permission_denied_reports_error_in_result(self):
+        """Permission denial appears as error in result, request_fn not called."""
         mock_perm = MagicMock()
         mock_perm.check_domain = AsyncMock(side_effect=RuntimeError("blocked"))
         request_fn = AsyncMock()
-        tool = BrowseUrlTool(request_fn=request_fn, permission_manager=mock_perm)
+        tool = self._make_tool(request_fn, permission_manager=mock_perm)
 
-        with pytest.raises(RuntimeError, match="blocked"):
-            await tool.execute(url="https://blocked.com")
+        result = await tool.execute(queries=["https://blocked.com"])
 
+        assert "Error: blocked" in result.text
         request_fn.assert_not_called()
 
 
-class TestMultiToolImagePassthrough:
-    """MultiTool passes the first browse_url image through to the combined result."""
+class TestBrowseToolImagePassthrough:
+    """BrowseTool passes the first browse image through to the combined result."""
 
     @pytest.mark.asyncio
-    async def test_image_from_browse_url_propagates(self):
-        """Image from a browse_url sub-call appears on the combined SearchResult."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.models import SearchResult
-        from penny.tools.multi import MultiTool
-
-        browse_result = SearchResult(
-            text="Title: Ex\nURL: https://ex.com\nImage: https://ex.com/img.jpg\n\nContent.",
-            image_base64="https://ex.com/img.jpg",
+    async def test_image_from_browse_propagates(self):
+        """Image from a browse sub-call appears on the combined SearchResult."""
+        request_fn = AsyncMock(
+            return_value=(
+                "Title: Ex\nURL: https://ex.com\nImage: https://ex.com/img.jpg\n\nContent.",
+                "https://ex.com/img.jpg",
+            )
         )
-        mock_browse_tool = AsyncMock()
-        mock_browse_tool.execute = AsyncMock(return_value=browse_result)
-
-        tool = MultiTool(max_calls=3, search_tool=None)
-        tool.set_browse_url_provider(lambda: mock_browse_tool)
+        mock_perm = MagicMock(check_domain=AsyncMock())
+        tool = BrowseTool(max_calls=3)
+        tool.set_browse_provider(lambda: (request_fn, mock_perm))
 
         result = await tool.execute(queries=["https://ex.com"])
         assert isinstance(result, SearchResult)
@@ -362,18 +336,11 @@ class TestMultiToolImagePassthrough:
 
     @pytest.mark.asyncio
     async def test_no_image_when_browse_has_none(self):
-        """Combined SearchResult has no image when browse_url returns none."""
-        from unittest.mock import AsyncMock
-
-        from penny.tools.models import SearchResult
-        from penny.tools.multi import MultiTool
-
-        browse_result = SearchResult(text="Title: Ex\nURL: https://ex.com\n\nContent.")
-        mock_browse_tool = AsyncMock()
-        mock_browse_tool.execute = AsyncMock(return_value=browse_result)
-
-        tool = MultiTool(max_calls=3, search_tool=None)
-        tool.set_browse_url_provider(lambda: mock_browse_tool)
+        """Combined SearchResult has no image when browse returns none."""
+        request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
+        mock_perm = MagicMock(check_domain=AsyncMock())
+        tool = BrowseTool(max_calls=3)
+        tool.set_browse_provider(lambda: (request_fn, mock_perm))
 
         result = await tool.execute(queries=["https://ex.com"])
         assert isinstance(result, SearchResult)
@@ -505,10 +472,6 @@ class TestBrowserConfigHandlers:
     """config_request and config_update handlers send and persist correctly."""
 
     def _channel(self, tmp_path) -> tuple[BrowserChannel, Database]:
-        from unittest.mock import MagicMock
-
-        from penny.config_params import RuntimeParams
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         # Give channel a real RuntimeParams so DB lookups work after updates
@@ -520,8 +483,6 @@ class TestBrowserConfigHandlers:
     @pytest.mark.asyncio
     async def test_config_request_returns_all_params(self, tmp_path):
         """config_request sends a config_response containing every registered param."""
-        from penny.config_params import RUNTIME_CONFIG_PARAMS
-
         channel, _ = self._channel(tmp_path)
         ws = _MockWs()
         await channel._handle_config_request(ws)  # ty: ignore[invalid-argument-type]
@@ -549,10 +510,6 @@ class TestBrowserConfigHandlers:
     @pytest.mark.asyncio
     async def test_config_update_persists_value(self, tmp_path):
         """config_update writes the validated value to the runtime_config table."""
-        from sqlmodel import Session, select
-
-        from penny.database.models import RuntimeConfig
-
         channel, db = self._channel(tmp_path)
         ws = _MockWs()
         await channel._handle_config_update(
@@ -641,8 +598,6 @@ class TestBrowserHeartbeat:
 
     @pytest.mark.asyncio
     async def test_heartbeat_calls_notify_activity(self, tmp_path):
-        from unittest.mock import MagicMock
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         scheduler = MagicMock()
@@ -706,8 +661,6 @@ class TestBrowserRegister:
     @pytest.mark.asyncio
     async def test_tool_request_works_after_register_without_chat(self, tmp_path):
         """Tool requests succeed after register + capabilities even if no chat message was sent."""
-        import asyncio
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
 
@@ -936,31 +889,21 @@ class TestBrowserThoughtReaction:
 class TestFormatToolStatus:
     """_format_tool_status produces human-readable labels for each tool."""
 
-    def test_search_single_query(self):
-        result = BrowserChannel._format_tool_status(SearchTool.name, {"query": "firefox memory"})
-        assert result == 'Searching for "firefox memory"'
-
-    def test_search_invalid_args(self):
-        result = BrowserChannel._format_tool_status(SearchTool.name, {})
-        assert result == "Searching"
-
-    def test_browse_url_with_url(self):
+    def test_browse_with_url_query(self):
         result = BrowserChannel._format_tool_status(
-            BrowseUrlTool.name, {"url": "https://example.com"}
+            BrowseTool.name, {"queries": ["https://example.com"]}
         )
-        assert result == "Reading https://example.com"
+        assert result == "Reading example.com"
 
-    def test_browse_url_without_url(self):
-        result = BrowserChannel._format_tool_status(BrowseUrlTool.name, {})
-        assert result == "Reading page"
+    def test_browse_with_text_query(self):
+        result = BrowserChannel._format_tool_status(
+            BrowseTool.name, {"queries": ["best guitar amps"]}
+        )
+        assert result == 'Searching "best guitar amps"'
 
-    def test_fetch_news_with_topic(self):
-        result = BrowserChannel._format_tool_status(FetchNewsTool.name, {"topic": "climate change"})
-        assert result == "Fetching news about climate change"
-
-    def test_fetch_news_default_topic(self):
-        result = BrowserChannel._format_tool_status(FetchNewsTool.name, {})
-        assert result == "Fetching news about top news"
+    def test_browse_without_queries(self):
+        result = BrowserChannel._format_tool_status(BrowseTool.name, {})
+        assert result == "Looking up..."
 
     def test_search_emails(self):
         result = BrowserChannel._format_tool_status(SearchEmailsTool.name, {"text": "invoice"})
@@ -981,8 +924,6 @@ class TestMakeHandleKwargs:
     @pytest.mark.asyncio
     async def test_returns_on_tool_start_key(self, tmp_path):
         """_make_handle_kwargs always returns a dict with an on_tool_start callable."""
-        from penny.channels.base import IncomingMessage
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         message = IncomingMessage(sender="browser-user", content="hello")
@@ -994,22 +935,18 @@ class TestMakeHandleKwargs:
     @pytest.mark.asyncio
     async def test_callback_sends_tool_status(self, tmp_path):
         """Callback calls _send_tool_status with the sender and formatted text."""
-        from unittest.mock import AsyncMock
-
-        from penny.channels.base import IncomingMessage
-
         db = _make_db(tmp_path)
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         channel._send_tool_status = AsyncMock()  # ty: ignore[invalid-assignment]
 
         message = IncomingMessage(sender="firefox-macbook", content="hello")
         kwargs = channel._make_handle_kwargs(message)
-        await kwargs["on_tool_start"]([(SearchTool.name, {"query": "test query"})])
+        await kwargs["on_tool_start"]([("browse", {"queries": ["test query"]})])
 
         channel._send_tool_status.assert_called_once()
         recipient, text = channel._send_tool_status.call_args.args
         assert recipient == "firefox-macbook"
-        assert '"test query"' in text
+        assert "test query" in text
 
     @pytest.mark.asyncio
     async def test_send_tool_status_sends_typing_with_content(self, tmp_path):
@@ -1026,3 +963,264 @@ class TestMakeHandleKwargs:
         assert msg["type"] == "typing"
         assert msg["active"] is True
         assert msg["content"] == "Searching for stuff"
+
+
+class TestBrowserScheduleHandlers:
+    """Schedule request/add/update/delete handlers for browser extension."""
+
+    USER = "testuser"
+
+    def _channel(self, tmp_path, monkeypatch) -> tuple[BrowserChannel, Database]:
+        db = _make_db(tmp_path)
+        monkeypatch.setattr(db.users, "get_primary_sender", lambda: self.USER)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        return channel, db
+
+    def _add_schedule(self, db, timing="daily 9am", prompt="check the news", cron="0 9 * * *"):
+        with Session(db.engine) as session:
+            from penny.database.models import Schedule
+
+            sched = Schedule(
+                user_id=self.USER,
+                user_timezone="America/New_York",
+                cron_expression=cron,
+                prompt_text=prompt,
+                timing_description=timing,
+            )
+            session.add(sched)
+            session.commit()
+            session.refresh(sched)
+            return sched
+
+    def _add_user_info(self, db):
+        with Session(db.engine) as session:
+            from penny.database.models import UserInfo
+
+            session.add(
+                UserInfo(
+                    sender=self.USER,
+                    name="Test User",
+                    location="New York",
+                    timezone="America/New_York",
+                    date_of_birth="1990-01-01",
+                )
+            )
+            session.commit()
+
+    @pytest.mark.asyncio
+    async def test_schedules_request_empty(self, tmp_path, monkeypatch):
+        """Request with no schedules sends an empty list."""
+        channel, _ = self._channel(tmp_path, monkeypatch)
+        ws = _MockWs()
+        await channel._handle_schedules_request(ws)  # ty: ignore[invalid-argument-type]
+
+        assert len(ws.sent) == 1
+        resp = ws.sent[0]
+        assert resp["type"] == "schedules_response"
+        assert resp["schedules"] == []
+        assert resp["error"] is None
+
+    @pytest.mark.asyncio
+    async def test_schedules_request_returns_existing(self, tmp_path, monkeypatch):
+        """Request returns all schedules for the user with correct fields."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        self._add_schedule(db, timing="daily 9am", prompt="check the news", cron="0 9 * * *")
+        self._add_schedule(db, timing="every monday", prompt="meal ideas", cron="0 9 * * 1")
+
+        ws = _MockWs()
+        await channel._handle_schedules_request(ws)  # ty: ignore[invalid-argument-type]
+
+        resp = ws.sent[0]
+        assert len(resp["schedules"]) == 2
+        first = resp["schedules"][0]
+        assert first["timing_description"] == "daily 9am"
+        assert first["prompt_text"] == "check the news"
+        assert first["cron_expression"] == "0 9 * * *"
+        assert "id" in first
+
+    @pytest.mark.asyncio
+    async def test_schedule_delete_removes_and_returns_list(self, tmp_path, monkeypatch):
+        """schedule_delete removes the entry and returns the remaining list."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        sched1 = self._add_schedule(db, prompt="check the news")
+        self._add_schedule(db, timing="every monday", prompt="meal ideas", cron="0 9 * * 1")
+
+        ws = _MockWs()
+        await channel._handle_schedule_delete(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "schedule_delete", "schedule_id": sched1.id},
+        )
+
+        resp = ws.sent[0]
+        prompts = [s["prompt_text"] for s in resp["schedules"]]
+        assert "check the news" not in prompts
+        assert "meal ideas" in prompts
+
+    @pytest.mark.asyncio
+    async def test_schedule_delete_unknown_id_still_returns_list(self, tmp_path, monkeypatch):
+        """Deleting a nonexistent ID still returns the current schedule list."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        self._add_schedule(db, prompt="check the news")
+
+        ws = _MockWs()
+        await channel._handle_schedule_delete(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "schedule_delete", "schedule_id": 9999},
+        )
+
+        resp = ws.sent[0]
+        assert len(resp["schedules"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_schedule_update_changes_prompt_text(self, tmp_path, monkeypatch):
+        """schedule_update persists the new prompt text and returns the updated list."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        sched = self._add_schedule(db, prompt="check the news")
+
+        ws = _MockWs()
+        await channel._handle_schedule_update(
+            ws,  # ty: ignore[invalid-argument-type]
+            {
+                "type": "schedule_update",
+                "schedule_id": sched.id,
+                "prompt_text": "check sports scores",
+            },
+        )
+
+        resp = ws.sent[0]
+        assert resp["schedules"][0]["prompt_text"] == "check sports scores"
+
+        # Verify persisted in DB
+        with Session(db.engine) as session:
+            from penny.database.models import Schedule
+
+            updated = session.get(Schedule, sched.id)
+            assert updated is not None
+            assert updated.prompt_text == "check sports scores"
+
+    @pytest.mark.asyncio
+    async def test_schedule_add_creates_via_llm_parsing(self, tmp_path, monkeypatch):
+        """schedule_add parses the command via LLM and creates a schedule."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        self._add_user_info(db)
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.message.content = json.dumps(
+            {
+                "timing_description": "daily 9am",
+                "prompt_text": "check the news",
+                "cron_expression": "0 9 * * *",
+            }
+        )
+        mock_client.generate.return_value = mock_response
+        channel._model_client = mock_client
+
+        ws = _MockWs()
+        await channel._handle_schedule_add(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "schedule_add", "command": "daily 9am check the news"},
+        )
+
+        resp = ws.sent[0]
+        assert resp["error"] is None
+        assert len(resp["schedules"]) == 1
+        assert resp["schedules"][0]["timing_description"] == "daily 9am"
+        assert resp["schedules"][0]["prompt_text"] == "check the news"
+        assert resp["schedules"][0]["cron_expression"] == "0 9 * * *"
+
+    @pytest.mark.asyncio
+    async def test_schedule_add_without_timezone_returns_error(self, tmp_path, monkeypatch):
+        """schedule_add without user timezone returns an error."""
+        channel, _ = self._channel(tmp_path, monkeypatch)
+
+        ws = _MockWs()
+        await channel._handle_schedule_add(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "schedule_add", "command": "daily 9am check the news"},
+        )
+
+        resp = ws.sent[0]
+        assert resp["error"] is not None
+        assert "timezone" in resp["error"].lower() or "profile" in resp["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_schedule_add_llm_failure_returns_error(self, tmp_path, monkeypatch):
+        """schedule_add returns an error when LLM parsing fails."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        self._add_user_info(db)
+
+        mock_client = AsyncMock()
+        mock_client.generate.side_effect = RuntimeError("ollama down")
+        channel._model_client = mock_client
+
+        ws = _MockWs()
+        await channel._handle_schedule_add(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "schedule_add", "command": "daily 9am check the news"},
+        )
+
+        resp = ws.sent[0]
+        assert resp["error"] is not None
+        assert resp["schedules"] == []
+
+    @pytest.mark.asyncio
+    async def test_schedule_add_invalid_cron_returns_error(self, tmp_path, monkeypatch):
+        """schedule_add returns an error when LLM produces an invalid cron expression."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        self._add_user_info(db)
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.message.content = json.dumps(
+            {
+                "timing_description": "daily 9am",
+                "prompt_text": "check the news",
+                "cron_expression": "0 9 * *",
+            }
+        )
+        mock_client.generate.return_value = mock_response
+        channel._model_client = mock_client
+
+        ws = _MockWs()
+        await channel._handle_schedule_add(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "schedule_add", "command": "daily 9am check the news"},
+        )
+
+        resp = ws.sent[0]
+        assert resp["error"] is not None
+        assert resp["schedules"] == []
+
+    @pytest.mark.asyncio
+    async def test_schedules_request_dispatched_via_process_raw_message(
+        self, tmp_path, monkeypatch
+    ):
+        """schedules_request type is dispatched through _process_raw_message."""
+        channel, _ = self._channel(tmp_path, monkeypatch)
+        ws = _MockWs()
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "schedules_request"}),
+            None,
+        )
+
+        assert len(ws.sent) == 1
+        assert ws.sent[0]["type"] == "schedules_response"
+
+    @pytest.mark.asyncio
+    async def test_schedule_delete_dispatched_via_process_raw_message(self, tmp_path, monkeypatch):
+        """schedule_delete type is dispatched through _process_raw_message."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        sched = self._add_schedule(db, prompt="check the news")
+
+        ws = _MockWs()
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps({"type": "schedule_delete", "schedule_id": sched.id}),
+            None,
+        )
+
+        assert len(ws.sent) == 1
+        assert ws.sent[0]["type"] == "schedules_response"
+        assert ws.sent[0]["schedules"] == []

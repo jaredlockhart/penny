@@ -32,7 +32,11 @@ export type WsOutgoingType =
   | "capabilities_update"
   | "domain_update"
   | "domain_delete"
-  | "permission_decision";
+  | "permission_decision"
+  | "schedules_request"
+  | "schedule_add"
+  | "schedule_update"
+  | "schedule_delete";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -49,6 +53,10 @@ export const WsOutgoingType = {
   DomainUpdate: "domain_update",
   DomainDelete: "domain_delete",
   PermissionDecision: "permission_decision",
+  SchedulesRequest: "schedules_request",
+  ScheduleAdd: "schedule_add",
+  ScheduleUpdate: "schedule_update",
+  ScheduleDelete: "schedule_delete",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
@@ -96,6 +104,26 @@ export interface WsOutgoingCapabilitiesUpdate {
   tool_use_enabled: boolean;
 }
 
+export interface WsOutgoingSchedulesRequest {
+  type: typeof WsOutgoingType.SchedulesRequest;
+}
+
+export interface WsOutgoingScheduleAdd {
+  type: typeof WsOutgoingType.ScheduleAdd;
+  command: string;
+}
+
+export interface WsOutgoingScheduleUpdate {
+  type: typeof WsOutgoingType.ScheduleUpdate;
+  schedule_id: number;
+  prompt_text: string;
+}
+
+export interface WsOutgoingScheduleDelete {
+  type: typeof WsOutgoingType.ScheduleDelete;
+  schedule_id: number;
+}
+
 export type WsOutgoing =
   | WsOutgoingMessage
   | WsOutgoingToolResponse
@@ -103,7 +131,11 @@ export type WsOutgoing =
   | WsOutgoingPreferenceAdd
   | WsOutgoingPreferenceDelete
   | WsOutgoingHeartbeat
-  | WsOutgoingCapabilitiesUpdate;
+  | WsOutgoingCapabilitiesUpdate
+  | WsOutgoingSchedulesRequest
+  | WsOutgoingScheduleAdd
+  | WsOutgoingScheduleUpdate
+  | WsOutgoingScheduleDelete;
 
 // --- WebSocket: incoming (server → browser) ---
 
@@ -117,7 +149,8 @@ export type WsIncomingType =
   | "config_response"
   | "domain_permissions_sync"
   | "permission_prompt"
-  | "permission_dismiss";
+  | "permission_dismiss"
+  | "schedules_response";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
@@ -129,6 +162,7 @@ export const WsIncomingType = {
   DomainPermissionsSync: "domain_permissions_sync",
   PermissionPrompt: "permission_prompt",
   PermissionDismiss: "permission_dismiss",
+  SchedulesResponse: "schedules_response",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -217,6 +251,19 @@ export interface WsIncomingPermissionDismissPayload {
   request_id: string;
 }
 
+export interface ScheduleItem {
+  id: number;
+  timing_description: string;
+  prompt_text: string;
+  cron_expression: string;
+}
+
+export interface WsIncomingSchedulesPayload {
+  type: typeof WsIncomingType.SchedulesResponse;
+  schedules: ScheduleItem[];
+  error: string | null;
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
@@ -227,7 +274,8 @@ export type WsIncomingPayload =
   | WsIncomingConfigPayload
   | WsIncomingDomainPermissionsPayload
   | WsIncomingPermissionPromptPayload
-  | WsIncomingPermissionDismissPayload;
+  | WsIncomingPermissionDismissPayload
+  | WsIncomingSchedulesPayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
@@ -255,7 +303,12 @@ export type RuntimeMessageType =
   | "tool_use_state"
   | "domain_update"
   | "domain_delete"
-  | "domain_permissions_sync";
+  | "domain_permissions_sync"
+  | "schedules_request"
+  | "schedules_response"
+  | "schedule_add"
+  | "schedule_update"
+  | "schedule_delete";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -282,6 +335,11 @@ export const RuntimeMessageType = {
   DomainUpdate: "domain_update",
   DomainDelete: "domain_delete",
   DomainPermissionsSync: "domain_permissions_sync",
+  SchedulesRequest: "schedules_request",
+  SchedulesResponse: "schedules_response",
+  ScheduleAdd: "schedule_add",
+  ScheduleUpdate: "schedule_update",
+  ScheduleDelete: "schedule_delete",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -439,6 +497,37 @@ export interface RuntimeDomainPermissionsSync {
   permissions: DomainPermissionEntry[];
 }
 
+/** Sidebar → background: request all schedules */
+export interface RuntimeSchedulesRequest {
+  type: typeof RuntimeMessageType.SchedulesRequest;
+}
+
+/** Background → sidebar: schedules list */
+export interface RuntimeSchedulesResponse {
+  type: typeof RuntimeMessageType.SchedulesResponse;
+  schedules: ScheduleItem[];
+  error: string | null;
+}
+
+/** Sidebar → background: add a new schedule */
+export interface RuntimeScheduleAdd {
+  type: typeof RuntimeMessageType.ScheduleAdd;
+  command: string;
+}
+
+/** Sidebar → background: update a schedule's prompt text */
+export interface RuntimeScheduleUpdate {
+  type: typeof RuntimeMessageType.ScheduleUpdate;
+  schedule_id: number;
+  prompt_text: string;
+}
+
+/** Sidebar → background: delete a schedule */
+export interface RuntimeScheduleDelete {
+  type: typeof RuntimeMessageType.ScheduleDelete;
+  schedule_id: number;
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -463,7 +552,12 @@ export type RuntimeMessage =
   | RuntimeToolUseState
   | RuntimeDomainUpdate
   | RuntimeDomainDelete
-  | RuntimeDomainPermissionsSync;
+  | RuntimeDomainPermissionsSync
+  | RuntimeSchedulesRequest
+  | RuntimeSchedulesResponse
+  | RuntimeScheduleAdd
+  | RuntimeScheduleUpdate
+  | RuntimeScheduleDelete;
 
 // --- Domain permissions ---
 

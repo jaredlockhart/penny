@@ -15,7 +15,6 @@ from penny.constants import PennyConstants
 from penny.database.models import MessageLog
 from penny.ollama import OllamaClient
 from penny.responses import PennyResponse
-from penny.tools.models import SearchArgs
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -274,7 +273,7 @@ class MessageChannel(ABC):
             recipient: Identifier for the recipient
             content: Message content
             parent_id: Parent message ID for thread linking
-            image_prompt: Deprecated — previously used for Serper image search
+            image_prompt: Unused (kept for interface compatibility)
             attachments: Optional list of base64-encoded image attachments
             quote_message: Optional message to quote-reply to
             thought_id: Optional FK to the thought that triggered this message
@@ -282,10 +281,6 @@ class MessageChannel(ABC):
         Returns:
             Database message ID if send was successful, None otherwise
         """
-        if not attachments and image_prompt:
-            attachments = await self._resolve_image(image_prompt, attachments)
-        elif not attachments:
-            attachments = await self._resolve_image(content[: self.MAX_IMAGE_PROMPT_LENGTH], None)
 
         # Apply channel-specific formatting
         # We log the prepared content so quote matching works correctly
@@ -329,32 +324,11 @@ class MessageChannel(ABC):
     def _extract_image_prompt(response) -> str | None:
         """Extract a short image search query from the agent's tool calls."""
         for tc in response.tool_calls or []:
-            if tc.tool == "fetch":
+            if tc.tool == "browse":
                 for q in tc.arguments.get("queries", []):
                     if not q.startswith("http"):
                         return q
-            elif tc.tool == "search":
-                args = SearchArgs.model_validate(tc.arguments)
-                if args.query:
-                    return args.query
         return None
-
-    async def _resolve_image(
-        self, image_prompt: str, attachments: list[str] | None
-    ) -> list[str] | None:
-        """Search for an image and merge it into the attachments list."""
-        from penny.serper.client import search_image
-
-        serper_key = self._config.serper_api_key if self._config else None
-        image = await search_image(
-            image_prompt,
-            api_key=serper_key,
-            max_results=int(self._config.runtime.IMAGE_MAX_RESULTS) if self._config else 5,
-            timeout=self._config.runtime.IMAGE_DOWNLOAD_TIMEOUT if self._config else 10.0,
-        )
-        if image:
-            return (attachments or []) + [image]
-        return attachments
 
     async def handle_message(self, envelope_data: dict) -> None:
         """

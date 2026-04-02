@@ -34,12 +34,14 @@ class PennyConstants:
         USER_MESSAGE = "user_message"
         PENNY_ENRICHMENT = "penny_enrichment"
 
-    # Search tool constants
-    PERPLEXITY_PRESET = "pro-search"
+    # Browse tool constants
     URL_BLOCKLIST_DOMAINS = (
         "play.google.com",
         "apps.apple.com",
     )
+    BROWSE_RETRIES = 2
+    BROWSE_RETRY_DELAY = 1.0
+    DISLIKE_FILTER_THRESHOLD = 0.8
 
     # Email command constants
     JMAP_SESSION_URL = "https://api.fastmail.com/jmap/session"
@@ -114,11 +116,9 @@ class PennyConstants:
     HISTORY_MAX_STEPS = 1
     VISION_MAX_STEPS = 1
     CHECKIN_MAX_STEPS = 1
-    NEWS_NOTIFY_MAX_STEPS = 3
     TOOL_RESULT_TRUNCATION_THRESHOLD = 3
     TOOL_RESULT_TRUNCATION_MAX_CHARS = 500
-    MAX_TOOL_RESULT_CHARS = 50000
-    XML_RETRY_LIMIT = 3
+    RESPONSE_VALIDATION_RETRIES = 5
     TOOL_FAILURE_ABORT_THRESHOLD = 2
     THOUGHT_CONTEXT_LIMIT = 10
     PREFERRED_POOL_SIZE = 5
@@ -131,7 +131,6 @@ class PennyConstants:
     CHECKIN_ACTIVE_WINDOW = 1800
     CHECKIN_COOLDOWN_SECONDS = 86400
     THOUGHT_TOPIC_COOLDOWN_SECONDS = 86400
-    NEWS_CHANCE = 1 / 3
     NOTIFY_URL_RETRIES = 2
 
     # History constants

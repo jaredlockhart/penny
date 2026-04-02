@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from sqlmodel import Session, or_, select
 
+from penny.constants import PennyConstants
 from penny.database.models import Preference
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,19 @@ class PreferenceStore:
                 session.exec(
                     select(Preference).where(
                         Preference.user == user,
+                        Preference.embedding != None,  # noqa: E711
+                    )
+                ).all()
+            )
+
+    def get_negative_with_embeddings(self, user: str) -> list[Preference]:
+        """Get negative preferences with embeddings for dislike filtering."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Preference).where(
+                        Preference.user == user,
+                        Preference.valence == PennyConstants.PreferenceValence.NEGATIVE,
                         Preference.embedding != None,  # noqa: E711
                     )
                 ).all()

@@ -28,7 +28,7 @@ def _insert_message(penny, sender, content, direction, timestamp, **kwargs):
 
 @pytest.mark.asyncio
 async def test_history_context_formats_dates_and_topics(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """History context includes date labels and topic bullets."""
     config = make_config()
@@ -53,7 +53,7 @@ async def test_history_context_formats_dates_and_topics(
 
 @pytest.mark.asyncio
 async def test_history_context_labels_today(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Today's history entry gets 'Today' label instead of date."""
     config = make_config()
@@ -76,7 +76,7 @@ async def test_history_context_labels_today(
 
 @pytest.mark.asyncio
 async def test_history_context_skips_daily_covered_by_weekly(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Daily entries within a weekly rollup range are excluded from context."""
     config = make_config()
@@ -117,7 +117,7 @@ async def test_history_context_skips_daily_covered_by_weekly(
 
 @pytest.mark.asyncio
 async def test_history_context_none_when_no_entries(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """History context returns None when there are no entries."""
     config = make_config()
@@ -132,7 +132,7 @@ async def test_history_context_none_when_no_entries(
 
 @pytest.mark.asyncio
 async def test_conversation_builds_user_assistant_turns(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Conversation history alternates user/assistant turns."""
     config = make_config()
@@ -161,7 +161,7 @@ async def test_conversation_builds_user_assistant_turns(
 
 @pytest.mark.asyncio
 async def test_conversation_merges_consecutive_same_role(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Consecutive messages from the same role are merged with newlines.
 
@@ -208,7 +208,7 @@ async def test_conversation_merges_consecutive_same_role(
 
 @pytest.mark.asyncio
 async def test_conversation_starts_after_rollup(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Conversation history starts after the latest history rollup."""
     config = make_config()
@@ -252,7 +252,7 @@ async def test_conversation_starts_after_rollup(
 
 @pytest.mark.asyncio
 async def test_dislike_context_lists_negative_preferences(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Dislike context includes only negative preferences."""
     config = make_config()
@@ -278,7 +278,7 @@ async def test_dislike_context_lists_negative_preferences(
 
 @pytest.mark.asyncio
 async def test_dislike_context_none_when_no_dislikes(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Dislike context returns None when user has no negative preferences."""
     config = make_config()
@@ -296,7 +296,7 @@ async def test_dislike_context_none_when_no_dislikes(
 
 @pytest.mark.asyncio
 async def test_dislike_context_deduplicates(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Dislike context deduplicates case-insensitively."""
     config = make_config()
@@ -324,7 +324,7 @@ async def test_dislike_context_deduplicates(
 
 @pytest.mark.asyncio
 async def test_thought_context_scoped_to_seed_preference(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Thinking agent thought context only includes thoughts for the same seed preference."""
     config = make_config()
@@ -344,7 +344,7 @@ async def test_thought_context_scoped_to_seed_preference(
 
 @pytest.mark.asyncio
 async def test_thought_context_none_when_no_thoughts(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Thought context returns None when there are no thoughts."""
     config = make_config()
@@ -359,26 +359,26 @@ async def test_thought_context_none_when_no_thoughts(
 
 @pytest.mark.asyncio
 async def test_profile_context_includes_name(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Profile context includes user name."""
     config = make_config()
 
     async with running_penny(config) as penny:
-        context = penny.chat_agent._profile_section(TEST_SENDER, "hello")
+        context = penny.chat_agent._profile_section(TEST_SENDER)
         assert context is not None
         assert "Test User" in context
 
 
 @pytest.mark.asyncio
 async def test_profile_context_none_for_unknown_user(
-    signal_server, mock_ollama, make_config, _mock_search, test_user_info, running_penny
+    signal_server, mock_ollama, make_config, test_user_info, running_penny
 ):
     """Profile context returns None for users without profile info."""
     config = make_config()
 
     async with running_penny(config) as penny:
-        context = penny.chat_agent._profile_section("+1999999999", "hello")
+        context = penny.chat_agent._profile_section("+1999999999")
         assert context is None
 
 
@@ -439,15 +439,15 @@ def test_page_context_injected_as_synthetic_tool_call():
     ChatAgent._inject_page_context(messages, page_context)
 
     assert len(messages) == 4
-    # Assistant tool call uses MultiTool format (name="fetch", URL in queries)
+    # Assistant tool call uses BrowseTool format (name="browse", URL in queries)
     assert messages[2]["role"] == "assistant"
-    assert messages[2]["tool_calls"][0]["function"]["name"] == "fetch"
+    assert messages[2]["tool_calls"][0]["function"]["name"] == "browse"
     assert messages[2]["tool_calls"][0]["function"]["arguments"]["queries"] == [
         "https://example.com/product"
     ]
     # Tool result
     assert messages[3]["role"] == "tool"
-    assert messages[3]["tool_name"] == "fetch"
+    assert messages[3]["tool_name"] == "browse"
     assert "$49.99" in messages[3]["content"]
     assert "Example Product Page" in messages[3]["content"]
 

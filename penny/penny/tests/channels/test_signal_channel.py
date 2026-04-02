@@ -61,7 +61,6 @@ async def test_validate_connectivity_dns_failure(test_db, mock_ollama):
         discord_channel_id=None,
         ollama_api_url="http://localhost:11434",
         ollama_model="test-model",
-        perplexity_api_key=None,
         log_level="DEBUG",
         db_path=test_db,
     )
@@ -118,7 +117,6 @@ async def test_validate_connectivity_connection_refused(test_db, mock_ollama):
         discord_channel_id=None,
         ollama_api_url="http://localhost:11434",
         ollama_model="test-model",
-        perplexity_api_key=None,
         log_level="DEBUG",
         db_path=test_db,
     )

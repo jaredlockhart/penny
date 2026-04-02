@@ -159,6 +159,14 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     sendDomainDelete(message.domain);
   } else if (message.type === RuntimeMessageType.PermissionResponse) {
     sendPermissionDecision(message.request_id, message.allowed);
+  } else if (message.type === RuntimeMessageType.SchedulesRequest) {
+    requestSchedules();
+  } else if (message.type === RuntimeMessageType.ScheduleAdd) {
+    sendScheduleAdd(message.command);
+  } else if (message.type === RuntimeMessageType.ScheduleUpdate) {
+    sendScheduleUpdate(message.schedule_id, message.prompt_text);
+  } else if (message.type === RuntimeMessageType.ScheduleDelete) {
+    sendScheduleDelete(message.schedule_id);
   }
 }
 
@@ -230,6 +238,12 @@ function connect(): void {
       });
     } else if (data.type === WsIn.PermissionDismiss) {
       broadcastToSidebar({ type: RuntimeMessageType.PermissionDismiss });
+    } else if (data.type === WsIn.SchedulesResponse) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.SchedulesResponse,
+        schedules: data.schedules,
+        error: data.error,
+      });
     }
   });
 
@@ -322,6 +336,30 @@ function sendPermissionDecision(requestId: string, allowed: boolean): void {
 function sendDomainDelete(domain: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.DomainDelete, domain }));
+}
+
+function requestSchedules(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.SchedulesRequest }));
+}
+
+function sendScheduleAdd(command: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.ScheduleAdd, command }));
+}
+
+function sendScheduleUpdate(scheduleId: number, promptText: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    type: WsOutgoingType.ScheduleUpdate,
+    schedule_id: scheduleId,
+    prompt_text: promptText,
+  }));
+}
+
+function sendScheduleDelete(scheduleId: number): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.ScheduleDelete, schedule_id: scheduleId }));
 }
 
 function syncDomainPermissionsToLocal(permissions: DomainPermissionEntry[]): void {
