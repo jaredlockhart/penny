@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import logging.handlers
 import os
@@ -70,6 +71,20 @@ def _validate_channel_config(channel_type: str) -> None:
             raise ValueError("DISCORD_CHANNEL_ID is required for Discord channel")
 
 
+def _parse_plugins(raw: str) -> list[str]:
+    """Parse PLUGINS env var — accepts JSON array or comma-separated string."""
+    raw = raw.strip()
+    if not raw or raw in ("[]", ""):
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(p).strip().lower() for p in parsed if str(p).strip()]
+    except json.JSONDecodeError:
+        pass
+    return [p.strip().lower() for p in raw.split(",") if p.strip()]
+
+
 def _collect_env_vars(channel_type: str) -> dict:
     """Read all config environment variables and return as constructor kwargs."""
     ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
@@ -95,11 +110,7 @@ def _collect_env_vars(channel_type: str) -> dict:
         "log_max_bytes": int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024))),
         "log_backup_count": int(os.getenv("LOG_BACKUP_COUNT", "5")),
         "tool_timeout": float(os.getenv("TOOL_TIMEOUT", "120.0")),
-        "fastmail_api_token": os.getenv("FASTMAIL_API_TOKEN"),
-        "zoho_api_id": os.getenv("ZOHO_API_ID"),
-        "zoho_api_secret": os.getenv("ZOHO_API_SECRET"),
-        "zoho_refresh_token": os.getenv("ZOHO_REFRESH_TOKEN"),
-        "news_api_key": os.getenv("NEWS_API_KEY"),
+        "plugins": _parse_plugins(os.getenv("PLUGINS", "[]")),
         "browser_enabled": os.getenv("BROWSER_ENABLED", "").lower() in ("1", "true", "yes"),
         "browser_host": os.getenv("BROWSER_HOST", "localhost"),
         "browser_port": int(os.getenv("BROWSER_PORT", "9090")),
@@ -169,13 +180,10 @@ class Config:
     # Scheduler tick interval (seconds)
     scheduler_tick_interval: float = 1.0
 
-    # Zoho API configuration (optional, enables /zoho command)
-    zoho_api_id: str | None = None
-    zoho_api_secret: str | None = None
-    zoho_refresh_token: str | None = None
+    # Plugins to load (read from PLUGINS env var, e.g. ["zoho", "fastmail"])
+    plugins: list[str] = field(default_factory=list)
 
-    # Fastmail JMAP configuration (optional, enables /email command)
-    fastmail_api_token: str | None = None
+    # Max agent steps for email commands
     email_max_steps: int = 5
 
     # News API configuration (optional, enables news search tool for agents)

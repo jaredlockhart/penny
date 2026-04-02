@@ -95,21 +95,37 @@ penny/
     draw.py           — /draw: generate images via Ollama image model (optional)
     bug.py            — /bug: file GitHub issues (optional, requires GitHub App)
     feature.py        — /feature: file GitHub feature requests (optional, requires GitHub App)
-    email.py          — /email: search Fastmail email via JMAP (optional)
+  email/
+    __init__.py       — Re-exports EmailClient, EmailAddress, EmailDetail, EmailSummary
+    protocol.py       — EmailClient Protocol (implemented by plugin email clients)
+    models.py         — Shared email models: EmailAddress, EmailSummary, EmailDetail
+    command.py        — /email: unified multi-provider routing command
+  plugins/
+    __init__.py       — Plugin ABC, CAPABILITY_EMAIL, load_plugins()
+    fastmail/
+      __init__.py     — FastmailPlugin class (PLUGIN_CLASS entry point)
+      client.py       — JmapClient: Fastmail JMAP API client (httpx)
+      models.py       — JmapSession model
+      commands.py     — FastmailEmailCommand
+      tools.py        — (empty — Fastmail uses shared search/read tools)
+    zoho/
+      __init__.py     — ZohoPlugin class (PLUGIN_CLASS entry point)
+      client.py       — ZohoClient: Zoho Mail API client (httpx + OAuth)
+      models.py       — ZohoCredentials, ZohoSession, ZohoAccount, ZohoFolder
+      commands.py     — ZohoEmailCommand
+      tools.py        — ListEmailsTool, ListFoldersTool, DraftEmailTool
+    invoiceninja/     — Stub plugin (not yet implemented)
+      __init__.py     — InvoiceNinjaPlugin class (PLUGIN_CLASS entry point)
+      client.py       — InvoiceNinjaClient stub
+      models.py       — Invoice, InvoiceNinjaCredentials
+      commands.py     — InvoiceCommand stub
+      tools.py        — ListInvoicesTool stub
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
-    models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult, and per-tool arg models (SearchArgs, FetchNewsArgs, etc.)
-    search.py         — SearchTool: Perplexity text search (no images)
-    news.py           — NewsTool: TheNewsAPI.com client (optional, requires NEWS_API_KEY)
-    fetch_news.py     — FetchNewsTool: tool wrapper for NewsTool (used by chat + thinking)
-    search_emails.py  — SearchEmailsTool (Fastmail JMAP)
-    read_emails.py    — ReadEmailTool (Fastmail JMAP)
-  serper/
-    client.py         — search_image(): async Serper image search, returns base64 data URI
-    models.py         — SerperImageResult, SerperImageResponse Pydantic models
-  jmap/
-    client.py         — JmapClient: Fastmail JMAP API client (httpx)
-    models.py         — JmapSession, EmailAddress, EmailSummary, EmailDetail
+    models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult, and per-tool arg models
+    browse.py         — BrowseTool: web search and page reading via browser extension
+    search_emails.py  — SearchEmailsTool (uses EmailClient protocol)
+    read_emails.py    — ReadEmailsTool (uses EmailClient protocol)
   channels/
     __init__.py       — create_channel() factory, channel type constants
     base.py           — MessageChannel ABC, IncomingMessage, shared message handling
@@ -154,8 +170,9 @@ penny/
       test_schedule.py, test_bug.py, test_system.py, test_test_mode.py
     database/         — Migration validation tests
       test_migrations.py
-    jmap/             — JMAP client tests
-      test_client.py
+    plugins/          — Plugin client tests
+      fastmail/test_client.py
+      zoho/test_client.py
     tools/            — Tool tests
       test_search_redaction.py, test_tool_timeout.py, test_tool_not_found.py,
       test_missing_tool_params.py, test_tool_reasoning.py, test_news_tool.py
