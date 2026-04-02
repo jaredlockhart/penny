@@ -8,7 +8,7 @@
 import { TAB_LOAD_TIMEOUT_MS } from "../../protocol.js";
 
 const EXTRACT_MAX_RETRIES = 10;
-const EXTRACT_POLL_MS = 1000;
+const EXTRACT_POLL_MS = 500;
 const MIN_CONTENT_LENGTH = 200;
 
 interface PageData {
@@ -27,7 +27,7 @@ export async function browseUrl(url: string): Promise<BrowseResult> {
     const tab = await openHiddenTab(url);
     try {
       await waitForTabLoad(tab.id!);
-      const pageData = await pollForContent(tab.id!);
+      const pageData = await pollForContent(tab.id!, url);
       return await formatResult(pageData);
     } catch (err) {
       console.warn(`[browse_url] attempt ${attempt} failed:`, err);
@@ -41,26 +41,68 @@ export async function browseUrl(url: string): Promise<BrowseResult> {
   return { text: `Failed to read ${url}`, image: "" };
 }
 
-async function pollForContent(tabId: number): Promise<PageData> {
+async function pollForContent(tabId: number, url: string): Promise<PageData> {
+  // Baseline extraction — establishes initial content length for growth detection
+  const baseline = await extractPageContent(tabId);
+  let previousLength = baseline.text.trim().length;
+  console.log(`[browse_url] ${url}: baseline ${previousLength} chars, ready=${baseline.ready}`);
+
+  if (baseline.ready && previousLength >= MIN_CONTENT_LENGTH) {
+    // Have content — poll once more to check for growth
+    await new Promise((r) => setTimeout(r, EXTRACT_POLL_MS));
+    const second = await extractPageContent(tabId);
+    const secondLength = second.text.trim().length;
+    if (secondLength < previousLength * 2) {
+      console.log(
+        `[browse_url] ${url}: settled at ${secondLength} chars (prev ${previousLength})`,
+      );
+      return second;
+    }
+    console.log(
+      `[browse_url] ${url}: ${secondLength} chars (prev ${previousLength}), still growing`,
+    );
+    previousLength = secondLength;
+  }
+
   for (let attempt = 1; attempt <= EXTRACT_MAX_RETRIES; attempt++) {
+    await new Promise((r) => setTimeout(r, EXTRACT_POLL_MS));
     const data = await extractPageContent(tabId);
     const textLen = data.text.trim().length;
-    if (data.ready && textLen >= MIN_CONTENT_LENGTH) {
-      console.log(`[browse_url] extracted ${textLen} chars (attempt ${attempt})`);
+
+    if (!data.ready) {
+      console.log(
+        `[browse_url] ${url}: not ready, waiting (attempt ${attempt}/${EXTRACT_MAX_RETRIES})`,
+      );
+      continue;
+    }
+
+    if (textLen < MIN_CONTENT_LENGTH) {
+      console.log(
+        `[browse_url] ${url}: only ${textLen} chars, waiting (attempt ${attempt}/${EXTRACT_MAX_RETRIES})`,
+      );
+      previousLength = textLen;
+      continue;
+    }
+
+    if (previousLength > 0 && textLen < previousLength * 2) {
+      console.log(
+        `[browse_url] ${url}: settled at ${textLen} chars (prev ${previousLength}, attempt ${attempt})`,
+      );
       return data;
     }
-    const reason = !data.ready ? "not ready" : `only ${textLen} chars`;
+
     console.log(
-      `[browse_url] ${reason}, waiting (attempt ${attempt}/${EXTRACT_MAX_RETRIES})`,
+      `[browse_url] ${url}: ${textLen} chars (prev ${previousLength}), still growing (attempt ${attempt}/${EXTRACT_MAX_RETRIES})`,
     );
-    await new Promise((r) => setTimeout(r, EXTRACT_POLL_MS));
+    previousLength = textLen;
   }
+
   const final = await extractPageContent(tabId);
   if (!final.ready) {
-    throw new Error(`Page not ready after ${EXTRACT_MAX_RETRIES} retries`);
+    throw new Error(`${url}: page not ready after ${EXTRACT_MAX_RETRIES} retries`);
   }
   console.warn(
-    `[browse_url] settled on ${final.text.trim().length} chars after ${EXTRACT_MAX_RETRIES} retries`,
+    `[browse_url] ${url}: settled on ${final.text.trim().length} chars after ${EXTRACT_MAX_RETRIES} retries`,
   );
   return final;
 }

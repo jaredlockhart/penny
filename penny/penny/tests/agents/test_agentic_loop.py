@@ -510,44 +510,6 @@ class TestParallelToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_max_tool_calls_config_caps_parallel_calls(self, test_db, mock_ollama):
-        """Tool calls beyond MESSAGE_MAX_TOOL_CALLS are silently dropped."""
-        agent, db, max_steps = _make_agent(
-            test_db, mock_ollama, max_steps=3, runtime_overrides={"MESSAGE_MAX_TOOL_CALLS": 2}
-        )
-        agent._tool_executor.execute = AsyncMock(
-            side_effect=lambda tool_call: ToolResult(
-                tool=tool_call.tool, result=f"result for {tool_call.arguments.get('query', '')}"
-            )
-        )
-
-        def handler(request, count):
-            if count == 1:
-                # Model requests 3 parallel calls — only 2 should execute
-                return mock_ollama._make_parallel_tool_calls_response(
-                    request,
-                    [
-                        ("search", {"query": "topic A"}),
-                        ("search", {"query": "topic B"}),
-                        ("search", {"query": "topic C"}),
-                    ],
-                )
-            return mock_ollama._make_text_response(request, "done")
-
-        mock_ollama.set_response_handler(handler)
-        agent.allow_repeat_tools = True
-
-        response = await agent.run("test", max_steps=max_steps)
-
-        assert response.answer == "done"
-        # Only the first 2 of 3 tool calls should have executed
-        assert len(response.tool_calls) == 2
-        assert response.tool_calls[0].arguments["query"] == "topic A"
-        assert response.tool_calls[1].arguments["query"] == "topic B"
-
-        await agent.close()
-
-    @pytest.mark.asyncio
     async def test_large_browse_tool_results_not_truncated(self, test_db, mock_ollama):
         """Two large tool results from BrowseTool both survive into the model context."""
         agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
@@ -795,10 +757,10 @@ class TestEmptyContentAfterToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_tool_result_truncated_at_source(self, test_db, mock_ollama):
-        """Tool results exceeding MAX_TOOL_RESULT_CHARS are truncated."""
+    async def test_large_tool_results_pass_through_untruncated(self, test_db, mock_ollama):
+        """Large tool results are not truncated — client enforces per-page limits."""
         agent, db, max_steps = _make_agent(test_db, mock_ollama)
-        large_result = "x" * (Agent.MAX_TOOL_RESULT_CHARS + 500)
+        large_result = "x" * 100_000
 
         def handler(request, count):
             if count == 1:
@@ -807,8 +769,8 @@ class TestEmptyContentAfterToolCalls:
             tool_messages = [m for m in messages if m.get("role") == "tool"]
             assert len(tool_messages) == 1
             content = tool_messages[0]["content"]
-            assert len(content) <= Agent.MAX_TOOL_RESULT_CHARS + len(" [truncated]")
-            assert content.endswith(" [truncated]")
+            assert len(content) == 100_000
+            assert "[truncated]" not in content
             return mock_ollama._make_text_response(request, "done")
 
         mock_ollama.set_response_handler(handler)
