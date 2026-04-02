@@ -23,31 +23,44 @@
           <span id="tool-use-icon" class="hidden" title="Tool use enabled"><i class="fa-solid fa-wrench"></i></span>
           <span id="status" class="disconnected"></span>
         </div>
-      </div>
-      <div id="messages-wrapper">
-        <div id="messages"></div>
-      </div>
-      <div id="permission-dialog" class="hidden">
-        <p>Penny wants to browse <strong id="permission-domain"></strong></p>
-        <p class="permission-url" id="permission-url"></p>
-        <div class="permission-actions">
-          <button id="permission-allow"><i class="fa-solid fa-check"></i> Allow</button>
-          <button id="permission-deny" class="deny"><i class="fa-solid fa-xmark"></i> Deny</button>
+        <div id="main-tabs">
+          <button class="main-tab active" data-mtab="conversation"><i class="fa-solid fa-comment"></i> Chat</button>
+          <button class="main-tab" data-mtab="schedules"><i class="fa-solid fa-clock"></i> Schedules</button>
         </div>
       </div>
-      <div id="page-context-bar" class="hidden">
-        <div id="page-context-header">
-          <img id="page-context-favicon" src="" alt="">
-          <span id="page-context-title"></span>
+      <div id="conversation-panel">
+        <div id="messages-wrapper">
+          <div id="messages"></div>
         </div>
-        <label id="page-context-label">
-          <input type="checkbox" id="page-context-toggle" checked>
-          <i class="fa-solid fa-file-lines"></i> Include page content with message
-        </label>
+        <div id="permission-dialog" class="hidden">
+          <p>Penny wants to browse <strong id="permission-domain"></strong></p>
+          <p class="permission-url" id="permission-url"></p>
+          <div class="permission-actions">
+            <button id="permission-allow"><i class="fa-solid fa-check"></i> Allow</button>
+            <button id="permission-deny" class="deny"><i class="fa-solid fa-xmark"></i> Deny</button>
+          </div>
+        </div>
+        <div id="page-context-bar" class="hidden">
+          <div id="page-context-header">
+            <img id="page-context-favicon" src="" alt="">
+            <span id="page-context-title"></span>
+          </div>
+          <label id="page-context-label">
+            <input type="checkbox" id="page-context-toggle" checked>
+            <i class="fa-solid fa-file-lines"></i> Include page content with message
+          </label>
+        </div>
+        <div id="input-area">
+          <textarea id="input" placeholder="Message Penny..." rows="1"></textarea>
+          <button id="send"><i class="fa-solid fa-paper-plane"></i></button>
+        </div>
       </div>
-      <div id="input-area">
-        <textarea id="input" placeholder="Message Penny..." rows="1"></textarea>
-        <button id="send"><i class="fa-solid fa-paper-plane"></i></button>
+      <div id="schedules-panel" class="hidden">
+        <div class="schedules-list" id="schedules-list"></div>
+        <div class="schedules-add">
+          <input type="text" id="schedules-input" placeholder="daily 9am check the news">
+          <button id="schedules-add-btn"><i class="fa-solid fa-plus"></i></button>
+        </div>
       </div>
     </div>
 
