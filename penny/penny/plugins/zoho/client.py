@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -11,32 +12,13 @@ from typing import Any
 import httpx
 
 from penny.constants import PennyConstants
+from penny.email.models import EmailAddress, EmailDetail, EmailSummary
 from penny.html_utils import strip_html
-from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary
-from penny.zoho.models import ZohoAccount, ZohoFolder, ZohoSession
+from penny.plugins.zoho.models import ZohoAccount, ZohoFolder, ZohoSession
 
 logger = logging.getLogger(__name__)
 
 EMAIL_SEARCH_LIMIT = 10
-
-# Regex for Zoho date format DD-MMM-YYYY (e.g., 12-Sep-2017)
-_ZOHO_DATE_RE = re.compile(r"^\d{1,2}-[A-Za-z]{3}-\d{4}$")
-
-# Month abbreviations for ISO 8601 → Zoho date conversion
-_MONTH_ABBREVS = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-]
 
 
 class ZohoClient:
@@ -116,10 +98,7 @@ class ZohoClient:
         if not accounts:
             raise RuntimeError("No Zoho Mail accounts found")
 
-        # Use the first (primary) account
         acct = accounts[0]
-
-        # emailAddress can be a list of dicts or a single dict
         email_addr_field = acct.get("emailAddress", [])
         if isinstance(email_addr_field, list) and email_addr_field:
             email_address = email_addr_field[0].get("mailId", "")
@@ -189,16 +168,10 @@ class ZohoClient:
         folder_name: str | None = None,
         limit: int = EMAIL_SEARCH_LIMIT,
     ) -> list[EmailSummary]:
-        """List emails from a specific folder.
-
-        Args:
-            folder_name: Name of folder to list (default: Inbox)
-            limit: Maximum number of emails to return
-        """
+        """List emails from a specific folder."""
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        # Get the folder ID
         if folder_name:
             folder = await self.get_folder_by_name(folder_name)
             if not folder:
@@ -206,7 +179,6 @@ class ZohoClient:
                 return []
             folder_id = folder.folder_id
         else:
-            # Default to Inbox
             folder = await self.get_folder_by_type("Inbox")
             if not folder:
                 logger.warning("Inbox folder not found")
@@ -214,11 +186,7 @@ class ZohoClient:
             folder_id = folder.folder_id
 
         url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages/view"
-        params = {
-            "folderId": folder_id,
-            "limit": limit,
-            "includeto": "true",
-        }
+        params = {"folderId": folder_id, "limit": limit, "includeto": "true"}
 
         resp = await self._http.get(url, headers=headers, params=params)
         resp.raise_for_status()
@@ -226,7 +194,6 @@ class ZohoClient:
 
         emails_data = data.get("data", [])
         logger.info("Listed %d email(s) from folder %s", len(emails_data), folder_name or "Inbox")
-
         return [self._parse_email_summary(e) for e in emails_data]
 
     async def search_emails(
@@ -238,38 +205,21 @@ class ZohoClient:
         before: str | None = None,
         limit: int = EMAIL_SEARCH_LIMIT,
     ) -> list[EmailSummary]:
-        """Search emails and return summaries.
-
-        Uses Zoho's search syntax to build the searchKey parameter.
-        Zoho syntax: parameter:value with :: between multiple conditions.
-        Docs: https://www.zoho.com/mail/help/search-syntax.html
-        """
+        """Search emails and return summaries."""
         search_parts = []
         if text:
-            escaped = text.replace('"', "")
-            if " " in escaped:
-                search_parts.append(f'entire:"{escaped}"')
-            else:
-                search_parts.append(f"entire:{escaped}")
+            search_parts.append(f'entire:"{text}"' if " " in text else f"entire:{text}")
         if from_addr:
-            search_parts.append(f"sender:{from_addr.replace('"', '')}")
+            search_parts.append(f"sender:{from_addr}")
         if subject:
-            escaped = subject.replace('"', "")
-            if " " in escaped or ":" in escaped:
-                search_parts.append(f'subject:"{escaped}"')
-            else:
-                search_parts.append(f"subject:{escaped}")
-        # Zoho date format is DD-MMM-YYYY — convert from ISO 8601 if needed
-        if after:
-            zoho_date = self._to_zoho_date(after)
-            if zoho_date:
-                search_parts.append(f"fromDate:{zoho_date}")
-        if before:
-            zoho_date = self._to_zoho_date(before)
-            if zoho_date:
-                search_parts.append(f"toDate:{zoho_date}")
+            needs_quotes = " " in subject or ":" in subject
+            subject_part = f'subject:"{subject}"' if needs_quotes else f"subject:{subject}"
+            search_parts.append(subject_part)
+        if after and self._is_valid_zoho_date(after):
+            search_parts.append(f"fromDate:{after}")
+        if before and self._is_valid_zoho_date(before):
+            search_parts.append(f"toDate:{before}")
 
-        # Join with :: for AND logic between conditions
         search_key = "::".join(search_parts) if search_parts else "newMails"
         logger.info("Zoho search query: %s", search_key)
 
@@ -277,11 +227,7 @@ class ZohoClient:
         headers = await self._get_headers()
 
         url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages/search"
-        params = {
-            "searchKey": search_key,
-            "limit": limit,
-            "includeto": "true",
-        }
+        params = {"searchKey": search_key, "limit": limit, "includeto": "true"}
 
         resp = await self._http.get(url, headers=headers, params=params)
         resp.raise_for_status()
@@ -290,13 +236,17 @@ class ZohoClient:
         emails_data = data.get("data", [])
         logger.info("Zoho search returned %d email(s)", len(emails_data))
 
-        return [self._parse_email_summary(e) for e in emails_data]
+        if emails_data:
+            logger.info("[DIAG] First email raw keys: %s", list(emails_data[0].keys()))
+
+        summaries = [self._parse_email_summary(e) for e in emails_data]
+        logger.info("[DIAG] Returning email IDs: %s", [s.id for s in summaries])
+        return summaries
 
     def _parse_email_summary(self, e: dict[str, Any]) -> EmailSummary:
         """Parse a Zoho email response into an EmailSummary."""
         from_addr = e.get("fromAddress", "")
         from_name = e.get("sender", "")
-
         return EmailSummary(
             id=self._make_email_id(e),
             subject=e.get("subject", "(no subject)"),
@@ -306,10 +256,27 @@ class ZohoClient:
         )
 
     def _make_email_id(self, e: dict[str, Any]) -> str:
-        """Create a folderId:messageId composite ID."""
-        folder_id = e.get("folderId", "")
+        """Create an ID from the message URI or folderId:messageId."""
+        uri = e.get("URI", "")
+        if uri:
+            return uri
+        folder_id = e.get("folderId") or e.get("mailFolderId") or ""
         message_id = e.get("messageId", "")
+        if not folder_id:
+            logger.warning(
+                "Missing folderId in email data. Available keys: %s, messageId: %s",
+                list(e.keys()),
+                message_id,
+            )
         return f"{folder_id}:{message_id}"
+
+    def _parse_email_id(self, email_id: str) -> tuple[str | None, str]:
+        """Parse an email ID into (uri_or_none, folder:message_or_id)."""
+        if email_id.startswith("http"):
+            return email_id, ""
+        if ":" in email_id:
+            return None, email_id
+        return None, email_id
 
     def _format_timestamp(self, ts: int | str) -> str:
         """Format a Unix timestamp (ms) to ISO 8601."""
@@ -325,50 +292,36 @@ class ZohoClient:
     @staticmethod
     def _is_valid_zoho_date(date_str: str) -> bool:
         """Check if date string is in Zoho format DD-MMM-YYYY (e.g., 12-Sep-2017)."""
-        return bool(_ZOHO_DATE_RE.match(date_str))
-
-    @staticmethod
-    def _convert_to_zoho_date(date_str: str) -> str | None:
-        """Convert ISO 8601 date string to Zoho DD-MMM-YYYY format.
-
-        Accepts formats like 2026-01-15, 2026-01-15T00:00:00Z, etc.
-        Returns None if parsing fails.
-        """
-        try:
-            # Strip time/timezone suffix for simple date parsing
-            date_part = date_str.split("T")[0]
-            parts = date_part.split("-")
-            if len(parts) != 3:
-                return None
-            year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
-            if not (1 <= month <= 12):
-                return None
-            return f"{day}-{_MONTH_ABBREVS[month - 1]}-{year}"
-        except ValueError, IndexError:
-            return None
-
-    def _to_zoho_date(self, date_str: str) -> str | None:
-        """Accept Zoho DD-MMM-YYYY or ISO 8601 date, return Zoho format or None."""
-        if self._is_valid_zoho_date(date_str):
-            return date_str
-        return self._convert_to_zoho_date(date_str)
+        pattern = r"^\d{1,2}-[A-Za-z]{3}-\d{4}$"
+        return bool(re.match(pattern, date_str))
 
     async def read_emails(self, email_ids: list[str]) -> list[EmailDetail]:
         """Fetch full email bodies by IDs."""
         if not email_ids:
             return []
 
-        headers = await self._get_headers()
-        results: list[EmailDetail] = []
+        start = time.monotonic()
+        logger.info("[DIAG] read_emails starting for %d email(s)", len(email_ids))
 
-        for email_id in email_ids:
+        headers = await self._get_headers()
+
+        async def fetch_one(email_id: str) -> EmailDetail | None:
             try:
-                detail = await self._fetch_email_detail(email_id, headers)
-                if detail:
-                    results.append(detail)
+                return await self._fetch_email_detail(email_id, headers)
             except Exception as e:
                 logger.warning("Failed to fetch email %s: %s", email_id, e)
+                return None
 
+        results_raw = await asyncio.gather(*[fetch_one(eid) for eid in email_ids])
+        results = [r for r in results_raw if r is not None]
+
+        elapsed = time.monotonic() - start
+        logger.info(
+            "[DIAG] read_emails fetched %d/%d emails in %.2fs",
+            len(results),
+            len(email_ids),
+            elapsed,
+        )
         return results
 
     async def _fetch_email_detail(
@@ -377,7 +330,6 @@ class ZohoClient:
         headers: dict[str, str],
     ) -> EmailDetail | None:
         """Fetch a single email's full content using the content endpoint."""
-        # Extract folder_id and message_id from the composite ID
         if ":" not in email_id:
             logger.warning("Invalid email ID format (no colon): %s", email_id)
             return None
@@ -388,8 +340,6 @@ class ZohoClient:
             return None
 
         account = await self._ensure_account()
-
-        # Use the content endpoint with folderId from search results
         content_url = (
             f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}"
             f"/folders/{folder_id}/messages/{message_id}/content"
@@ -402,17 +352,12 @@ class ZohoClient:
         resp.raise_for_status()
         content_data = resp.json().get("data", {})
 
-        text_body = content_data.get("content") or ""
-
-        # Strip HTML if content contains HTML tags
-        if text_body and re.search(r"<[a-zA-Z][^>]*>", text_body):
+        text_body = content_data.get("content", "")
+        if text_body and "<" in text_body:
             text_body = strip_html(text_body)
-
-        # Truncate long bodies
         if len(text_body) > self._max_body_length:
             text_body = text_body[: self._max_body_length] + "\n\n[truncated]"
 
-        # Get metadata from content response or use defaults
         from_addr = content_data.get("fromAddress", "")
         from_name = content_data.get("sender", "")
         to_list = (
@@ -440,25 +385,11 @@ class ZohoClient:
         in_reply_to: str | None = None,
         mail_format: str = "plaintext",
     ) -> str | None:
-        """Save an email draft to the Drafts folder.
-
-        Args:
-            to_addresses: List of recipient email addresses
-            subject: Email subject line
-            content: Email body content
-            cc_addresses: Optional CC recipients
-            bcc_addresses: Optional BCC recipients
-            in_reply_to: Optional Message-ID of email being replied to
-            mail_format: 'plaintext' or 'html' (default: plaintext)
-
-        Returns:
-            The draft message ID if successful, None otherwise.
-        """
+        """Save an email draft to the Drafts folder."""
         account = await self._ensure_account()
         headers = await self._get_headers()
 
         url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages"
-
         payload: dict[str, Any] = {
             "fromAddress": account.email_address,
             "toAddress": ",".join(to_addresses),
@@ -467,7 +398,6 @@ class ZohoClient:
             "mode": "draft",
             "mailFormat": mail_format,
         }
-
         if cc_addresses:
             payload["ccAddress"] = ",".join(cc_addresses)
         if bcc_addresses:
@@ -476,12 +406,10 @@ class ZohoClient:
             payload["inReplyTo"] = in_reply_to
 
         logger.info("Saving draft to %s: %s", to_addresses, subject)
-
         resp = await self._http.post(url, headers=headers, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
-        # Extract the draft message ID from response
         draft_data = data.get("data", {})
         message_id = draft_data.get("messageId")
         if message_id:
