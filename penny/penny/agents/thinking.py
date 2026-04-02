@@ -13,12 +13,13 @@ import re
 from typing import Any
 
 from similarity.dedup import DedupStrategy, is_embedding_duplicate
+from similarity.embeddings import cosine_similarity, deserialize_embedding
 
 from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
 from penny.constants import PennyConstants
 from penny.ollama.embeddings import serialize_embedding
-from penny.ollama.similarity import compute_mention_weighted_sentiment, embed_text
+from penny.ollama.similarity import embed_text
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
@@ -187,14 +188,19 @@ class ThinkingAgent(Agent):
             title, content = self._parse_title(report)
             content_vec = await embed_text(self._embedding_model_client, content)
             content_embedding = serialize_embedding(content_vec) if content_vec else None
-            if not await self._passes_preference_filter(user, content_vec):
+            title_vec = (
+                await embed_text(self._embedding_model_client, title.lower()) if title else None
+            )
+            title_embedding = serialize_embedding(title_vec) if title_vec else None
+            matched_dislike = self._matches_dislike(user, title_vec)
+            if matched_dislike:
                 logger.info(
-                    "[inner_monologue] filtered by preferences (seed=%s): %s",
+                    "[inner_monologue] filtered by dislike %r (seed=%s): %s",
+                    matched_dislike,
                     self._seed_topic or "free",
                     content[:100],
                 )
             else:
-                title_embedding = await self._embed_and_serialize(title.lower()) if title else None
                 self.db.thoughts.add(
                     user,
                     content,
@@ -219,24 +225,28 @@ class ThinkingAgent(Agent):
             self.db.preferences.mark_thought_about(self._seed_pref_id)
         return True
 
-    async def _passes_preference_filter(self, user: str, vec: list[float] | None) -> bool:
-        """Return True if the thought passes mention-weighted preference scoring.
+    def _matches_dislike(self, user: str, vec: list[float] | None) -> str | None:
+        """Return the dislike content if the thought title is too similar to any dislike.
 
-        Gate: if no preferences (positive or negative) at or above
-        PREFERENCE_MENTION_THRESHOLD exist, return True (filter inactive — no
-        signal yet or no embedding client).
-        Score: weighted_avg_sim(positive prefs) - weighted_avg_sim(negative prefs) >= 0.
+        Compares the thought's title embedding against each negative preference.
+        Short titles and short dislike labels produce strong similarity signals,
+        avoiding the dilution that full-content embeddings suffer from.
+        Returns the matched dislike content, or None if no match.
         """
-        if not self._embedding_model_client or vec is None:
-            return True
-        threshold = int(self.config.runtime.PREFERENCE_MENTION_THRESHOLD)
-        preferences = self.db.preferences.get_with_embeddings(user)
-        has_signal = any((p.mention_count or 0) >= threshold and p.embedding for p in preferences)
-        if not has_signal:
-            return True
-        score = compute_mention_weighted_sentiment(vec, preferences, min_mentions=threshold)
-        logger.debug("[inner_monologue] preference filter score: %.4f", score)
-        return score >= 0.0
+        if vec is None:
+            return None
+        threshold = PennyConstants.DISLIKE_FILTER_THRESHOLD
+        dislikes = self.db.preferences.get_negative_with_embeddings(user)
+        for pref in dislikes:
+            if not pref.embedding:
+                continue
+            similarity = cosine_similarity(vec, deserialize_embedding(pref.embedding))
+            if similarity >= threshold:
+                logger.debug(
+                    "[inner_monologue] dislike match: %.3f for %r", similarity, pref.content
+                )
+                return pref.content
+        return None
 
     # ── Model calls ────────────────────────────────────────────────────────
 
