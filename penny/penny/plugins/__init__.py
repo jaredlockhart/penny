@@ -55,9 +55,8 @@ class Plugin(ABC):
         """Return LLM-callable tools contributed by this plugin."""
         ...
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027
         """Clean up any open resources (HTTP clients, etc.). Override if needed."""
-        pass
 
 
 def load_plugins(config: Config) -> list[Plugin]:
