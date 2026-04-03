@@ -122,24 +122,29 @@ _TOOL_RESULT_TRUNCATION_THRESHOLD = PennyConstants.TOOL_RESULT_TRUNCATION_THRESH
 _TOOL_RESULT_MAX_CHARS = PennyConstants.TOOL_RESULT_TRUNCATION_MAX_CHARS
 
 
+_NUDGE_PREFIX = "STOP. You cannot search anymore."
+
+
 def _build_strong_nudge(messages: list[dict]) -> str:
     """Build a context-aware nudge that includes the original user question.
 
     Called when many preceding tool calls may have saturated the model's context.
+    Uses forceful language to break the model out of search-fixation loops.
     Including the original question gives the model a clear target after heavy tool use.
     """
     user_messages = [
         m["content"]
         for m in messages
-        if m.get("role") == MessageRole.USER and not m["content"].startswith("You have gathered")
+        if m.get("role") == MessageRole.USER and not m["content"].startswith(_NUDGE_PREFIX)
     ]
     original_question = user_messages[-1] if user_messages else None
     if original_question:
         return (
-            f"You have gathered enough information from your searches. "
-            f"Please provide your final answer to: {original_question}"
+            f"{_NUDGE_PREFIX} Tools are no longer available. "
+            f"Answer the user NOW using ONLY what you already found. "
+            f"The user asked: {original_question}"
         )
-    return "You have gathered enough information. Please provide your final response."
+    return f"{_NUDGE_PREFIX} Tools are no longer available. Provide your final response NOW."
 
 
 # Phrases that indicate a model refusal — used to detect and retry unhelpful responses
@@ -368,10 +373,7 @@ class Agent:
             if response is None:
                 return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
 
-            if response.has_tool_calls and strip_tools:
-                logger.warning("Model hallucinated tool calls on final step — ignoring")
-
-            if response.has_tool_calls and not strip_tools:
+            if response.has_tool_calls:
                 result = await self._process_tool_calls(response, called_tools, on_tool_start)
                 messages.extend(result.messages)
                 tool_call_records.extend(result.records)
@@ -447,7 +449,9 @@ class Agent:
 
         Checks for (in order): XML markup, empty content, refusal, hallucinated URLs.
         Each invalid output type gets one retry. Tool call responses are returned
-        immediately without validation.
+        immediately without validation. When tools are stripped (None) but the model
+        hallucinates tool calls, they are cleared and content is validated normally —
+        this triggers the nudge/retry logic for empty responses.
         """
         max_retries = PennyConstants.RESPONSE_VALIDATION_RETRIES
         effective_tools = tools if tools else None
@@ -461,8 +465,20 @@ class Agent:
                 return None
 
             # Tool calls are not validated — return immediately
-            if response.has_tool_calls:
+            if response.has_tool_calls and effective_tools is not None:
                 return response
+
+            # When tools were stripped but the model hallucinated tool calls,
+            # clear them and immediately inject the strongest nudge. The model
+            # is on its final step — no point graduating, just force text output.
+            if response.has_tool_calls and effective_tools is None:
+                logger.warning("Model hallucinated tool calls without tools — stripping")
+                response.message.tool_calls = None
+                messages.append(response.message.to_input_message())
+                messages = self._truncate_tool_messages(messages)
+                nudge = _build_strong_nudge(messages)
+                messages.append({"role": MessageRole.USER, "content": nudge})
+                continue
 
             self.on_response(response)
             content = response.content.strip()

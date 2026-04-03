@@ -143,22 +143,51 @@ class TestLastStepToolRemoval:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_hallucinated_tool_calls_ignored_on_final_step(self, test_db, mock_ollama):
-        """If model hallucinates tool calls on the final step, they are ignored."""
+    async def test_hallucinated_tool_call_gets_nudged_and_recovers(self, test_db, mock_ollama):
+        """If model hallucinates tool calls on final step, it gets nudged and can recover."""
         agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
 
         def handler(request, count):
             if count == 1:
                 return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
-            # Final step: model hallucinates a tool call despite no tools offered
+            if count == 2:
+                # Final step: model hallucinates a tool call despite no tools offered
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "more"})
+            # Nudge retry: model produces text
+            return mock_ollama._make_text_response(request, "here is the answer after nudge")
+
+        mock_ollama.set_response_handler(handler)
+
+        response = await agent.run("test query", max_steps=max_steps)
+        assert response.answer == "here is the answer after nudge"
+
+        # Hallucinated tool calls should have been stripped — retry called without tools
+        assert mock_ollama.requests[2]["tools"] is None
+
+        # The nudge message should include the forceful prefix and original question
+        nudge_messages = mock_ollama.requests[2]["messages"]
+        last_user_message = [m for m in nudge_messages if m["role"] == "user"][-1]
+        assert "STOP" in last_user_message["content"]
+        assert "Tools are no longer available" in last_user_message["content"]
+        assert "test query" in last_user_message["content"]
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_tool_call_fallback_when_nudge_fails(self, test_db, mock_ollama):
+        """If model keeps hallucinating after nudge, falls back gracefully."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            # All subsequent calls: model keeps hallucinating tool calls
             return mock_ollama._make_tool_call_response(request, "search", {"query": "more"})
 
         mock_ollama.set_response_handler(handler)
 
         response = await agent.run("test", max_steps=max_steps)
-        # Should NOT get AGENT_MAX_STEPS — hallucinated call is ignored.
-        # Preceding tool calls → FALLBACK_RESPONSE (friendlier than AGENT_EMPTY_RESPONSE).
-        assert "couldn't complete" not in response.answer.lower()
+        # Fallback when nudge cannot recover
         assert response.answer == PennyResponse.FALLBACK_RESPONSE
 
         await agent.close()
@@ -819,7 +848,7 @@ class TestStrongNudgeUsesLastQuestion:
             user_msgs = [m for m in messages if m.get("role") == "user"]
             last_user = user_msgs[-1]["content"] if user_msgs else ""
 
-            if "gathered enough" in last_user:
+            if "STOP" in last_user:
                 nudge_content = last_user
                 return mock_ollama._make_text_response(request, "Joan Chen was in Twin Peaks")
 
