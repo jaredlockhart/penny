@@ -43,6 +43,7 @@ class OllamaClient:
         tools: list[dict] | None = None,
         format: dict | str | None = None,
         agent_name: str | None = None,
+        prompt_type: str | None = None,
         run_id: str | None = None,
     ) -> ChatResponse:
         """
@@ -111,6 +112,7 @@ class OllamaClient:
                         thinking=thinking,
                         duration_ms=duration_ms,
                         agent_name=agent_name,
+                        prompt_type=prompt_type,
                         run_id=run_id,
                     )
 
@@ -144,6 +146,7 @@ class OllamaClient:
         tools: list[dict] | None = None,
         format: dict | str | None = None,
         agent_name: str | None = None,
+        prompt_type: str | None = None,
         run_id: str | None = None,
     ) -> ChatResponse:
         """
@@ -154,13 +157,21 @@ class OllamaClient:
             tools: Optional list of tool definitions
             format: Optional format specification (JSON schema dict, "json", or None)
             agent_name: Which agent produced this call
+            prompt_type: Which flow within the agent
             run_id: Groups prompts from one agentic loop invocation
 
         Returns:
             ChatResponse
         """
         messages = [{"role": "user", "content": prompt}]
-        return await self.chat(messages, tools, format, agent_name=agent_name, run_id=run_id)
+        return await self.chat(
+            messages,
+            tools,
+            format,
+            agent_name=agent_name,
+            prompt_type=prompt_type,
+            run_id=run_id,
+        )
 
     async def generate_image(self, prompt: str) -> str:
         """

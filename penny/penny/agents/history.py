@@ -55,6 +55,16 @@ class ClassifiedPreferences(BaseModel):
     )
 
 
+class HistoryPromptType:
+    """Prompt types for HistoryAgent flows."""
+
+    DAILY_SUMMARY = "daily_summary"
+    DAILY_BACKFILL = "daily_backfill"
+    WEEKLY_ROLLUP = "weekly_rollup"
+    PREFERENCE_IDENTIFICATION = "preference_identification"
+    PREFERENCE_VALENCE = "preference_valence"
+
+
 class HistoryAgent(Agent):
     """Background worker that compacts daily conversations into topic summaries."""
 
@@ -113,6 +123,7 @@ class HistoryAgent(Agent):
             max_steps=self.get_max_steps(),
             system_prompt=system_prompt,
             run_id=run_id,
+            prompt_type=HistoryPromptType.DAILY_SUMMARY,
         )
         topics = response.answer.strip()
         if not topics:
@@ -155,6 +166,7 @@ class HistoryAgent(Agent):
             max_steps=self.get_max_steps(),
             system_prompt=system_prompt,
             run_id=run_id,
+            prompt_type=HistoryPromptType.DAILY_BACKFILL,
         )
         topics = response.answer.strip()
         if not topics:
@@ -192,6 +204,7 @@ class HistoryAgent(Agent):
                 max_steps=self.get_max_steps(),
                 system_prompt=system_prompt,
                 run_id=run_id,
+                prompt_type=HistoryPromptType.WEEKLY_ROLLUP,
             )
             topics = response.answer.strip()
             if not topics:
@@ -358,6 +371,7 @@ class HistoryAgent(Agent):
                 tools=None,
                 format=IdentifiedPreferenceTopics.model_json_schema(),
                 agent_name=self.name,
+                prompt_type=HistoryPromptType.PREFERENCE_IDENTIFICATION,
                 run_id=run_id,
             )
             if not response.content or not response.content.strip():
@@ -465,6 +479,7 @@ class HistoryAgent(Agent):
                 tools=None,
                 format=ClassifiedPreferences.model_json_schema(),
                 agent_name=self.name,
+                prompt_type=HistoryPromptType.PREFERENCE_VALENCE,
                 run_id=run_id,
             )
             if not response.content or not response.content.strip():

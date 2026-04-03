@@ -21,6 +21,14 @@ from penny.tools.browse import BrowseTool
 logger = logging.getLogger(__name__)
 
 
+class ChatPromptType:
+    """Prompt types for ChatAgent flows."""
+
+    USER_MESSAGE = "user_message"
+    VISION_MESSAGE = "vision_message"
+    VISION_CAPTION = "vision_caption"
+
+
 class ChatAgent(Agent):
     """Conversation-mode agent — handles user messages.
 
@@ -78,6 +86,7 @@ class ChatAgent(Agent):
                     history=history,
                     max_steps=PennyConstants.VISION_MAX_STEPS,
                     system_prompt=system_prompt,
+                    prompt_type=ChatPromptType.VISION_MESSAGE,
                 )
 
             logger.info("Handling message from %s (conversation mode)", sender)
@@ -89,6 +98,7 @@ class ChatAgent(Agent):
                 history=history,
                 system_prompt=system_prompt,
                 on_tool_start=on_tool_start,
+                prompt_type=ChatPromptType.USER_MESSAGE,
             )
         finally:
             self._current_user = None
@@ -203,7 +213,10 @@ class ChatAgent(Agent):
         ]
         assert self._vision_model_client is not None
         response = await self._vision_model_client.chat(
-            messages=messages, agent_name=self.name, run_id=uuid.uuid4().hex
+            messages=messages,
+            agent_name=self.name,
+            prompt_type=ChatPromptType.VISION_CAPTION,
+            run_id=uuid.uuid4().hex,
         )
         return response.content.strip()
 

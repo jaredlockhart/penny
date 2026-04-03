@@ -92,6 +92,7 @@ class MessageStore:
         thinking: str | None = None,
         duration_ms: int | None = None,
         agent_name: str | None = None,
+        prompt_type: str | None = None,
         run_id: str | None = None,
     ) -> None:
         """Log a prompt/response exchange with Ollama."""
@@ -107,6 +108,7 @@ class MessageStore:
                     thinking=thinking,
                     duration_ms=duration_ms,
                     agent_name=agent_name,
+                    prompt_type=prompt_type,
                     run_id=run_id,
                 )
                 session.add(log)

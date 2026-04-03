@@ -12,6 +12,7 @@ run model, validate, extract image, send.
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -187,6 +188,13 @@ class ThoughtMode(NotificationMode):
 # ── Agent ──────────────────────────────────────────────────────────────
 
 
+class NotifyPromptType:
+    """Prompt types for NotifyAgent flows."""
+
+    CHECKIN = "checkin"
+    THOUGHT = "thought"
+
+
 class NotifyAgent(Agent):
     """Notification outreach agent — sends thoughts and check-ins.
 
@@ -226,7 +234,8 @@ class NotifyAgent(Agent):
         """Scheduled cycle: send a notification if the user has been idle."""
         if not self._should_notify(user):
             return False
-        return await self._send_notification(user)
+        run_id = uuid.uuid4().hex
+        return await self._send_notification(user, run_id)
 
     def _should_notify(self, user: str) -> bool:
         """Python-space eligibility checks for notifications."""
@@ -288,13 +297,13 @@ class NotifyAgent(Agent):
 
     # ── Notification pipeline ─────────────────────────────────────────
 
-    async def _send_notification(self, user: str) -> bool:
+    async def _send_notification(self, user: str, run_id: str) -> bool:
         """Select mode and execute: check-in or thought candidates."""
         assert self._channel is not None
         try:
             if self._should_checkin(user):
-                return await self._send_mode(user, CheckinMode())
-            return await self._send_best_candidate(user)
+                return await self._send_mode(user, CheckinMode(), run_id, NotifyPromptType.CHECKIN)
+            return await self._send_best_candidate(user, run_id)
         except Exception:
             logger.exception("Failed to send notification to %s", user)
             return False
@@ -306,32 +315,36 @@ class NotifyAgent(Agent):
     # Max retries for notification URL validation
     NOTIFY_URL_RETRIES = PennyConstants.NOTIFY_URL_RETRIES
 
-    async def _send_mode(self, user: str, mode: NotificationMode) -> bool:
+    async def _send_mode(
+        self, user: str, mode: NotificationMode, run_id: str, prompt_type: str
+    ) -> bool:
         """Execute a notification mode: generate candidate, validate, send.
 
         Handles tools-unavailable fallback for single-shot modes (checkin, news).
         """
         logger.info("Notify %s for %s", mode.__class__.__name__, user)
         self._last_tools_unavailable = None
-        candidate = await self._execute_mode(user, mode)
+        candidate = await self._execute_mode(user, mode, run_id, prompt_type)
         if not candidate:
             if self._last_tools_unavailable:
                 return await self._send_tools_unavailable(user, self._last_tools_unavailable)
             return False
         return await self._send_candidate(user, candidate)
 
-    async def _execute_mode(self, user: str, mode: NotificationMode) -> NotifyCandidate | None:
+    async def _execute_mode(
+        self, user: str, mode: NotificationMode, run_id: str, prompt_type: str
+    ) -> NotifyCandidate | None:
         """Shared pipeline: prepare, tools, prompt, run, validate, candidate."""
         mode.prepare(self)
         self._install_tools(mode.get_tools(self, user))
         system_prompt = mode.build_system_prompt(self, user)
-        response = await self._run_mode(user, mode, system_prompt)
+        response = await self._run_mode(user, mode, system_prompt, run_id, prompt_type)
         candidate = self._to_candidate(mode, response)
         mode.cleanup(self)
         return candidate
 
     async def _run_mode(
-        self, user: str, mode: NotificationMode, system_prompt: str
+        self, user: str, mode: NotificationMode, system_prompt: str, run_id: str, prompt_type: str
     ) -> ControllerResponse:
         """Run the model — with or without URL validation per mode."""
         if mode.validate_urls:
@@ -340,12 +353,16 @@ class NotifyAgent(Agent):
                 max_steps=mode.get_max_steps(),
                 system_prompt=system_prompt,
                 extra_source=mode.extra_source(),
+                run_id=run_id,
+                prompt_type=prompt_type,
             )
         return await self.run(
             prompt=mode.prompt,
             max_steps=mode.get_max_steps(),
             history=mode.get_history(self, user),
             system_prompt=system_prompt,
+            run_id=run_id,
+            prompt_type=prompt_type,
         )
 
     def _to_candidate(
@@ -378,12 +395,18 @@ class NotifyAgent(Agent):
         max_steps: int,
         system_prompt: str,
         extra_source: str = "",
+        run_id: str | None = None,
+        prompt_type: str | None = None,
     ) -> ControllerResponse:
         """Run agentic loop, retrying if the response contains hallucinated URLs."""
         response = ControllerResponse(answer="")
         for attempt in range(1 + self.NOTIFY_URL_RETRIES):
             response = await self.run(
-                prompt=prompt, max_steps=max_steps, system_prompt=system_prompt
+                prompt=prompt,
+                max_steps=max_steps,
+                system_prompt=system_prompt,
+                run_id=run_id,
+                prompt_type=prompt_type,
             )
             answer = response.answer.strip() if response.answer else ""
             if not answer:
@@ -436,7 +459,7 @@ class NotifyAgent(Agent):
 
     # ── Thought candidates ────────────────────────────────────────────
 
-    async def _send_best_candidate(self, user: str) -> bool:
+    async def _send_best_candidate(self, user: str, run_id: str) -> bool:
         """Score thoughts by embedding, then generate and send the best."""
         self._last_tools_unavailable: str | None = None
         n = int(self.config.runtime.NOTIFY_CANDIDATES)
@@ -445,7 +468,9 @@ class NotifyAgent(Agent):
             logger.warning("No viable notification candidates for %s", user)
             return False
         winner = await self._pick_best_thought(user, thoughts)
-        candidate = await self._execute_mode(user, ThoughtMode(winner, self.config))
+        candidate = await self._execute_mode(
+            user, ThoughtMode(winner, self.config), run_id, NotifyPromptType.THOUGHT
+        )
         if not candidate:
             if self._last_tools_unavailable:
                 return await self._send_tools_unavailable(user, self._last_tools_unavailable)

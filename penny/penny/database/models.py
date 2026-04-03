@@ -18,6 +18,9 @@ class PromptLog(SQLModel, table=True):
     thinking: str | None = None  # Model's thinking/reasoning trace
     duration_ms: int | None = None  # How long the call took
     agent_name: str | None = None  # Which agent produced this call (chat, history, etc.)
+    prompt_type: str | None = (
+        None  # Which flow within the agent (user_message, free, daily_summary, etc.)
+    )
     run_id: str | None = None  # Groups all prompts from one agentic loop invocation
 
     def get_messages(self) -> list[dict]:

@@ -25,6 +25,13 @@ from penny.prompts import Prompt
 logger = logging.getLogger(__name__)
 
 
+class ThinkingPromptType:
+    """Prompt types for ThinkingAgent flows."""
+
+    FREE = "free"
+    SEEDED = "seeded"
+
+
 class ThinkingAgent(Agent):
     """Autonomous inner monologue — Penny's conscious mind.
 
@@ -65,6 +72,12 @@ class ThinkingAgent(Agent):
     def get_max_steps(self) -> int:
         """Read from config each cycle so /config changes take effect immediately."""
         return int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
+
+    def get_prompt_type(self) -> str:
+        """Free or seeded, based on whether a seed preference was selected."""
+        if self._seed_pref_id is not None:
+            return ThinkingPromptType.SEEDED
+        return ThinkingPromptType.FREE
 
     # ── Execution hooks ──────────────────────────────────────────────────
 
@@ -156,12 +169,12 @@ class ThinkingAgent(Agent):
     # Max retries for summary URL validation
     SUMMARY_URL_RETRIES = PennyConstants.SUMMARY_URL_RETRIES
 
-    async def after_run(self, user: str, run_id: str) -> bool:
+    async def after_run(self, user: str, run_id: str, prompt_type: str | None = None) -> bool:
         """Summarize the search results, dedup, and store."""
         if not self._tool_result_text:
             return False
         combined = "\n\n---\n\n".join(self._tool_result_text)
-        report = await self._summarize_with_url_validation(combined, run_id)
+        report = await self._summarize_with_url_validation(combined, run_id, prompt_type)
         if report and len(report.split()) < PennyConstants.MIN_THOUGHT_WORDS:
             logger.info(
                 "[inner_monologue] report too short (%d words), skipping", len(report.split())
@@ -240,7 +253,9 @@ class ThinkingAgent(Agent):
 
     # ── Model calls ────────────────────────────────────────────────────────
 
-    async def _summarize_text(self, content: str, prompt: str, run_id: str) -> str:
+    async def _summarize_text(
+        self, content: str, prompt: str, run_id: str, prompt_type: str | None = None
+    ) -> str:
         """Summarize content using the model. Returns empty string on failure."""
         messages = [
             {"role": "system", "content": prompt},
@@ -248,19 +263,23 @@ class ThinkingAgent(Agent):
         ]
         try:
             response = await self._model_client.chat(
-                messages=messages, agent_name=self.name, run_id=run_id
+                messages=messages, agent_name=self.name, prompt_type=prompt_type, run_id=run_id
             )
             return response.content.strip()
         except Exception as e:
             logger.error("Summarization failed: %s", e)
             return ""
 
-    async def _summarize_with_url_validation(self, combined: str, run_id: str) -> str:
+    async def _summarize_with_url_validation(
+        self, combined: str, run_id: str, prompt_type: str | None = None
+    ) -> str:
         """Summarize monologue, retrying if the report contains hallucinated URLs."""
         source_text = self._get_source_text()
         report = ""
         for attempt in range(1 + self.SUMMARY_URL_RETRIES):
-            report = await self._summarize_text(combined, Prompt.THINKING_REPORT_PROMPT, run_id)
+            report = await self._summarize_text(
+                combined, Prompt.THINKING_REPORT_PROMPT, run_id, prompt_type
+            )
             if not report:
                 return ""
             bad_urls = self._find_hallucinated_urls(report, source_text)
