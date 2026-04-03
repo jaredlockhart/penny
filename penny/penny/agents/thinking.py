@@ -157,7 +157,7 @@ class ThinkingAgent(Agent):
     SUMMARY_URL_RETRIES = PennyConstants.SUMMARY_URL_RETRIES
 
     async def after_run(self, user: str) -> bool:
-        """Summarize the search results, dedup against same-seed thoughts, and store."""
+        """Summarize the search results, dedup, and store."""
         if not self._tool_result_text:
             return False
         combined = "\n\n---\n\n".join(self._tool_result_text)
@@ -167,48 +167,53 @@ class ThinkingAgent(Agent):
                 "[inner_monologue] report too short (%d words), skipping", len(report.split())
             )
             report = ""
-        if report and not await self._is_duplicate_thought(user, report):
+        if report:
             title, content = self._parse_title(report)
             content_vec = await embed_text(self._embedding_model_client, content)
-            content_embedding = serialize_embedding(content_vec) if content_vec else None
-            title_vec = (
-                await embed_text(self._embedding_model_client, title.lower()) if title else None
-            )
-            title_embedding = serialize_embedding(title_vec) if title_vec else None
-            matched_dislike = self._matches_dislike(user, title_vec)
-            if matched_dislike:
+            if self._is_duplicate_thought(user, title, content_vec):
                 logger.info(
-                    "[inner_monologue] filtered by dislike %r (seed=%s): %s",
-                    matched_dislike,
+                    "[inner_monologue] discarded duplicate (seed=%s): %s",
                     self._seed_topic or "free",
-                    content[:100],
+                    report[:100],
                 )
             else:
-                image = self._tool_result_images[0] if self._tool_result_images else None
-                self.db.thoughts.add(
-                    user,
-                    content,
-                    preference_id=self._seed_pref_id,
-                    embedding=content_embedding,
-                    title=title,
-                    title_embedding=title_embedding,
-                    image=image,
-                )
-                logger.info(
-                    "[inner_monologue] stored thought (seed=%s, title=%s): %s",
-                    self._seed_topic or "free",
-                    title or "none",
-                    content[:200],
-                )
-        elif report:
-            logger.info(
-                "[inner_monologue] discarded duplicate (seed=%s): %s",
-                self._seed_topic or "free",
-                report[:100],
-            )
+                await self._store_thought(user, title, content, content_vec)
         if self._seed_pref_id is not None:
             self.db.preferences.mark_thought_about(self._seed_pref_id)
         return True
+
+    async def _store_thought(
+        self, user: str, title: str | None, content: str, content_vec: list[float] | None
+    ) -> None:
+        """Embed title, check dislike filter, and persist thought."""
+        content_embedding = serialize_embedding(content_vec) if content_vec else None
+        title_vec = await embed_text(self._embedding_model_client, title.lower()) if title else None
+        title_embedding = serialize_embedding(title_vec) if title_vec else None
+        matched_dislike = self._matches_dislike(user, title_vec)
+        if matched_dislike:
+            logger.info(
+                "[inner_monologue] filtered by dislike %r (seed=%s): %s",
+                matched_dislike,
+                self._seed_topic or "free",
+                content[:100],
+            )
+            return
+        image = self._tool_result_images[0] if self._tool_result_images else None
+        self.db.thoughts.add(
+            user,
+            content,
+            preference_id=self._seed_pref_id,
+            embedding=content_embedding,
+            title=title,
+            title_embedding=title_embedding,
+            image=image,
+        )
+        logger.info(
+            "[inner_monologue] stored thought (seed=%s, title=%s): %s",
+            self._seed_topic or "free",
+            title or "none",
+            content[:200],
+        )
 
     def _matches_dislike(self, user: str, vec: list[float] | None) -> str | None:
         """Return the dislike content if the thought title is too similar to any dislike.
@@ -289,33 +294,37 @@ class ThinkingAgent(Agent):
         content = report[: match.start()].rstrip()
         return title, content
 
-    async def _is_duplicate_thought(self, user: str, report: str) -> bool:
-        """Check if report title duplicates any existing thought title."""
-        title, _ = self._parse_title(report)
-        if not title:
+    def _is_duplicate_thought(
+        self, user: str, title: str | None, content_vec: list[float] | None
+    ) -> bool:
+        """Check new thought against all existing thoughts.
+
+        Uses title TCR OR content embedding similarity — either signal
+        triggers a match.  Scans all past thoughts (O(N), N is small).
+        Falls back to EMBEDDING_ONLY when the candidate has no title.
+        """
+        if not title and content_vec is None:
             return False
-        title_vec = (
-            await embed_text(self._embedding_model_client, title.lower())
-            if self._embedding_model_client
-            else None
-        )
+        all_thoughts = self.db.thoughts.get_all(user)
         existing_items: list[tuple[str, bytes | None]] = [
-            (t.title, t.title_embedding) for t in self.db.thoughts.get_recent(user) if t.title
+            (t.title or "", t.embedding) for t in all_thoughts
         ]
+        if not existing_items:
+            return False
+        strategy = DedupStrategy.TCR_OR_EMBEDDING if title else DedupStrategy.EMBEDDING_ONLY
         match_idx = is_embedding_duplicate(
-            title,
-            title_vec,
+            title or "",
+            content_vec,
             existing_items,
-            DedupStrategy.TCR_AND_EMBEDDING,
+            strategy,
             embedding_threshold=self.config.runtime.THOUGHT_DEDUP_EMBEDDING_THRESHOLD,
             tcr_threshold=self.config.runtime.THOUGHT_DEDUP_TCR_THRESHOLD,
         )
         if match_idx is not None:
-            matched_title = existing_items[match_idx][0]
             logger.info(
-                "[inner_monologue] duplicate title %r matches %r (pref #%s)",
+                "[inner_monologue] duplicate %r matches %r (pref #%s)",
                 title,
-                matched_title,
+                existing_items[match_idx][0],
                 self._seed_pref_id,
             )
             return True
