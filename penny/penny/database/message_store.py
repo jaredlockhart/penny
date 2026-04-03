@@ -507,10 +507,14 @@ class MessageStore:
         if after is not None and (cutoff is None or after > cutoff):
             cutoff = after
         with self._session() as session:
-            query = select(func.count(MessageLog.id)).where(
-                MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                MessageLog.parent_id == None,  # noqa: E711
-                MessageLog.recipient == user,
+            query = (
+                select(func.count())
+                .select_from(MessageLog)
+                .where(
+                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
+                    MessageLog.parent_id == None,  # noqa: E711
+                    MessageLog.recipient == user,
+                )
             )
             if cutoff is not None:
                 query = query.where(MessageLog.timestamp > cutoff)

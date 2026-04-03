@@ -266,18 +266,18 @@ ConfigParam(
 
 ConfigParam(
     key="THOUGHT_DEDUP_EMBEDDING_THRESHOLD",
-    description="Embedding similarity threshold for thought title deduplication (0-1)",
+    description="Content embedding similarity threshold for thought dedup (0-1)",
     type=float,
-    default=0.60,
+    default=0.70,
     validator=_validate_unit_float,
     group=GROUP_INNER_MONOLOGUE,
 )
 
 ConfigParam(
     key="THOUGHT_DEDUP_TCR_THRESHOLD",
-    description="Token containment ratio threshold for thought title deduplication",
+    description="Title token containment ratio threshold for thought dedup (0-1)",
     type=float,
-    default=0.6,
+    default=0.50,
     validator=_validate_unit_float,
     group=GROUP_INNER_MONOLOGUE,
 )
