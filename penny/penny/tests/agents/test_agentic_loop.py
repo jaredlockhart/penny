@@ -676,12 +676,12 @@ class TestSearchResultTrimming:
 
 
 class TestEmptyContentAfterToolCalls:
-    """Tests for combined empty-content fixes: synthesis prompt, think tag stripping,
-    retry counter reset, context truncation, and fallback response."""
+    """Tests for combined empty-content fixes: nudge prompts, think tag stripping,
+    retry counter reset, and fallback response."""
 
     @pytest.mark.asyncio
-    async def test_synthesis_prompt_after_tool_calls(self, test_db, mock_ollama):
-        """When model returns empty after tool calls, retry uses synthesis prompt."""
+    async def test_final_step_empty_content_gets_strong_nudge(self, test_db, mock_ollama):
+        """When model returns empty on final step, retry uses strong nudge."""
         agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
 
         def handler(request, count):
@@ -697,19 +697,24 @@ class TestEmptyContentAfterToolCalls:
 
         retry_messages = mock_ollama.requests[2]["messages"]
         last_user = next(m for m in reversed(retry_messages) if m["role"] == "user")
-        assert "synthesize" in last_user["content"].lower()
+        assert "STOP" in last_user["content"]
+        assert "test question" in last_user["content"]
 
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_generic_prompt_without_tool_calls(self, test_db, mock_ollama):
-        """Without tool calls, empty-content retry uses generic prompt."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=1)
+    async def test_mid_loop_empty_content_gets_continue_nudge(self, test_db, mock_ollama):
+        """When model returns empty mid-loop (tools still available), uses continue nudge."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
 
         def handler(request, count):
             if count == 1:
+                # Mid-loop: model returns empty (tools still available, not final step)
                 return mock_ollama._make_text_response(request, "")
-            return mock_ollama._make_text_response(request, "here's my answer")
+            if count == 2:
+                # Retry after continue nudge — model responds
+                return mock_ollama._make_text_response(request, "here's my answer")
+            return mock_ollama._make_text_response(request, "fallback")
 
         mock_ollama.set_response_handler(handler)
         response = await agent.run("test question", max_steps=max_steps)
@@ -718,6 +723,8 @@ class TestEmptyContentAfterToolCalls:
         retry_messages = mock_ollama.requests[1]["messages"]
         last_user = next(m for m in reversed(retry_messages) if m["role"] == "user")
         assert last_user["content"] == "Please provide your response."
+        # Should NOT have the strong nudge — model still has tools available
+        assert "STOP" not in last_user["content"]
 
         await agent.close()
 
@@ -852,7 +859,7 @@ class TestStrongNudgeUsesLastQuestion:
                 nudge_content = last_user
                 return mock_ollama._make_text_response(request, "Joan Chen was in Twin Peaks")
 
-            # After 4 tool calls, return empty to trigger truncation + strong nudge
+            # After 4 tool calls, return empty to trigger strong nudge
             if count >= 5:
                 return mock_ollama._make_text_response(request, "")
 
