@@ -354,9 +354,7 @@ class Agent:
             if strip_tools:
                 logger.debug("Final step — tools removed, model must produce text")
 
-            response = await self._call_model_validated(
-                messages, step_tools, tool_call_records=tool_call_records
-            )
+            response = await self._call_model_validated(messages, step_tools)
             if response is None:
                 return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
 
@@ -430,15 +428,14 @@ class Agent:
         self,
         messages: list[dict],
         tools: list[dict],
-        tool_call_records: list[ToolCallRecord] | None = None,
     ):
         """Call the model, retrying on invalid outputs.
 
         Checks for (in order): XML markup, empty content, refusal, hallucinated URLs.
         Each invalid output type gets one retry. Tool call responses are returned
         immediately without validation. When tools are stripped (None) but the model
-        hallucinates tool calls, they are cleared and content is validated normally —
-        this triggers the nudge/retry logic for empty responses.
+        hallucinates tool calls, they are cleared and content falls through to
+        normal validation — which triggers the appropriate nudge for empty responses.
         """
         max_retries = PennyConstants.RESPONSE_VALIDATION_RETRIES
         effective_tools = tools if tools else None
@@ -451,20 +448,14 @@ class Agent:
                 logger.error("Error calling Ollama: %s", exception)
                 return None
 
-            # Tool calls are not validated — return immediately
+            # Tool calls with tools available — return immediately, no validation
             if response.has_tool_calls and effective_tools is not None:
                 return response
 
-            # When tools were stripped but the model hallucinated tool calls,
-            # clear them and immediately inject the strongest nudge. The model
-            # is on its final step — no point graduating, just force text output.
+            # Hallucinated tool calls (tools stripped) — clear and validate content
             if response.has_tool_calls and effective_tools is None:
                 logger.warning("Model hallucinated tool calls without tools — stripping")
                 response.message.tool_calls = None
-                messages.append(response.message.to_input_message())
-                nudge = _build_strong_nudge(messages)
-                messages.append({"role": MessageRole.USER, "content": nudge})
-                continue
 
             self.on_response(response)
             content = response.content.strip()
