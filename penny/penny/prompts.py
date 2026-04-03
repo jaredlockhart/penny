@@ -267,6 +267,14 @@ Examples:
     NOTIFY_PROMPT = "Hey penny, what have you been thinking about?"
     NOTIFY_CHECKIN = "Ask the user what they've been up to lately."
 
+    # Nudge prompts (injected when model returns empty content)
+    FINAL_STEP_NUDGE = (
+        "STOP. You cannot search anymore. Tools are no longer available. "
+        "Answer the user NOW using ONLY what you already found. "
+        "The user asked: {original_question}"
+    )
+    CONTINUE_NUDGE = "Please provide your response."
+
     PREFERENCE_IDENTIFICATION_PROMPT = (
         "Identify preference topics in the following conversation — "
         "things the user likes, dislikes, wants, or is frustrated by.\n\n"
