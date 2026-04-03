@@ -19,6 +19,15 @@ class DomainPermissionValue(StrEnum):
     BLOCKED = "blocked"
 
 
+class ValidationReason(StrEnum):
+    """Reasons a model response failed validation."""
+
+    XML = "xml"
+    EMPTY = "empty"
+    REFUSAL = "refusal"
+    HALLUCINATED_URLS = "hallucinated_urls"
+
+
 class PennyConstants:
     """All constants for the Penny agent."""
 
@@ -116,8 +125,6 @@ class PennyConstants:
     HISTORY_MAX_STEPS = 1
     VISION_MAX_STEPS = 1
     CHECKIN_MAX_STEPS = 1
-    TOOL_RESULT_TRUNCATION_THRESHOLD = 3
-    TOOL_RESULT_TRUNCATION_MAX_CHARS = 500
     RESPONSE_VALIDATION_RETRIES = 5
     TOOL_FAILURE_ABORT_THRESHOLD = 2
     THOUGHT_CONTEXT_LIMIT = 10

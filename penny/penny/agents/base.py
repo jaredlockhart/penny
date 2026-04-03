@@ -13,7 +13,7 @@ from typing import Any
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
-from penny.constants import PennyConstants
+from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
 from penny.ollama import OllamaClient
 from penny.prompts import Prompt
@@ -118,28 +118,20 @@ def _is_tool_result_failed(result_str: str) -> bool:
     return any(result_str.startswith(prefix) for prefix in _TOOL_FAILURE_PREFIXES)
 
 
-_TOOL_RESULT_TRUNCATION_THRESHOLD = PennyConstants.TOOL_RESULT_TRUNCATION_THRESHOLD
-_TOOL_RESULT_MAX_CHARS = PennyConstants.TOOL_RESULT_TRUNCATION_MAX_CHARS
-
-
 def _build_strong_nudge(messages: list[dict]) -> str:
     """Build a context-aware nudge that includes the original user question.
 
     Called when many preceding tool calls may have saturated the model's context.
+    Uses forceful language to break the model out of search-fixation loops.
     Including the original question gives the model a clear target after heavy tool use.
     """
     user_messages = [
         m["content"]
         for m in messages
-        if m.get("role") == MessageRole.USER and not m["content"].startswith("You have gathered")
+        if m.get("role") == MessageRole.USER and not m["content"].startswith("STOP")
     ]
-    original_question = user_messages[-1] if user_messages else None
-    if original_question:
-        return (
-            f"You have gathered enough information from your searches. "
-            f"Please provide your final answer to: {original_question}"
-        )
-    return "You have gathered enough information. Please provide your final response."
+    original_question = user_messages[-1]
+    return Prompt.FINAL_STEP_NUDGE.format(original_question=original_question)
 
 
 # Phrases that indicate a model refusal — used to detect and retry unhelpful responses
@@ -362,16 +354,11 @@ class Agent:
             if strip_tools:
                 logger.debug("Final step — tools removed, model must produce text")
 
-            response = await self._call_model_validated(
-                messages, step_tools, tool_call_records=tool_call_records
-            )
+            response = await self._call_model_validated(messages, step_tools)
             if response is None:
                 return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
 
-            if response.has_tool_calls and strip_tools:
-                logger.warning("Model hallucinated tool calls on final step — ignoring")
-
-            if response.has_tool_calls and not strip_tools:
+            if response.has_tool_calls:
                 result = await self._process_tool_calls(response, called_tools, on_tool_start)
                 messages.extend(result.messages)
                 tool_call_records.extend(result.records)
@@ -441,17 +428,18 @@ class Agent:
         self,
         messages: list[dict],
         tools: list[dict],
-        tool_call_records: list[ToolCallRecord] | None = None,
     ):
         """Call the model, retrying on invalid outputs.
 
         Checks for (in order): XML markup, empty content, refusal, hallucinated URLs.
         Each invalid output type gets one retry. Tool call responses are returned
-        immediately without validation.
+        immediately without validation. When tools are stripped (None) but the model
+        hallucinates tool calls, they are cleared and content falls through to
+        normal validation — which triggers the appropriate nudge for empty responses.
         """
         max_retries = PennyConstants.RESPONSE_VALIDATION_RETRIES
         effective_tools = tools if tools else None
-        retried: set[str] = set()
+        retried: set[ValidationReason] = set()
 
         for attempt in range(max_retries):
             try:
@@ -460,9 +448,14 @@ class Agent:
                 logger.error("Error calling Ollama: %s", exception)
                 return None
 
-            # Tool calls are not validated — return immediately
-            if response.has_tool_calls:
+            # Tool calls with tools available — return immediately, no validation
+            if response.has_tool_calls and effective_tools is not None:
                 return response
+
+            # Hallucinated tool calls (tools stripped) — clear and validate content
+            if response.has_tool_calls and effective_tools is None:
+                logger.warning("Model hallucinated tool calls without tools — stripping")
+                response.message.tool_calls = None
 
             self.on_response(response)
             content = response.content.strip()
@@ -481,66 +474,47 @@ class Agent:
             # Append the bad response so the model sees what it produced
             messages.append(response.message.to_input_message())
 
-            # Empty content needs special handling: truncate tool context and nudge
-            if reason == "empty":
-                records = tool_call_records or []
-                if len(records) >= _TOOL_RESULT_TRUNCATION_THRESHOLD:
-                    messages = self._truncate_tool_messages(messages)
+            # Empty content: nudge depends on whether the model still has tools
+            if reason == ValidationReason.EMPTY:
+                if effective_tools is None:
+                    # Final step, tools stripped — force synthesis
                     nudge = _build_strong_nudge(messages)
-                elif records:
-                    nudge = (
-                        "You've completed your research. Please synthesize your findings "
-                        "and provide a helpful response."
-                    )
                 else:
-                    nudge = "Please provide your response."
+                    # Mid-loop, tools still available — gentle nudge to continue
+                    nudge = Prompt.CONTINUE_NUDGE
                 messages.append({"role": MessageRole.USER, "content": nudge})
 
         return response
 
-    def _check_response(self, content: str, already_retried: set[str]) -> str | None:
-        """Check a text response for problems. Returns reason string or None if valid."""
-        if _has_xml_tags(content) and "xml" not in already_retried:
-            return "xml"
+    def _check_response(
+        self, content: str, already_retried: set[ValidationReason]
+    ) -> ValidationReason | None:
+        """Check a text response for problems. Returns reason or None if valid."""
+        if _has_xml_tags(content) and ValidationReason.XML not in already_retried:
+            return ValidationReason.XML
 
         effective_content, _ = _strip_think_tags(content)
-        if not effective_content and "empty" not in already_retried:
-            return "empty"
+        if not effective_content and ValidationReason.EMPTY not in already_retried:
+            return ValidationReason.EMPTY
 
         if (
             effective_content
             and self._is_refusal(effective_content)
-            and "refusal" not in already_retried
+            and ValidationReason.REFUSAL not in already_retried
         ):
-            return "refusal"
+            return ValidationReason.REFUSAL
 
         source_text = self._get_source_text()
         if source_text and effective_content:
             bad_urls = self._find_hallucinated_urls(effective_content, source_text)
-            if bad_urls and "hallucinated_urls" not in already_retried:
+            if bad_urls and ValidationReason.HALLUCINATED_URLS not in already_retried:
                 logger.warning(
                     "Hallucinated URL(s): %s",
                     ", ".join(url[:80] for url in bad_urls),
                 )
-                return "hallucinated_urls"
+                return ValidationReason.HALLUCINATED_URLS
 
         return None
-
-    @staticmethod
-    def _truncate_tool_messages(messages: list[dict]) -> list[dict]:
-        """Truncate tool result messages to reduce context size before retrying.
-
-        Called when many preceding tool calls may have saturated the model's
-        context window, causing an empty response on the synthesis step.
-        """
-        result = []
-        for msg in messages:
-            if msg.get("role") == MessageRole.TOOL:
-                content = msg.get("content", "")
-                if len(content) > _TOOL_RESULT_MAX_CHARS:
-                    msg = {**msg, "content": content[:_TOOL_RESULT_MAX_CHARS] + "... [truncated]"}
-            result.append(msg)
-        return result
 
     def _build_final_response(
         self,
