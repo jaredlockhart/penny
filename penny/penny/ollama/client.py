@@ -42,6 +42,8 @@ class OllamaClient:
         messages: list[dict],
         tools: list[dict] | None = None,
         format: dict | str | None = None,
+        agent_name: str | None = None,
+        run_id: str | None = None,
     ) -> ChatResponse:
         """
         Generate a chat completion with optional tool calling.
@@ -108,6 +110,8 @@ class OllamaClient:
                         tools=tools,
                         thinking=thinking,
                         duration_ms=duration_ms,
+                        agent_name=agent_name,
+                        run_id=run_id,
                     )
 
                 return response
@@ -135,7 +139,12 @@ class OllamaClient:
         raise last_error
 
     async def generate(
-        self, prompt: str, tools: list[dict] | None = None, format: dict | str | None = None
+        self,
+        prompt: str,
+        tools: list[dict] | None = None,
+        format: dict | str | None = None,
+        agent_name: str | None = None,
+        run_id: str | None = None,
     ) -> ChatResponse:
         """
         Generate a completion for a prompt (converts to chat format internally).
@@ -144,12 +153,14 @@ class OllamaClient:
             prompt: The prompt to generate from
             tools: Optional list of tool definitions
             format: Optional format specification (JSON schema dict, "json", or None)
+            agent_name: Which agent produced this call
+            run_id: Groups prompts from one agentic loop invocation
 
         Returns:
             ChatResponse
         """
         messages = [{"role": "user", "content": prompt}]
-        return await self.chat(messages, tools, format)
+        return await self.chat(messages, tools, format, agent_name=agent_name, run_id=run_id)
 
     async def generate_image(self, prompt: str) -> str:
         """

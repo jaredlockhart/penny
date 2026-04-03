@@ -7,6 +7,7 @@ Context is injected automatically via the Agent base class.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 
 from penny.agents.base import Agent
@@ -201,7 +202,9 @@ class ChatAgent(Agent):
             {"role": "user", "content": Prompt.VISION_AUTO_DESCRIBE_PROMPT, "images": [image_b64]},
         ]
         assert self._vision_model_client is not None
-        response = await self._vision_model_client.chat(messages=messages)
+        response = await self._vision_model_client.chat(
+            messages=messages, agent_name=self.name, run_id=uuid.uuid4().hex
+        )
         return response.content.strip()
 
     # ── Image processing ──────────────────────────────────────────────────

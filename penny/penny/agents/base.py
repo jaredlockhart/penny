@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 import urllib.parse as _urlparse
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -259,6 +260,7 @@ class Agent:
                 return False
 
             logger.info("%s starting for %s", self.name, user)
+            run_id = uuid.uuid4().hex
             system_prompt = await self._build_system_prompt(user)
             history = self.get_history(user)
             on_tool_start, tool_cleanup = (
@@ -271,11 +273,12 @@ class Agent:
                     system_prompt=system_prompt,
                     history=history,
                     on_tool_start=on_tool_start,
+                    run_id=run_id,
                 )
             finally:
                 if tool_cleanup:
                     await tool_cleanup()
-            did_work = await self.after_run(user)
+            did_work = await self.after_run(user, run_id)
             logger.info("%s complete for %s", self.name, user)
             return did_work
         except Exception:
@@ -303,7 +306,7 @@ class Agent:
         """Conversation history for the agentic loop. Override for conversation agents."""
         return None
 
-    async def after_run(self, user: str) -> bool:
+    async def after_run(self, user: str, run_id: str) -> bool:
         """Post-processing after the agentic loop. Return True if work was done."""
         return True
 
@@ -316,13 +319,16 @@ class Agent:
         history: list[tuple[str, str]] | None = None,
         system_prompt: str | None = None,
         on_tool_start: Callable[[list[tuple[str, dict]]], Awaitable[None]] | None = None,
+        run_id: str | None = None,
     ) -> ControllerResponse:
         """Run the agentic loop — prompt in, response out."""
+        if run_id is None:
+            run_id = uuid.uuid4().hex
         self._tool_result_text = []
         self._tool_result_images = []
         messages = self._build_messages(prompt, history, system_prompt)
         tools = self._tool_registry.get_ollama_tools()
-        return await self._run_agentic_loop(messages, tools, max_steps, on_tool_start)
+        return await self._run_agentic_loop(messages, tools, max_steps, on_tool_start, run_id)
 
     # ── Agentic loop internals ───────────────────────────────────────────
 
@@ -338,6 +344,7 @@ class Agent:
         tools: list[dict],
         steps: int,
         on_tool_start: Callable[[list[tuple[str, dict]]], Awaitable[None]] | None = None,
+        run_id: str | None = None,
     ) -> ControllerResponse:
         """Execute the step loop: call model, process tool calls, or return final answer."""
         attachments: list[str] = []
@@ -354,7 +361,7 @@ class Agent:
             if strip_tools:
                 logger.debug("Final step — tools removed, model must produce text")
 
-            response = await self._call_model_validated(messages, step_tools)
+            response = await self._call_model_validated(messages, step_tools, run_id)
             if response is None:
                 return ControllerResponse(answer=PennyResponse.AGENT_MODEL_ERROR)
 
@@ -428,6 +435,7 @@ class Agent:
         self,
         messages: list[dict],
         tools: list[dict],
+        run_id: str | None = None,
     ):
         """Call the model, retrying on invalid outputs.
 
@@ -443,7 +451,12 @@ class Agent:
 
         for attempt in range(max_retries):
             try:
-                response = await self._model_client.chat(messages=messages, tools=effective_tools)
+                response = await self._model_client.chat(
+                    messages=messages,
+                    tools=effective_tools,
+                    agent_name=self.name,
+                    run_id=run_id,
+                )
             except Exception as exception:
                 logger.error("Error calling Ollama: %s", exception)
                 return None

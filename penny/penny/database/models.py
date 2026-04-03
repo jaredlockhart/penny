@@ -17,6 +17,8 @@ class PromptLog(SQLModel, table=True):
     response: str  # JSON-serialized response dict
     thinking: str | None = None  # Model's thinking/reasoning trace
     duration_ms: int | None = None  # How long the call took
+    agent_name: str | None = None  # Which agent produced this call (chat, history, etc.)
+    run_id: str | None = None  # Groups all prompts from one agentic loop invocation
 
     def get_messages(self) -> list[dict]:
         return json.loads(self.messages)
