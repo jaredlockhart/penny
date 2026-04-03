@@ -101,6 +101,15 @@ class ThoughtStore:
             thoughts.reverse()
             return thoughts
 
+    def get_all(self, user: str) -> list[Thought]:
+        """Get all thoughts for a user, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Thought).where(Thought.user == user).order_by(Thought.created_at.desc())
+                ).all()
+            )
+
     def get_next_unnotified(self, user: str) -> Thought | None:
         """Get the oldest un-notified thought."""
         with self._session() as session:

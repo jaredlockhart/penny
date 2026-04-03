@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from penny.constants import PennyConstants
+from penny.ollama.embeddings import serialize_embedding
 from penny.prompts import Prompt
 from penny.tests.conftest import TEST_SENDER
 
@@ -678,7 +679,7 @@ async def test_seeded_duplicate_thought_skips_storage(
     running_penny,
     monkeypatch,
 ):
-    """Seeded: when a new thought is too similar to existing, it is not stored."""
+    """Seeded: content embedding dedup catches thought even with different title words."""
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
     config = make_config(
@@ -701,10 +702,8 @@ async def test_seeded_duplicate_thought_skips_storage(
                 {"queries": ["quantum gravity"], "reasoning": "Researching"},
             )
         if count == 2:
-            return mock_ollama._make_text_response(request, "Yep, same old stuff.")
-        return mock_ollama._make_text_response(
-            request, "Confirmed the album still exists, nothing new."
-        )
+            return mock_ollama._make_text_response(request, "Found some results.")
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
 
     mock_ollama.set_response_handler(handler)
 
@@ -712,11 +711,18 @@ async def test_seeded_duplicate_thought_skips_storage(
         _seed_thinking(penny)
         penny.thinking_agent._embedding_model_client = object()
 
-        penny.db.thoughts.add(TEST_SENDER, "Old thought about the same topic.", preference_id=1)
+        # Pre-seed with different title words but same content embedding — caught by content sim
+        penny.db.thoughts.add(
+            TEST_SENDER,
+            "Old thought about the same topic.",
+            preference_id=1,
+            title="Neural network breakthroughs",
+            embedding=serialize_embedding(duplicate_vec),
+        )
 
         await penny.thinking_agent.execute()
 
-        # Only the pre-seeded thought remains
+        # Only the pre-seeded thought remains — dedup blocked the new one
         thoughts = penny.db.thoughts.get_recent_by_preference(TEST_SENDER, preference_id=1)
         assert len(thoughts) == 1
         assert "Old thought" in thoughts[0].content
@@ -735,7 +741,7 @@ async def test_free_duplicate_thought_skips_storage(
     running_penny,
     monkeypatch,
 ):
-    """Free: when a new thought is too similar to existing free thought, it is not stored."""
+    """Free: content embedding dedup catches free thought duplicate."""
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.0)
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -757,10 +763,8 @@ async def test_free_duplicate_thought_skips_storage(
                 {"queries": ["interesting science"], "reasoning": "Exploring"},
             )
         if count == 2:
-            return mock_ollama._make_text_response(request, "Yep, same old stuff.")
-        return mock_ollama._make_text_response(
-            request, "Confirmed quantum computers still quantum, nothing new."
-        )
+            return mock_ollama._make_text_response(request, "Found some results.")
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
 
     mock_ollama.set_response_handler(handler)
 
@@ -769,15 +773,83 @@ async def test_free_duplicate_thought_skips_storage(
         penny.thinking_agent._embedding_model_client = object()
 
         penny.db.thoughts.add(
-            TEST_SENDER, "Old free thought about quantum stuff.", preference_id=None
+            TEST_SENDER,
+            "Old free thought about quantum stuff.",
+            preference_id=None,
+            title="Quantum computing research",
+            embedding=serialize_embedding(duplicate_vec),
         )
 
         await penny.thinking_agent.execute()
 
-        # Only the pre-seeded free thought remains
+        # Only the pre-seeded free thought remains — content dedup blocked the new one
         free_thoughts = penny.db.thoughts.get_recent_by_preference(TEST_SENDER, preference_id=None)
         assert len(free_thoughts) == 1
         assert "Old free thought" in free_thoughts[0].content
+
+
+@pytest.mark.asyncio
+async def test_cross_preference_duplicate_skips_storage(
+    signal_server,
+    mock_ollama,
+    make_config,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Global dedup catches duplicate even when seeded from a different preference."""
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    monkeypatch.setattr("penny.agents.thinking.random.choice", lambda lst: lst[0])
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=2,
+        free_thinking_probability=0.0,
+    )
+
+    duplicate_vec = [1.0, 0.0, 0.0]
+    monkeypatch.setattr(
+        "penny.agents.thinking.embed_text",
+        lambda _client, _text: _fake_embed(duplicate_vec),  # noqa: ARG005
+    )
+
+    def handler(request, count):
+        if count == 1:
+            return mock_ollama._make_tool_call_response(
+                request,
+                "browse",
+                {"queries": ["quantum gravity"], "reasoning": "Researching"},
+            )
+        if count == 2:
+            return mock_ollama._make_text_response(request, "Found some results.")
+        return mock_ollama._make_text_response(request, MOCK_REPORT)
+
+    mock_ollama.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+        penny.thinking_agent._embedding_model_client = object()
+
+        # Add a second preference and a thought from it with matching content embedding
+        penny.db.preferences.add(
+            user=TEST_SENDER,
+            content="Space exploration",
+            valence="positive",
+            source=PennyConstants.PreferenceSource.MANUAL,
+        )
+        penny.db.thoughts.add(
+            TEST_SENDER,
+            "Old thought from a different preference.",
+            preference_id=2,
+            title="Space telescope breakthroughs",
+            embedding=serialize_embedding(duplicate_vec),
+        )
+
+        await penny.thinking_agent.execute()
+
+        # No new thought stored — global dedup caught the cross-preference match
+        all_thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        assert len(all_thoughts) == 1
+        assert "Old thought from a different preference" in all_thoughts[0].content
 
 
 @pytest.mark.asyncio

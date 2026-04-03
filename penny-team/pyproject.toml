@@ -22,7 +22,7 @@ packages = []
 [dependency-groups]
 dev = [
     "ruff>=0.8.0",
-    "ty>=0.0.25",
+    "ty==0.0.27",
     "pytest>=8.0.0",
 ]
 
