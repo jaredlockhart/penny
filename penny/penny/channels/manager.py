@@ -15,7 +15,8 @@ if TYPE_CHECKING:
     from penny.commands import CommandRegistry
     from penny.database import Database
     from penny.database.models import MessageLog
-    from penny.ollama import OllamaClient
+    from penny.llm import LlmClient
+    from penny.llm.image_client import OllamaImageClient
     from penny.scheduler import BackgroundScheduler
 
 logger = logging.getLogger(__name__)
@@ -154,9 +155,9 @@ class ChannelManager(MessageChannel):
         config: Config,
         channel_type: str,
         start_time: datetime,
-        model_client: OllamaClient,
-        embedding_model_client: OllamaClient | None = None,
-        image_model_client: OllamaClient | None = None,
+        model_client: LlmClient,
+        embedding_model_client: LlmClient | None = None,
+        image_model_client: OllamaImageClient | None = None,
     ) -> None:
         """Forward command context to all registered channels."""
         super().set_command_context(

@@ -144,7 +144,7 @@ async def test_foreground_during_idle_prevents_task_start():
 
 @pytest.mark.asyncio
 async def test_command_does_not_cancel_background_task(
-    signal_server, make_config, mock_ollama, running_penny
+    signal_server, make_config, mock_llm, running_penny
 ):
     """Commands don't use Ollama, so they should not interrupt background tasks."""
     config = make_config(IDLE_SECONDS=0.0)

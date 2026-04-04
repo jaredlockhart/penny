@@ -10,11 +10,11 @@ from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 @pytest.mark.asyncio
-async def test_test_mode_basic_flow(signal_server, mock_ollama, test_config, running_penny):
+async def test_test_mode_basic_flow(signal_server, mock_llm, test_config, running_penny):
     """
     Test that /test command uses test database and prepends [TEST] to response.
     """
-    mock_ollama.set_default_flow(
+    mock_llm.set_default_flow(
         final_response="here's what i found about your question! 🌟",
     )
 
@@ -44,7 +44,7 @@ async def test_test_mode_basic_flow(signal_server, mock_ollama, test_config, run
 
 @pytest.mark.asyncio
 async def test_test_mode_rejects_nested_commands(
-    signal_server, mock_ollama, test_config, running_penny
+    signal_server, mock_llm, test_config, running_penny
 ):
     """
     Test that /test rejects nested commands like /test /debug.
@@ -64,11 +64,11 @@ async def test_test_mode_rejects_nested_commands(
         assert "nested commands are not supported" in response["message"].lower()
 
         # Verify Ollama was NOT called
-        assert len(mock_ollama.requests) == 0, "Ollama should not be called for nested commands"
+        assert len(mock_llm.requests) == 0, "Ollama should not be called for nested commands"
 
 
 @pytest.mark.asyncio
-async def test_test_mode_rejects_threading(signal_server, mock_ollama, test_config, running_penny):
+async def test_test_mode_rejects_threading(signal_server, mock_llm, test_config, running_penny):
     """
     Test that /test rejects threaded messages (blocked at channel layer like all commands).
     """
@@ -88,17 +88,17 @@ async def test_test_mode_rejects_threading(signal_server, mock_ollama, test_conf
         assert "commands can't be used in threads" in response["message"].lower()
 
         # Verify Ollama was NOT called
-        assert len(mock_ollama.requests) == 0, "Ollama should not be called for threaded commands"
+        assert len(mock_llm.requests) == 0, "Ollama should not be called for threaded commands"
 
 
 @pytest.mark.asyncio
 async def test_test_mode_uses_real_external_services(
-    signal_server, mock_ollama, test_config, running_penny
+    signal_server, mock_llm, test_config, running_penny
 ):
     """
     Test that /test mode uses real external services (Ollama, Perplexity).
     """
-    mock_ollama.set_default_flow(
+    mock_llm.set_default_flow(
         final_response="here's what i found! 🌟",
     )
 
@@ -114,14 +114,14 @@ async def test_test_mode_uses_real_external_services(
         assert response["message"].startswith(PennyResponse.TEST_MODE_PREFIX)
 
         # Verify Ollama was called (real service usage)
-        assert len(mock_ollama.requests) >= 1, "Ollama should be called in test mode"
+        assert len(mock_llm.requests) >= 1, "Ollama should be called in test mode"
 
         # Verify Ollama processed the message with tools available
 
 
 @pytest.mark.asyncio
 async def test_test_mode_blocks_threading_to_test_responses(
-    signal_server, mock_ollama, test_config, running_penny
+    signal_server, mock_llm, test_config, running_penny
 ):
     """
     Test that threading/replying to a test mode response is rejected.
@@ -132,7 +132,7 @@ async def test_test_mode_blocks_threading_to_test_responses(
     3. User: quotetext(Blah blah response) hello
     4. Penny: "Threading is not supported for test mode responses."
     """
-    mock_ollama.set_default_flow(
+    mock_llm.set_default_flow(
         final_response="here's what i found! 🌟",
     )
 
@@ -206,12 +206,12 @@ async def test_test_mode_snapshot_created_at_startup(test_config, running_penny)
 
 @pytest.mark.asyncio
 async def test_test_mode_shows_typing_indicator(
-    signal_server, mock_ollama, test_config, running_penny
+    signal_server, mock_llm, test_config, running_penny
 ):
     """
     Test that /test command shows typing indicator while processing.
     """
-    mock_ollama.set_default_flow(
+    mock_llm.set_default_flow(
         final_response="here's what i found! 🌟",
     )
 

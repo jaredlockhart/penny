@@ -72,18 +72,24 @@ def _validate_channel_config(channel_type: str) -> None:
 
 def _collect_env_vars(channel_type: str) -> dict:
     """Read all config environment variables and return as constructor kwargs."""
-    ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
+    llm_model = os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", "gpt-oss:20b"))
     return {
         "channel_type": channel_type,
         "signal_number": os.getenv("SIGNAL_NUMBER"),
         "signal_api_url": os.getenv("SIGNAL_API_URL", "http://localhost:8080"),
         "discord_bot_token": os.getenv("DISCORD_BOT_TOKEN"),
         "discord_channel_id": os.getenv("DISCORD_CHANNEL_ID"),
+        "llm_api_url": os.getenv(
+            "LLM_API_URL", os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434")
+        ),
+        "llm_model": llm_model,
+        "llm_api_key": os.getenv("LLM_API_KEY", "not-needed"),
+        "llm_vision_model": os.getenv("LLM_VISION_MODEL", os.getenv("OLLAMA_VISION_MODEL")),
+        "llm_image_model": os.getenv("LLM_IMAGE_MODEL", os.getenv("OLLAMA_IMAGE_MODEL")),
+        "llm_embedding_model": os.getenv(
+            "LLM_EMBEDDING_MODEL", os.getenv("OLLAMA_EMBEDDING_MODEL")
+        ),
         "ollama_api_url": os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434"),
-        "ollama_model": ollama_model,
-        "ollama_vision_model": os.getenv("OLLAMA_VISION_MODEL"),
-        "ollama_image_model": os.getenv("OLLAMA_IMAGE_MODEL"),
-        "ollama_embedding_model": os.getenv("OLLAMA_EMBEDDING_MODEL"),
         "github_app_id": os.getenv("GITHUB_APP_ID"),
         "github_app_private_key_path": os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
         "github_app_installation_id": os.getenv("GITHUB_APP_INSTALLATION_ID"),
@@ -129,9 +135,9 @@ class Config:
     discord_bot_token: str | None
     discord_channel_id: str | None
 
-    # Ollama configuration
-    ollama_api_url: str
-    ollama_model: str  # Text model for all agents
+    # LLM configuration (works with Ollama, omlx, or any OpenAI-compatible API)
+    llm_api_url: str
+    llm_model: str  # Text model for all agents
 
     # Logging configuration
     log_level: str
@@ -140,21 +146,23 @@ class Config:
     db_path: str
 
     # Optional fields with defaults
+    llm_api_key: str = "not-needed"
     log_file: str | None = None
     log_max_bytes: int = 10 * 1024 * 1024  # 10 MB
     log_backup_count: int = 5
-    ollama_vision_model: str | None = None  # Vision model for image understanding
-    ollama_image_model: str | None = None  # Image generation model (e.g., x/z-image-turbo)
-    ollama_embedding_model: str | None = None  # Embedding model (e.g., nomic-embed-text)
+    llm_vision_model: str | None = None  # Vision model for image understanding
+    llm_image_model: str | None = None  # Image generation model (e.g., x/z-image-turbo)
+    llm_embedding_model: str | None = None  # Embedding model (e.g., nomic-embed-text)
+    ollama_api_url: str = "http://host.docker.internal:11434"  # Ollama-specific (image gen)
 
     # GitHub App Configuration (optional, needed for /bug command)
     github_app_id: str | None = None
     github_app_private_key_path: str | None = None
     github_app_installation_id: str | None = None
 
-    # Ollama retry configuration
-    ollama_max_retries: int = 3
-    ollama_retry_delay: float = 0.5
+    # LLM retry configuration
+    llm_max_retries: int = 3
+    llm_retry_delay: float = 0.5
 
     # Tool execution timeout (seconds)
     tool_timeout: float = 120.0

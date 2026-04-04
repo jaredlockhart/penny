@@ -3,13 +3,13 @@
 import logging
 import os
 
-from penny.ollama.client import OllamaClient
+from penny.llm.client import LlmClient
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
 
 
-async def get_restart_message(ollama_client: OllamaClient) -> str:
+async def get_restart_message(ollama_client: LlmClient) -> str:
     """
     Generate a casual restart announcement based on the latest git commit.
 

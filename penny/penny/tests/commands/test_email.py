@@ -189,18 +189,18 @@ async def test_read_emails_tool_summarizes_content():
     mock_jmap = AsyncMock()
     mock_jmap.read_emails.return_value = [SAMPLE_DETAIL]
 
-    mock_ollama = AsyncMock()
-    mock_ollama.chat.return_value = MagicMock(
+    mock_llm = AsyncMock()
+    mock_llm.chat.return_value = MagicMock(
         content="Amazon shipped order #123-456, arriving Feb 12."
     )
 
-    tool = ReadEmailsTool(mock_jmap, mock_ollama, "what packages am I expecting")
+    tool = ReadEmailsTool(mock_jmap, mock_llm, "what packages am I expecting")
     result = await tool.execute(email_ids=["M001"])
 
     assert result == "Amazon shipped order #123-456, arriving Feb 12."
     mock_jmap.read_emails.assert_called_once_with(["M001"])
-    mock_ollama.chat.assert_called_once()
-    prompt = mock_ollama.chat.call_args[0][0][0]["content"]
+    mock_llm.chat.assert_called_once()
+    prompt = mock_llm.chat.call_args[0][0][0]["content"]
     assert "what packages am I expecting" in prompt
 
 
@@ -210,10 +210,10 @@ async def test_read_emails_tool_falls_back_on_empty_summary():
     mock_jmap = AsyncMock()
     mock_jmap.read_emails.return_value = [SAMPLE_DETAIL]
 
-    mock_ollama = AsyncMock()
-    mock_ollama.chat.return_value = MagicMock(content="")
+    mock_llm = AsyncMock()
+    mock_llm.chat.return_value = MagicMock(content="")
 
-    tool = ReadEmailsTool(mock_jmap, mock_ollama, "test query")
+    tool = ReadEmailsTool(mock_jmap, mock_llm, "test query")
     result = await tool.execute(email_ids=["M001"])
 
     assert "Your order #123-456 has been shipped!" in result
@@ -223,11 +223,11 @@ async def test_read_emails_tool_falls_back_on_empty_summary():
 async def test_read_emails_tool_no_ids():
     """Test that ReadEmailsTool returns early for empty ID list."""
     mock_jmap = AsyncMock()
-    mock_ollama = AsyncMock()
+    mock_llm = AsyncMock()
 
-    tool = ReadEmailsTool(mock_jmap, mock_ollama, "test query")
+    tool = ReadEmailsTool(mock_jmap, mock_llm, "test query")
     result = await tool.execute(email_ids=[])
 
     assert result == NO_EMAILS_TO_READ
     mock_jmap.read_emails.assert_not_called()
-    mock_ollama.chat.assert_not_called()
+    mock_llm.chat.assert_not_called()

@@ -1,8 +1,9 @@
-"""Tests for embedding utilities and OllamaClient.embed()."""
+"""Tests for embedding utilities and LlmClient.embed()."""
 
 import math
 
-import ollama
+import httpx
+import openai
 import pytest
 from similarity.embeddings import (
     find_similar,
@@ -10,7 +11,7 @@ from similarity.embeddings import (
     tokenize_entity_name,
 )
 
-from penny.ollama.embeddings import (
+from penny.llm.embeddings import (
     cosine_similarity,
     deserialize_embedding,
     serialize_embedding,
@@ -175,17 +176,17 @@ class TestFindSimilar:
         assert scores == sorted(scores, reverse=True)
 
 
-class TestOllamaClientEmbed:
-    """Integration tests for OllamaClient.embed() with mock."""
+class TestLlmClientEmbed:
+    """Integration tests for LlmClient.embed() with mock."""
 
     @pytest.mark.asyncio
-    async def test_embed_single_text(self, mock_ollama):
-        from penny.ollama.client import OllamaClient
+    async def test_embed_single_text(self, mock_llm):
+        from penny.llm.client import LlmClient
 
         expected = [[0.1, 0.2, 0.3, 0.4]]
-        mock_ollama.set_embed_handler(lambda model, input: expected)
+        mock_llm.set_embed_handler(lambda model, input: expected)
 
-        client = OllamaClient(
+        client = LlmClient(
             api_url="http://localhost:11434",
             model="nomic-embed-text",
             max_retries=1,
@@ -194,18 +195,18 @@ class TestOllamaClientEmbed:
         result = await client.embed("hello world")
 
         assert result == expected
-        assert len(mock_ollama.embed_requests) == 1
-        assert mock_ollama.embed_requests[0]["model"] == "nomic-embed-text"
-        assert mock_ollama.embed_requests[0]["input"] == "hello world"
+        assert len(mock_llm.embed_requests) == 1
+        assert mock_llm.embed_requests[0]["model"] == "nomic-embed-text"
+        assert mock_llm.embed_requests[0]["input"] == "hello world"
 
     @pytest.mark.asyncio
-    async def test_embed_batch(self, mock_ollama):
-        from penny.ollama.client import OllamaClient
+    async def test_embed_batch(self, mock_llm):
+        from penny.llm.client import LlmClient
 
         expected = [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
-        mock_ollama.set_embed_handler(lambda model, input: expected)
+        mock_llm.set_embed_handler(lambda model, input: expected)
 
-        client = OllamaClient(
+        client = LlmClient(
             api_url="http://localhost:11434",
             model="nomic-embed-text",
             max_retries=1,
@@ -217,11 +218,11 @@ class TestOllamaClientEmbed:
         assert result == expected
 
     @pytest.mark.asyncio
-    async def test_embed_default_mock(self, mock_ollama):
+    async def test_embed_default_mock(self, mock_llm):
         """Default mock returns unit vectors."""
-        from penny.ollama.client import OllamaClient
+        from penny.llm.client import LlmClient
 
-        client = OllamaClient(
+        client = LlmClient(
             api_url="http://localhost:11434",
             model="nomic-embed-text",
             max_retries=1,
@@ -233,11 +234,15 @@ class TestOllamaClientEmbed:
         assert result[0] == [1.0, 0.0, 0.0, 0.0]
 
     @pytest.mark.asyncio
-    async def test_embed_404_raises_immediately_without_retry(self, mock_ollama):
+    async def test_embed_404_raises_immediately_without_retry(self, mock_llm):
         """A 404 (model not found) must raise immediately — no retries."""
-        from penny.ollama.client import OllamaClient
+        from penny.llm.client import LlmClient
 
-        error_404 = ollama.ResponseError("model not found", status_code=404)
+        error_404 = openai.NotFoundError(
+            "model not found",
+            response=httpx.Response(status_code=404, request=httpx.Request("POST", "http://test")),
+            body=None,
+        )
         call_count = 0
 
         def raising_handler(model: str, input: str | list[str]) -> list[list[float]]:
@@ -245,42 +250,41 @@ class TestOllamaClientEmbed:
             call_count += 1
             raise error_404
 
-        mock_ollama.set_embed_handler(raising_handler)
+        mock_llm.set_embed_handler(raising_handler)
 
-        client = OllamaClient(
+        client = LlmClient(
             api_url="http://localhost:11434",
             model="missing-model",
             max_retries=3,
             retry_delay=0.0,
         )
-        with pytest.raises(ollama.ResponseError) as exc_info:
+        with pytest.raises(openai.NotFoundError):
             await client.embed("hello")
 
-        assert exc_info.value.status_code == 404
         # Must have called embed exactly once — no retries on 404
         assert call_count == 1
 
     @pytest.mark.asyncio
-    async def test_embed_transient_error_retries(self, mock_ollama):
+    async def test_embed_transient_error_retries(self, mock_llm):
         """Non-404 errors should still be retried up to max_retries."""
-        from penny.ollama.client import OllamaClient
+        from penny.llm.client import LlmClient
 
         call_count = 0
 
         def flaky_handler(model: str, input: str | list[str]) -> list[list[float]]:
             nonlocal call_count
             call_count += 1
-            raise ollama.ResponseError("server error", status_code=500)
+            raise openai.APIConnectionError(request=httpx.Request("POST", "http://test"))
 
-        mock_ollama.set_embed_handler(flaky_handler)
+        mock_llm.set_embed_handler(flaky_handler)
 
-        client = OllamaClient(
+        client = LlmClient(
             api_url="http://localhost:11434",
             model="some-model",
             max_retries=3,
             retry_delay=0.0,
         )
-        with pytest.raises(ollama.ResponseError):
+        with pytest.raises(openai.APIConnectionError):
             await client.embed("hello")
 
         # Should have retried all 3 times

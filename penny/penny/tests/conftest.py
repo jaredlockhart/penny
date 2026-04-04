@@ -12,8 +12,8 @@ from penny.config import Config
 from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.penny import Penny
 
-# Re-export Ollama mock fixture so it can be used directly in tests
-from penny.tests.mocks.ollama_patches import mock_ollama  # noqa: F401
+# Re-export LLM mock fixture so it can be used directly in tests
+from penny.tests.mocks.llm_patches import mock_llm  # noqa: F401
 from penny.tests.mocks.signal_server import MockSignalServer
 
 # Configure pytest-asyncio
@@ -28,15 +28,15 @@ DEFAULT_TEST_CONFIG = {
     "signal_number": "+15551234567",
     "discord_bot_token": None,
     "discord_channel_id": None,
-    "ollama_api_url": "http://localhost:11434",
-    "ollama_model": "test-model",
+    "llm_api_url": "http://localhost:11434",
+    "llm_model": "test-model",
     "log_level": "DEBUG",
     "tool_timeout": 60.0,
     # Fast scheduler ticks for tests
     "scheduler_tick_interval": 0.05,
     # Fast retries for tests
-    "ollama_max_retries": 1,
-    "ollama_retry_delay": 0.1,
+    "llm_max_retries": 1,
+    "llm_retry_delay": 0.1,
 }
 
 # Default runtime param overrides for tests (disable background tasks)
@@ -195,9 +195,9 @@ def running_penny(signal_server) -> Callable[[Config], AbstractAsyncContextManag
 
 
 @pytest.fixture
-def setup_ollama_flow(mock_ollama):  # noqa: F811
+def setup_llm_flow(mock_llm):  # noqa: F811
     """
-    Factory fixture to configure mock_ollama for a standard message + background task flow.
+    Factory fixture to configure mock_llm for a standard message + background task flow.
 
     Sets up a multi-phase handler:
     1. First call: tool call (search) with given query
@@ -205,8 +205,8 @@ def setup_ollama_flow(mock_ollama):  # noqa: F811
     3. Third call onwards: background task response
 
     Usage:
-        setup_ollama_flow(
-            message_response="here's the weather! 🌤️",
+        setup_llm_flow(
+            message_response="here's the weather!",
             background_response="background task response (optional)",
         )
     """
@@ -221,17 +221,14 @@ def setup_ollama_flow(mock_ollama):  # noqa: F811
         def multi_phase_handler(request: dict, count: int) -> dict:
             request_count[0] += 1
             if request_count[0] == 1:
-                # First call: message agent tool call
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request, "browse", {"queries": [search_query]}
                 )
             elif request_count[0] == 2:
-                # Second call: message agent final response
-                return mock_ollama._make_text_response(request, message_response)
+                return mock_llm._make_text_response(request, message_response)
             else:
-                # Third call onwards: background task
-                return mock_ollama._make_text_response(request, background_response)
+                return mock_llm._make_text_response(request, background_response)
 
-        mock_ollama.set_response_handler(multi_phase_handler)
+        mock_llm.set_response_handler(multi_phase_handler)
 
     return _setup

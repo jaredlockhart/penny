@@ -1,5 +1,5 @@
-"""Ollama module for LLM inference."""
+"""Legacy shim — imports redirected to penny.llm."""
 
-from penny.ollama.client import OllamaClient
+from penny.llm.client import LlmClient as OllamaClient
 
 __all__ = ["OllamaClient"]

@@ -74,7 +74,7 @@ def test_schedule_does_not_fire_after_window():
 
 
 @pytest.mark.asyncio
-async def test_schedule_list_empty(signal_server, test_config, mock_ollama, running_penny):
+async def test_schedule_list_empty(signal_server, test_config, mock_llm, running_penny):
     """Test /schedule with no schedules shows empty message."""
     async with running_penny(test_config) as penny:
         # Create user profile so we have timezone
@@ -100,7 +100,7 @@ async def test_schedule_list_empty(signal_server, test_config, mock_ollama, runn
 
 @pytest.mark.asyncio
 async def test_schedule_create_requires_timezone(
-    signal_server, test_config, mock_ollama, running_penny
+    signal_server, test_config, mock_llm, running_penny
 ):
     """Test /schedule creation requires user timezone to be set."""
     async with running_penny(test_config) as _penny:
@@ -117,7 +117,7 @@ async def test_schedule_create_requires_timezone(
 
 
 @pytest.mark.asyncio
-async def test_schedule_create_and_list(signal_server, test_config, mock_ollama, running_penny):
+async def test_schedule_create_and_list(signal_server, test_config, mock_llm, running_penny):
     """Test creating a schedule and listing it."""
     schedule_json = (
         '{"timing_description": "daily 9am", '
@@ -126,9 +126,9 @@ async def test_schedule_create_and_list(signal_server, test_config, mock_ollama,
     )
 
     def handler(request, count):
-        return mock_ollama._make_text_response(request, schedule_json)
+        return mock_llm._make_text_response(request, schedule_json)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(test_config) as penny:
         # Create user profile with timezone
@@ -159,7 +159,7 @@ async def test_schedule_create_and_list(signal_server, test_config, mock_ollama,
 
 
 @pytest.mark.asyncio
-async def test_schedule_delete(signal_server, test_config, mock_ollama, running_penny):
+async def test_schedule_delete(signal_server, test_config, mock_llm, running_penny):
     """Test deleting a schedule."""
     schedule_json = (
         '{"timing_description": "hourly", '
@@ -168,9 +168,9 @@ async def test_schedule_delete(signal_server, test_config, mock_ollama, running_
     )
 
     def handler(request, count):
-        return mock_ollama._make_text_response(request, schedule_json)
+        return mock_llm._make_text_response(request, schedule_json)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(test_config) as penny:
         # Create user profile with timezone
@@ -204,9 +204,7 @@ async def test_schedule_delete(signal_server, test_config, mock_ollama, running_
 
 
 @pytest.mark.asyncio
-async def test_schedule_delete_invalid_index(
-    signal_server, test_config, mock_ollama, running_penny
-):
+async def test_schedule_delete_invalid_index(signal_server, test_config, mock_llm, running_penny):
     """Test deleting with invalid index shows error."""
     async with running_penny(test_config) as penny:
         # Create user profile

@@ -26,8 +26,9 @@ from penny.config import Config, setup_logging
 from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
 from penny.database.migrate import migrate
-from penny.ollama.client import OllamaClient
-from penny.ollama.embeddings import serialize_embedding
+from penny.llm.client import LlmClient
+from penny.llm.embeddings import serialize_embedding
+from penny.llm.image_client import OllamaImageClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.scheduler import (
@@ -44,14 +45,14 @@ logger = logging.getLogger(__name__)
 
 
 class Penny:
-    """AI agent powered by Ollama via an agent controller."""
+    """AI agent powered by local LLM inference via an agent controller."""
 
     def __init__(self, config: Config, channel: MessageChannel | None = None):
         """Initialize Penny — summary method."""
         self.config = config
         self.start_time = datetime.now()
         self._init_database(config)
-        self._init_ollama_clients(config)
+        self._init_llm_clients(config)
         self._init_agents(config)
         self._init_commands(config)
         self._init_channel(config, channel)
@@ -66,48 +67,46 @@ class Penny:
         self.db.create_tables()
         config.runtime._db = self.db
 
-    def _create_ollama_client(self, model: str) -> OllamaClient:
-        """Create an OllamaClient with standard configuration."""
-        return OllamaClient(
-            api_url=self.config.ollama_api_url,
+    def _create_llm_client(self, model: str, db: Database | None = None) -> LlmClient:
+        """Create an LlmClient with standard configuration."""
+        return LlmClient(
+            api_url=self.config.llm_api_url,
             model=model,
-            db=self.db,
-            max_retries=self.config.ollama_max_retries,
-            retry_delay=self.config.ollama_retry_delay,
+            db=db if db is not None else self.db,
+            max_retries=self.config.llm_max_retries,
+            retry_delay=self.config.llm_retry_delay,
+            api_key=self.config.llm_api_key,
         )
 
-    def _init_ollama_clients(self, config: Config) -> None:
-        """Create shared Ollama model clients."""
-        self.model_client = self._create_ollama_client(config.ollama_model)
+    def _init_llm_clients(self, config: Config) -> None:
+        """Create shared LLM model clients."""
+        self.model_client = self._create_llm_client(config.llm_model)
         self.vision_model_client = (
-            self._create_ollama_client(config.ollama_vision_model)
-            if config.ollama_vision_model
-            else None
+            self._create_llm_client(config.llm_vision_model) if config.llm_vision_model else None
         )
         self.embedding_model_client = (
-            self._create_ollama_client(config.ollama_embedding_model)
-            if config.ollama_embedding_model
+            self._create_llm_client(config.llm_embedding_model)
+            if config.llm_embedding_model
             else None
         )
-        self.image_model_client = (
-            self._create_ollama_client(config.ollama_image_model)
-            if config.ollama_image_model
+        self.image_client = (
+            OllamaImageClient(
+                api_url=config.ollama_api_url,
+                model=config.llm_image_model,
+                max_retries=config.llm_max_retries,
+                retry_delay=config.llm_retry_delay,
+            )
+            if config.llm_image_model
             else None
         )
 
     def _create_chat_agent(self, db: Database) -> ChatAgent:
         """Factory for creating ChatAgent with a given database.
 
-        Creates its own OllamaClient because the /test command needs
+        Creates its own LlmClient because the /test command needs
         prompt logging against a separate test database.
         """
-        client = OllamaClient(
-            api_url=self.config.ollama_api_url,
-            model=self.config.ollama_model,
-            db=db,
-            max_retries=self.config.ollama_max_retries,
-            retry_delay=self.config.ollama_retry_delay,
-        )
+        client = self._create_llm_client(self.config.llm_model, db=db)
         return ChatAgent(
             system_prompt=Prompt.CONVERSATION_PROMPT,
             max_queries_key="CHAT_MAX_QUERIES",
@@ -209,7 +208,7 @@ class Penny:
         self.command_registry = create_command_registry(
             message_agent_factory=self._create_chat_agent,
             github_api=github_api,
-            image_model_client=self.image_model_client,
+            image_model_client=self.image_client,
             fastmail_api_token=config.fastmail_api_token,
             zoho_credentials=zoho_credentials,
         )
@@ -296,7 +295,7 @@ class Penny:
             start_time=self.start_time,
             model_client=self.model_client,
             embedding_model_client=self.embedding_model_client,
-            image_model_client=self.image_model_client,
+            image_model_client=self.image_client,
         )
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
@@ -313,17 +312,19 @@ class Penny:
         letting background tasks fail repeatedly with opaque 404 errors.
         """
         optional_models: list[tuple[str, str]] = []
-        if self.config.ollama_vision_model:
-            optional_models.append((self.config.ollama_vision_model, "OLLAMA_VISION_MODEL"))
-        if self.config.ollama_image_model:
-            optional_models.append((self.config.ollama_image_model, "OLLAMA_IMAGE_MODEL"))
-        if self.config.ollama_embedding_model:
-            optional_models.append((self.config.ollama_embedding_model, "OLLAMA_EMBEDDING_MODEL"))
+        if self.config.llm_vision_model:
+            optional_models.append((self.config.llm_vision_model, "LLM_VISION_MODEL"))
+        if self.config.llm_image_model:
+            optional_models.append((self.config.llm_image_model, "LLM_IMAGE_MODEL"))
+        if self.config.llm_embedding_model:
+            optional_models.append((self.config.llm_embedding_model, "LLM_EMBEDDING_MODEL"))
 
         if not optional_models:
             return
 
-        available = await self.model_client.list_models()
+        if not self.image_client:
+            return
+        available = await self.image_client.list_models()
         for model_name, env_var in optional_models:
             # Strip tag for comparison since some models report without tag
             base_name = model_name.split(":")[0]
@@ -421,11 +422,11 @@ class Penny:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
         logger.info("Channel: %s (sender_id=%s)", self.config.channel_type, self.channel.sender_id)
-        logger.info("Ollama model: %s", self.config.ollama_model)
-        if self.config.ollama_vision_model:
-            logger.info("Ollama model: %s (vision)", self.config.ollama_vision_model)
-        if self.config.ollama_image_model:
-            logger.info("Ollama model: %s (image generation)", self.config.ollama_image_model)
+        logger.info("Ollama model: %s", self.config.llm_model)
+        if self.config.llm_vision_model:
+            logger.info("Ollama model: %s (vision)", self.config.llm_vision_model)
+        if self.config.llm_image_model:
+            logger.info("Ollama model: %s (image generation)", self.config.llm_image_model)
 
         # Validate channel connectivity before starting
         validate_fn = getattr(self.channel, "validate_connectivity", None)
@@ -495,8 +496,6 @@ class Penny:
             await self.vision_model_client.close()
         if self.embedding_model_client:
             await self.embedding_model_client.close()
-        if self.image_model_client:
-            await self.image_model_client.close()
         logger.info("Agent shutdown complete")
 
 
@@ -507,8 +506,8 @@ async def main() -> None:
 
     logger.info("Starting Penny with config:")
     logger.info("  channel_type: %s", config.channel_type)
-    logger.info("  ollama_model: %s", config.ollama_model)
-    logger.info("  ollama_api_url: %s", config.ollama_api_url)
+    logger.info("  llm_model: %s", config.llm_model)
+    logger.info("  llm_api_url: %s", config.llm_api_url)
     logger.info("  idle_threshold: %.0fs", config.runtime.IDLE_SECONDS)
 
     agent = Penny(config)

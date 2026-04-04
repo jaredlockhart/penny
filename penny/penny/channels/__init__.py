@@ -71,8 +71,8 @@ def _register_primary_channel(
             message_agent=message_agent,
             db=db,
             command_registry=command_registry,
-            max_retries=config.ollama_max_retries,
-            retry_delay=config.ollama_retry_delay,
+            max_retries=config.llm_max_retries,
+            retry_delay=config.llm_retry_delay,
         )
         manager.register_channel(ChannelType.SIGNAL, channel)
         # Seed the Signal device

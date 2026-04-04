@@ -22,7 +22,7 @@ from penny.commands.unschedule import UnscheduleCommand
 if TYPE_CHECKING:
     from github_api.api import GitHubAPI
 
-    from penny.ollama import OllamaClient
+    from penny.llm.image_client import OllamaImageClient
     from penny.zoho.models import ZohoCredentials
 
 __all__ = [
@@ -38,7 +38,7 @@ __all__ = [
 def create_command_registry(
     message_agent_factory: Callable | None = None,
     github_api: GitHubAPI | None = None,
-    image_model_client: OllamaClient | None = None,
+    image_model_client: OllamaImageClient | None = None,
     fastmail_api_token: str | None = None,
     zoho_credentials: ZohoCredentials | None = None,
 ) -> CommandRegistry:
@@ -49,7 +49,7 @@ def create_command_registry(
         message_agent_factory: Optional factory for creating ChatAgent instances
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
-        image_model_client: Optional image generation OllamaClient (required for draw command)
+        image_model_client: Optional image generation OllamaImageClient (required for draw command)
         fastmail_api_token: Optional Fastmail API token (required for email command)
         zoho_credentials: Optional ZohoCredentials for Zoho Mail API (required for zoho command)
 

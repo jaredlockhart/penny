@@ -21,7 +21,7 @@ from penny.tests.conftest import TEST_SENDER, wait_until
 @pytest.mark.asyncio
 async def test_basic_message_flow(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -38,7 +38,7 @@ async def test_basic_message_flow(
     config = make_config()
 
     # Configure Ollama to return fetch tool call, then final response
-    mock_ollama.set_default_flow(
+    mock_llm.set_default_flow(
         final_response="here's what i found about your question! 🌟",
     )
 
@@ -84,16 +84,16 @@ async def test_basic_message_flow(
         assert "here's what i found" in response["message"].lower()
 
         # Verify Ollama was called twice (tool call + final response)
-        assert len(mock_ollama.requests) == 2, "Expected 2 Ollama calls (tool + final)"
+        assert len(mock_llm.requests) == 2, "Expected 2 Ollama calls (tool + final)"
 
         # First request should have user message
-        first_request = mock_ollama.requests[0]
+        first_request = mock_llm.requests[0]
         messages = first_request.get("messages", [])
         user_messages = [m for m in messages if m.get("role") == "user"]
         assert any("weather" in m.get("content", "").lower() for m in user_messages)
 
         # Second request should include tool result
-        second_request = mock_ollama.requests[1]
+        second_request = mock_llm.requests[1]
         messages = second_request.get("messages", [])
         tool_messages = [m for m in messages if m.get("role") == "tool"]
         assert len(tool_messages) >= 1, "Second request should include tool result"
@@ -219,15 +219,15 @@ source URL so the user can follow up."""
 
 @pytest.mark.asyncio
 async def test_message_without_tool_call(
-    signal_server, mock_ollama, test_config, test_user_info, running_penny
+    signal_server, mock_llm, test_config, test_user_info, running_penny
 ):
     """Test handling a message where Ollama doesn't call a tool."""
 
     # Configure Ollama to return direct response (no tool call)
     def direct_response(request, count):
-        return mock_ollama._make_text_response(request, "just a simple response! 🌟")
+        return mock_llm._make_text_response(request, "just a simple response! 🌟")
 
-    mock_ollama.set_response_handler(direct_response)
+    mock_llm.set_response_handler(direct_response)
 
     async with running_penny(test_config):
         await signal_server.push_message(
@@ -241,18 +241,18 @@ async def test_message_without_tool_call(
         assert "simple response" in response["message"].lower()
 
         # Only one Ollama call (no tool)
-        assert len(mock_ollama.requests) == 1
+        assert len(mock_llm.requests) == 1
 
 
 @pytest.mark.asyncio
 async def test_conversation_prompt_includes_antirefusal_instruction(
-    signal_server, mock_ollama, test_config, test_user_info, running_penny
+    signal_server, mock_llm, test_config, test_user_info, running_penny
 ):
     """
     Regression test for #775: CONVERSATION_PROMPT must include an explicit instruction
     to never refuse a request, so the model always provides something useful.
     """
-    mock_ollama.set_default_flow(
+    mock_llm.set_default_flow(
         final_response="here are some vegan options! 🌱",
     )
 
@@ -264,7 +264,7 @@ async def test_conversation_prompt_includes_antirefusal_instruction(
         await signal_server.wait_for_message(timeout=10.0)
 
     # Verify the system prompt instructs the model to always provide something useful
-    first_request = mock_ollama.requests[0]
+    first_request = mock_llm.requests[0]
     messages = first_request.get("messages", [])
     system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
     assert "must respond with what you found" in system_text.lower(), (
@@ -287,7 +287,7 @@ async def test_conversation_prompt_includes_antirefusal_instruction(
 async def test_xml_tool_call_not_leaked_to_user(
     malformed_response,
     signal_server,
-    mock_ollama,
+    mock_llm,
     test_config,
     test_user_info,
     running_penny,
@@ -303,10 +303,10 @@ async def test_xml_tool_call_not_leaked_to_user(
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_text_response(request, malformed_response)
-        return mock_ollama._make_text_response(request, clean_response)
+            return mock_llm._make_text_response(request, malformed_response)
+        return mock_llm._make_text_response(request, clean_response)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(test_config):
         await signal_server.push_message(
@@ -316,7 +316,7 @@ async def test_xml_tool_call_not_leaked_to_user(
 
         response = await signal_server.wait_for_message(timeout=10.0)
 
-        assert mock_ollama._request_count >= 2, (
+        assert mock_llm._request_count >= 2, (
             "Agent should have retried when XML markup was in content"
         )
         assert response["message"] == clean_response
@@ -324,7 +324,7 @@ async def test_xml_tool_call_not_leaked_to_user(
 
 @pytest.mark.asyncio
 async def test_short_response_logged_as_warning(
-    signal_server, mock_ollama, test_config, test_user_info, running_penny, caplog
+    signal_server, mock_llm, test_config, test_user_info, running_penny, caplog
 ):
     """
     Regression test for #775: short/apologetic responses should be logged as warnings.
@@ -338,9 +338,9 @@ async def test_short_response_logged_as_warning(
     apologetic_response = "I'm sorry, but I can't help with that."
 
     def handler(request, count):
-        return mock_ollama._make_text_response(request, apologetic_response)
+        return mock_llm._make_text_response(request, apologetic_response)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     with caplog.at_level(logging.WARNING, logger="penny.agents.base"):
         async with running_penny(test_config):
@@ -360,7 +360,7 @@ async def test_short_response_logged_as_warning(
 
 @pytest.mark.asyncio
 async def test_delivery_failure_sends_notice(
-    signal_server, mock_ollama, test_config, test_user_info, running_penny
+    signal_server, mock_llm, test_config, test_user_info, running_penny
 ):
     """Test that a delivery failure notice is sent to the user when all send retries fail.
 
@@ -368,11 +368,11 @@ async def test_delivery_failure_sends_notice(
     exhausts its retries and returns None from send_message.  _dispatch_to_agent
     should detect this and send a brief failure notice so the user knows to retry.
     """
-    mock_ollama.set_default_flow(
+    mock_llm.set_default_flow(
         final_response="my answer to your question",
     )
 
-    # test_config uses ollama_max_retries=1, so SignalChannel makes 2 total send
+    # test_config uses llm_max_retries=1, so SignalChannel makes 2 total send
     # attempts (attempt 0 + 1 retry) for the main response.  Queue 2 transient
     # SocketException errors to exhaust those attempts; the 3rd request (the
     # failure notice) gets the default 200 success.
@@ -393,4 +393,4 @@ async def test_delivery_failure_sends_notice(
         notice = signal_server.outgoing_messages[0]
         assert notice["recipients"] == [TEST_SENDER]
         assert "trouble" in notice["message"].lower()
-        assert len(mock_ollama.requests) == 2
+        assert len(mock_llm.requests) == 2
