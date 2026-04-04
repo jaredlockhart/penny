@@ -259,7 +259,9 @@ class LlmClient:
         if message.tool_calls:
             tool_calls = [self._parse_tool_call(tc) for tc in message.tool_calls]
 
-        thinking = getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None)
+        thinking = getattr(message, "reasoning_content", None) or getattr(
+            message, "reasoning", None
+        )
 
         return LlmResponse(
             message=LlmMessage(
