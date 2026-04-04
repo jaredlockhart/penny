@@ -10,7 +10,8 @@ from pydantic import BaseModel
 
 from penny.config import Config
 from penny.database import Database
-from penny.ollama import OllamaClient
+from penny.llm import LlmClient
+from penny.llm.image_client import OllamaImageClient
 
 if TYPE_CHECKING:
     from penny.channels.base import IncomingMessage
@@ -23,12 +24,12 @@ class CommandContext:
 
     db: Database
     config: Config
-    model_client: OllamaClient
+    model_client: LlmClient
     user: str  # Signal number or Discord user ID
     channel_type: str  # "signal" or "discord"
     start_time: datetime  # Penny startup time for uptime calculation
-    embedding_model_client: OllamaClient | None = None
-    image_model_client: OllamaClient | None = None
+    embedding_model_client: LlmClient | None = None
+    image_model_client: OllamaImageClient | None = None
     scheduler: BackgroundScheduler | None = None  # Background task scheduler
     message: IncomingMessage | None = None  # The incoming message (for quote-reply metadata)
 

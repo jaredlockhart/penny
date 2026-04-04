@@ -6,7 +6,7 @@ from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
-async def test_unknown_command(signal_server, test_config, mock_ollama, running_penny):
+async def test_unknown_command(signal_server, test_config, mock_llm, running_penny):
     """Test unknown command shows error."""
     async with running_penny(test_config) as _penny:
         # Send unknown command
@@ -21,7 +21,7 @@ async def test_unknown_command(signal_server, test_config, mock_ollama, running_
 
 
 @pytest.mark.asyncio
-async def test_command_threading_blocked(signal_server, test_config, mock_ollama, running_penny):
+async def test_command_threading_blocked(signal_server, test_config, mock_llm, running_penny):
     """Test that thread-replying to a command is blocked."""
     async with running_penny(test_config) as _penny:
         # First, send a command
@@ -42,7 +42,7 @@ async def test_command_threading_blocked(signal_server, test_config, mock_ollama
 
 
 @pytest.mark.asyncio
-async def test_command_logging(signal_server, test_config, mock_ollama, running_penny):
+async def test_command_logging(signal_server, test_config, mock_llm, running_penny):
     """Test that commands are logged to the database."""
     async with running_penny(test_config) as penny:
         # Send a command
@@ -68,7 +68,7 @@ async def test_command_logging(signal_server, test_config, mock_ollama, running_
 
 @pytest.mark.asyncio
 async def test_command_not_logged_to_message_table(
-    signal_server, test_config, mock_ollama, running_penny
+    signal_server, test_config, mock_llm, running_penny
 ):
     """Test that commands are NOT logged to MessageLog table."""
     async with running_penny(test_config) as penny:

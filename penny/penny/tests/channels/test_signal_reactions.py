@@ -13,11 +13,11 @@ from penny.tests.conftest import TEST_SENDER, wait_until
 @pytest.mark.asyncio
 async def test_signal_reaction_message(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
-    setup_ollama_flow,
+    setup_llm_flow,
 ):
     """
     Test Signal reaction handling:
@@ -26,7 +26,7 @@ async def test_signal_reaction_message(
     3. Verify reaction is logged as a regular incoming message
     """
     config = make_config(idle_seconds=0.5)
-    setup_ollama_flow(
+    setup_llm_flow(
         message_response="here's a cool fact! 🌟",
         background_response="glad you liked that, here's more! 🎉",
     )
@@ -94,7 +94,7 @@ async def test_signal_reaction_message(
 
 @pytest.mark.asyncio
 async def test_signal_reaction_raw_format(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """
     Test Signal reaction handling with the raw format that Signal actually sends.
@@ -104,7 +104,7 @@ async def test_signal_reaction_raw_format(
     - emoji: "👍" (plain string, not {"value": "👍"} object)
     """
     config = make_config()
-    mock_ollama.set_default_flow(
+    mock_llm.set_default_flow(
         final_response="test response 🌟",
     )
 

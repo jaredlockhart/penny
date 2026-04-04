@@ -18,8 +18,8 @@ from similarity.embeddings import cosine_similarity, deserialize_embedding
 from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
 from penny.constants import PennyConstants
-from penny.ollama.embeddings import serialize_embedding
-from penny.ollama.similarity import embed_text
+from penny.llm.embeddings import serialize_embedding
+from penny.llm.similarity import embed_text
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)

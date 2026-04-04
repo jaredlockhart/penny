@@ -34,7 +34,7 @@ def _seed_notify(penny):
 
 @pytest.mark.asyncio
 async def test_notify_blocked_when_no_channel(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Notification is blocked when no channel is set."""
     config = make_config()
@@ -47,7 +47,7 @@ async def test_notify_blocked_when_no_channel(
 
 @pytest.mark.asyncio
 async def test_notify_blocked_when_muted(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Notification is blocked when user is muted."""
     config = make_config()
@@ -60,7 +60,7 @@ async def test_notify_blocked_when_muted(
 
 @pytest.mark.asyncio
 async def test_notify_blocked_when_no_thoughts(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Notification is blocked when user has no un-notified thoughts."""
     config = make_config()
@@ -74,7 +74,7 @@ async def test_notify_blocked_when_no_thoughts(
 
 @pytest.mark.asyncio
 async def test_notify_eligible_with_thoughts_and_channel(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Notification is eligible when all conditions are met."""
     config = make_config()
@@ -89,7 +89,7 @@ async def test_notify_eligible_with_thoughts_and_channel(
 
 @pytest.mark.asyncio
 async def test_cooldown_elapsed_when_no_prior_autonomous(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Cooldown is always elapsed when no prior autonomous messages exist."""
     config = make_config()
@@ -104,7 +104,7 @@ async def test_cooldown_elapsed_when_no_prior_autonomous(
 @pytest.mark.asyncio
 async def test_send_notify_thought_candidate(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -117,11 +117,11 @@ async def test_send_notify_thought_candidate(
 
     def handler(request, count):
         requests_seen.append(request)
-        return mock_ollama._make_text_response(
+        return mock_llm._make_text_response(
             request, "hey, i was just thinking about quantum computing!"
         )
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_notify(penny)
@@ -190,7 +190,7 @@ Every fact and detail in your message must come from your context."""
 @pytest.mark.asyncio
 async def test_multiple_candidates_scored_by_embedding(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -200,11 +200,11 @@ async def test_multiple_candidates_scored_by_embedding(
     goes through the model and gets sent."""
     config = make_config(
         notify_candidates=3,
-        ollama_embedding_model="test-embedding",
+        llm_embedding_model="test-embedding",
     )
 
-    mock_ollama.set_response_handler(
-        lambda request, count: mock_ollama._make_text_response(request, "here's something cool!")
+    mock_llm.set_response_handler(
+        lambda request, count: mock_llm._make_text_response(request, "here's something cool!")
     )
 
     async with running_penny(config) as penny:
@@ -235,8 +235,8 @@ async def test_multiple_candidates_scored_by_embedding(
         )
 
         # Reset counters before the notify flow
-        mock_ollama.requests.clear()
-        mock_ollama.embed_requests.clear()
+        mock_llm.requests.clear()
+        mock_llm.embed_requests.clear()
 
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
         assert result is True
@@ -244,10 +244,10 @@ async def test_multiple_candidates_scored_by_embedding(
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
 
         # -- Only 1 Ollama chat call (the winner), not 3
-        assert len(mock_ollama.requests) == 1
+        assert len(mock_llm.requests) == 1
 
         # -- 1 embed call: the outgoing message (at send time), not during scoring
-        assert len(mock_ollama.embed_requests) == 1
+        assert len(mock_llm.embed_requests) == 1
 
         # -- Notification was sent via Signal
         msg = signal_server.outgoing_messages[-1]
@@ -266,7 +266,7 @@ async def test_multiple_candidates_scored_by_embedding(
 @pytest.mark.asyncio
 async def test_send_notify_checkin(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -279,9 +279,9 @@ async def test_send_notify_checkin(
 
     def handler(request, count):
         requests_seen.append(request)
-        return mock_ollama._make_text_response(request, "hey! what have you been up to?")
+        return mock_llm._make_text_response(request, "hey! what have you been up to?")
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_notify(penny)
@@ -343,7 +343,7 @@ Every fact and detail in your message must come from your context."""
 
 def test_novelty_score_full_when_no_recent():
     """Novelty is 1.0 when there are no recent messages to compare against."""
-    from penny.ollama.similarity import novelty_score
+    from penny.llm.similarity import novelty_score
 
     score = novelty_score([1.0, 0.0, 0.0], [])
     assert score == 1.0
@@ -351,7 +351,7 @@ def test_novelty_score_full_when_no_recent():
 
 def test_novelty_score_low_when_identical():
     """Novelty is low when candidate matches a recent message exactly."""
-    from penny.ollama.similarity import novelty_score
+    from penny.llm.similarity import novelty_score
 
     vec = [1.0, 0.0, 0.0]
     recent = [[1.0, 0.0, 0.0]]
@@ -427,7 +427,7 @@ def test_topic_on_cooldown_free_thought():
 
 @pytest.mark.asyncio
 async def test_get_top_thoughts_skips_recently_notified_topics(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Topics notified in the last 24h are excluded from candidate selection."""
     config = make_config(notify_candidates=5)
@@ -465,7 +465,7 @@ async def test_get_top_thoughts_skips_recently_notified_topics(
 
 @pytest.mark.asyncio
 async def test_get_top_thoughts_sorts_mix_of_notified_and_never_notified(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Sorting works when some eligible topics have prior notifications and others don't.
 
@@ -508,7 +508,7 @@ async def test_get_top_thoughts_sorts_mix_of_notified_and_never_notified(
 
 @pytest.mark.asyncio
 async def test_chat_thought_context_shows_notified_only(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """ChatAgent chat mode only shows thoughts that have been shared with the user."""
     config = make_config()
@@ -529,7 +529,7 @@ async def test_chat_thought_context_shows_notified_only(
 
 @pytest.mark.asyncio
 async def test_notify_thought_context_shows_specific_thought(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """NotifyAgent shows the specific thought being shared."""
     config = make_config()
@@ -563,7 +563,7 @@ async def test_notify_thought_context_shows_specific_thought(
 @pytest.mark.asyncio
 async def test_disqualified_candidates_excluded(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -573,11 +573,11 @@ async def test_disqualified_candidates_excluded(
     config = make_config(notify_candidates=1)
 
     def handler(request, count):
-        return mock_ollama._make_text_response(
+        return mock_llm._make_text_response(
             request, "Sorry, I couldn't complete that request within the allowed steps."
         )
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_notify(penny)
@@ -617,7 +617,7 @@ def test_is_disqualified_allows_normal_messages():
 @pytest.mark.asyncio
 async def test_thought_tools_unavailable_sends_message(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -630,11 +630,11 @@ async def test_thought_tools_unavailable_sends_message(
 
     # Force thought candidate path
     def handler(request, count):
-        return mock_ollama._make_text_response(
+        return mock_llm._make_text_response(
             request, PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(tools="search")
         )
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_notify(penny)

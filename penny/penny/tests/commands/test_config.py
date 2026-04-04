@@ -6,7 +6,7 @@ from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
-async def test_config_list(signal_server, test_config, mock_ollama, running_penny):
+async def test_config_list(signal_server, test_config, mock_llm, running_penny):
     """Test /config lists all available config parameters."""
     async with running_penny(test_config) as _penny:
         # Send /config
@@ -26,7 +26,7 @@ async def test_config_list(signal_server, test_config, mock_ollama, running_penn
 
 
 @pytest.mark.asyncio
-async def test_config_get_specific(signal_server, test_config, mock_ollama, running_penny):
+async def test_config_get_specific(signal_server, test_config, mock_llm, running_penny):
     """Test /config <key> shows value of specific parameter."""
     async with running_penny(test_config) as _penny:
         # Send /config IDLE_SECONDS
@@ -42,7 +42,7 @@ async def test_config_get_specific(signal_server, test_config, mock_ollama, runn
 
 
 @pytest.mark.asyncio
-async def test_config_set_valid(signal_server, test_config, mock_ollama, running_penny):
+async def test_config_set_valid(signal_server, test_config, mock_llm, running_penny):
     """Test /config <key> <value> updates a parameter."""
     async with running_penny(test_config) as penny:
         # Send /config IDLE_SECONDS 600
@@ -71,7 +71,7 @@ async def test_config_set_valid(signal_server, test_config, mock_ollama, running
 
 
 @pytest.mark.asyncio
-async def test_config_set_invalid_key(signal_server, test_config, mock_ollama, running_penny):
+async def test_config_set_invalid_key(signal_server, test_config, mock_llm, running_penny):
     """Test /config with unknown key shows error."""
     async with running_penny(test_config) as _penny:
         # Send /config FAKE_KEY 123
@@ -86,7 +86,7 @@ async def test_config_set_invalid_key(signal_server, test_config, mock_ollama, r
 
 
 @pytest.mark.asyncio
-async def test_config_set_invalid_value(signal_server, test_config, mock_ollama, running_penny):
+async def test_config_set_invalid_value(signal_server, test_config, mock_llm, running_penny):
     """Test /config with invalid value shows error."""
     async with running_penny(test_config) as _penny:
         # Send /config IDLE_SECONDS -1 (negative not allowed)
@@ -101,7 +101,7 @@ async def test_config_set_invalid_value(signal_server, test_config, mock_ollama,
 
 
 @pytest.mark.asyncio
-async def test_config_set_non_numeric(signal_server, test_config, mock_ollama, running_penny):
+async def test_config_set_non_numeric(signal_server, test_config, mock_llm, running_penny):
     """Test /config with non-numeric value shows error."""
     async with running_penny(test_config) as _penny:
         # Send /config MESSAGE_MAX_STEPS abc
@@ -118,7 +118,7 @@ async def test_config_set_non_numeric(signal_server, test_config, mock_ollama, r
 
 
 @pytest.mark.asyncio
-async def test_config_case_insensitive(signal_server, test_config, mock_ollama, running_penny):
+async def test_config_case_insensitive(signal_server, test_config, mock_llm, running_penny):
     """Test /config works with lowercase keys."""
     async with running_penny(test_config) as penny:
         # Send /config idle_seconds 450 (lowercase)
@@ -133,7 +133,7 @@ async def test_config_case_insensitive(signal_server, test_config, mock_ollama, 
 
 
 @pytest.mark.asyncio
-async def test_config_persistence(signal_server, test_config, mock_ollama, running_penny):
+async def test_config_persistence(signal_server, test_config, mock_llm, running_penny):
     """Test config changes persist in database across agent restarts."""
     # First run: set a config value
     async with running_penny(test_config) as penny:

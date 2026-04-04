@@ -162,7 +162,7 @@ def _create_mock_client(host: str | None = None) -> MockOllamaAsyncClient:
 
 
 @pytest.fixture
-def mock_ollama(monkeypatch: pytest.MonkeyPatch) -> MockOllamaAsyncClient:
+def mock_llm(monkeypatch: pytest.MonkeyPatch) -> MockOllamaAsyncClient:
     """Fixture to patch ollama.AsyncClient with a mock."""
     global _mock_client
     _mock_client = MockOllamaAsyncClient()
@@ -172,6 +172,6 @@ def mock_ollama(monkeypatch: pytest.MonkeyPatch) -> MockOllamaAsyncClient:
     async def _mock_list_models(self: object) -> list[str]:
         return []
 
-    monkeypatch.setattr("penny.ollama.client.OllamaClient.list_models", _mock_list_models)
+    monkeypatch.setattr("penny.llm.image_client.OllamaImageClient.list_models", _mock_list_models)
 
     return _mock_client

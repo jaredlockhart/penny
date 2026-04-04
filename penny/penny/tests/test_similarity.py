@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from penny.ollama.embeddings import serialize_embedding
-from penny.ollama.similarity import (
+from penny.llm.embeddings import serialize_embedding
+from penny.llm.similarity import (
     DedupStrategy,
     embed_text,
     is_embedding_duplicate,

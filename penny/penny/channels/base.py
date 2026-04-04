@@ -13,7 +13,8 @@ from pydantic import BaseModel, Field
 from penny.config import Config
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog
-from penny.ollama import OllamaClient
+from penny.llm import LlmClient
+from penny.llm.image_client import OllamaImageClient
 from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
@@ -80,9 +81,9 @@ class MessageChannel(ABC):
         config: Config,
         channel_type: str,
         start_time: datetime,
-        model_client: OllamaClient,
-        embedding_model_client: OllamaClient | None = None,
-        image_model_client: OllamaClient | None = None,
+        model_client: LlmClient,
+        embedding_model_client: LlmClient | None = None,
+        image_model_client: OllamaImageClient | None = None,
     ) -> None:
         """
         Set command context for command execution.
@@ -91,9 +92,9 @@ class MessageChannel(ABC):
             config: Penny config
             channel_type: Channel type ("signal" or "discord")
             start_time: Penny startup time
-            model_client: Shared OllamaClient for commands
-            embedding_model_client: Shared embedding OllamaClient for similarity
-            image_model_client: Shared image generation OllamaClient for /draw
+            model_client: Shared LlmClient for commands
+            embedding_model_client: Shared embedding LlmClient for similarity
+            image_model_client: Shared image generation LlmClient for /draw
         """
         self._config = config
         self._model_client = model_client
@@ -309,8 +310,8 @@ class MessageChannel(ABC):
         if not self._embedding_model_client:
             return
         try:
-            from penny.ollama.embeddings import serialize_embedding
-            from penny.ollama.similarity import embed_text
+            from penny.llm.embeddings import serialize_embedding
+            from penny.llm.similarity import embed_text
 
             vec = await embed_text(self._embedding_model_client, content)
             if vec is not None:
@@ -352,7 +353,7 @@ class MessageChannel(ABC):
     async def _validate_message(self, message: IncomingMessage) -> bool:
         """Check vision config and notify scheduler. Returns False if message should be dropped."""
         if message.images:
-            vision_model = self._config.ollama_vision_model if self._config else None
+            vision_model = self._config.llm_vision_model if self._config else None
             if not vision_model:
                 await self.send_status_message(
                     message.sender, PennyResponse.VISION_NOT_CONFIGURED_MESSAGE
