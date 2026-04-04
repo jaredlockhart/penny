@@ -2,7 +2,7 @@
 
 Re-exports DedupStrategy and is_embedding_duplicate from the shared
 similarity package for backward compatibility.  Keeps penny-specific
-functions that depend on OllamaClient or penny's data model.
+functions that depend on LlmClient or penny's data model.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from similarity.dedup import DedupStrategy, is_embedding_duplicate
 from similarity.embeddings import cosine_similarity, deserialize_embedding
 
 if TYPE_CHECKING:
-    from penny.ollama.client import OllamaClient
+    from penny.llm.client import LlmClient
 
 logger = logging.getLogger(__name__)
 
-# Re-export so existing `from penny.ollama.similarity import DedupStrategy` works
+# Re-export so existing imports work
 __all__ = [
     "DedupStrategy",
     "compute_mention_weighted_sentiment",
@@ -31,7 +31,7 @@ __all__ = [
 
 
 async def embed_text(
-    client: OllamaClient | None,
+    client: LlmClient | None,
     text: str,
 ) -> list[float] | None:
     """Embed a single text string.  Returns None if no client or on failure."""

@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from penny.email.protocol import EmailClient
-from penny.ollama.client import OllamaClient
+from penny.llm.client import LlmClient
 from penny.prompts import Prompt
 from penny.tools.base import Tool
 from penny.tools.models import ReadEmailsArgs
@@ -43,7 +43,7 @@ class ReadEmailsTool(Tool):
     def __init__(
         self,
         email_client: EmailClient,
-        ollama_client: OllamaClient,
+        ollama_client: LlmClient,
         user_query: str,
     ) -> None:
         self._client = email_client

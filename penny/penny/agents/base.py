@@ -16,7 +16,7 @@ from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, To
 from penny.config import Config
 from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
-from penny.ollama import OllamaClient
+from penny.llm import LlmClient
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -163,7 +163,7 @@ class Agent:
     """
     AI agent with a specific persona and capabilities.
 
-    Agents receive shared OllamaClient instances — foreground (fast, user-facing)
+    Agents receive shared LlmClient instances — foreground (fast, user-facing)
     and background (smart, processing). Callers create and own the clients;
     agents just hold references.
     """
@@ -177,13 +177,13 @@ class Agent:
     def __init__(
         self,
         system_prompt: str,
-        model_client: OllamaClient,
+        model_client: LlmClient,
         tools: list[Tool],
         db: Database,
         config: Config,
         tool_timeout: float = 60.0,
-        vision_model_client: OllamaClient | None = None,
-        embedding_model_client: OllamaClient | None = None,
+        vision_model_client: LlmClient | None = None,
+        embedding_model_client: LlmClient | None = None,
         allow_repeat_tools: bool = False,
         max_queries_key: str | None = None,
     ):
@@ -646,10 +646,11 @@ class Agent:
 
         # Dedup check and on_tool_start are sequential: dedup requires ordered mutation of
         # called_tools, and on_tool_start fires UI status updates before execution begins.
-        pending: list[tuple[str, dict, str | None]] = []
-        for ollama_tool_call in response.message.tool_calls or []:
-            tool_name = ollama_tool_call.function.name
-            arguments = ollama_tool_call.function.arguments
+        pending: list[tuple[str, str, dict, str | None]] = []
+        for tool_call in response.message.tool_calls or []:
+            tool_call_id = tool_call.id
+            tool_name = tool_call.function.name
+            arguments = tool_call.function.arguments
 
             # Pop reasoning before dedup (same args + different reasoning = repeat)
             reasoning = arguments.pop("reasoning", None)
@@ -659,27 +660,30 @@ class Agent:
                 logger.info("Skipping repeat: %s(%s)", tool_name, arguments)
                 repeat_msg = "You already made this exact tool call. Try a different query or tool."
                 messages.append(
-                    {"role": MessageRole.TOOL, "content": repeat_msg, "tool_name": tool_name}
+                    {"role": MessageRole.TOOL, "content": repeat_msg, "tool_call_id": tool_call_id}
                 )
                 continue
 
             called_tools.add(call_key)
-            pending.append((tool_name, arguments, reasoning))
+            pending.append((tool_call_id, tool_name, arguments, reasoning))
 
         # Fire on_tool_start once with all pending tools so the UI can show
         # a combined status (e.g. "Searching A + Searching B") for parallel calls.
         if on_tool_start and pending:
             try:
-                await on_tool_start([(name, dict(args)) for name, args, _ in pending])
+                await on_tool_start([(name, dict(args)) for _, name, args, _ in pending])
             except Exception:
                 logger.debug("on_tool_start callback failed")
 
         # Execute all valid tool calls in parallel.
         results = await asyncio.gather(
-            *[self._execute_single_tool(name, args, reasoning) for name, args, reasoning in pending]
+            *[
+                self._execute_single_tool(name, args, reasoning)
+                for _, name, args, reasoning in pending
+            ]
         )
 
-        for (tool_name, _, _), (result_str, record, urls, image) in zip(
+        for (tool_call_id, _, _, _), (result_str, record, urls, image) in zip(
             pending, results, strict=True
         ):
             records.append(record)
@@ -687,7 +691,7 @@ class Agent:
             if image:
                 attachments.append(image)
             messages.append(
-                {"role": MessageRole.TOOL, "content": result_str, "tool_name": tool_name}
+                {"role": MessageRole.TOOL, "content": result_str, "tool_call_id": tool_call_id}
             )
 
         return _StepResult(

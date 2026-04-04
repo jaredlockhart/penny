@@ -19,8 +19,8 @@ from pydantic import Field as PydanticField
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
 from penny.database.models import Preference
-from penny.ollama.embeddings import deserialize_embedding, serialize_embedding
-from penny.ollama.similarity import DedupStrategy, is_embedding_duplicate
+from penny.llm.embeddings import deserialize_embedding, serialize_embedding
+from penny.llm.similarity import DedupStrategy, is_embedding_duplicate
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)

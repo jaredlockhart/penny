@@ -28,7 +28,7 @@ def _insert_message(penny, sender, content, direction, timestamp, **kwargs):
 
 @pytest.mark.asyncio
 async def test_history_context_formats_dates_and_topics(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """History context includes date labels and topic bullets."""
     config = make_config()
@@ -53,7 +53,7 @@ async def test_history_context_formats_dates_and_topics(
 
 @pytest.mark.asyncio
 async def test_history_context_labels_today(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Today's history entry gets 'Today' label instead of date."""
     config = make_config()
@@ -76,7 +76,7 @@ async def test_history_context_labels_today(
 
 @pytest.mark.asyncio
 async def test_history_context_skips_daily_covered_by_weekly(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Daily entries within a weekly rollup range are excluded from context."""
     config = make_config()
@@ -117,7 +117,7 @@ async def test_history_context_skips_daily_covered_by_weekly(
 
 @pytest.mark.asyncio
 async def test_history_context_none_when_no_entries(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """History context returns None when there are no entries."""
     config = make_config()
@@ -132,7 +132,7 @@ async def test_history_context_none_when_no_entries(
 
 @pytest.mark.asyncio
 async def test_conversation_builds_user_assistant_turns(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Conversation history alternates user/assistant turns."""
     config = make_config()
@@ -161,7 +161,7 @@ async def test_conversation_builds_user_assistant_turns(
 
 @pytest.mark.asyncio
 async def test_conversation_merges_consecutive_same_role(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Consecutive messages from the same role are merged with newlines.
 
@@ -208,7 +208,7 @@ async def test_conversation_merges_consecutive_same_role(
 
 @pytest.mark.asyncio
 async def test_conversation_starts_after_rollup(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Conversation history starts after the latest history rollup."""
     config = make_config()
@@ -252,7 +252,7 @@ async def test_conversation_starts_after_rollup(
 
 @pytest.mark.asyncio
 async def test_dislike_context_lists_negative_preferences(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Dislike context includes only negative preferences."""
     config = make_config()
@@ -278,7 +278,7 @@ async def test_dislike_context_lists_negative_preferences(
 
 @pytest.mark.asyncio
 async def test_dislike_context_none_when_no_dislikes(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Dislike context returns None when user has no negative preferences."""
     config = make_config()
@@ -296,7 +296,7 @@ async def test_dislike_context_none_when_no_dislikes(
 
 @pytest.mark.asyncio
 async def test_dislike_context_deduplicates(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Dislike context deduplicates case-insensitively."""
     config = make_config()
@@ -324,7 +324,7 @@ async def test_dislike_context_deduplicates(
 
 @pytest.mark.asyncio
 async def test_thought_context_scoped_to_seed_preference(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Thinking agent thought context only includes thoughts for the same seed preference."""
     config = make_config()
@@ -344,7 +344,7 @@ async def test_thought_context_scoped_to_seed_preference(
 
 @pytest.mark.asyncio
 async def test_thought_context_none_when_no_thoughts(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Thought context returns None when there are no thoughts."""
     config = make_config()
@@ -359,7 +359,7 @@ async def test_thought_context_none_when_no_thoughts(
 
 @pytest.mark.asyncio
 async def test_profile_context_includes_name(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Profile context includes user name."""
     config = make_config()
@@ -372,7 +372,7 @@ async def test_profile_context_includes_name(
 
 @pytest.mark.asyncio
 async def test_profile_context_none_for_unknown_user(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Profile context returns None for users without profile info."""
     config = make_config()
@@ -389,7 +389,7 @@ def _make_pref(vec: list[float], valence: str, mention_count: int = 2):
     """Build a minimal preference-like object for sentiment scoring tests."""
     from types import SimpleNamespace
 
-    from penny.ollama.embeddings import serialize_embedding
+    from penny.llm.embeddings import serialize_embedding
 
     return SimpleNamespace(
         embedding=serialize_embedding(vec),
@@ -400,7 +400,7 @@ def _make_pref(vec: list[float], valence: str, mention_count: int = 2):
 
 def test_compute_mention_weighted_sentiment_likes_minus_dislikes():
     """Score = weighted avg similarity to likes - weighted avg similarity to dislikes."""
-    from penny.ollama.similarity import compute_mention_weighted_sentiment
+    from penny.llm.similarity import compute_mention_weighted_sentiment
 
     vec = [1.0, 0.0, 0.0]
     prefs = [
@@ -413,7 +413,7 @@ def test_compute_mention_weighted_sentiment_likes_minus_dislikes():
 
 def test_compute_mention_weighted_sentiment_no_preferences():
     """Score is 0 when no qualifying preferences exist."""
-    from penny.ollama.similarity import compute_mention_weighted_sentiment
+    from penny.llm.similarity import compute_mention_weighted_sentiment
 
     score = compute_mention_weighted_sentiment([1.0, 0.0, 0.0], [], min_mentions=2)
     assert score == 0.0

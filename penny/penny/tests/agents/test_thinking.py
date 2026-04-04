@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from penny.constants import PennyConstants
-from penny.ollama.embeddings import serialize_embedding
+from penny.llm.embeddings import serialize_embedding
 from penny.prompts import Prompt
 from penny.tests.conftest import TEST_SENDER
 
@@ -69,7 +69,7 @@ def _add_dislike(penny):
 @pytest.mark.asyncio
 async def test_seeded_thinking_full_loop(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -83,7 +83,7 @@ async def test_seeded_thinking_full_loop(
         inner_monologue_interval=99999.0,
         inner_monologue_max_steps=3,
         free_thinking_probability=0.0,
-        ollama_embedding_model="test-embedding",
+        llm_embedding_model="test-embedding",
     )
 
     requests_seen: list[dict] = []
@@ -92,23 +92,23 @@ async def test_seeded_thinking_full_loop(
         requests_seen.append(request)
         if count == 1:
             # Step 1: tool call
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request,
                 "browse",
                 {"queries": ["quantum gravity 2026"], "reasoning": "Researching seed topic"},
             )
         if count == 2:
             # Step 2: text reflecting on search results
-            return mock_ollama._make_text_response(
+            return mock_llm._make_text_response(
                 request, "Found interesting quantum gravity results from the search."
             )
         if count == 3:
             # Step 3: more text
-            return mock_ollama._make_text_response(request, "The implications are fascinating.")
+            return mock_llm._make_text_response(request, "The implications are fascinating.")
         # Summary call
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -220,7 +220,7 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
 @pytest.mark.asyncio
 async def test_free_thinking_full_loop(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -240,20 +240,20 @@ async def test_free_thinking_full_loop(
     def handler(request, count):
         requests_seen.append(request)
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request,
                 "browse",
                 {"queries": ["interesting science 2026"], "reasoning": "Exploring freely"},
             )
         if count == 2:
-            return mock_ollama._make_text_response(
+            return mock_llm._make_text_response(
                 request, "Found something interesting about biology."
             )
         if count == 3:
-            return mock_ollama._make_text_response(request, "This is a novel finding.")
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+            return mock_llm._make_text_response(request, "This is a novel finding.")
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -352,7 +352,7 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
 @pytest.mark.asyncio
 async def test_no_preferences_falls_back_to_free_thinking(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -372,16 +372,16 @@ async def test_no_preferences_falls_back_to_free_thinking(
     def handler(request, count):
         requests_seen.append(request)
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request,
                 "browse",
                 {"queries": ["interesting discovery"], "reasoning": "Exploring"},
             )
         if count == 2:
-            return mock_ollama._make_text_response(request, "Found something cool.")
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+            return mock_llm._make_text_response(request, "Found something cool.")
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         # User exists but no preferences — triggers free thinking fallback
@@ -407,7 +407,7 @@ async def test_no_preferences_falls_back_to_free_thinking(
 @pytest.mark.asyncio
 async def test_preference_rotation_via_last_thought_at(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -424,16 +424,16 @@ async def test_preference_rotation_via_last_thought_at(
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request,
                 "browse",
                 {"queries": ["astrophysics 2026"], "reasoning": "Researching"},
             )
         if count == 2:
-            return mock_ollama._make_text_response(request, "ok")
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+            return mock_llm._make_text_response(request, "ok")
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         penny.db.messages.log_message(
@@ -470,7 +470,7 @@ async def test_preference_rotation_via_last_thought_at(
 @pytest.mark.asyncio
 async def test_extracted_preference_below_threshold_skipped(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -488,9 +488,9 @@ async def test_extracted_preference_below_threshold_skipped(
 
     def handler(request, count):
         requests_seen.append(request)
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         penny.db.messages.log_message(
@@ -515,7 +515,7 @@ async def test_extracted_preference_below_threshold_skipped(
 @pytest.mark.asyncio
 async def test_extracted_preference_at_threshold_used(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -533,9 +533,9 @@ async def test_extracted_preference_at_threshold_used(
 
     def handler(request, count):
         requests_seen.append(request)
-        return mock_ollama._make_text_response(request, "ok")
+        return mock_llm._make_text_response(request, "ok")
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         penny.db.messages.log_message(
@@ -558,7 +558,7 @@ async def test_extracted_preference_at_threshold_used(
 
 @pytest.mark.asyncio
 async def test_scheduler_runs_history_before_thinking(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """History is scheduled before thinking so context is fresh."""
     config = make_config()
@@ -575,7 +575,7 @@ async def test_scheduler_runs_history_before_thinking(
 @pytest.mark.asyncio
 async def test_distribution_steers_toward_underrepresented_type(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -612,7 +612,7 @@ async def test_distribution_steers_toward_underrepresented_type(
 
 @pytest.mark.asyncio
 async def test_thinking_skips_when_too_many_unnotified(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Thinking agent skips cycle when unnotified thoughts reach the cap."""
     config = make_config(
@@ -649,7 +649,7 @@ async def test_thinking_skips_when_too_many_unnotified(
 
 @pytest.mark.asyncio
 async def test_empty_monologue_skips_storage(
-    signal_server, mock_ollama, make_config, test_user_info, running_penny
+    signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """No thought stored when the model produces empty content."""
     config = make_config(
@@ -658,9 +658,9 @@ async def test_empty_monologue_skips_storage(
     )
 
     def handler(request, count):
-        return mock_ollama._make_text_response(request, "")
+        return mock_llm._make_text_response(request, "")
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -673,7 +673,7 @@ async def test_empty_monologue_skips_storage(
 @pytest.mark.asyncio
 async def test_seeded_duplicate_thought_skips_storage(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -696,16 +696,16 @@ async def test_seeded_duplicate_thought_skips_storage(
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request,
                 "browse",
                 {"queries": ["quantum gravity"], "reasoning": "Researching"},
             )
         if count == 2:
-            return mock_ollama._make_text_response(request, "Found some results.")
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+            return mock_llm._make_text_response(request, "Found some results.")
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -735,7 +735,7 @@ async def test_seeded_duplicate_thought_skips_storage(
 @pytest.mark.asyncio
 async def test_free_duplicate_thought_skips_storage(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -757,16 +757,16 @@ async def test_free_duplicate_thought_skips_storage(
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request,
                 "browse",
                 {"queries": ["interesting science"], "reasoning": "Exploring"},
             )
         if count == 2:
-            return mock_ollama._make_text_response(request, "Found some results.")
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+            return mock_llm._make_text_response(request, "Found some results.")
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -791,7 +791,7 @@ async def test_free_duplicate_thought_skips_storage(
 @pytest.mark.asyncio
 async def test_cross_preference_duplicate_skips_storage(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -814,16 +814,16 @@ async def test_cross_preference_duplicate_skips_storage(
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request,
                 "browse",
                 {"queries": ["quantum gravity"], "reasoning": "Researching"},
             )
         if count == 2:
-            return mock_ollama._make_text_response(request, "Found some results.")
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+            return mock_llm._make_text_response(request, "Found some results.")
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -855,7 +855,7 @@ async def test_cross_preference_duplicate_skips_storage(
 @pytest.mark.asyncio
 async def test_novel_thought_is_stored(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -882,16 +882,16 @@ async def test_novel_thought_is_stored(
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request,
                 "browse",
                 {"queries": ["quantum gravity"], "reasoning": "Researching"},
             )
         if count == 2:
-            return mock_ollama._make_text_response(request, "Found something new!")
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+            return mock_llm._make_text_response(request, "Found something new!")
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -911,7 +911,7 @@ async def test_novel_thought_is_stored(
 @pytest.mark.asyncio
 async def test_dislike_veto_allows_thought_with_no_dislikes(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -932,12 +932,12 @@ async def test_dislike_veto_allows_thought_with_no_dislikes(
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request, "browse", {"queries": ["test"], "reasoning": "x"}
             )
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -952,7 +952,7 @@ async def test_dislike_veto_allows_thought_with_no_dislikes(
 @pytest.mark.asyncio
 async def test_dislike_veto_rejects_thought_matching_dislike(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -972,18 +972,18 @@ async def test_dislike_veto_rejects_thought_matching_dislike(
 
     monkeypatch.setattr("penny.agents.thinking.embed_text", _fixed_embed)
 
-    from penny.ollama.embeddings import serialize_embedding
+    from penny.llm.embeddings import serialize_embedding
 
     neg_vec = serialize_embedding([0.0, 0.0, 1.0])
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request, "browse", {"queries": ["test"], "reasoning": "x"}
             )
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
@@ -1004,7 +1004,7 @@ async def test_dislike_veto_rejects_thought_matching_dislike(
 @pytest.mark.asyncio
 async def test_dislike_veto_allows_thought_below_threshold(
     signal_server,
-    mock_ollama,
+    mock_llm,
     make_config,
     test_user_info,
     running_penny,
@@ -1024,18 +1024,18 @@ async def test_dislike_veto_allows_thought_below_threshold(
 
     monkeypatch.setattr("penny.agents.thinking.embed_text", _fixed_embed)
 
-    from penny.ollama.embeddings import serialize_embedding
+    from penny.llm.embeddings import serialize_embedding
 
     neg_vec = serialize_embedding([0.0, 0.0, 1.0])
 
     def handler(request, count):
         if count == 1:
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request, "browse", {"queries": ["test"], "reasoning": "x"}
             )
-        return mock_ollama._make_text_response(request, MOCK_REPORT)
+        return mock_llm._make_text_response(request, MOCK_REPORT)
 
-    mock_ollama.set_response_handler(handler)
+    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
