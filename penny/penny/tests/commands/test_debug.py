@@ -8,7 +8,7 @@ from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
-async def test_debug_command(signal_server, test_config, mock_ollama, running_penny):
+async def test_debug_command(signal_server, test_config, mock_llm, running_penny):
     """Test /debug returns diagnostic information."""
     async with running_penny(test_config) as _penny:
         # Send /debug
@@ -35,7 +35,7 @@ async def test_debug_command(signal_server, test_config, mock_ollama, running_pe
 
 
 @pytest.mark.asyncio
-async def test_debug_git_commit_from_env(signal_server, test_config, mock_ollama, running_penny):
+async def test_debug_git_commit_from_env(signal_server, test_config, mock_llm, running_penny):
     """Test /debug shows git commit from environment variable."""
     # Set GIT_COMMIT environment variable
     old_commit = os.environ.get("GIT_COMMIT")

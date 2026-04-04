@@ -5,7 +5,7 @@ import pytest
 from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
-from penny.ollama import OllamaClient
+from penny.llm import LlmClient
 from penny.tools.base import Tool
 
 
@@ -28,7 +28,7 @@ class TestToolNotFound:
     """Test handling of tool calls for tools that don't exist."""
 
     @pytest.mark.asyncio
-    async def test_agent_returns_helpful_error_for_nonexistent_tool(self, test_db, mock_ollama):
+    async def test_agent_returns_helpful_error_for_nonexistent_tool(self, test_db, mock_llm):
         """Agent returns helpful error listing available tools for non-existent tool."""
         db = Database(test_db)
         db.create_tables()
@@ -39,14 +39,14 @@ class TestToolNotFound:
             signal_api_url="http://localhost:8080",
             discord_bot_token=None,
             discord_channel_id=None,
-            ollama_api_url="http://localhost:11434",
-            ollama_model="test-model",
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
             log_level="DEBUG",
             db_path=test_db,
         )
         search_tool = StubSearchTool()
 
-        client = OllamaClient(
+        client = LlmClient(
             api_url="http://localhost:11434",
             model="test-model",
             db=db,
@@ -68,13 +68,13 @@ class TestToolNotFound:
             messages_sent.append(request["messages"])
             if count == 1:
                 # First call: return tool call with non-existent tool name
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request, "example_function_name", {"query": "test"}
                 )
             # Second call: return final response after receiving error
-            return mock_ollama._make_text_response(request, "Let me use the correct search tool.")
+            return mock_llm._make_text_response(request, "Let me use the correct search tool.")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         # Agent should not crash - it should handle the error gracefully
         response = await agent.run("test prompt", max_steps=3)

@@ -10,7 +10,7 @@ from penny.config import Config
 from penny.config_params import RuntimeParams
 from penny.database import Database
 from penny.database.models import PromptLog
-from penny.ollama import OllamaClient
+from penny.llm import LlmClient
 from penny.responses import PennyResponse
 from penny.tools.base import Tool
 from penny.tools.browse import BrowseTool, _trim_search_result
@@ -32,7 +32,7 @@ class StubSearchTool(Tool):
         return "Mock search results for testing"
 
 
-def _make_agent(test_db, mock_ollama, *, max_steps=3, runtime_overrides=None):
+def _make_agent(test_db, mock_llm, *, max_steps=3, runtime_overrides=None):
     """Create a minimal Agent for loop testing.
 
     Returns (agent, db, max_steps) — max_steps must be passed to agent.run().
@@ -46,14 +46,14 @@ def _make_agent(test_db, mock_ollama, *, max_steps=3, runtime_overrides=None):
         signal_api_url="http://localhost:8080",
         discord_bot_token=None,
         discord_channel_id=None,
-        ollama_api_url="http://localhost:11434",
-        ollama_model="test-model",
+        llm_api_url="http://localhost:11434",
+        llm_model="test-model",
         log_level="DEBUG",
         db_path=test_db,
         runtime=RuntimeParams(db=db, env_overrides=runtime_overrides or {}),
     )
     stub_tool = StubSearchTool()
-    client = OllamaClient(
+    client = LlmClient(
         api_url="http://localhost:11434",
         model="test-model",
         db=db,
@@ -74,20 +74,20 @@ class TestReasoningStripped:
     """Test that reasoning is popped from tool arguments and stored on the record."""
 
     @pytest.mark.asyncio
-    async def test_reasoning_captured_on_tool_call_record(self, test_db, mock_ollama):
+    async def test_reasoning_captured_on_tool_call_record(self, test_db, mock_llm):
         """Reasoning from tool call args is stored on ToolCallRecord."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request,
                     "search",
                     {"query": "weather", "reasoning": "User asked about weather"},
                 )
-            return mock_ollama._make_text_response(request, "here's the weather!")
+            return mock_llm._make_text_response(request, "here's the weather!")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("what's the weather?", max_steps=max_steps)
         assert response.answer == "here's the weather!"
@@ -99,16 +99,16 @@ class TestReasoningStripped:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_reasoning_none_when_not_provided(self, test_db, mock_ollama):
+    async def test_reasoning_none_when_not_provided(self, test_db, mock_llm):
         """ToolCallRecord.reasoning is None when model doesn't provide it."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "weather"})
-            return mock_ollama._make_text_response(request, "done")
+                return mock_llm._make_tool_call_response(request, "search", {"query": "weather"})
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test", max_steps=max_steps)
         assert len(response.tool_calls) == 1
@@ -121,53 +121,53 @@ class TestLastStepToolRemoval:
     """Test that on the final step, tools are removed so the model must produce text."""
 
     @pytest.mark.asyncio
-    async def test_final_step_has_no_tools(self, test_db, mock_ollama):
+    async def test_final_step_has_no_tools(self, test_db, mock_llm):
         """On the last step, the model is called without tools."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
 
         def handler(request, count):
             if count == 1:
                 # Step 1: model makes a tool call
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             # Step 2 (final): model must produce text — verify no tools sent
-            return mock_ollama._make_text_response(request, "final answer")
+            return mock_llm._make_text_response(request, "final answer")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test", max_steps=max_steps)
         assert response.answer == "final answer"
 
         # Step 1 should have tools, step 2 should not
-        assert mock_ollama.requests[0]["tools"] is not None
-        assert len(mock_ollama.requests[0]["tools"]) > 0
-        assert mock_ollama.requests[1]["tools"] is None
+        assert mock_llm.requests[0]["tools"] is not None
+        assert len(mock_llm.requests[0]["tools"]) > 0
+        assert mock_llm.requests[1]["tools"] is None
 
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_hallucinated_tool_call_gets_nudged_and_recovers(self, test_db, mock_ollama):
+    async def test_hallucinated_tool_call_gets_nudged_and_recovers(self, test_db, mock_llm):
         """If model hallucinates tool calls on final step, it gets nudged and can recover."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
                 # Final step: model hallucinates a tool call despite no tools offered
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "more"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "more"})
             # Nudge retry: model produces text
-            return mock_ollama._make_text_response(request, "here is the answer after nudge")
+            return mock_llm._make_text_response(request, "here is the answer after nudge")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test query", max_steps=max_steps)
         assert response.answer == "here is the answer after nudge"
 
         # Hallucinated tool calls should have been stripped — retry called without tools
-        assert mock_ollama.requests[2]["tools"] is None
+        assert mock_llm.requests[2]["tools"] is None
 
         # The nudge message should include the forceful prefix and original question
-        nudge_messages = mock_ollama.requests[2]["messages"]
+        nudge_messages = mock_llm.requests[2]["messages"]
         last_user_message = [m for m in nudge_messages if m["role"] == "user"][-1]
         assert "STOP" in last_user_message["content"]
         assert "Tools are no longer available" in last_user_message["content"]
@@ -176,17 +176,17 @@ class TestLastStepToolRemoval:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_hallucinated_tool_call_fallback_when_nudge_fails(self, test_db, mock_ollama):
+    async def test_hallucinated_tool_call_fallback_when_nudge_fails(self, test_db, mock_llm):
         """If model keeps hallucinating after nudge, falls back gracefully."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             # All subsequent calls: model keeps hallucinating tool calls
-            return mock_ollama._make_tool_call_response(request, "search", {"query": "more"})
+            return mock_llm._make_tool_call_response(request, "search", {"query": "more"})
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test", max_steps=max_steps)
         # Fallback when nudge cannot recover
@@ -195,19 +195,19 @@ class TestLastStepToolRemoval:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_hallucinated_tool_call_with_text_uses_text(self, test_db, mock_ollama):
+    async def test_hallucinated_tool_call_with_text_uses_text(self, test_db, mock_llm):
         """If model returns both text and tool calls on final step, text is used."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             # Final step: model returns text AND a hallucinated tool call
-            resp = mock_ollama._make_tool_call_response(request, "search", {"query": "more"})
-            resp["message"]["content"] = "here is the answer"
+            resp = mock_llm._make_tool_call_response(request, "search", {"query": "more"})
+            resp.message.content = "here is the answer"
             return resp
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test", max_steps=max_steps)
         assert response.answer == "here is the answer"
@@ -219,9 +219,9 @@ class TestRepeatCallGuard:
     """Test that repeat tool calls are blocked by args, not just name."""
 
     @pytest.mark.asyncio
-    async def test_same_tool_different_args_allowed(self, test_db, mock_ollama):
+    async def test_same_tool_different_args_allowed(self, test_db, mock_llm):
         """Calling the same tool with different arguments is allowed."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=4)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=4)
         # Mock tool executor so tool calls don't fail (this test checks dedup, not tools)
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(tool="search", result="search result")
@@ -229,16 +229,16 @@ class TestRepeatCallGuard:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request, "search", {"query": "first topic"}
                 )
             if count == 2:
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request, "search", {"query": "second topic"}
                 )
-            return mock_ollama._make_text_response(request, "done")
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test", max_steps=max_steps)
         assert response.answer == "done"
@@ -250,18 +250,16 @@ class TestRepeatCallGuard:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_same_tool_same_args_blocked(self, test_db, mock_ollama):
+    async def test_same_tool_same_args_blocked(self, test_db, mock_llm):
         """Calling the same tool with identical arguments is blocked."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         def handler(request, count):
             if count <= 2:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"query": "same query"}
-                )
-            return mock_ollama._make_text_response(request, "done")
+                return mock_llm._make_tool_call_response(request, "search", {"query": "same query"})
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test", max_steps=max_steps)
         assert response.answer == "done"
@@ -275,14 +273,14 @@ class TestEmptyContentFallback:
     """Test that an empty model response falls back to AGENT_EMPTY_RESPONSE."""
 
     @pytest.mark.asyncio
-    async def test_empty_response_returns_agent_empty_response(self, test_db, mock_ollama):
+    async def test_empty_response_returns_agent_empty_response(self, test_db, mock_llm):
         """When the model returns empty content, AGENT_EMPTY_RESPONSE is returned."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
         def handler(request, count):
-            return mock_ollama._make_text_response(request, "")
+            return mock_llm._make_text_response(request, "")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test prompt", max_steps=max_steps)
         assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
@@ -290,16 +288,16 @@ class TestEmptyContentFallback:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_empty_response_after_tool_call(self, test_db, mock_ollama):
+    async def test_empty_response_after_tool_call(self, test_db, mock_llm):
         """FALLBACK_RESPONSE is returned when model returns empty after preceding tool calls."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
-            return mock_ollama._make_text_response(request, "")
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_llm._make_text_response(request, "")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test prompt", max_steps=max_steps)
         assert response.answer == PennyResponse.FALLBACK_RESPONSE
@@ -311,14 +309,12 @@ class TestThinkTagStripping:
     """Test that <think>...</think> blocks are stripped from final responses."""
 
     @pytest.mark.asyncio
-    async def test_think_tags_stripped_from_content(self, test_db, mock_ollama):
+    async def test_think_tags_stripped_from_content(self, test_db, mock_llm):
         """<think>...</think> blocks in content are removed before sending to user."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
         raw = "<think>Internal reasoning here.</think>\nHere is the real answer."
-        mock_ollama.set_response_handler(
-            lambda req, count: mock_ollama._make_text_response(req, raw)
-        )
+        mock_llm.set_response_handler(lambda req, count: mock_llm._make_text_response(req, raw))
 
         response = await agent.run("test", max_steps=max_steps)
         assert "<think>" not in response.answer
@@ -328,14 +324,12 @@ class TestThinkTagStripping:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_think_tags_moved_to_thinking_field(self, test_db, mock_ollama):
+    async def test_think_tags_moved_to_thinking_field(self, test_db, mock_llm):
         """Content inside <think> blocks is captured in the thinking field."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
         raw = "<think>Step-by-step plan.</think>\nFinal response."
-        mock_ollama.set_response_handler(
-            lambda req, count: mock_ollama._make_text_response(req, raw)
-        )
+        mock_llm.set_response_handler(lambda req, count: mock_llm._make_text_response(req, raw))
 
         response = await agent.run("test", max_steps=max_steps)
         assert response.thinking == "Step-by-step plan."
@@ -344,12 +338,12 @@ class TestThinkTagStripping:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_response_without_think_tags_unchanged(self, test_db, mock_ollama):
+    async def test_response_without_think_tags_unchanged(self, test_db, mock_llm):
         """Responses that contain no <think> tags are returned as-is."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
-        mock_ollama.set_response_handler(
-            lambda req, count: mock_ollama._make_text_response(req, "Normal answer.")
+        mock_llm.set_response_handler(
+            lambda req, count: mock_llm._make_text_response(req, "Normal answer.")
         )
 
         response = await agent.run("test", max_steps=max_steps)
@@ -363,9 +357,9 @@ class TestAfterStepHook:
     """Test the after_step hook fires after tool calls."""
 
     @pytest.mark.asyncio
-    async def testafter_step_called_with_step_records(self, test_db, mock_ollama):
+    async def testafter_step_called_with_step_records(self, test_db, mock_llm):
         """after_step receives only the records from the current step."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
         # Mock tool executor so tool calls don't fail (this test checks after_step hook)
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(tool="search", result="search result")
@@ -380,16 +374,16 @@ class TestAfterStepHook:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request, "search", {"query": "first", "reasoning": "step 1 reason"}
                 )
             if count == 2:
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request, "search", {"query": "second", "reasoning": "step 2 reason"}
                 )
-            return mock_ollama._make_text_response(request, "done")
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         agent.allow_repeat_tools = True
 
         response = await agent.run("test", max_steps=max_steps)
@@ -405,9 +399,9 @@ class TestAfterStepHook:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_tool_result_text_no_duplicates_across_steps(self, test_db, mock_ollama):
+    async def test_tool_result_text_no_duplicates_across_steps(self, test_db, mock_llm):
         """Each step's tool result should appear exactly once in _tool_result_text."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=4)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=4)
         agent._tool_executor.execute = AsyncMock(
             side_effect=[
                 ToolResult(tool="search", result="result_A"),
@@ -418,12 +412,12 @@ class TestAfterStepHook:
 
         def handler(request, count):
             if count <= 3:
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request, "search", {"query": f"query_{count}"}
                 )
-            return mock_ollama._make_text_response(request, "done")
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         agent.allow_repeat_tools = True
 
         await agent.run("test", max_steps=max_steps)
@@ -439,63 +433,63 @@ class TestEmptyContentRetry:
     """Test that empty content responses trigger a retry with a follow-up prompt."""
 
     @pytest.mark.asyncio
-    async def test_empty_content_on_nonfinal_step_retries_with_followup(self, test_db, mock_ollama):
+    async def test_empty_content_on_nonfinal_step_retries_with_followup(self, test_db, mock_llm):
         """When model returns empty content on a non-final step, agent retries with follow-up."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
                 # Thinking-only response: empty content, no tool calls
-                return mock_ollama._make_text_response(request, "")
+                return mock_llm._make_text_response(request, "")
             # After follow-up injection, model returns actual text
-            return mock_ollama._make_text_response(request, "here's the answer")
+            return mock_llm._make_text_response(request, "here's the answer")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test question", max_steps=max_steps)
         assert response.answer == "here's the answer"
         # Three model calls: tool call, empty response, final answer
-        assert len(mock_ollama.requests) == 3
+        assert len(mock_llm.requests) == 3
 
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_empty_content_on_final_step_retries_and_succeeds(self, test_db, mock_ollama):
+    async def test_empty_content_on_final_step_retries_and_succeeds(self, test_db, mock_llm):
         """When model returns empty content on the final step, agent retries once and succeeds."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=1)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=1)
 
         def handler(request, count):
             if count == 1:
                 # Final step returns empty content
-                return mock_ollama._make_text_response(request, "")
+                return mock_llm._make_text_response(request, "")
             # Retry (extra step) returns real content
-            return mock_ollama._make_text_response(request, "here's the answer")
+            return mock_llm._make_text_response(request, "here's the answer")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test question", max_steps=max_steps)
         assert response.answer == "here's the answer"
         # Two model calls: empty final step + retry
-        assert len(mock_ollama.requests) == 2
+        assert len(mock_llm.requests) == 2
 
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_empty_content_twice_returns_fallback(self, test_db, mock_ollama):
+    async def test_empty_content_twice_returns_fallback(self, test_db, mock_llm):
         """When model returns empty content on both the final step and retry, returns fallback."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=1)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=1)
 
         def handler(request, count):
-            return mock_ollama._make_text_response(request, "")
+            return mock_llm._make_text_response(request, "")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test question", max_steps=max_steps)
         assert response.answer == PennyResponse.AGENT_EMPTY_RESPONSE
         # Two model calls: empty final step + one retry that also returns empty
-        assert len(mock_ollama.requests) == 2
+        assert len(mock_llm.requests) == 2
 
         await agent.close()
 
@@ -504,9 +498,9 @@ class TestParallelToolCalls:
     """Test that multiple tool calls in a single turn are dispatched in parallel."""
 
     @pytest.mark.asyncio
-    async def test_two_tool_calls_produce_separate_tool_messages(self, test_db, mock_ollama):
+    async def test_two_tool_calls_produce_separate_tool_messages(self, test_db, mock_llm):
         """Two tool calls returned in one response each get their own tool message."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
         agent._tool_executor.execute = AsyncMock(
             side_effect=lambda tool_call: ToolResult(
                 tool=tool_call.tool, result=f"result for {tool_call.arguments.get('query', '')}"
@@ -515,13 +509,13 @@ class TestParallelToolCalls:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_parallel_tool_calls_response(
+                return mock_llm._make_parallel_tool_calls_response(
                     request,
                     [("search", {"query": "topic A"}), ("search", {"query": "topic B"})],
                 )
-            return mock_ollama._make_text_response(request, "done")
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         agent.allow_repeat_tools = True
 
         response = await agent.run("test", max_steps=max_steps)
@@ -532,7 +526,7 @@ class TestParallelToolCalls:
         assert response.tool_calls[1].arguments["query"] == "topic B"
 
         # The second Ollama call should include two separate role=tool messages, not one merged blob
-        second_call_messages = mock_ollama.requests[1]["messages"]
+        second_call_messages = mock_llm.requests[1]["messages"]
         tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
         assert len(tool_messages) == 2
         assert "topic A" in tool_messages[0]["content"]
@@ -541,9 +535,9 @@ class TestParallelToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_large_browse_tool_results_not_truncated(self, test_db, mock_ollama):
+    async def test_large_browse_tool_results_not_truncated(self, test_db, mock_llm):
         """Two large tool results from BrowseTool both survive into the model context."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         page_a = "A" * 15000  # 15k chars — realistic extracted web page
         page_b = "B" * 15000
@@ -557,7 +551,7 @@ class TestParallelToolCalls:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request, "browse", {"queries": ["https://a.com", "https://b.com"]}
                 )
             # Verify both pages present in the tool message
@@ -567,17 +561,15 @@ class TestParallelToolCalls:
             content = tool_messages[0]["content"]
             assert "A" * 1000 in content, "Page A content was truncated"
             assert "B" * 1000 in content, "Page B content was truncated"
-            return mock_ollama._make_text_response(request, "done")
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         response = await agent.run("test", max_steps=max_steps)
         assert response.answer == "done"
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_text_queries_route_to_search_url_when_browser_connected(
-        self, test_db, mock_ollama
-    ):
+    async def test_text_queries_route_to_search_url_when_browser_connected(self, test_db, mock_llm):
         """When a browser is connected, text queries become search URLs via BrowseTool."""
         browsed_urls: dict[str, str] = {}
 
@@ -600,7 +592,7 @@ class TestParallelToolCalls:
         assert "best%20pizza%20toronto" in search_url
 
     @pytest.mark.asyncio
-    async def test_text_queries_fail_without_browser(self, test_db, mock_ollama):
+    async def test_text_queries_fail_without_browser(self, test_db, mock_llm):
         """Without a browser, text queries return a 'no browser' message."""
         tool = BrowseTool(max_calls=5)
 
@@ -609,7 +601,7 @@ class TestParallelToolCalls:
         assert "No browser connected" in result.text
 
     @pytest.mark.asyncio
-    async def test_urls_always_route_to_browse(self, test_db, mock_ollama):
+    async def test_urls_always_route_to_browse(self, test_db, mock_llm):
         """URLs always go to BrowseTool regardless of browser connection."""
         browsed_urls: list[str] = []
 
@@ -682,22 +674,22 @@ class TestEmptyContentAfterToolCalls:
     retry counter reset, and fallback response."""
 
     @pytest.mark.asyncio
-    async def test_final_step_empty_content_gets_strong_nudge(self, test_db, mock_ollama):
+    async def test_final_step_empty_content_gets_strong_nudge(self, test_db, mock_llm):
         """When model returns empty on final step, retry uses strong nudge."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
-                return mock_ollama._make_text_response(request, "")
-            return mock_ollama._make_text_response(request, "Here's what I found!")
+                return mock_llm._make_text_response(request, "")
+            return mock_llm._make_text_response(request, "Here's what I found!")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         response = await agent.run("test question", max_steps=max_steps)
         assert response.answer == "Here's what I found!"
 
-        retry_messages = mock_ollama.requests[2]["messages"]
+        retry_messages = mock_llm.requests[2]["messages"]
         last_user = next(m for m in reversed(retry_messages) if m["role"] == "user")
         assert "STOP" in last_user["content"]
         assert "test question" in last_user["content"]
@@ -705,24 +697,24 @@ class TestEmptyContentAfterToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_mid_loop_empty_content_gets_continue_nudge(self, test_db, mock_ollama):
+    async def test_mid_loop_empty_content_gets_continue_nudge(self, test_db, mock_llm):
         """When model returns empty mid-loop (tools still available), uses continue nudge."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         def handler(request, count):
             if count == 1:
                 # Mid-loop: model returns empty (tools still available, not final step)
-                return mock_ollama._make_text_response(request, "")
+                return mock_llm._make_text_response(request, "")
             if count == 2:
                 # Retry after continue nudge — model responds
-                return mock_ollama._make_text_response(request, "here's my answer")
-            return mock_ollama._make_text_response(request, "fallback")
+                return mock_llm._make_text_response(request, "here's my answer")
+            return mock_llm._make_text_response(request, "fallback")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         response = await agent.run("test question", max_steps=max_steps)
         assert response.answer == "here's my answer"
 
-        retry_messages = mock_ollama.requests[1]["messages"]
+        retry_messages = mock_llm.requests[1]["messages"]
         last_user = next(m for m in reversed(retry_messages) if m["role"] == "user")
         assert last_user["content"] == "Please provide your response."
         # Should NOT have the strong nudge — model still has tools available
@@ -731,30 +723,30 @@ class TestEmptyContentAfterToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_think_only_response_triggers_retry(self, test_db, mock_ollama):
+    async def test_think_only_response_triggers_retry(self, test_db, mock_llm):
         """Model returning only <think> tags with no body triggers retry."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
-                return mock_ollama._make_text_response(
+                return mock_llm._make_text_response(
                     request, "<think>Let me reason about this...</think>"
                 )
-            return mock_ollama._make_text_response(request, "here's the answer")
+            return mock_llm._make_text_response(request, "here's the answer")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         response = await agent.run("test question", max_steps=max_steps)
         assert response.answer == "here's the answer"
-        assert len(mock_ollama.requests) == 3
+        assert len(mock_llm.requests) == 3
 
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_retry_counter_resets_after_tool_calls(self, test_db, mock_ollama):
+    async def test_retry_counter_resets_after_tool_calls(self, test_db, mock_llm):
         """After nudge fires, tools are stripped so model must synthesize."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=5)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=5)
         # Mock tool executor so tool calls don't fail
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(tool="search", result="search result")
@@ -762,16 +754,16 @@ class TestEmptyContentAfterToolCalls:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "first"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "first"})
             if count == 2:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "second"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "second"})
             if count == 3:
                 # Empty content triggers nudge — tools stripped on next call
-                return mock_ollama._make_text_response(request, "")
+                return mock_llm._make_text_response(request, "")
             # count 4: tools stripped, model must produce text
-            return mock_ollama._make_text_response(request, "synthesized answer")
+            return mock_llm._make_text_response(request, "synthesized answer")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         agent.allow_repeat_tools = True
         response = await agent.run("test question", max_steps=max_steps)
         assert response.answer == "synthesized answer"
@@ -779,39 +771,39 @@ class TestEmptyContentAfterToolCalls:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_fallback_response_after_tool_calls(self, test_db, mock_ollama):
+    async def test_fallback_response_after_tool_calls(self, test_db, mock_llm):
         """FALLBACK_RESPONSE (not AGENT_EMPTY_RESPONSE) when empty after tool calls."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
-            return mock_ollama._make_text_response(request, "")
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_llm._make_text_response(request, "")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         response = await agent.run("test prompt", max_steps=max_steps)
         assert response.answer == PennyResponse.FALLBACK_RESPONSE
 
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_large_tool_results_pass_through_untruncated(self, test_db, mock_ollama):
+    async def test_large_tool_results_pass_through_untruncated(self, test_db, mock_llm):
         """Large tool results are not truncated — client enforces per-page limits."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
         large_result = "x" * 100_000
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             messages = request["messages"]
             tool_messages = [m for m in messages if m.get("role") == "tool"]
             assert len(tool_messages) == 1
             content = tool_messages[0]["content"]
             assert len(content) == 100_000
             assert "[truncated]" not in content
-            return mock_ollama._make_text_response(request, "done")
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         with patch.object(agent._tool_executor, "execute") as mock_exec:
             mock_exec.return_value = ToolResult(tool="search", result=large_result)
@@ -828,7 +820,7 @@ class TestStrongNudgeUsesLastQuestion:
     async def test_nudge_references_current_question_not_history(
         self,
         test_db,
-        mock_ollama,
+        mock_llm,
     ):
         """When the agentic loop exhausts tool calls and fires a strong nudge,
         the nudge must reference the latest user question — not an earlier one
@@ -837,7 +829,7 @@ class TestStrongNudgeUsesLastQuestion:
         Regression: _build_strong_nudge used next() (first user message) instead
         of the last, so with conversation history it would reference a prior question.
         """
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=5)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=5)
 
         history = [
             ("user", "what are some good 40k novels?"),
@@ -859,17 +851,17 @@ class TestStrongNudgeUsesLastQuestion:
 
             if "STOP" in last_user:
                 nudge_content = last_user
-                return mock_ollama._make_text_response(request, "Joan Chen was in Twin Peaks")
+                return mock_llm._make_text_response(request, "Joan Chen was in Twin Peaks")
 
             # After 4 tool calls, return empty to trigger strong nudge
             if count >= 5:
-                return mock_ollama._make_text_response(request, "")
+                return mock_llm._make_text_response(request, "")
 
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request, "search", {"query": f"joan chen filmography {count}"}
             )
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         agent.allow_repeat_tools = True
         response = await agent.run(
             current_question,
@@ -893,75 +885,75 @@ class TestRefusalRetry:
     """Test that model refusals trigger a retry nudge."""
 
     @pytest.mark.asyncio
-    async def test_refusal_on_nonfinal_step_retries_with_nudge(self, test_db, mock_ollama):
+    async def test_refusal_on_nonfinal_step_retries_with_nudge(self, test_db, mock_llm):
         """When model refuses on a non-final step, agent injects nudge and continues."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
-                return mock_ollama._make_text_response(
+                return mock_llm._make_text_response(
                     request, "I'm sorry, but I can't help with that."
                 )
-            return mock_ollama._make_text_response(request, "Here are the vegan smoothie recipes!")
+            return mock_llm._make_text_response(request, "Here are the vegan smoothie recipes!")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("Give me a list of vegan smoothie recipes", max_steps=max_steps)
         assert response.answer == "Here are the vegan smoothie recipes!"
-        assert len(mock_ollama.requests) == 3
+        assert len(mock_llm.requests) == 3
 
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_refusal_on_final_step_retries_inline(self, test_db, mock_ollama):
+    async def test_refusal_on_final_step_retries_inline(self, test_db, mock_llm):
         """When model refuses on the final step, agent retries once inline."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=1)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=1)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_text_response(request, "I cannot help with that request.")
-            return mock_ollama._make_text_response(request, "Here is a helpful answer!")
+                return mock_llm._make_text_response(request, "I cannot help with that request.")
+            return mock_llm._make_text_response(request, "Here is a helpful answer!")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test question", max_steps=max_steps)
         assert response.answer == "Here is a helpful answer!"
-        assert len(mock_ollama.requests) == 2
+        assert len(mock_llm.requests) == 2
 
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_refusal_only_retried_once(self, test_db, mock_ollama):
+    async def test_refusal_only_retried_once(self, test_db, mock_llm):
         """Refusal retry only fires once — second refusal is returned as-is."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         def handler(request, count):
-            return mock_ollama._make_text_response(request, "I'm sorry, I am unable to help.")
+            return mock_llm._make_text_response(request, "I'm sorry, I am unable to help.")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test question", max_steps=max_steps)
         # Should contain the refusal text (returned as-is after one retry)
         assert "sorry" in response.answer.lower() or "unable" in response.answer.lower()
         # Only two model calls: initial refusal + one retry
-        assert len(mock_ollama.requests) == 2
+        assert len(mock_llm.requests) == 2
 
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_normal_response_not_retried(self, test_db, mock_ollama):
+    async def test_normal_response_not_retried(self, test_db, mock_llm):
         """Normal responses are not mistakenly flagged as refusals."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
-        mock_ollama.set_response_handler(
-            lambda req, count: mock_ollama._make_text_response(req, "Here are your recipes!")
+        mock_llm.set_response_handler(
+            lambda req, count: mock_llm._make_text_response(req, "Here are your recipes!")
         )
 
         response = await agent.run("Give me vegan smoothie recipes", max_steps=max_steps)
         assert response.answer == "Here are your recipes!"
-        assert len(mock_ollama.requests) == 1
+        assert len(mock_llm.requests) == 1
 
         await agent.close()
 
@@ -970,14 +962,12 @@ class TestMalformedUrlCleaning:
     """Test that truncated or malformed URLs are stripped from final responses."""
 
     @pytest.mark.asyncio
-    async def test_bare_truncated_url_removed(self, test_db, mock_ollama):
+    async def test_bare_truncated_url_removed(self, test_db, mock_llm):
         """Bare URL ending with a hyphen (truncated path) is removed from the response."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
         raw = "Check this out: https://travelguide.com/destination- for details."
-        mock_ollama.set_response_handler(
-            lambda req, count: mock_ollama._make_text_response(req, raw)
-        )
+        mock_llm.set_response_handler(lambda req, count: mock_llm._make_text_response(req, raw))
 
         response = await agent.run("tell me about travel", max_steps=max_steps)
         assert "https://travelguide.com/destination-" not in response.answer
@@ -986,14 +976,12 @@ class TestMalformedUrlCleaning:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_markdown_link_truncated_url_keeps_text(self, test_db, mock_ollama):
+    async def test_markdown_link_truncated_url_keeps_text(self, test_db, mock_llm):
         """Markdown link [text](bad_url) strips the URL but preserves the link text."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
         raw = "Visit [Travel Guide](https://travelguide.com/destination-) for more info."
-        mock_ollama.set_response_handler(
-            lambda req, count: mock_ollama._make_text_response(req, raw)
-        )
+        mock_llm.set_response_handler(lambda req, count: mock_llm._make_text_response(req, raw))
 
         response = await agent.run("travel info", max_steps=max_steps)
         assert "https://travelguide.com/destination-" not in response.answer
@@ -1002,14 +990,12 @@ class TestMalformedUrlCleaning:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_valid_url_unchanged(self, test_db, mock_ollama):
+    async def test_valid_url_unchanged(self, test_db, mock_llm):
         """A well-formed URL is not touched."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama)
+        agent, db, max_steps = _make_agent(test_db, mock_llm)
 
         raw = "See https://example.com/article for more."
-        mock_ollama.set_response_handler(
-            lambda req, count: mock_ollama._make_text_response(req, raw)
-        )
+        mock_llm.set_response_handler(lambda req, count: mock_llm._make_text_response(req, raw))
 
         response = await agent.run("article link", max_steps=max_steps)
         assert "https://example.com/article" in response.answer
@@ -1017,18 +1003,18 @@ class TestMalformedUrlCleaning:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_source_url_appended_after_malformed_url_stripped(self, test_db, mock_ollama):
+    async def test_source_url_appended_after_malformed_url_stripped(self, test_db, mock_llm):
         """When a malformed URL is stripped, source URL fallback appends a real URL."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
-            return mock_ollama._make_text_response(
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_llm._make_text_response(
                 request, "Found something at https://bad.example/path-"
             )
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         source_url = "https://real-source.com/article"
         with patch.object(agent._tool_executor, "execute") as mock_exec:
@@ -1048,9 +1034,9 @@ class TestAllToolsFailedAbort:
     """Test that the agentic loop aborts when all tool calls fail."""
 
     @pytest.mark.asyncio
-    async def test_aborts_when_all_tool_calls_fail(self, test_db, mock_ollama):
+    async def test_aborts_when_all_tool_calls_fail(self, test_db, mock_llm):
         """Loop aborts with AGENT_TOOLS_UNAVAILABLE when all tools return errors."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=5)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=5)
         # Mock tool executor to always return an error
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(tool="search", result=None, error="API unavailable")
@@ -1058,11 +1044,11 @@ class TestAllToolsFailedAbort:
 
         def handler(request, count):
             # Model keeps trying tool calls — all fail
-            return mock_ollama._make_tool_call_response(
+            return mock_llm._make_tool_call_response(
                 request, "search", {"query": f"attempt {count}"}
             )
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         response = await agent.run("what's the news?", max_steps=max_steps)
         assert response.answer.startswith("Sorry, I wasn't able to get results right now")
         assert "search" in response.answer
@@ -1070,9 +1056,9 @@ class TestAllToolsFailedAbort:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_no_abort_when_some_tools_succeed(self, test_db, mock_ollama):
+    async def test_no_abort_when_some_tools_succeed(self, test_db, mock_llm):
         """Loop continues when at least one tool call succeeds."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=4)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=4)
 
         call_count = 0
 
@@ -1087,12 +1073,10 @@ class TestAllToolsFailedAbort:
 
         def handler(request, count):
             if count <= 2:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"query": f"q{count}"}
-                )
-            return mock_ollama._make_text_response(request, "here are results")
+                return mock_llm._make_tool_call_response(request, "search", {"query": f"q{count}"})
+            return mock_llm._make_text_response(request, "here are results")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         response = await agent.run("test", max_steps=max_steps)
         assert response.answer == "here are results"
 
@@ -1103,9 +1087,9 @@ class TestOnToolStartCallback:
     """Test that the on_tool_start callback fires before tool execution with all pending tools."""
 
     @pytest.mark.asyncio
-    async def test_callback_called_once_per_step_with_all_tools(self, test_db, mock_ollama):
+    async def test_callback_called_once_per_step_with_all_tools(self, test_db, mock_llm):
         """on_tool_start fires once per step with a list of all tools in that step."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(tool="search", result="result")
         )
@@ -1117,12 +1101,12 @@ class TestOnToolStartCallback:
 
         def handler(request, count):
             if count <= 2:
-                return mock_ollama._make_tool_call_response(
+                return mock_llm._make_tool_call_response(
                     request, "search", {"query": f"query {count}"}
                 )
-            return mock_ollama._make_text_response(request, "done")
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         agent.allow_repeat_tools = True
 
         response = await agent.run("test", max_steps=max_steps, on_tool_start=on_tool_start)
@@ -1135,9 +1119,9 @@ class TestOnToolStartCallback:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_parallel_tools_fire_callback_once_with_both(self, test_db, mock_ollama):
+    async def test_parallel_tools_fire_callback_once_with_both(self, test_db, mock_llm):
         """on_tool_start fires once for a parallel step, receiving both tools together."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(tool="search", result="result")
         )
@@ -1149,13 +1133,13 @@ class TestOnToolStartCallback:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_parallel_tool_calls_response(
+                return mock_llm._make_parallel_tool_calls_response(
                     request,
                     [("search", {"query": "topic A"}), ("search", {"query": "topic B"})],
                 )
-            return mock_ollama._make_text_response(request, "done")
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
         agent.allow_repeat_tools = True
 
         response = await agent.run("test", max_steps=max_steps, on_tool_start=on_tool_start)
@@ -1167,9 +1151,9 @@ class TestOnToolStartCallback:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_callback_not_called_for_deduped_repeat(self, test_db, mock_ollama):
+    async def test_callback_not_called_for_deduped_repeat(self, test_db, mock_llm):
         """on_tool_start does not fire when all tools in a step are deduplicated."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         captured: list[list[tuple[str, dict]]] = []
 
@@ -1178,12 +1162,10 @@ class TestOnToolStartCallback:
 
         def handler(request, count):
             if count <= 2:
-                return mock_ollama._make_tool_call_response(
-                    request, "search", {"query": "same query"}
-                )
-            return mock_ollama._make_text_response(request, "done")
+                return mock_llm._make_tool_call_response(request, "search", {"query": "same query"})
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         await agent.run("test", max_steps=max_steps, on_tool_start=on_tool_start)
         # Only the first step fires; the second is fully deduplicated so pending is empty
@@ -1192,9 +1174,9 @@ class TestOnToolStartCallback:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_failing_callback_does_not_abort_tool(self, test_db, mock_ollama):
+    async def test_failing_callback_does_not_abort_tool(self, test_db, mock_llm):
         """A callback that raises an exception does not prevent tool execution."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=2)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(tool="search", result="result")
         )
@@ -1204,10 +1186,10 @@ class TestOnToolStartCallback:
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
-            return mock_ollama._make_text_response(request, "done")
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         response = await agent.run("test", max_steps=max_steps, on_tool_start=on_tool_start)
         assert response.answer == "done"
@@ -1220,19 +1202,19 @@ class TestPromptLogAnnotations:
     """Test that prompt logs are annotated with agent_name and run_id."""
 
     @pytest.mark.asyncio
-    async def test_agent_name_and_run_id_written_to_promptlog(self, test_db, mock_ollama):
+    async def test_agent_name_and_run_id_written_to_promptlog(self, test_db, mock_llm):
         """Every prompt in an agentic loop gets the agent's name and a shared run_id."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(tool="search", result="result")
         )
 
         def handler(request, count):
             if count == 1:
-                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
-            return mock_ollama._make_text_response(request, "done")
+                return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_llm._make_text_response(request, "done")
 
-        mock_ollama.set_response_handler(handler)
+        mock_llm.set_response_handler(handler)
 
         await agent.run("test question", max_steps=max_steps)
 
@@ -1253,13 +1235,11 @@ class TestPromptLogAnnotations:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_separate_runs_get_different_run_ids(self, test_db, mock_ollama):
+    async def test_separate_runs_get_different_run_ids(self, test_db, mock_llm):
         """Two separate run() calls produce different run_ids."""
-        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=1)
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=1)
 
-        mock_ollama.set_response_handler(
-            lambda req, count: mock_ollama._make_text_response(req, "done")
-        )
+        mock_llm.set_response_handler(lambda req, count: mock_llm._make_text_response(req, "done"))
 
         await agent.run("first", max_steps=max_steps)
         await agent.run("second", max_steps=max_steps)

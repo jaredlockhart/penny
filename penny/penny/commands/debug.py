@@ -84,7 +84,7 @@ class DebugCommand(Command):
             channel=context.channel_type.title(),
             messages=total_messages,
             threads=active_threads,
-            model=context.config.ollama_model,
+            model=context.config.llm_model,
             task_status=task_status,
             memory=mem_str,
         )

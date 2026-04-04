@@ -6,7 +6,7 @@ from penny.tests.conftest import TEST_SENDER
 
 
 @pytest.mark.asyncio
-async def test_commands_list(signal_server, test_config, mock_ollama, running_penny):
+async def test_commands_list(signal_server, test_config, mock_llm, running_penny):
     """Test /commands lists all available commands."""
     async with running_penny(test_config) as _penny:
         # Send /commands
@@ -24,7 +24,7 @@ async def test_commands_list(signal_server, test_config, mock_ollama, running_pe
 
 
 @pytest.mark.asyncio
-async def test_commands_help_specific(signal_server, test_config, mock_ollama, running_penny):
+async def test_commands_help_specific(signal_server, test_config, mock_llm, running_penny):
     """Test /commands <name> shows help for specific command."""
     async with running_penny(test_config) as _penny:
         # Send /commands debug
@@ -40,7 +40,7 @@ async def test_commands_help_specific(signal_server, test_config, mock_ollama, r
 
 
 @pytest.mark.asyncio
-async def test_commands_unknown(signal_server, test_config, mock_ollama, running_penny):
+async def test_commands_unknown(signal_server, test_config, mock_llm, running_penny):
     """Test /commands <unknown> shows error."""
     async with running_penny(test_config) as _penny:
         # Send /commands unknown

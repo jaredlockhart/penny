@@ -22,8 +22,8 @@ from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
 from penny.constants import PennyConstants
 from penny.database.models import Thought
-from penny.ollama.embeddings import deserialize_embedding
-from penny.ollama.similarity import novelty_score
+from penny.llm.embeddings import deserialize_embedding
+from penny.llm.similarity import novelty_score
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 

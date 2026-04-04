@@ -16,7 +16,7 @@ def _add_preference(penny, content: str, valence: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_like_list_empty(signal_server, test_config, mock_ollama, running_penny):
+async def test_like_list_empty(signal_server, test_config, mock_llm, running_penny):
     """Test /like with no likes shows empty message."""
     async with running_penny(test_config) as _penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/like")
@@ -25,7 +25,7 @@ async def test_like_list_empty(signal_server, test_config, mock_ollama, running_
 
 
 @pytest.mark.asyncio
-async def test_like_list_shows_positives(signal_server, test_config, mock_ollama, running_penny):
+async def test_like_list_shows_positives(signal_server, test_config, mock_llm, running_penny):
     """Test /like lists positive preferences with numbers."""
     async with running_penny(test_config) as penny:
         _add_preference(penny, "dark roast coffee", PennyConstants.PreferenceValence.POSITIVE)
@@ -43,7 +43,7 @@ async def test_like_list_shows_positives(signal_server, test_config, mock_ollama
 
 
 @pytest.mark.asyncio
-async def test_unlike_deletes_positive(signal_server, test_config, mock_ollama, running_penny):
+async def test_unlike_deletes_positive(signal_server, test_config, mock_llm, running_penny):
     """Test /unlike <N> removes a positive preference."""
     async with running_penny(test_config) as penny:
         _add_preference(penny, "dark roast coffee", PennyConstants.PreferenceValence.POSITIVE)
@@ -63,7 +63,7 @@ async def test_unlike_deletes_positive(signal_server, test_config, mock_ollama, 
 
 
 @pytest.mark.asyncio
-async def test_dislike_list_shows_negatives(signal_server, test_config, mock_ollama, running_penny):
+async def test_dislike_list_shows_negatives(signal_server, test_config, mock_llm, running_penny):
     """Test /dislike lists negative preferences."""
     async with running_penny(test_config) as penny:
         _add_preference(penny, "cold weather", PennyConstants.PreferenceValence.NEGATIVE)
@@ -79,7 +79,7 @@ async def test_dislike_list_shows_negatives(signal_server, test_config, mock_oll
 
 @pytest.mark.asyncio
 async def test_undislike_deletes_last_shows_no_remaining(
-    signal_server, test_config, mock_ollama, running_penny
+    signal_server, test_config, mock_llm, running_penny
 ):
     """Test /undislike <N> on the last dislike shows 'no more' message."""
     async with running_penny(test_config) as penny:
@@ -93,7 +93,7 @@ async def test_undislike_deletes_last_shows_no_remaining(
 
 
 @pytest.mark.asyncio
-async def test_like_adds_preference(signal_server, test_config, mock_ollama, running_penny):
+async def test_like_adds_preference(signal_server, test_config, mock_llm, running_penny):
     """Test /like <text> adds a positive preference."""
     async with running_penny(test_config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/like dark roast coffee")
@@ -109,7 +109,7 @@ async def test_like_adds_preference(signal_server, test_config, mock_ollama, run
 
 
 @pytest.mark.asyncio
-async def test_dislike_adds_preference(signal_server, test_config, mock_ollama, running_penny):
+async def test_dislike_adds_preference(signal_server, test_config, mock_llm, running_penny):
     """Test /dislike <text> adds a negative preference."""
     async with running_penny(test_config) as penny:
         await signal_server.push_message(sender=TEST_SENDER, content="/dislike cold weather")
@@ -124,7 +124,7 @@ async def test_dislike_adds_preference(signal_server, test_config, mock_ollama, 
 
 
 @pytest.mark.asyncio
-async def test_preference_invalid_number(signal_server, test_config, mock_ollama, running_penny):
+async def test_preference_invalid_number(signal_server, test_config, mock_llm, running_penny):
     """Test remove command with invalid number shows error."""
     async with running_penny(test_config) as penny:
         _add_preference(penny, "hiking", PennyConstants.PreferenceValence.POSITIVE)
