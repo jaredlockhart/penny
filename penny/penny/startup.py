@@ -44,7 +44,9 @@ async def get_restart_message(ollama_client: OllamaClient) -> str:
     )
 
     try:
-        response = await ollama_client.generate(prompt)
+        response = await ollama_client.generate(
+            prompt, agent_name="startup", prompt_type="startup_announcement"
+        )
         announcement = response.content.strip()
 
         if not announcement or len(announcement) > 150:

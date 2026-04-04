@@ -9,6 +9,7 @@ Runs on a schedule. Each cycle, for each user:
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -54,6 +55,16 @@ class ClassifiedPreferences(BaseModel):
     )
 
 
+class HistoryPromptType:
+    """Prompt types for HistoryAgent flows."""
+
+    DAILY_SUMMARY = "daily_summary"
+    DAILY_BACKFILL = "daily_backfill"
+    WEEKLY_ROLLUP = "weekly_rollup"
+    PREFERENCE_IDENTIFICATION = "preference_identification"
+    PREFERENCE_VALENCE = "preference_valence"
+
+
 class HistoryAgent(Agent):
     """Background worker that compacts daily conversations into topic summaries."""
 
@@ -76,24 +87,25 @@ class HistoryAgent(Agent):
 
     async def execute_for_user(self, user: str) -> bool:
         """Summarize today's conversation, extract preferences, backfill days and weeks."""
+        run_id = uuid.uuid4().hex
         system_prompt = await self._build_system_prompt(user)
 
-        did_work = await self._summarize_today(user, system_prompt)
-        did_work = await self._extract_today_preferences(user) or did_work
+        did_work = await self._summarize_today(user, system_prompt, run_id)
+        did_work = await self._extract_today_preferences(user, run_id) or did_work
 
         max_days = int(self.config.runtime.HISTORY_MAX_DAYS_PER_RUN)
         days = self._find_unsummarized_days(user, max_days)
         for day_start, day_end in days:
-            await self._summarize_day(user, day_start, day_end, system_prompt)
+            await self._summarize_day(user, day_start, day_end, system_prompt, run_id)
             did_work = True
 
-        did_work = await self._rollup_completed_weeks(user, system_prompt) or did_work
+        did_work = await self._rollup_completed_weeks(user, system_prompt, run_id) or did_work
 
         return did_work
 
     # ── Topic summarization ───────────────────────────────────────────────
 
-    async def _summarize_today(self, user: str, system_prompt: str) -> bool:
+    async def _summarize_today(self, user: str, system_prompt: str, run_id: str) -> bool:
         """Summarize messages from midnight to now, upserting today's history entry."""
         day_start = self._midnight_today()
         day_end = datetime.now(UTC).replace(tzinfo=None)
@@ -107,7 +119,11 @@ class HistoryAgent(Agent):
 
         message_text = self._format_messages(messages)
         response = await self.run(
-            prompt=message_text, max_steps=self.get_max_steps(), system_prompt=system_prompt
+            prompt=message_text,
+            max_steps=self.get_max_steps(),
+            system_prompt=system_prompt,
+            run_id=run_id,
+            prompt_type=HistoryPromptType.DAILY_SUMMARY,
         )
         topics = response.answer.strip()
         if not topics:
@@ -136,7 +152,7 @@ class HistoryAgent(Agent):
         return existing.created_at >= latest_msg
 
     async def _summarize_day(
-        self, user: str, day_start: datetime, day_end: datetime, system_prompt: str
+        self, user: str, day_start: datetime, day_end: datetime, system_prompt: str, run_id: str
     ) -> None:
         """Get messages for a day and call model to summarize topics."""
         messages = self.db.messages.get_messages_in_range(user, day_start, day_end)
@@ -146,7 +162,11 @@ class HistoryAgent(Agent):
 
         message_text = self._format_messages(messages)
         response = await self.run(
-            prompt=message_text, max_steps=self.get_max_steps(), system_prompt=system_prompt
+            prompt=message_text,
+            max_steps=self.get_max_steps(),
+            system_prompt=system_prompt,
+            run_id=run_id,
+            prompt_type=HistoryPromptType.DAILY_BACKFILL,
         )
         topics = response.answer.strip()
         if not topics:
@@ -166,7 +186,7 @@ class HistoryAgent(Agent):
 
     # ── Weekly rollup ──────────────────────────────────────────────────────
 
-    async def _rollup_completed_weeks(self, user: str, system_prompt: str) -> bool:
+    async def _rollup_completed_weeks(self, user: str, system_prompt: str, run_id: str) -> bool:
         """Summarize completed weeks from daily entries into weekly history entries."""
         max_weeks = PennyConstants.MAX_WEEKLY_ROLLUPS_PER_RUN
         weeks = self._find_unrolled_weeks(user, max_weeks)
@@ -180,7 +200,11 @@ class HistoryAgent(Agent):
                 continue
 
             response = await self.run(
-                prompt=input_text, max_steps=self.get_max_steps(), system_prompt=system_prompt
+                prompt=input_text,
+                max_steps=self.get_max_steps(),
+                system_prompt=system_prompt,
+                run_id=run_id,
+                prompt_type=HistoryPromptType.WEEKLY_ROLLUP,
             )
             topics = response.answer.strip()
             if not topics:
@@ -242,7 +266,7 @@ class HistoryAgent(Agent):
 
     # ── Preference extraction ─────────────────────────────────────────────
 
-    async def _extract_today_preferences(self, user: str) -> bool:
+    async def _extract_today_preferences(self, user: str, run_id: str) -> bool:
         """Extract preferences from unprocessed text messages only.
 
         Reactions are processed for thought valence only (no preference extraction)
@@ -257,7 +281,7 @@ class HistoryAgent(Agent):
         did_work = False
 
         if messages:
-            did_work = await self._extract_text_preferences(user, messages)
+            did_work = await self._extract_text_preferences(user, messages, run_id)
             if did_work:
                 processed_ids.extend(m.id for m in messages if m.id is not None)
 
@@ -269,18 +293,20 @@ class HistoryAgent(Agent):
             self.db.messages.mark_processed(processed_ids)
         return did_work
 
-    async def _extract_text_preferences(self, user: str, messages: list) -> bool:
+    async def _extract_text_preferences(self, user: str, messages: list, run_id: str) -> bool:
         """Extract preferences from text messages via two-pass LLM pipeline."""
         conversation = self._format_messages(messages)
         if not conversation:
             return False
-        return await self._extract_preferences_from_content(user, conversation)
+        return await self._extract_preferences_from_content(user, conversation, run_id)
 
-    async def _extract_preferences_from_content(self, user: str, conversation: str) -> bool:
+    async def _extract_preferences_from_content(
+        self, user: str, conversation: str, run_id: str
+    ) -> bool:
         """Two-pass preference extraction: identify topics, dedup, classify valence."""
         existing = self.db.preferences.get_for_user(user)
 
-        identified = await self._identify_preference_topics(conversation, existing)
+        identified = await self._identify_preference_topics(conversation, existing, run_id)
         if not identified:
             return False
 
@@ -295,7 +321,7 @@ class HistoryAgent(Agent):
             return bool(identified.existing)
 
         survivor_topics = [topic for topic, _emb in survivors]
-        classified = await self._classify_preference_valence(survivor_topics, conversation)
+        classified = await self._classify_preference_valence(survivor_topics, conversation, run_id)
         if not classified:
             return bool(identified.existing)
 
@@ -331,7 +357,7 @@ class HistoryAgent(Agent):
     # ── Pass 1: topic identification ─────────────────────────────────────
 
     async def _identify_preference_topics(
-        self, conversation: str, existing: list
+        self, conversation: str, existing: list, run_id: str
     ) -> IdentifiedPreferenceTopics | None:
         """Pass 1: ask model to identify new and existing preference topics."""
         known_context = self._build_known_preferences_context(existing)
@@ -344,6 +370,9 @@ class HistoryAgent(Agent):
                 prompt=prompt,
                 tools=None,
                 format=IdentifiedPreferenceTopics.model_json_schema(),
+                agent_name=self.name,
+                prompt_type=HistoryPromptType.PREFERENCE_IDENTIFICATION,
+                run_id=run_id,
             )
             if not response.content or not response.content.strip():
                 return None
@@ -434,7 +463,7 @@ class HistoryAgent(Agent):
     # ── Pass 2: valence classification ───────────────────────────────────
 
     async def _classify_preference_valence(
-        self, topics: list[str], conversation: str
+        self, topics: list[str], conversation: str, run_id: str
     ) -> list[ClassifiedPreference]:
         """Pass 2: classify each topic as positive or negative."""
         topics_text = "\n".join(f"- {t}" for t in topics)
@@ -449,6 +478,9 @@ class HistoryAgent(Agent):
                 prompt=prompt,
                 tools=None,
                 format=ClassifiedPreferences.model_json_schema(),
+                agent_name=self.name,
+                prompt_type=HistoryPromptType.PREFERENCE_VALENCE,
+                run_id=run_id,
             )
             if not response.content or not response.content.strip():
                 return []
