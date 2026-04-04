@@ -10,6 +10,27 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# ── Error types ──────────────────────────────────────────────────────────
+
+
+class LlmError(Exception):
+    """Base error for LLM client operations."""
+
+
+class LlmNotFoundError(LlmError):
+    """Model not found (404). Should not be retried."""
+
+
+class LlmConnectionError(LlmError):
+    """Could not connect to the LLM server."""
+
+
+class LlmResponseError(LlmError):
+    """Server returned an error response."""
+
+
+# ── Response types ───────────────────────────────────────────────────────
+
 
 class LlmToolCallFunction(BaseModel):
     """Function details within a tool call."""

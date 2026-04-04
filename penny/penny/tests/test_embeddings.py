@@ -2,8 +2,6 @@
 
 import math
 
-import httpx
-import openai
 import pytest
 from similarity.embeddings import (
     find_similar,
@@ -11,6 +9,7 @@ from similarity.embeddings import (
     tokenize_entity_name,
 )
 
+from penny.llm import LlmNotFoundError, LlmResponseError
 from penny.llm.embeddings import (
     cosine_similarity,
     deserialize_embedding,
@@ -238,17 +237,12 @@ class TestLlmClientEmbed:
         """A 404 (model not found) must raise immediately — no retries."""
         from penny.llm.client import LlmClient
 
-        error_404 = openai.NotFoundError(
-            "model not found",
-            response=httpx.Response(status_code=404, request=httpx.Request("POST", "http://test")),
-            body=None,
-        )
         call_count = 0
 
         def raising_handler(model: str, input: str | list[str]) -> list[list[float]]:
             nonlocal call_count
             call_count += 1
-            raise error_404
+            raise LlmNotFoundError("model not found")
 
         mock_llm.set_embed_handler(raising_handler)
 
@@ -258,7 +252,7 @@ class TestLlmClientEmbed:
             max_retries=3,
             retry_delay=0.0,
         )
-        with pytest.raises(openai.NotFoundError):
+        with pytest.raises(LlmNotFoundError):
             await client.embed("hello")
 
         # Must have called embed exactly once — no retries on 404
@@ -274,7 +268,7 @@ class TestLlmClientEmbed:
         def flaky_handler(model: str, input: str | list[str]) -> list[list[float]]:
             nonlocal call_count
             call_count += 1
-            raise openai.APIConnectionError(request=httpx.Request("POST", "http://test"))
+            raise ConnectionError("server error")
 
         mock_llm.set_embed_handler(flaky_handler)
 
@@ -284,7 +278,7 @@ class TestLlmClientEmbed:
             max_retries=3,
             retry_delay=0.0,
         )
-        with pytest.raises(openai.APIConnectionError):
+        with pytest.raises(LlmResponseError):
             await client.embed("hello")
 
         # Should have retried all 3 times

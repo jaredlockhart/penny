@@ -2,5 +2,18 @@
 
 from penny.llm.client import LlmClient
 from penny.llm.image_client import OllamaImageClient
+from penny.llm.models import (
+    LlmConnectionError,
+    LlmError,
+    LlmNotFoundError,
+    LlmResponseError,
+)
 
-__all__ = ["LlmClient", "OllamaImageClient"]
+__all__ = [
+    "LlmClient",
+    "LlmConnectionError",
+    "LlmError",
+    "LlmNotFoundError",
+    "LlmResponseError",
+    "OllamaImageClient",
+]

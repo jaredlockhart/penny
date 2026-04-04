@@ -14,7 +14,16 @@ from typing import Any
 
 import openai
 
-from penny.llm.models import LlmMessage, LlmResponse, LlmToolCall, LlmToolCallFunction
+from penny.llm.models import (
+    LlmConnectionError,
+    LlmError,
+    LlmMessage,
+    LlmNotFoundError,
+    LlmResponse,
+    LlmResponseError,
+    LlmToolCall,
+    LlmToolCallFunction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +103,20 @@ class LlmClient:
 
                 return response
 
+            except LlmError:
+                raise
             except openai.NotFoundError as error:
                 logger.error("LLM chat failed (model not found, no retry): %s", error)
-                raise
+                raise LlmNotFoundError(str(error)) from error
+            except openai.APIConnectionError as error:
+                last_error = LlmConnectionError(str(error))
+                logger.warning(
+                    "LLM chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
             except Exception as error:
-                last_error = error
+                last_error = LlmResponseError(str(error))
                 logger.warning(
                     "LLM chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
                 )
@@ -149,11 +167,20 @@ class LlmClient:
                 )
                 return embeddings
 
+            except LlmError:
+                raise
             except openai.NotFoundError as error:
                 logger.error("LLM embed failed (model not found, no retry): %s", error)
-                raise
+                raise LlmNotFoundError(str(error)) from error
+            except openai.APIConnectionError as error:
+                last_error = LlmConnectionError(str(error))
+                logger.warning(
+                    "LLM embed error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
             except Exception as error:
-                last_error = error
+                last_error = LlmResponseError(str(error))
                 logger.warning(
                     "LLM embed error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
                 )
