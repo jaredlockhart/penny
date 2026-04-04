@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CAPABILITY_EMAIL = "email"
+CAPABILITY_CALENDAR = "calendar"
+CAPABILITY_PROJECT = "project"
 CAPABILITY_INVOICING = "invoicing"
 
 
@@ -97,6 +99,8 @@ def load_plugins(config: Config) -> list[Plugin]:
 
 __all__ = [
     "CAPABILITY_EMAIL",
+    "CAPABILITY_CALENDAR",
+    "CAPABILITY_PROJECT",
     "CAPABILITY_INVOICING",
     "Plugin",
     "load_plugins",

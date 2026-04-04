@@ -1,6 +1,6 @@
-"""Zoho Mail plugin for Penny.
+"""Zoho plugin for Penny.
 
-Provides email search, listing, reading, and drafting via the Zoho Mail API.
+Provides email, calendar, and project management via Zoho APIs.
 
 Required environment variables:
     ZOHO_API_ID       — Zoho OAuth client ID
@@ -13,8 +13,12 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from penny.plugins import CAPABILITY_EMAIL, Plugin
-from penny.plugins.zoho.commands import ZohoEmailCommand
+from penny.plugins import CAPABILITY_CALENDAR, CAPABILITY_EMAIL, CAPABILITY_PROJECT, Plugin
+from penny.plugins.zoho.commands import (
+    ZohoCalendarCommand,
+    ZohoEmailCommand,
+    ZohoProjectCommand,
+)
 
 if TYPE_CHECKING:
     from penny.commands.base import Command
@@ -23,10 +27,10 @@ if TYPE_CHECKING:
 
 
 class ZohoPlugin(Plugin):
-    """Zoho Mail integration plugin."""
+    """Zoho integration plugin for email, calendar, and projects."""
 
     name = "zoho"
-    capabilities = [CAPABILITY_EMAIL]
+    capabilities = [CAPABILITY_EMAIL, CAPABILITY_CALENDAR, CAPABILITY_PROJECT]
 
     def __init__(self, config: Config) -> None:
         self._client_id = os.environ["ZOHO_API_ID"]
@@ -43,17 +47,27 @@ class ZohoPlugin(Plugin):
         )
 
     def get_commands(self) -> list[Command]:
-        """Return the Zoho email command."""
+        """Return Zoho commands for email, calendar, and projects."""
         return [
             ZohoEmailCommand(
                 client_id=self._client_id,
                 client_secret=self._client_secret,
                 refresh_token=self._refresh_token,
-            )
+            ),
+            ZohoCalendarCommand(
+                client_id=self._client_id,
+                client_secret=self._client_secret,
+                refresh_token=self._refresh_token,
+            ),
+            ZohoProjectCommand(
+                client_id=self._client_id,
+                client_secret=self._client_secret,
+                refresh_token=self._refresh_token,
+            ),
         ]
 
     def get_tools(self) -> list[Tool]:
-        """Zoho tools are created per-request inside ZohoEmailCommand."""
+        """Zoho tools are created per-request inside command handlers."""
         return []
 
 
