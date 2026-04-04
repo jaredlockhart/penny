@@ -723,7 +723,7 @@ async def test_weekly_rollup_creates_entry_from_daily_entries(
         )
 
         system_prompt = await penny.history_agent._build_system_prompt(TEST_SENDER)
-        await penny.history_agent._rollup_completed_weeks(TEST_SENDER, system_prompt)
+        await penny.history_agent._rollup_completed_weeks(TEST_SENDER, system_prompt, "test-run-id")
 
         weekly_entries = penny.db.history.get_recent(
             TEST_SENDER, PennyConstants.HistoryDuration.WEEKLY, limit=10
@@ -760,7 +760,7 @@ async def test_weekly_rollup_skips_incomplete_week(
             )
 
         system_prompt = await penny.history_agent._build_system_prompt(TEST_SENDER)
-        await penny.history_agent._rollup_completed_weeks(TEST_SENDER, system_prompt)
+        await penny.history_agent._rollup_completed_weeks(TEST_SENDER, system_prompt, "test-run-id")
 
         weekly_entries = penny.db.history.get_recent(
             TEST_SENDER, PennyConstants.HistoryDuration.WEEKLY, limit=10
