@@ -3,11 +3,13 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.config import Config
 from penny.config_params import RuntimeParams
 from penny.database import Database
+from penny.database.models import PromptLog
 from penny.ollama import OllamaClient
 from penny.responses import PennyResponse
 from penny.tools.base import Tool
@@ -1210,5 +1212,63 @@ class TestOnToolStartCallback:
         response = await agent.run("test", max_steps=max_steps, on_tool_start=on_tool_start)
         assert response.answer == "done"
         assert len(response.tool_calls) == 1
+
+        await agent.close()
+
+
+class TestPromptLogAnnotations:
+    """Test that prompt logs are annotated with agent_name and run_id."""
+
+    @pytest.mark.asyncio
+    async def test_agent_name_and_run_id_written_to_promptlog(self, test_db, mock_ollama):
+        """Every prompt in an agentic loop gets the agent's name and a shared run_id."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=3)
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(tool="search", result="result")
+        )
+
+        def handler(request, count):
+            if count == 1:
+                return mock_ollama._make_tool_call_response(request, "search", {"query": "test"})
+            return mock_ollama._make_text_response(request, "done")
+
+        mock_ollama.set_response_handler(handler)
+
+        await agent.run("test question", max_steps=max_steps)
+
+        with Session(db.engine) as session:
+            logs = session.exec(select(PromptLog)).all()
+
+        assert len(logs) == 2
+        # All logs share the same run_id
+        run_ids = {log.run_id for log in logs}
+        assert len(run_ids) == 1
+        run_id = run_ids.pop()
+        assert run_id is not None
+        assert len(run_id) == 32  # uuid4 hex
+
+        # All logs have the agent name
+        assert all(log.agent_name == "Agent" for log in logs)
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_separate_runs_get_different_run_ids(self, test_db, mock_ollama):
+        """Two separate run() calls produce different run_ids."""
+        agent, db, max_steps = _make_agent(test_db, mock_ollama, max_steps=1)
+
+        mock_ollama.set_response_handler(
+            lambda req, count: mock_ollama._make_text_response(req, "done")
+        )
+
+        await agent.run("first", max_steps=max_steps)
+        await agent.run("second", max_steps=max_steps)
+
+        with Session(db.engine) as session:
+            logs = session.exec(select(PromptLog)).all()
+
+        assert len(logs) == 2
+        assert logs[0].run_id != logs[1].run_id
+        assert logs[0].agent_name == logs[1].agent_name == "Agent"
 
         await agent.close()
