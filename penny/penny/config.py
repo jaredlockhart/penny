@@ -85,10 +85,14 @@ def _collect_env_vars(channel_type: str) -> dict:
         "llm_model": llm_model,
         "llm_api_key": os.getenv("LLM_API_KEY", "not-needed"),
         "llm_vision_model": os.getenv("LLM_VISION_MODEL", os.getenv("OLLAMA_VISION_MODEL")),
+        "llm_vision_api_url": os.getenv("LLM_VISION_API_URL"),
+        "llm_vision_api_key": os.getenv("LLM_VISION_API_KEY"),
         "llm_image_model": os.getenv("LLM_IMAGE_MODEL", os.getenv("OLLAMA_IMAGE_MODEL")),
         "llm_embedding_model": os.getenv(
             "LLM_EMBEDDING_MODEL", os.getenv("OLLAMA_EMBEDDING_MODEL")
         ),
+        "llm_embedding_api_url": os.getenv("LLM_EMBEDDING_API_URL"),
+        "llm_embedding_api_key": os.getenv("LLM_EMBEDDING_API_KEY"),
         "ollama_api_url": os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434"),
         "github_app_id": os.getenv("GITHUB_APP_ID"),
         "github_app_private_key_path": os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
@@ -151,8 +155,12 @@ class Config:
     log_max_bytes: int = 10 * 1024 * 1024  # 10 MB
     log_backup_count: int = 5
     llm_vision_model: str | None = None  # Vision model for image understanding
+    llm_vision_api_url: str | None = None  # Override API URL for vision model
+    llm_vision_api_key: str | None = None  # Override API key for vision model
     llm_image_model: str | None = None  # Image generation model (e.g., x/z-image-turbo)
-    llm_embedding_model: str | None = None  # Embedding model (e.g., nomic-embed-text)
+    llm_embedding_model: str | None = None  # Embedding model (e.g., embeddinggemma)
+    llm_embedding_api_url: str | None = None  # Override API URL for embedding model
+    llm_embedding_api_key: str | None = None  # Override API key for embedding model
     ollama_api_url: str = "http://host.docker.internal:11434"  # Ollama-specific (image gen)
 
     # GitHub App Configuration (optional, needed for /bug command)

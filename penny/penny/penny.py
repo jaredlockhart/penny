@@ -67,25 +67,41 @@ class Penny:
         self.db.create_tables()
         config.runtime._db = self.db
 
-    def _create_llm_client(self, model: str, db: Database | None = None) -> LlmClient:
+    def _create_llm_client(
+        self,
+        model: str,
+        db: Database | None = None,
+        api_url: str | None = None,
+        api_key: str | None = None,
+    ) -> LlmClient:
         """Create an LlmClient with standard configuration."""
         return LlmClient(
-            api_url=self.config.llm_api_url,
+            api_url=api_url or self.config.llm_api_url,
             model=model,
             db=db if db is not None else self.db,
             max_retries=self.config.llm_max_retries,
             retry_delay=self.config.llm_retry_delay,
-            api_key=self.config.llm_api_key,
+            api_key=api_key or self.config.llm_api_key,
         )
 
     def _init_llm_clients(self, config: Config) -> None:
         """Create shared LLM model clients."""
         self.model_client = self._create_llm_client(config.llm_model)
         self.vision_model_client = (
-            self._create_llm_client(config.llm_vision_model) if config.llm_vision_model else None
+            self._create_llm_client(
+                config.llm_vision_model,
+                api_url=config.llm_vision_api_url,
+                api_key=config.llm_vision_api_key,
+            )
+            if config.llm_vision_model
+            else None
         )
         self.embedding_model_client = (
-            self._create_llm_client(config.llm_embedding_model)
+            self._create_llm_client(
+                config.llm_embedding_model,
+                api_url=config.llm_embedding_api_url,
+                api_key=config.llm_embedding_api_key,
+            )
             if config.llm_embedding_model
             else None
         )
