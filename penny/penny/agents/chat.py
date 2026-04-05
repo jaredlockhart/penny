@@ -166,15 +166,13 @@ class ChatAgent(Agent):
         content: str | None = None,
         instructions: str | None = None,
     ) -> str:
-        """Identity + profile + history + thought + page hint + instructions."""
+        """Identity + profile + page hint + instructions."""
         return "\n\n".join(
             s
             for s in [
                 self._identity_section(),
                 self._context_block(
                     self._profile_section(user),
-                    self._history_section(user),
-                    self._thought_section(user),
                     self._page_hint_section(),
                 ),
                 self._instructions_section(instructions),
@@ -188,17 +186,6 @@ class ChatAgent(Agent):
         if not context or not context.url:
             return None
         return f"### Current Browser Page\n{context.title}\n{context.url}"
-
-    def _thought_section(self, sender: str) -> str | None:
-        """Build thought context — only thoughts Penny has shared with the user.
-
-        Only notified thoughts appear in chat context so the model
-        doesn't reference thoughts the user hasn't seen yet.
-        """
-        thoughts = self.db.thoughts.get_recent_notified(sender, limit=1)
-        if not thoughts:
-            return None
-        return f"### Recent Background Thinking\n{thoughts[0].content}"
 
     def get_history(self, user: str) -> list[tuple[str, str]] | None:
         """Recent conversation messages for chat continuity."""
