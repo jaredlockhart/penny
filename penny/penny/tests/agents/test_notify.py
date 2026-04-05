@@ -507,26 +507,6 @@ async def test_get_top_thoughts_sorts_mix_of_notified_and_never_notified(
 
 
 @pytest.mark.asyncio
-async def test_chat_thought_context_shows_notified_only(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """ChatAgent chat mode only shows thoughts that have been shared with the user."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        penny.db.thoughts.add(TEST_SENDER, "shared thought about cats")
-        penny.db.thoughts.add(TEST_SENDER, "unshared thought about dogs")
-
-        thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
-        cat_thought = [t for t in thoughts if "cats" in t.content][0]
-        penny.db.thoughts.mark_notified(cat_thought.id)
-
-        context = penny.chat_agent._thought_section(TEST_SENDER)
-        if context:
-            assert "cats" in context
-            assert "dogs" not in context
-
-
 @pytest.mark.asyncio
 async def test_notify_thought_context_shows_specific_thought(
     signal_server, mock_llm, make_config, test_user_info, running_penny

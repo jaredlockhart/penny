@@ -6,6 +6,7 @@ translates provider-specific responses into these models.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -64,7 +65,7 @@ class LlmMessage(BaseModel):
                     "type": "function",
                     "function": {
                         "name": tool_call.function.name,
-                        "arguments": tool_call.function.arguments,
+                        "arguments": json.dumps(tool_call.function.arguments),
                     },
                 }
                 for tool_call in self.tool_calls
