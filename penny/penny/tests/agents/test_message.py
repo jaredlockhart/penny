@@ -125,21 +125,9 @@ Just wrap them in conversational text, not a clinical dump.
 ### User Profile
 The user's name is Test User.
 
-### Conversation History
-Week of Mar 16:
-- Guitar pedal research
-- Quantum computing news
-Mar 23:
-- Tone King Royalist amp
-
-### Recent Background Thinking
-Recent thought about amps
-
 ## Instructions
 The user is talking to you — no greetings, no sign-offs, just pick up \
-the thread. You have context injected above — \
-recent conversation history, relevant knowledge, recent events, \
-and your own recent thoughts.
+the thread.
 
 You have tools available:
 - **browse**: Look things up. Pass up to 3 queries and/or URLs.

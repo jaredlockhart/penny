@@ -114,7 +114,6 @@ class CheckinMode(NotificationMode):
                 agent._identity_section(),
                 agent._context_block(
                     agent._profile_section(user),
-                    agent._history_section(user),
                     agent._notified_thought_section(user),
                 ),
                 agent._instructions_section(),

@@ -22,9 +22,7 @@ class Prompt:
     # Conversation mode prompt (used by ChatAgent)
     CONVERSATION_PROMPT = (
         "The user is talking to you — no greetings, no sign-offs, just pick up "
-        "the thread. You have context injected above — "
-        "recent conversation history, relevant knowledge, recent events, "
-        "and your own recent thoughts.\n\n"
+        "the thread.\n\n"
         "You have tools available:\n{tools}\n\n"
         "Every tool call has a `reasoning` field — use it to think out loud. "
         "Explain what you're looking for, what you already know, "
