@@ -50,6 +50,7 @@ class PennyConstants:
     )
     BROWSE_RETRIES = 2
     BROWSE_RETRY_DELAY = 1.0
+    MAX_SEARCH_LINKS = 10
     DISLIKE_FILTER_THRESHOLD = 0.8
 
     # Email command constants
