@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from penny.agents.base import Agent
 from penny.config import Config
 from penny.config_params import RuntimeParams
+from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.models import PromptLog
 from penny.llm import LlmClient
@@ -661,6 +662,57 @@ class TestSearchResultTrimming:
         content = "Just plain text\nwith no links\nat all"
         result = _trim_search_result(content)
         assert result == content
+
+    def test_strips_knowledge_panel_prose_with_inline_links(self):
+        """Wikipedia-style prose with inline links is excluded."""
+        content = "\n".join(
+            [
+                "A [fantasy](https://x.org/a) [drama](https://x.org/b).",
+                "",
+                "Ira [Martin](https://x.org/m)",
+                "",
+                "[Alice](https://x.org/a1) [Bob](https://x.org/b1)",
+                "",
+                "Genre",
+                "Created by",
+                "",
+                "### Show Title",
+                "",
+                "[en.example.org/show](https://en.example.org/show)",
+                "",
+                "An American fantasy drama television series.",
+                "### Show - IMDb",
+                "",
+                "[imdb.com/title/tt1](https://imdb.com/title/tt1)",
+                "",
+                "A delightful return to the world.",
+            ]
+        )
+        result = _trim_search_result(content)
+        # Real search result links and their context are kept
+        assert "en.example.org/show" in result
+        assert "imdb.com/title/tt1" in result
+        assert "### Show Title" in result
+        # Knowledge panel prose with inline links is stripped
+        assert "[fantasy]" not in result
+        # Multi-link metadata lines are stripped
+        assert "[Alice]" not in result
+        assert "Ira [Martin]" not in result
+
+    def test_caps_at_max_search_links(self):
+        """Only the first PennyConstants.MAX_SEARCH_LINKS standalone links are kept."""
+        lines: list[str] = []
+        for i in range(PennyConstants.MAX_SEARCH_LINKS + 5):
+            lines.append(f"### Result {i}")
+            lines.append(f"[example.com/page{i}](https://example.com/page{i})")
+            lines.append(f"Snippet for result {i}")
+        content = "\n".join(lines)
+        result = _trim_search_result(content)
+        # First 10 kept
+        assert f"example.com/page{PennyConstants.MAX_SEARCH_LINKS - 1}" in result
+        # 11th and beyond dropped
+        assert f"example.com/page{PennyConstants.MAX_SEARCH_LINKS}" not in result
+        assert f"example.com/page{PennyConstants.MAX_SEARCH_LINKS + 4}" not in result
 
     def test_header_injected(self):
         """Trimmed results start with the search result header."""
