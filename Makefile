@@ -51,14 +51,6 @@ RUN = docker compose run --rm penny
 TEAM_RUN = docker compose run --rm team
 endif
 
-fmt: $(if $(LOCAL),,build team-build)
-	$(RUN) ruff format $(RUFF_TARGETS)
-	$(TEAM_RUN) ruff format $(TEAM_RUFF_TARGETS)
-
-lint: $(if $(LOCAL),,build team-build)
-	$(RUN) ruff check $(RUFF_TARGETS)
-	$(TEAM_RUN) ruff check $(TEAM_RUFF_TARGETS)
-
 fix: $(if $(LOCAL),,build team-build)
 	$(RUN) ruff format $(RUFF_TARGETS)
 	$(RUN) ruff check --fix $(RUFF_TARGETS)
