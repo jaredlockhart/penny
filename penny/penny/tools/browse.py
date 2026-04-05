@@ -27,31 +27,30 @@ logger = logging.getLogger(__name__)
 
 _URL_PATTERN = re.compile(r"^https?://")
 
-_LINK_RE = re.compile(r"\[([^\]]*)\]\((https?://[^)]+)\)")
+_LINK_RE = re.compile(r"^\s*\[([^\]]*)\]\(https?://(?:[^)\\]|\\.)*\)\s*$")
 
 # Type alias for the browser request function
 RequestFn = Callable[[str, dict], Awaitable[tuple[str, str | None]]]
 
 
 def _trim_search_result(text: str, context_lines: int = 2) -> str:
-    """Trim search result page to lines near markdown links.
+    """Trim search result page to lines near standalone markdown links.
 
-    Keeps a few lines of context around each link so the model
-    sees titles and URLs but not full article content.  Prepends a header
-    telling the model these are search results, not pages.
+    Pipeline: filter to solo-link lines (drops knowledge panel prose),
+    cap at MAX_SEARCH_LINKS, then keep context lines around each.
     """
     lines = text.split("\n")
 
-    link_lines: set[int] = set()
+    link_lines: list[int] = []
     for i, line in enumerate(lines):
-        if _LINK_RE.search(line):
-            link_lines.add(i)
+        if _LINK_RE.match(line):
+            link_lines.append(i)
 
     if not link_lines:
         return text
 
     keep: set[int] = set()
-    for line_number in link_lines:
+    for line_number in link_lines[: PennyConstants.MAX_SEARCH_LINKS]:
         for offset in range(-context_lines, context_lines + 1):
             idx = line_number + offset
             if 0 <= idx < len(lines):
