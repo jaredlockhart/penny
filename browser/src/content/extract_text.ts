@@ -67,6 +67,12 @@ function extractMetaImage(): string {
     const content = el?.getAttribute("content");
     if (content) return content;
   }
+  // Kagi search results: grab first image from the inline image results
+  const kagiImage = document.querySelector("._0_image_item");
+  if (kagiImage) {
+    const url = kagiImage.getAttribute("data-content_url");
+    if (url) return url;
+  }
   return "";
 }
 
