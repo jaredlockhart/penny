@@ -225,7 +225,8 @@ h1 {
   min-width: 80px;
 }
 
-.run-meta i {
+.run-meta i,
+.prompt-meta i {
   width: 16px;
   text-align: center;
   margin-right: 4px;
