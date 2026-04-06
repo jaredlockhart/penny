@@ -36,7 +36,8 @@ export type WsOutgoingType =
   | "schedules_request"
   | "schedule_add"
   | "schedule_update"
-  | "schedule_delete";
+  | "schedule_delete"
+  | "prompt_logs_request";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -57,6 +58,7 @@ export const WsOutgoingType = {
   ScheduleAdd: "schedule_add",
   ScheduleUpdate: "schedule_update",
   ScheduleDelete: "schedule_delete",
+  PromptLogsRequest: "prompt_logs_request",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
@@ -150,7 +152,9 @@ export type WsIncomingType =
   | "domain_permissions_sync"
   | "permission_prompt"
   | "permission_dismiss"
-  | "schedules_response";
+  | "schedules_response"
+  | "prompt_logs_response"
+  | "prompt_log_update";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
@@ -163,6 +167,8 @@ export const WsIncomingType = {
   PermissionPrompt: "permission_prompt",
   PermissionDismiss: "permission_dismiss",
   SchedulesResponse: "schedules_response",
+  PromptLogsResponse: "prompt_logs_response",
+  PromptLogUpdate: "prompt_log_update",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -264,6 +270,46 @@ export interface WsIncomingSchedulesPayload {
   error: string | null;
 }
 
+export interface PromptLogEntry {
+  id: number;
+  timestamp: string;
+  model: string;
+  agent_name: string;
+  prompt_type: string;
+  duration_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  messages: Record<string, unknown>[];
+  response: Record<string, unknown>;
+  thinking: string;
+  has_tools: boolean;
+}
+
+export interface PromptLogRun {
+  run_id: string;
+  agent_name: string;
+  prompt_count: number;
+  started_at: string;
+  ended_at: string;
+  total_duration_ms: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  run_outcome: string | null;
+  prompts: PromptLogEntry[];
+}
+
+export interface WsIncomingPromptLogsPayload {
+  type: typeof WsIncomingType.PromptLogsResponse;
+  agent_names: string[];
+  runs: PromptLogRun[];
+  has_more: boolean;
+}
+
+export interface WsIncomingPromptLogUpdatePayload {
+  type: typeof WsIncomingType.PromptLogUpdate;
+  prompt: PromptLogEntry & { run_id: string };
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
@@ -275,7 +321,9 @@ export type WsIncomingPayload =
   | WsIncomingDomainPermissionsPayload
   | WsIncomingPermissionPromptPayload
   | WsIncomingPermissionDismissPayload
-  | WsIncomingSchedulesPayload;
+  | WsIncomingSchedulesPayload
+  | WsIncomingPromptLogsPayload
+  | WsIncomingPromptLogUpdatePayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
@@ -308,7 +356,10 @@ export type RuntimeMessageType =
   | "schedules_response"
   | "schedule_add"
   | "schedule_update"
-  | "schedule_delete";
+  | "schedule_delete"
+  | "prompt_logs_request"
+  | "prompt_logs_response"
+  | "prompt_log_update";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -340,6 +391,9 @@ export const RuntimeMessageType = {
   ScheduleAdd: "schedule_add",
   ScheduleUpdate: "schedule_update",
   ScheduleDelete: "schedule_delete",
+  PromptLogsRequest: "prompt_logs_request",
+  PromptLogsResponse: "prompt_logs_response",
+  PromptLogUpdate: "prompt_log_update",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -528,6 +582,27 @@ export interface RuntimeScheduleDelete {
   schedule_id: number;
 }
 
+/** Prompts page → background: request prompt logs */
+export interface RuntimePromptLogsRequest {
+  type: typeof RuntimeMessageType.PromptLogsRequest;
+  agent_name?: string;
+  offset?: number;
+}
+
+/** Background → prompts page: prompt logs data */
+export interface RuntimePromptLogsResponse {
+  type: typeof RuntimeMessageType.PromptLogsResponse;
+  agent_names: string[];
+  runs: PromptLogRun[];
+  has_more: boolean;
+}
+
+/** Background → prompts page: single prompt logged in real time */
+export interface RuntimePromptLogUpdate {
+  type: typeof RuntimeMessageType.PromptLogUpdate;
+  prompt: PromptLogEntry & { run_id: string };
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -557,7 +632,10 @@ export type RuntimeMessage =
   | RuntimeSchedulesResponse
   | RuntimeScheduleAdd
   | RuntimeScheduleUpdate
-  | RuntimeScheduleDelete;
+  | RuntimeScheduleDelete
+  | RuntimePromptLogsRequest
+  | RuntimePromptLogsResponse
+  | RuntimePromptLogUpdate;
 
 // --- Domain permissions ---
 

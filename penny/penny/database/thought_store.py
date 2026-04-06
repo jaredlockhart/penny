@@ -28,6 +28,7 @@ class ThoughtStore:
         title: str | None = None,
         title_embedding: bytes | None = None,
         image: str | None = None,
+        run_id: str | None = None,
     ) -> Thought | None:
         """Append a thought to the log. Returns the created Thought or None."""
         try:
@@ -40,6 +41,7 @@ class ThoughtStore:
                     title=title,
                     title_embedding=title_embedding,
                     image=image,
+                    run_id=run_id,
                     created_at=datetime.now(UTC),
                 )
                 session.add(thought)

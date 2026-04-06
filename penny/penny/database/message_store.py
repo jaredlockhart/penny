@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -25,6 +26,7 @@ class MessageStore:
 
     def __init__(self, engine):
         self.engine = engine
+        self._on_prompt_logged: Callable[[dict], None] | None = None
 
     def _session(self) -> Session:
         return Session(self.engine)
@@ -113,7 +115,27 @@ class MessageStore:
                 )
                 session.add(log)
                 session.commit()
+                session.refresh(log)
                 logger.debug("Logged prompt exchange (model=%s)", model)
+                if self._on_prompt_logged and run_id:
+                    input_tokens, output_tokens = self._extract_token_usage(response)
+                    self._on_prompt_logged(
+                        {
+                            "id": log.id,
+                            "timestamp": log.timestamp.isoformat(),
+                            "model": model,
+                            "agent_name": agent_name or "",
+                            "prompt_type": prompt_type or "",
+                            "duration_ms": duration_ms or 0,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "run_id": run_id,
+                            "messages": messages,
+                            "response": response,
+                            "thinking": thinking or "",
+                            "has_tools": tools is not None,
+                        }
+                    )
         except Exception as e:
             logger.error("Failed to log prompt: %s", e)
 
@@ -525,6 +547,131 @@ class MessageStore:
             if cutoff is not None:
                 query = query.where(MessageLog.timestamp > cutoff)
             return session.exec(query).one()
+
+    def set_run_outcome(self, run_id: str, outcome: str) -> None:
+        """Set the run_outcome on the last prompt log for a given run_id."""
+        try:
+            with self._session() as session:
+                last_prompt = session.exec(
+                    select(PromptLog)
+                    .where(PromptLog.run_id == run_id)
+                    .order_by(PromptLog.timestamp.desc())
+                    .limit(1)
+                ).first()
+                if last_prompt:
+                    last_prompt.run_outcome = outcome
+                    session.add(last_prompt)
+                    session.commit()
+        except Exception as e:
+            logger.error("Failed to set run_outcome for %s: %s", run_id, e)
+
+    def get_prompt_log_agent_names(self) -> list[str]:
+        """Get distinct agent names from prompt logs."""
+        with self._session() as session:
+            rows = session.exec(
+                select(PromptLog.agent_name)
+                .where(
+                    PromptLog.run_id.isnot(None),  # ty: ignore[unresolved-attribute]
+                    PromptLog.agent_name.isnot(None),  # ty: ignore[unresolved-attribute]
+                )
+                .distinct()
+            ).all()
+            return sorted(name for name in rows if name)
+
+    def get_prompt_log_runs(
+        self, limit: int = 50, offset: int = 0, agent_name: str | None = None
+    ) -> list[dict]:
+        """Get prompt logs grouped by run_id, newest first.
+
+        Returns a list of run summaries with their individual prompts.
+        """
+        import json
+
+        with self._session() as session:
+            query = (
+                select(PromptLog)
+                .where(PromptLog.run_id.isnot(None))  # ty: ignore[unresolved-attribute]
+                .order_by(PromptLog.timestamp.desc())
+            )
+            if agent_name:
+                query = query.where(PromptLog.agent_name == agent_name)
+            all_prompts = list(session.exec(query).all())
+
+            grouped: dict[str, list[PromptLog]] = {}
+            for prompt in all_prompts:
+                assert prompt.run_id is not None
+                grouped.setdefault(prompt.run_id, []).append(prompt)
+
+            run_ids_ordered = list(grouped.keys())[offset : offset + limit]
+
+            runs = []
+            for run_id in run_ids_ordered:
+                prompts = sorted(grouped[run_id], key=lambda p: p.timestamp)
+                total_duration_ms = sum(p.duration_ms or 0 for p in prompts)
+                runs.append(self._serialize_run(run_id, prompts, total_duration_ms, json))
+
+            return runs
+
+    @staticmethod
+    def _extract_token_usage(response: dict) -> tuple[int, int]:
+        """Extract prompt and completion token counts from an OpenAI response."""
+        usage = response.get("usage")
+        if not usage:
+            return 0, 0
+        return usage.get("prompt_tokens", 0) or 0, usage.get("completion_tokens", 0) or 0
+
+    @staticmethod
+    def _serialize_run(
+        run_id: str,
+        prompts: list[PromptLog],
+        total_duration_ms: int,
+        json_module: Any,
+    ) -> dict:
+        """Serialize a single run and its prompts to a dict."""
+        total_input_tokens = 0
+        total_output_tokens = 0
+        serialized_prompts = []
+        for p in prompts:
+            response = json_module.loads(p.response) if p.response else {}
+            input_tokens, output_tokens = MessageStore._extract_token_usage(response)
+            total_input_tokens += input_tokens
+            total_output_tokens += output_tokens
+            serialized_prompts.append(
+                {
+                    "id": p.id,
+                    "timestamp": p.timestamp.isoformat(),
+                    "model": p.model,
+                    "agent_name": p.agent_name or "",
+                    "prompt_type": p.prompt_type or "",
+                    "duration_ms": p.duration_ms or 0,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "messages": json_module.loads(p.messages) if p.messages else [],
+                    "response": response,
+                    "thinking": p.thinking or "",
+                    "has_tools": p.tools is not None,
+                }
+            )
+
+        # run_outcome is set on the last prompt that has one
+        run_outcome = None
+        for p in reversed(prompts):
+            if p.run_outcome:
+                run_outcome = p.run_outcome
+                break
+
+        return {
+            "run_id": run_id,
+            "agent_name": prompts[0].agent_name or "unknown",
+            "prompt_count": len(prompts),
+            "started_at": prompts[0].timestamp.isoformat(),
+            "ended_at": prompts[-1].timestamp.isoformat(),
+            "total_duration_ms": total_duration_ms,
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "run_outcome": run_outcome,
+            "prompts": serialized_prompts,
+        }
 
     def get_last_checkin_time(self, prompt_text: str, hours: int = 48) -> datetime | None:
         """Get timestamp of the most recent prompt log containing the check-in prompt."""
