@@ -189,6 +189,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  flex: 1;
   padding: 7px 0;
   border: none;
   background: none;
