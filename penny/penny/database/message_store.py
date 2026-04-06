@@ -27,6 +27,7 @@ class MessageStore:
     def __init__(self, engine):
         self.engine = engine
         self._on_prompt_logged: Callable[[dict], None] | None = None
+        self._on_run_outcome_set: Callable[[str, str], None] | None = None
 
     def _session(self) -> Session:
         return Session(self.engine)
@@ -562,6 +563,8 @@ class MessageStore:
                     last_prompt.run_outcome = outcome
                     session.add(last_prompt)
                     session.commit()
+                    if self._on_run_outcome_set:
+                        self._on_run_outcome_set(run_id, outcome)
         except Exception as e:
             logger.error("Failed to set run_outcome for %s: %s", run_id, e)
 

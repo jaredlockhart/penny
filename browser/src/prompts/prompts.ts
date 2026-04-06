@@ -61,6 +61,8 @@ function handleMessage(message: RuntimeMessage): void {
     populateFilter(message.agent_names);
   } else if (message.type === RuntimeMessageType.PromptLogUpdate) {
     handlePromptUpdate(message.prompt);
+  } else if (message.type === RuntimeMessageType.RunOutcomeUpdate) {
+    handleRunOutcome(message.run_id, message.outcome);
   }
 }
 
@@ -133,6 +135,20 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
   const row = createRunRow(run);
   runsContainer.prepend(row);
   markRunActive(run.run_id, row);
+}
+
+function handleRunOutcome(runId: string, outcome: string): void {
+  const run = allRuns.find((r) => r.run_id === runId);
+  if (!run) return;
+  run.run_outcome = outcome;
+
+  const row = runElements.get(runId);
+  if (!row) return;
+
+  const promptsContainer = row.querySelector(".run-prompts");
+  if (promptsContainer) {
+    row.insertBefore(createRunOutcome(outcome), promptsContainer);
+  }
 }
 
 function markRunActive(runId: string, row: HTMLElement): void {

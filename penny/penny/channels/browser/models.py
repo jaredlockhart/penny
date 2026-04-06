@@ -43,6 +43,7 @@ BROWSER_RESP_TYPE_PERMISSION_DISMISS = "permission_dismiss"
 BROWSER_RESP_TYPE_SCHEDULES = "schedules_response"
 BROWSER_RESP_TYPE_PROMPT_LOGS = "prompt_logs_response"
 BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE = "prompt_log_update"
+BROWSER_RESP_TYPE_RUN_OUTCOME = "run_outcome_update"
 
 
 class BrowserIncoming(BaseModel):
