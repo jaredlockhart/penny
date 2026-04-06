@@ -179,6 +179,10 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   const header = createRunHeader(run);
   row.appendChild(header);
 
+  if (run.run_outcome) {
+    row.appendChild(createRunOutcome(run.run_outcome));
+  }
+
   const promptsContainer = document.createElement("div");
   promptsContainer.className = "run-prompts";
   for (let i = 0; i < run.prompts.length; i++) {
@@ -191,6 +195,15 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   });
 
   return row;
+}
+
+function createRunOutcome(outcome: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = outcome.startsWith("Stored")
+    ? "run-outcome run-outcome-stored"
+    : "run-outcome run-outcome-discarded";
+  el.textContent = outcome;
+  return el;
 }
 
 function createRunHeader(run: PromptLogRun): HTMLElement {
@@ -224,14 +237,6 @@ function createRunHeader(run: PromptLogRun): HTMLElement {
   time.textContent = formatDateTime(run.started_at);
   header.appendChild(time);
 
-  if (run.run_outcome) {
-    const outcome = document.createElement("span");
-    outcome.className = run.run_outcome.startsWith("Stored")
-      ? "run-outcome run-outcome-stored"
-      : "run-outcome run-outcome-discarded";
-    outcome.textContent = run.run_outcome;
-    header.appendChild(outcome);
-  }
 
   const meta = document.createElement("span");
   meta.className = "run-meta";
