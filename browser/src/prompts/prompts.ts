@@ -21,7 +21,8 @@ const loadMoreBtn = document.getElementById("load-more-btn")!;
 let allRuns: PromptLogRun[] = [];
 let hasMore = false;
 const runElements = new Map<string, HTMLElement>();
-const activeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+let activeRunId: string | null = null;
+let activeTimer: ReturnType<typeof setTimeout> | null = null;
 const ACTIVE_TIMEOUT_MS = 10_000;
 
 // --- Init ---
@@ -135,13 +136,18 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
 }
 
 function markRunActive(runId: string, row: HTMLElement): void {
+  if (activeRunId && activeRunId !== runId) {
+    const previous = runElements.get(activeRunId);
+    if (previous) previous.classList.remove("active-run");
+  }
+  activeRunId = runId;
   row.classList.add("active-run");
-  const existing = activeTimers.get(runId);
-  if (existing) clearTimeout(existing);
-  activeTimers.set(runId, setTimeout(() => {
+  if (activeTimer) clearTimeout(activeTimer);
+  activeTimer = setTimeout(() => {
     row.classList.remove("active-run");
-    activeTimers.delete(runId);
-  }, ACTIVE_TIMEOUT_MS));
+    activeRunId = null;
+    activeTimer = null;
+  }, ACTIVE_TIMEOUT_MS);
 }
 
 // --- Rendering ---
@@ -150,8 +156,9 @@ function render(): void {
   loading.classList.add("hidden");
   runsContainer.innerHTML = "";
   runElements.clear();
-  for (const timer of activeTimers.values()) clearTimeout(timer);
-  activeTimers.clear();
+  if (activeTimer) clearTimeout(activeTimer);
+  activeTimer = null;
+  activeRunId = null;
 
   if (allRuns.length === 0) {
     const label = agentFilter.value || "any agent";
