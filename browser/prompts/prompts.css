@@ -188,8 +188,11 @@ h1 {
 }
 
 .run-outcome {
-  font-size: 11px;
-  padding: 4px 16px 4px 44px;
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 8px;
+  margin: 0 0 4px 44px;
+  border-radius: 10px;
 }
 
 .run-outcome-stored {
