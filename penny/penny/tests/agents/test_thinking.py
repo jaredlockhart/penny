@@ -11,8 +11,10 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlmodel import Session, select
 
 from penny.constants import PennyConstants
+from penny.database.models import PromptLog
 from penny.llm.embeddings import serialize_embedding
 from penny.prompts import Prompt
 from penny.tests.conftest import TEST_SENDER
@@ -731,6 +733,14 @@ async def test_seeded_duplicate_thought_skips_storage(
         pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER)
         assert any(p.last_thought_at is not None for p in pool)
 
+        # run_outcome records the discard reason
+        with Session(penny.db.engine) as session:
+            outcomes = [
+                log.run_outcome for log in session.exec(select(PromptLog)).all() if log.run_outcome
+            ]
+        assert len(outcomes) == 1
+        assert outcomes[0].startswith("Discard: duplicate of ")
+
 
 @pytest.mark.asyncio
 async def test_free_duplicate_thought_skips_storage(
@@ -903,6 +913,18 @@ async def test_novel_thought_is_stored(
 
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
         assert len(thoughts) == 2
+
+        # Stored thought has run_id linking it to the prompt logs
+        new_thought = thoughts[-1]
+        assert new_thought.run_id is not None
+
+        # run_outcome records successful storage
+        with Session(penny.db.engine) as session:
+            outcomes = [
+                log.run_outcome for log in session.exec(select(PromptLog)).all() if log.run_outcome
+            ]
+        assert len(outcomes) == 1
+        assert outcomes[0].startswith("Stored: ")
 
 
 # ── 4. Dislike veto filter ────────────────────────────────────────────────

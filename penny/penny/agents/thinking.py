@@ -172,6 +172,7 @@ class ThinkingAgent(Agent):
     async def after_run(self, user: str, run_id: str, prompt_type: str | None = None) -> bool:
         """Summarize the search results, dedup, and store."""
         if not self._tool_result_text:
+            self._record_outcome(run_id, "Discard: no search results")
             return False
         combined = "\n\n---\n\n".join(self._tool_result_text)
         report = await self._summarize_with_url_validation(combined, run_id, prompt_type)
@@ -179,24 +180,36 @@ class ThinkingAgent(Agent):
             logger.info(
                 "[inner_monologue] report too short (%d words), skipping", len(report.split())
             )
+            self._record_outcome(run_id, f"Discard: too short ({len(report.split())} words)")
             report = ""
         if report:
             title, content = self._parse_title(report)
             content_vec = await embed_text(self._embedding_model_client, content)
-            if self._is_duplicate_thought(user, title, content_vec):
+            duplicate_match = self._find_duplicate_thought(user, title, content_vec)
+            if duplicate_match:
                 logger.info(
                     "[inner_monologue] discarded duplicate (seed=%s): %s",
                     self._seed_topic or "free",
                     report[:100],
                 )
+                self._record_outcome(run_id, f"Discard: duplicate of {duplicate_match!r}")
             else:
-                await self._store_thought(user, title, content, content_vec)
+                await self._store_thought(user, run_id, title, content, content_vec)
         if self._seed_pref_id is not None:
             self.db.preferences.mark_thought_about(self._seed_pref_id)
         return True
 
+    def _record_outcome(self, run_id: str, outcome: str) -> None:
+        """Record the outcome of a thinking run on its last prompt log."""
+        self.db.messages.set_run_outcome(run_id, outcome)
+
     async def _store_thought(
-        self, user: str, title: str | None, content: str, content_vec: list[float] | None
+        self,
+        user: str,
+        run_id: str,
+        title: str | None,
+        content: str,
+        content_vec: list[float] | None,
     ) -> None:
         """Embed title, check dislike filter, and persist thought."""
         content_embedding = serialize_embedding(content_vec) if content_vec else None
@@ -210,6 +223,7 @@ class ThinkingAgent(Agent):
                 self._seed_topic or "free",
                 content[:100],
             )
+            self._record_outcome(run_id, f"Discard: matches dislike {matched_dislike!r}")
             return
         image = self._tool_result_images[0] if self._tool_result_images else None
         self.db.thoughts.add(
@@ -220,7 +234,9 @@ class ThinkingAgent(Agent):
             title=title,
             title_embedding=title_embedding,
             image=image,
+            run_id=run_id,
         )
+        self._record_outcome(run_id, f"Stored: {title or 'untitled'}")
         logger.info(
             "[inner_monologue] stored thought (seed=%s, title=%s): %s",
             self._seed_topic or "free",
@@ -315,23 +331,24 @@ class ThinkingAgent(Agent):
         content = report[: match.start()].rstrip()
         return title, content
 
-    def _is_duplicate_thought(
+    def _find_duplicate_thought(
         self, user: str, title: str | None, content_vec: list[float] | None
-    ) -> bool:
+    ) -> str | None:
         """Check new thought against all existing thoughts.
 
         Uses title TCR OR content embedding similarity — either signal
         triggers a match.  Scans all past thoughts (O(N), N is small).
         Falls back to EMBEDDING_ONLY when the candidate has no title.
+        Returns the matched thought's title, or None if no match.
         """
         if not title and content_vec is None:
-            return False
+            return None
         all_thoughts = self.db.thoughts.get_all(user)
         existing_items: list[tuple[str, bytes | None]] = [
             (t.title or "", t.embedding) for t in all_thoughts
         ]
         if not existing_items:
-            return False
+            return None
         strategy = DedupStrategy.TCR_OR_EMBEDDING if title else DedupStrategy.EMBEDDING_ONLY
         match_idx = is_embedding_duplicate(
             title or "",
@@ -342,14 +359,15 @@ class ThinkingAgent(Agent):
             tcr_threshold=self.config.runtime.THOUGHT_DEDUP_TCR_THRESHOLD,
         )
         if match_idx is not None:
+            matched_title = existing_items[match_idx][0]
             logger.info(
                 "[inner_monologue] duplicate %r matches %r (pref #%s)",
                 title,
-                existing_items[match_idx][0],
+                matched_title,
                 self._seed_pref_id,
             )
-            return True
-        return False
+            return matched_title
+        return None
 
     # ── Loop hooks ─────────────────────────────────────────────────────────
 
