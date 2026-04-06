@@ -205,12 +205,11 @@ function createRunHeader(run: PromptLogRun): HTMLElement {
   const agent = document.createElement("span");
   agent.className = "run-agent";
   agent.textContent = run.agent_name;
-  header.appendChild(agent);
-
   const spinner = document.createElement("span");
   spinner.className = "run-spinner";
-  spinner.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
-  header.appendChild(spinner);
+  spinner.innerHTML = ' <i class="fa-solid fa-spinner fa-spin"></i>';
+  agent.appendChild(spinner);
+  header.appendChild(agent);
 
   const promptType = extractPromptType(run);
   if (promptType) {
