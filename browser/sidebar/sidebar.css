@@ -91,8 +91,8 @@ body {
 #nav-top {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
+  gap: 4px;
+  padding: 7px 6px 7px 14px;
 }
 
 .nav-icon {
@@ -102,10 +102,36 @@ body {
 }
 
 #nav-title {
-  flex: 1;
   font-weight: 600;
   font-size: 13px;
   color: var(--text-primary);
+}
+
+#nav-prompts {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 2px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#nav-prompts:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+#nav-prompts.pulsing {
+  animation: prompt-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes prompt-pulse {
+  0%, 100% { color: var(--text-muted); }
+  50% { color: var(--accent); }
 }
 
 #nav-thoughts {
@@ -155,15 +181,16 @@ body {
 
 #main-tabs {
   display: flex;
+  padding: 0 6px 0 14px;
+  gap: 8px;
 }
 
 .main-tab {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 5px;
   flex: 1;
-  padding: 7px 4px;
+  padding: 7px 0;
   border: none;
   background: none;
   color: var(--text-muted);
@@ -181,6 +208,23 @@ body {
 .main-tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+.main-tab-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.main-tab-link:hover {
+  color: var(--text-primary);
 }
 
 /* --- Conversation panel --- */

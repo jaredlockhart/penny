@@ -22,6 +22,7 @@ class PromptLog(SQLModel, table=True):
         None  # Which flow within the agent (user_message, free, daily_summary, etc.)
     )
     run_id: str | None = None  # Groups all prompts from one agentic loop invocation
+    run_outcome: str | None = None  # Outcome of the run (set on last prompt of thinking runs)
 
     def get_messages(self) -> list[dict]:
         return json.loads(self.messages)
@@ -136,6 +137,7 @@ class Thought(SQLModel, table=True):
     user: str = Field(index=True)
     content: str
     preference_id: int | None = Field(default=None, foreign_key="preference.id", index=True)
+    run_id: str | None = Field(default=None, index=True)  # Links to PromptLog.run_id
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     notified_at: datetime | None = None  # When this thought was shared with the user
     embedding: bytes | None = None  # Serialized float32 content embedding (novelty/sentiment)

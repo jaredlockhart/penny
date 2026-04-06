@@ -167,6 +167,8 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     sendScheduleUpdate(message.schedule_id, message.prompt_text);
   } else if (message.type === RuntimeMessageType.ScheduleDelete) {
     sendScheduleDelete(message.schedule_id);
+  } else if (message.type === RuntimeMessageType.PromptLogsRequest) {
+    requestPromptLogs(message.agent_name, message.offset);
   }
 }
 
@@ -243,6 +245,18 @@ function connect(): void {
         type: RuntimeMessageType.SchedulesResponse,
         schedules: data.schedules,
         error: data.error,
+      });
+    } else if (data.type === WsIn.PromptLogUpdate) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.PromptLogUpdate,
+        prompt: data.prompt,
+      });
+    } else if (data.type === WsIn.PromptLogsResponse) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.PromptLogsResponse,
+        agent_names: data.agent_names,
+        runs: data.runs,
+        has_more: data.has_more,
       });
     }
   });
@@ -360,6 +374,14 @@ function sendScheduleUpdate(scheduleId: number, promptText: string): void {
 function sendScheduleDelete(scheduleId: number): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.ScheduleDelete, schedule_id: scheduleId }));
+}
+
+function requestPromptLogs(agentName?: string, offset?: number): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const payload: Record<string, unknown> = { type: WsOutgoingType.PromptLogsRequest };
+  if (agentName) payload.agent_name = agentName;
+  if (offset) payload.offset = offset;
+  ws.send(JSON.stringify(payload));
 }
 
 function syncDomainPermissionsToLocal(permissions: DomainPermissionEntry[]): void {

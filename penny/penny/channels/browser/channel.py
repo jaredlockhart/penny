@@ -32,6 +32,7 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_PREFERENCE_ADD,
     BROWSER_MSG_TYPE_PREFERENCE_DELETE,
     BROWSER_MSG_TYPE_PREFERENCES_REQUEST,
+    BROWSER_MSG_TYPE_PROMPT_LOGS_REQUEST,
     BROWSER_MSG_TYPE_REGISTER,
     BROWSER_MSG_TYPE_SCHEDULE_ADD,
     BROWSER_MSG_TYPE_SCHEDULE_DELETE,
@@ -43,6 +44,8 @@ from penny.channels.browser.models import (
     BROWSER_RESP_TYPE_CONFIG,
     BROWSER_RESP_TYPE_MESSAGE,
     BROWSER_RESP_TYPE_PREFERENCES,
+    BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE,
+    BROWSER_RESP_TYPE_PROMPT_LOGS,
     BROWSER_RESP_TYPE_SCHEDULES,
     BROWSER_RESP_TYPE_STATUS,
     BROWSER_RESP_TYPE_THOUGHTS,
@@ -124,6 +127,13 @@ class BrowserChannel(MessageChannel):
         self._connections: dict[str, ConnectionInfo] = {}
         self._pending_requests: dict[str, asyncio.Future[tuple[str, str | None]]] = {}
         self._permission_manager: PermissionManager | None = None
+        db.messages._on_prompt_logged = self._on_prompt_logged
+
+    def _on_prompt_logged(self, prompt_data: dict) -> None:
+        """Callback fired after each prompt is logged — broadcast to browsers."""
+        message = json.dumps({"type": BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE, "prompt": prompt_data})
+        for conn in self._connections.values():
+            asyncio.ensure_future(conn.ws.send(message))
 
     @property
     def sender_id(self) -> str:
@@ -265,6 +275,10 @@ class BrowserChannel(MessageChannel):
 
         if msg_type == BROWSER_MSG_TYPE_SCHEDULE_DELETE:
             await self._handle_schedule_delete(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_PROMPT_LOGS_REQUEST:
+            await self._handle_prompt_logs_request(ws, data)
             return device_label
 
         return device_label
@@ -415,6 +429,25 @@ class BrowserChannel(MessageChannel):
         if emoji in PennyConstants.NEGATIVE_REACTION_EMOJIS:
             return -1
         return None
+
+    _PROMPT_LOG_PAGE_SIZE = 50
+
+    async def _handle_prompt_logs_request(self, ws: ServerConnection, data: dict) -> None:
+        """Query prompt logs grouped by run_id and send them to the browser."""
+        agent_name = data.get("agent_name") or None
+        offset = int(data.get("offset", 0))
+        agent_names = self._db.messages.get_prompt_log_agent_names()
+        runs = self._db.messages.get_prompt_log_runs(
+            limit=self._PROMPT_LOG_PAGE_SIZE, offset=offset, agent_name=agent_name
+        )
+        response = {
+            "type": BROWSER_RESP_TYPE_PROMPT_LOGS,
+            "agent_names": agent_names,
+            "runs": runs,
+            "has_more": len(runs) == self._PROMPT_LOG_PAGE_SIZE,
+        }
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await ws.send(json.dumps(response))
 
     async def _handle_preferences_request(self, ws: ServerConnection, data: dict) -> None:
         """Query preferences by valence and send them to the browser."""
