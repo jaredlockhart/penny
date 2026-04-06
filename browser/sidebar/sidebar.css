@@ -181,6 +181,7 @@ body {
 
 #main-tabs {
   display: flex;
+  padding: 0 10px;
 }
 
 .main-tab {
