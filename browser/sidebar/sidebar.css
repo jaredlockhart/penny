@@ -187,10 +187,8 @@ body {
 .main-tab {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 5px;
-  flex: 1;
-  padding: 7px 4px;
+  padding: 7px 8px;
   border: none;
   background: none;
   color: var(--text-muted);
