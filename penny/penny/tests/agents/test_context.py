@@ -331,15 +331,17 @@ async def test_thought_context_scoped_to_seed_preference(
 
     async with running_penny(config) as penny:
         # Add thoughts for two different preferences
-        penny.db.thoughts.add(TEST_SENDER, "thought about AI", preference_id=1)
-        penny.db.thoughts.add(TEST_SENDER, "thought about music", preference_id=2)
+        penny.db.thoughts.add(TEST_SENDER, "thought about AI", preference_id=1, title="AI advances")
+        penny.db.thoughts.add(
+            TEST_SENDER, "thought about music", preference_id=2, title="Music theory"
+        )
 
-        # Scope to preference 1 — should only see the AI thought
+        # Scope to preference 1 — should only see the AI thought title
         penny.thinking_agent._seed_pref_id = 1
         context = penny.thinking_agent._thought_section(TEST_SENDER)
         assert context is not None
-        assert "thought about AI" in context
-        assert "thought about music" not in context
+        assert "AI advances" in context
+        assert "Music theory" not in context
 
 
 @pytest.mark.asyncio
