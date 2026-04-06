@@ -136,6 +136,7 @@ h1 {
   cursor: pointer;
   user-select: none;
   transition: background 0.15s;
+  overflow: hidden;
 }
 
 .run-header:hover {
@@ -178,7 +179,6 @@ h1 {
 .run-type {
   font-size: 12px;
   color: var(--text-muted);
-  min-width: 100px;
 }
 
 .run-time {
@@ -209,15 +209,16 @@ h1 {
   font-size: 12px;
   color: var(--text-muted);
   display: flex;
-  gap: 4px;
+  gap: 2px;
   align-items: center;
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .run-meta span {
   display: inline-flex;
   align-items: center;
-  min-width: 80px;
+  min-width: 64px;
 }
 
 .run-meta i {
