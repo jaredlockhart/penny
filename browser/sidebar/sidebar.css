@@ -126,13 +126,12 @@ body {
 }
 
 #nav-prompts.pulsing {
-  color: var(--accent);
-  animation: prompt-pulse 0.8s ease-in-out infinite;
+  animation: prompt-pulse 1.5s ease-in-out infinite;
 }
 
 @keyframes prompt-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(1.2); }
+  0%, 100% { color: var(--text-muted); }
+  50% { color: var(--accent); }
 }
 
 #nav-thoughts {
