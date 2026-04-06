@@ -200,6 +200,23 @@ body {
   border-bottom-color: var(--accent);
 }
 
+.main-tab-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 8px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.main-tab-link:hover {
+  color: var(--text-primary);
+}
+
 /* --- Conversation panel --- */
 
 #conversation-panel {
