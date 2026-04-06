@@ -205,7 +205,8 @@ h1 {
   background: rgba(220, 53, 69, 0.1);
 }
 
-.run-meta {
+.run-meta,
+.prompt-meta {
   font-size: 12px;
   color: var(--text-muted);
   display: flex;
@@ -213,9 +214,11 @@ h1 {
   align-items: center;
   margin-left: auto;
   flex-shrink: 0;
+  width: 380px;
 }
 
-.run-meta span {
+.run-meta span,
+.prompt-meta span {
   display: inline-flex;
   align-items: center;
   min-width: 64px;
@@ -278,28 +281,6 @@ h1 {
   color: var(--accent);
 }
 
-.prompt-meta {
-  font-size: 12px;
-  color: var(--text-muted);
-  display: flex;
-  gap: 2px;
-  align-items: center;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.prompt-meta span {
-  display: inline-flex;
-  align-items: center;
-  min-width: 64px;
-}
-
-.prompt-meta i {
-  width: 16px;
-  text-align: center;
-  margin-right: 4px;
-  flex-shrink: 0;
-}
 
 /* --- Prompt detail sections --- */
 
