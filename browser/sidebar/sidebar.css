@@ -91,7 +91,7 @@ body {
 #nav-top {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 7px 2px 7px 10px;
 }
 
