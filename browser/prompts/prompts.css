@@ -191,10 +191,7 @@ h1 {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 300px;
+  flex-shrink: 0;
 }
 
 .run-outcome-stored {
