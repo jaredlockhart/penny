@@ -285,6 +285,7 @@ function createPromptRow(prompt: PromptLogEntry, step: number): HTMLElement {
     ? ((prompt.output_tokens / prompt.duration_ms) * 1000).toFixed(1)
     : "0";
   meta.innerHTML =
+    `<span></span>` +
     `<span><i class="fa-solid fa-arrow-down"></i>${formatTokens(prompt.input_tokens)}</span>` +
     `<span><i class="fa-solid fa-arrow-up"></i>${formatTokens(prompt.output_tokens)}</span>` +
     `<span><i class="fa-solid fa-gauge-high"></i>${promptTokPerSec} tok/s</span>` +
