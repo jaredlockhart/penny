@@ -1261,6 +1261,10 @@ class TestPromptLogAnnotations:
             return_value=ToolResult(tool="search", result="result")
         )
 
+        # Track callback invocations
+        callback_prompts: list[dict] = []
+        db.messages._on_prompt_logged = lambda data: callback_prompts.append(data)
+
         def handler(request, count):
             if count == 1:
                 return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
@@ -1283,6 +1287,12 @@ class TestPromptLogAnnotations:
 
         # All logs have the agent name
         assert all(log.agent_name == "Agent" for log in logs)
+
+        # Callback fired for each prompt with run_id
+        assert len(callback_prompts) == 2
+        assert all(p["run_id"] == run_id for p in callback_prompts)
+        assert all(p["agent_name"] == "Agent" for p in callback_prompts)
+        assert "input_tokens" in callback_prompts[0]
 
         await agent.close()
 

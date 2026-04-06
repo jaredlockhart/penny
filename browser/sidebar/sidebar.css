@@ -102,10 +102,27 @@ body {
 }
 
 #nav-title {
-  flex: 1;
   font-weight: 600;
   font-size: 13px;
   color: var(--text-primary);
+}
+
+#nav-prompts {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#nav-prompts:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
 }
 
 #nav-thoughts {

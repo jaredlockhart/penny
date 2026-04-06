@@ -14,7 +14,7 @@ from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.migrate import migrate
-from penny.database.models import RuntimeConfig
+from penny.database.models import PromptLog, RuntimeConfig
 from penny.tools.browse import BrowseTool
 from penny.tools.models import SearchResult
 from penny.tools.read_emails import ReadEmailsTool
@@ -1224,3 +1224,136 @@ class TestBrowserScheduleHandlers:
         assert len(ws.sent) == 1
         assert ws.sent[0]["type"] == "schedules_response"
         assert ws.sent[0]["schedules"] == []
+
+
+class TestBrowserPromptLogHandlers:
+    """Prompt log request handlers: filtering, pagination, outcome tracking."""
+
+    def _channel(self, tmp_path) -> tuple[BrowserChannel, Database]:
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        return channel, db
+
+    def _log_prompt(self, db: Database, agent_name: str, run_id: str) -> None:
+        db.messages.log_prompt(
+            model="test-model",
+            messages=[{"role": "user", "content": "test"}],
+            response={"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+            agent_name=agent_name,
+            run_id=run_id,
+            duration_ms=100,
+        )
+
+    async def _request_prompt_logs(self, channel: BrowserChannel, data: dict | None = None) -> dict:
+        ws = _MockWs()
+        payload = {"type": "prompt_logs_request", **(data or {})}
+        await channel._process_raw_message(
+            ws,  # ty: ignore[invalid-argument-type]
+            json.dumps(payload),
+            None,
+        )
+        return ws.sent[0]
+
+    @pytest.mark.asyncio
+    async def test_prompt_logs_request_returns_runs(self, tmp_path):
+        """Basic prompt logs request returns grouped runs."""
+        channel, db = self._channel(tmp_path)
+        self._log_prompt(db, "chat", "run1")
+        self._log_prompt(db, "chat", "run1")
+        self._log_prompt(db, "inner_monologue", "run2")
+
+        response = await self._request_prompt_logs(channel)
+        assert response["type"] == "prompt_logs_response"
+        assert len(response["runs"]) == 2
+        assert response["has_more"] is False
+        assert set(response["agent_names"]) == {"chat", "inner_monologue"}
+
+    @pytest.mark.asyncio
+    async def test_prompt_logs_filter_by_agent(self, tmp_path):
+        """Filtering by agent_name returns only matching runs."""
+        channel, db = self._channel(tmp_path)
+        self._log_prompt(db, "chat", "run1")
+        self._log_prompt(db, "inner_monologue", "run2")
+
+        response = await self._request_prompt_logs(channel, {"agent_name": "chat"})
+        assert len(response["runs"]) == 1
+        assert response["runs"][0]["agent_name"] == "chat"
+        # agent_names still lists all available types
+        assert set(response["agent_names"]) == {"chat", "inner_monologue"}
+
+    @pytest.mark.asyncio
+    async def test_prompt_logs_pagination(self, tmp_path):
+        """Offset skips earlier runs."""
+        channel, db = self._channel(tmp_path)
+        self._log_prompt(db, "chat", "run1")
+        self._log_prompt(db, "chat", "run2")
+        self._log_prompt(db, "chat", "run3")
+
+        response = await self._request_prompt_logs(channel, {"offset": 1})
+        assert len(response["runs"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_prompt_logs_include_run_outcome(self, tmp_path):
+        """run_outcome is included in the response when set."""
+        channel, db = self._channel(tmp_path)
+        self._log_prompt(db, "inner_monologue", "run1")
+        db.messages.set_run_outcome("run1", "Stored: test topic")
+
+        response = await self._request_prompt_logs(channel)
+        assert response["runs"][0]["run_outcome"] == "Stored: test topic"
+
+    @pytest.mark.asyncio
+    async def test_prompt_logs_include_token_counts(self, tmp_path):
+        """Token counts are extracted from usage in response."""
+        channel, db = self._channel(tmp_path)
+        self._log_prompt(db, "chat", "run1")
+
+        response = await self._request_prompt_logs(channel)
+        run = response["runs"][0]
+        assert run["total_input_tokens"] == 10
+        assert run["total_output_tokens"] == 5
+        assert run["prompts"][0]["input_tokens"] == 10
+
+    def test_set_run_outcome(self, tmp_path):
+        """set_run_outcome updates the last prompt log for a run."""
+        _, db = self._channel(tmp_path)
+        self._log_prompt(db, "inner_monologue", "run1")
+        self._log_prompt(db, "inner_monologue", "run1")
+        db.messages.set_run_outcome("run1", "Discard: duplicate of 'test'")
+
+        with Session(db.engine) as session:
+            logs = session.exec(
+                select(PromptLog).where(PromptLog.run_id == "run1").order_by(PromptLog.timestamp)  # ty: ignore[invalid-argument-type]
+            ).all()
+
+        assert logs[0].run_outcome is None
+        assert logs[1].run_outcome == "Discard: duplicate of 'test'"
+
+    def test_on_prompt_logged_callback(self, tmp_path):
+        """_on_prompt_logged callback fires with prompt data for prompts with run_id."""
+        _, db = self._channel(tmp_path)
+        received: list[dict] = []
+        db.messages._on_prompt_logged = lambda data: received.append(data)
+
+        # Prompt without run_id — no callback
+        db.messages.log_prompt(
+            model="test",
+            messages=[],
+            response={},
+            agent_name="chat",
+        )
+        assert len(received) == 0
+
+        # Prompt with run_id — callback fires
+        db.messages.log_prompt(
+            model="test",
+            messages=[{"role": "user", "content": "hi"}],
+            response={"usage": {"prompt_tokens": 50, "completion_tokens": 20}},
+            agent_name="chat",
+            run_id="run1",
+            duration_ms=200,
+        )
+        assert len(received) == 1
+        assert received[0]["run_id"] == "run1"
+        assert received[0]["input_tokens"] == 50
+        assert received[0]["output_tokens"] == 20

@@ -117,6 +117,9 @@ async function showChat(): Promise<void> {
   document.getElementById("nav-thoughts")!.addEventListener("click", () => {
     browser.tabs.create({ url: browser.runtime.getURL("feed/feed.html") });
   });
+  document.getElementById("nav-prompts")!.addEventListener("click", () => {
+    browser.tabs.create({ url: browser.runtime.getURL("prompts/prompts.html") });
+  });
   document.getElementById("nav-settings")!.addEventListener("click", () => {
     showView("settings");
     activateSettingsTab(activeSettingsTab);

@@ -191,7 +191,7 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 
 ## Testing Philosophy
 
-- **Always use `make fmt check`**: The only way to run tests is `make fmt check 2>&1 | tee /tmp/check-output.txt`. Never use `make pytest`, `make check` alone, `docker compose run`, or any other ad-hoc invocation. Read `/tmp/check-output.txt` to inspect results afterward.
+- **Always use `make fix check`**: The only way to run tests is `make fix check 2>&1 | tee /tmp/check-output.txt; echo "EXIT_CODE=$pipestatus[1]" >> /tmp/check-output.txt`. Never use `make pytest`, `make check` alone, `docker compose run`, or any other ad-hoc invocation. Read `/tmp/check-output.txt` to inspect results afterward — check EXIT_CODE first, then grep for FAILED or `error\[` as needed.
 - **Strongly prefer integration tests**: Test through public entry points (e.g., `agent.run()`, `has_work()`, full message flow) rather than testing internal functions in isolation
 - **Fold assertions into existing tests**: Prefer adding assertions to an existing test that covers the relevant code path over creating a new test function
 - **Unit tests only for pure utility functions**: CODEOWNERS parsing, config loading, and similar pure functions with many edge cases are acceptable as unit tests

@@ -27,6 +27,7 @@ BROWSER_MSG_TYPE_SCHEDULES_REQUEST = "schedules_request"
 BROWSER_MSG_TYPE_SCHEDULE_ADD = "schedule_add"
 BROWSER_MSG_TYPE_SCHEDULE_UPDATE = "schedule_update"
 BROWSER_MSG_TYPE_SCHEDULE_DELETE = "schedule_delete"
+BROWSER_MSG_TYPE_PROMPT_LOGS_REQUEST = "prompt_logs_request"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -40,6 +41,8 @@ BROWSER_RESP_TYPE_DOMAIN_PERMISSIONS = "domain_permissions_sync"
 BROWSER_RESP_TYPE_PERMISSION_PROMPT = "permission_prompt"
 BROWSER_RESP_TYPE_PERMISSION_DISMISS = "permission_dismiss"
 BROWSER_RESP_TYPE_SCHEDULES = "schedules_response"
+BROWSER_RESP_TYPE_PROMPT_LOGS = "prompt_logs_response"
+BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE = "prompt_log_update"
 
 
 class BrowserIncoming(BaseModel):
