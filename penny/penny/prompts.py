@@ -191,7 +191,10 @@ Examples:
         "- Do NOT summarize from search snippets — always read the actual page\n\n"
         "When you receive 'dig deeper', that means: learn more about what "
         "you already found. More detail on the same thing, not a new thing.\n\n"
-        "Check your recent thoughts to avoid repeating what you already explored.\n\n"
+        "Your 'Already Explored' list shows topics you've already covered. "
+        "Do NOT search for any of those topics or anything closely related to them. "
+        "Find a DIFFERENT angle on the seed topic — a different product, person, "
+        "event, or technique. If you can't find anything new, stop early.\n\n"
         "All information in your responses must come from pages you read. "
         "If nothing interesting comes up, that's fine — quiet cycles are normal."
     )

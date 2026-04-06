@@ -122,7 +122,9 @@ async def test_seeded_thinking_full_loop(
         penny.thinking_agent._browse_provider = lambda: (mock_request_fn, mock_perm)
 
         # Pre-seed a thought with matching preference_id for context
-        penny.db.thoughts.add(TEST_SENDER, "Previous thought about gravity", preference_id=1)
+        penny.db.thoughts.add(
+            TEST_SENDER, "Previous thought about gravity", preference_id=1, title="Gravity waves"
+        )
 
         await penny.thinking_agent.execute()
 
@@ -144,8 +146,8 @@ async def test_seeded_thinking_full_loop(
         expected = """\
 
 ## Context
-### Recent Background Thinking
-Previous thought about gravity
+### Already Explored (do NOT repeat)
+- Gravity waves
 
 ### Topics to Avoid
 - Country music
@@ -174,7 +176,10 @@ by passing its URL back to your tool
 When you receive 'dig deeper', that means: learn more about what \
 you already found. More detail on the same thing, not a new thing.
 
-Check your recent thoughts to avoid repeating what you already explored.
+Your 'Already Explored' list shows topics you've already covered. \
+Do NOT search for any of those topics or anything closely related to them. \
+Find a DIFFERENT angle on the seed topic — a different product, person, \
+event, or technique. If you can't find anything new, stop early.
 
 All information in your responses must come from pages you read. \
 If nothing interesting comes up, that's fine — quiet cycles are normal."""
@@ -314,7 +319,10 @@ by passing its URL back to your tool
 When you receive 'dig deeper', that means: learn more about what \
 you already found. More detail on the same thing, not a new thing.
 
-Check your recent thoughts to avoid repeating what you already explored.
+Your 'Already Explored' list shows topics you've already covered. \
+Do NOT search for any of those topics or anything closely related to them. \
+Find a DIFFERENT angle on the seed topic — a different product, person, \
+event, or technique. If you can't find anything new, stop early.
 
 All information in your responses must come from pages you read. \
 If nothing interesting comes up, that's fine — quiet cycles are normal."""
