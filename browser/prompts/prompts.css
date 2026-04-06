@@ -179,7 +179,7 @@ h1 {
 .run-type {
   font-size: 12px;
   color: var(--text-muted);
-  min-width: 80px;
+  min-width: 110px;
 }
 
 .run-time {
