@@ -182,13 +182,14 @@ body {
 #main-tabs {
   display: flex;
   padding: 0 10px;
+  gap: 8px;
 }
 
 .main-tab {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 7px 8px;
+  padding: 7px 0;
   border: none;
   background: none;
   color: var(--text-muted);
@@ -212,7 +213,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 7px 8px;
+  padding: 7px 0;
   border: none;
   background: none;
   color: var(--text-muted);
