@@ -150,7 +150,8 @@ class ThinkingAgent(Agent):
     def _thought_section(self, sender: str) -> str | None:
         """Build thought context scoped to the current preference_id.
 
-        Shows what Penny already explored so she avoids repeating herself.
+        Lists titles of what Penny already explored so she avoids repeating.
+        Only titles — full bodies prime the model to re-search the same things.
         Only used for seeded cycles (preference_id is not None).
         """
         try:
@@ -159,9 +160,12 @@ class ThinkingAgent(Agent):
             )
             if not thoughts:
                 return None
-            lines = [t.content for t in thoughts]
-            logger.debug("Built thought context (%d thoughts)", len(thoughts))
-            return "### Recent Background Thinking\n" + "\n\n---\n\n".join(lines)
+            titles = [t.title for t in thoughts if t.title]
+            if not titles:
+                return None
+            logger.debug("Built thought context (%d titles)", len(titles))
+            lines = [f"- {title}" for title in titles]
+            return "### Already Explored (do NOT repeat)\n" + "\n".join(lines)
         except Exception:
             logger.warning("Thought context retrieval failed, proceeding without")
             return None
