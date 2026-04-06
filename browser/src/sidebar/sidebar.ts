@@ -53,7 +53,7 @@ function pulsePromptIcon(): void {
   if (!icon) return;
   icon.classList.add("pulsing");
   if (promptPulseTimer) clearTimeout(promptPulseTimer);
-  promptPulseTimer = setTimeout(() => icon.classList.remove("pulsing"), 3000);
+  promptPulseTimer = setTimeout(() => icon.classList.remove("pulsing"), 10_000);
 }
 
 // View state
