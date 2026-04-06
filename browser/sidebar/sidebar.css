@@ -125,6 +125,15 @@ body {
   background: var(--bg-secondary);
 }
 
+#nav-prompts.pulsing {
+  animation: prompt-pulse 1s ease-in-out infinite;
+}
+
+@keyframes prompt-pulse {
+  0%, 100% { color: var(--text-muted); }
+  50% { color: var(--accent); }
+}
+
 #nav-thoughts {
   display: inline-flex;
   align-items: center;

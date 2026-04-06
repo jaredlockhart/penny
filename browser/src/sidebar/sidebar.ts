@@ -46,6 +46,16 @@ function showToast(text: string): void {
   toastTimer = setTimeout(() => toast.classList.remove("visible"), 2000);
 }
 
+let promptPulseTimer: ReturnType<typeof setTimeout> | null = null;
+
+function pulsePromptIcon(): void {
+  const icon = document.getElementById("nav-prompts");
+  if (!icon) return;
+  icon.classList.add("pulsing");
+  if (promptPulseTimer) clearTimeout(promptPulseTimer);
+  promptPulseTimer = setTimeout(() => icon.classList.remove("pulsing"), 3000);
+}
+
 // View state
 type View = "register" | "chat" | "settings";
 type MainTab = "conversation" | "schedules";
@@ -589,6 +599,8 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.ThoughtCount) {
     const countEl = document.getElementById("nav-thoughts-count");
     if (countEl) countEl.textContent = message.count > 0 ? ` (${message.count})` : "";
+  } else if (message.type === RuntimeMessageType.PromptLogUpdate) {
+    pulsePromptIcon();
   } else if (message.type === RuntimeMessageType.PageInfo) {
     updatePageContextBar(message.title, message.url, message.favicon, message.image, message.available);
   } else if (message.type === RuntimeMessageType.PreferencesResponse) {
