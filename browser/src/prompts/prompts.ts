@@ -11,7 +11,15 @@ import {
   RuntimeMessageType,
 } from "../protocol.js";
 
-const runsContainer = document.getElementById("runs")!;
+const AGENT_LABELS: Record<string, string> = {
+  inner_monologue: "Thinking",
+  chat: "Chat",
+  history: "History",
+  notify: "Notify",
+  startup: "Startup",
+};
+
+const runsContainer = document.getElementById("runs")!
 const loading = document.getElementById("loading")!;
 const agentFilter = document.getElementById("agent-filter") as HTMLSelectElement;
 
@@ -23,7 +31,7 @@ let hasMore = false;
 const runElements = new Map<string, HTMLElement>();
 let activeRunId: string | null = null;
 let activeTimer: ReturnType<typeof setTimeout> | null = null;
-const ACTIVE_TIMEOUT_MS = 10_000;
+const ACTIVE_TIMEOUT_MS = 30_000;
 
 // --- Init ---
 
@@ -74,7 +82,7 @@ function populateFilter(agentNames: string[]): void {
   for (const agent of agentNames) {
     const option = document.createElement("option");
     option.value = agent;
-    option.textContent = agent;
+    option.textContent = AGENT_LABELS[agent] ?? agent;
     agentFilter.appendChild(option);
   }
   agentFilter.value = previous;
@@ -241,7 +249,7 @@ function createRunHeader(run: PromptLogRun): HTMLElement {
 
   const agent = document.createElement("span");
   agent.className = "run-agent";
-  agent.textContent = run.agent_name;
+  agent.textContent = AGENT_LABELS[run.agent_name] ?? run.agent_name;
   const spinner = document.createElement("span");
   spinner.className = "run-spinner";
   spinner.innerHTML = ' <i class="fa-solid fa-spinner fa-spin"></i>';
