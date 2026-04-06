@@ -215,14 +215,24 @@ h1 {
   align-items: center;
   margin-left: auto;
   flex-shrink: 0;
-  width: 460px;
+  width: 400px;
 }
 
 .run-meta span,
 .prompt-meta span {
   display: inline-flex;
   align-items: center;
-  min-width: 80px;
+  min-width: 70px;
+}
+
+.run-meta span:nth-child(4),
+.prompt-meta span:nth-child(4) {
+  min-width: 100px;
+}
+
+.run-meta span:nth-child(5),
+.prompt-meta span:nth-child(5) {
+  min-width: 70px;
 }
 
 .run-meta i,
