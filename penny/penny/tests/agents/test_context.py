@@ -1,11 +1,13 @@
 """Integration tests for Agent context building (history, conversation, dislikes)."""
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog
+from penny.llm.embeddings import serialize_embedding
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -478,3 +480,321 @@ def test_page_hint_in_system_prompt():
     assert "https://example.com/article" in hint
     # Should NOT contain the full text — that's in the tool result
     assert "content" not in hint
+
+
+# ── Related messages context ────────────────────────────────────────────
+
+
+# Deterministic test vectors: pedal_vec is similar to query_vec, space_vec is orthogonal
+_QUERY_VEC = [1.0, 0.0, 0.0]
+_PEDAL_VEC = [0.9, 0.1, 0.0]  # cosine ~0.994
+_SPACE_VEC = [0.0, 1.0, 0.0]  # cosine ~0.0 to query vec (orthogonal)
+
+
+def _seed_past_messages(penny, timestamp_offset_days: int = 3):
+    """Insert past messages with embeddings for related message tests.
+
+    Inserts two messages: a pedal message (older) and a space message (newer).
+    The pedal message is similar to _QUERY_VEC, the space message is orthogonal.
+    """
+    past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=timestamp_offset_days)
+    _insert_message(
+        penny,
+        TEST_SENDER,
+        "i ordered a tone king royalist and tubesteader eggnog pedal",
+        PennyConstants.MessageDirection.INCOMING,
+        past,
+        embedding=serialize_embedding(_PEDAL_VEC),
+    )
+    _insert_message(
+        penny,
+        TEST_SENDER,
+        "tell me about black holes and neutron stars",
+        PennyConstants.MessageDirection.INCOMING,
+        past + timedelta(hours=1),
+        embedding=serialize_embedding(_SPACE_VEC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_related_messages_retrieves_similar_past_messages(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Related messages section includes semantically similar past messages."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_past_messages(penny)
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(return_value=[_QUERY_VEC])
+        penny.chat_agent._embedding_model_client = mock_client
+
+        context = await penny.chat_agent._related_messages_section(
+            TEST_SENDER, "the pedals finally arrived"
+        )
+        assert context is not None
+        assert "Related Past Messages" in context
+        # Full message content shown (no truncation)
+        assert "i ordered a tone king royalist and tubesteader eggnog pedal" in context
+        # Results sorted by date (pedal message is older, should appear first)
+        lines = context.strip().split("\n")
+        message_lines = [line for line in lines if line.startswith(("Mar", "Apr"))]
+        assert len(message_lines) >= 1
+        # Pedal message should appear before the space message (chronological order)
+        royalist_pos = context.index("royalist")
+        if "black holes" in context:
+            space_pos = context.index("black holes")
+            assert royalist_pos < space_pos
+
+
+@pytest.mark.asyncio
+async def test_related_messages_excludes_current_conversation(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Messages within the current conversation window are excluded."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        # Insert a message in the current conversation window (after rollup/midnight)
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "recent pedal message in current session",
+        )
+        # Manually set its embedding
+        penny.db.messages.update_embedding(1, serialize_embedding(_PEDAL_VEC))
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(return_value=[_QUERY_VEC])
+        penny.chat_agent._embedding_model_client = mock_client
+
+        context = await penny.chat_agent._related_messages_section(
+            TEST_SENDER, "the pedals finally arrived"
+        )
+        # Current session message should be excluded, so no results
+        assert context is None
+
+
+@pytest.mark.asyncio
+async def test_related_messages_none_without_embedding_client(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Related messages section returns None when no embedding client is configured."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_past_messages(penny)
+
+        penny.chat_agent._embedding_model_client = None
+
+        context = await penny.chat_agent._related_messages_section(
+            TEST_SENDER, "the pedals finally arrived"
+        )
+        assert context is None
+
+
+@pytest.mark.asyncio
+async def test_related_messages_in_chat_system_prompt(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Related messages section appears in ChatAgent system prompt."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_past_messages(penny)
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(return_value=[_QUERY_VEC])
+        penny.chat_agent._embedding_model_client = mock_client
+        penny.chat_agent._pending_page_context = None
+
+        prompt = await penny.chat_agent._build_system_prompt(
+            TEST_SENDER, content="the pedals finally arrived"
+        )
+        assert "Related Past Messages" in prompt
+        assert "royalist" in prompt
+
+
+@pytest.mark.asyncio
+async def test_related_messages_date_ordering_with_multiple_dates(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Related messages are sorted chronologically after similarity selection."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        # Insert 3 messages on different days — all similar to query
+        base = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=10)
+        similar_vec = [0.95, 0.05, 0.0]
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "third message about pedals",
+            PennyConstants.MessageDirection.INCOMING,
+            base + timedelta(days=2),
+            embedding=serialize_embedding(similar_vec),
+        )
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "first message about pedals",
+            PennyConstants.MessageDirection.INCOMING,
+            base,
+            embedding=serialize_embedding(similar_vec),
+        )
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "second message about pedals",
+            PennyConstants.MessageDirection.INCOMING,
+            base + timedelta(days=1),
+            embedding=serialize_embedding(similar_vec),
+        )
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(return_value=[_QUERY_VEC])
+        penny.chat_agent._embedding_model_client = mock_client
+
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, "pedals")
+        assert context is not None
+        # Messages should appear in chronological order regardless of insertion order
+        first_pos = context.index("first message")
+        second_pos = context.index("second message")
+        third_pos = context.index("third message")
+        assert first_pos < second_pos < third_pos
+
+
+# ── Message store embedding methods ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_incoming_without_embeddings(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """get_incoming_without_embeddings returns incoming messages lacking embeddings."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "no embedding yet",
+        )
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            penny.config.signal_number,
+            "outgoing message",
+            parent_id=1,
+            recipient=TEST_SENDER,
+        )
+        # Reaction should be excluded
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "reaction",
+            is_reaction=True,
+        )
+
+        results = penny.db.messages.get_incoming_without_embeddings()
+        assert len(results) == 1
+        assert results[0].content == "no embedding yet"
+
+
+@pytest.mark.asyncio
+async def test_get_incoming_with_embeddings(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """get_incoming_with_embeddings returns only incoming messages that have embeddings."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        # Incoming with embedding
+        msg_id = penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "has embedding",
+        )
+        penny.db.messages.update_embedding(msg_id, serialize_embedding(_PEDAL_VEC))
+
+        # Incoming without embedding — should be excluded
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "no embedding",
+        )
+
+        # Outgoing with embedding — should be excluded
+        out_id = penny.db.messages.log_message(
+            PennyConstants.MessageDirection.OUTGOING,
+            penny.config.signal_number,
+            "outgoing",
+            parent_id=1,
+            recipient=TEST_SENDER,
+        )
+        penny.db.messages.update_embedding(out_id, serialize_embedding(_PEDAL_VEC))
+
+        results = penny.db.messages.get_incoming_with_embeddings(TEST_SENDER)
+        assert len(results) == 1
+        assert results[0].content == "has embedding"
+
+
+# ── Incoming message embedding on arrival ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_incoming_message_embedded_on_arrival(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Incoming messages get embedded when an embedding client is available."""
+    config = make_config(llm_embedding_model="test-embedding")
+    mock_llm.set_default_flow(final_response="got it! 🎸")
+
+    async with running_penny(config) as penny:
+        mock_embed_client = AsyncMock()
+        mock_embed_client.embed = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+        # Set on the concrete signal channel inside the manager
+        for channel in penny.channel._channels.values():
+            channel._embedding_model_client = mock_embed_client
+
+        await signal_server.push_message(sender=TEST_SENDER, content="test embedding")
+        await signal_server.wait_for_message(timeout=10.0)
+
+        # The incoming message should have been embedded
+        messages = penny.db.messages.get_incoming_with_embeddings(TEST_SENDER)
+        assert len(messages) >= 1
+        assert any("test embedding" in m.content for m in messages)
+
+
+# ── Startup backfill ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_backfill_incoming_message_embeddings(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Startup backfill embeds incoming messages that lack embeddings."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        # Insert incoming messages without embeddings
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "needs embedding",
+        )
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "also needs embedding",
+        )
+        assert len(penny.db.messages.get_incoming_without_embeddings()) == 2
+
+        # Mock the embedding client and run backfill
+        mock_embed_client = AsyncMock()
+        mock_embed_client.embed = AsyncMock(return_value=[[0.1, 0.2], [0.3, 0.4]])
+        penny.embedding_model_client = mock_embed_client
+
+        count = await penny._backfill_incoming_message_embeddings(batch_limit=50)
+        assert count == 2
+        assert len(penny.db.messages.get_incoming_without_embeddings()) == 0

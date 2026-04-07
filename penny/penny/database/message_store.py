@@ -742,6 +742,38 @@ class MessageStore:
                 ).all()
             )
 
+    def get_incoming_without_embeddings(self, limit: int = 50) -> list[MessageLog]:
+        """Get incoming non-reaction messages that don't have embeddings yet, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                        MessageLog.is_reaction == False,  # noqa: E712
+                        MessageLog.embedding == None,  # noqa: E711
+                    )
+                    .order_by(MessageLog.timestamp.desc())
+                    .limit(limit)
+                ).all()
+            )
+
+    def get_incoming_with_embeddings(self, sender: str) -> list[MessageLog]:
+        """Get all incoming non-reaction messages that have embeddings, for similarity search."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.sender == sender,
+                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
+                        MessageLog.is_reaction == False,  # noqa: E712
+                        MessageLog.embedding != None,  # noqa: E711
+                    )
+                    .order_by(MessageLog.timestamp.desc())
+                ).all()
+            )
+
     def get_latest_message_time_in_range(
         self, sender: str, start: datetime, end: datetime
     ) -> datetime | None:
