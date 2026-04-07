@@ -500,7 +500,13 @@ class BrowserChannel(MessageChannel):
         primary = self._db.users.get_primary_sender()
         prefs = self._db.preferences.get_for_user_by_valence(primary, valence) if primary else []
         items = [
-            {"id": p.id, "content": p.content, "mention_count": p.mention_count} for p in prefs
+            {
+                "id": p.id,
+                "content": p.content,
+                "mention_count": p.mention_count,
+                "source": p.source,
+            }
+            for p in prefs
         ]
         response = {"type": BROWSER_RESP_TYPE_PREFERENCES, "valence": valence, "preferences": items}
         with contextlib.suppress(websockets.ConnectionClosed):

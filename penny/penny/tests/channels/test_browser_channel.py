@@ -403,6 +403,7 @@ class TestBrowserPreferenceHandlers:
         assert "dark roast coffee" in contents
         assert "hiking" in contents
         assert "cold weather" not in contents
+        assert all(p["source"] == "manual" for p in resp["preferences"])
 
     @pytest.mark.asyncio
     async def test_preference_add_stores_and_returns_list(self, tmp_path, monkeypatch):
@@ -418,6 +419,7 @@ class TestBrowserPreferenceHandlers:
         assert resp["type"] == "preferences_response"
         assert resp["valence"] == "positive"
         assert resp["preferences"][0]["content"] == "jazz music"
+        assert resp["preferences"][0]["source"] == "manual"
 
         saved = db.preferences.get_for_user_by_valence(self.USER, "positive")
         assert len(saved) == 1
