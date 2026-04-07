@@ -178,7 +178,13 @@ class ThinkingAgent(Agent):
         if not self._tool_result_text:
             self._record_outcome(run_id, "Discard: no search results")
             return False
-        combined = "\n\n---\n\n".join(self._tool_result_text)
+        combined = self._filter_page_reads()
+        if not combined:
+            self._record_outcome(run_id, "Discard: no page reads")
+            return False
+        if not self._tool_result_images:
+            self._record_outcome(run_id, "Discard: no image")
+            return False
         report = await self._summarize_with_url_validation(combined, run_id, prompt_type)
         if report and len(report.split()) < PennyConstants.MIN_THOUGHT_WORDS:
             logger.info(
@@ -271,6 +277,21 @@ class ThinkingAgent(Agent):
                 return pref.content
         return None
 
+    def _filter_page_reads(self) -> str:
+        """Extract only page-read sections from tool results, excluding search snippets.
+
+        Search snippets are titles+links only — summarizing from them produces
+        shallow output. Page reads have the actual content worth distilling.
+        Returns empty string if no page reads were captured.
+        """
+        separator = PennyConstants.SECTION_SEPARATOR
+        page_sections: list[str] = []
+        for tool_result in self._tool_result_text:
+            for section in tool_result.split(separator):
+                if not section.startswith(PennyConstants.BROWSE_SEARCH_HEADER):
+                    page_sections.append(section)
+        return separator.join(page_sections)
+
     # ── Model calls ────────────────────────────────────────────────────────
 
     async def _summarize_text(
@@ -293,26 +314,34 @@ class ThinkingAgent(Agent):
     async def _summarize_with_url_validation(
         self, combined: str, run_id: str, prompt_type: str | None = None
     ) -> str:
-        """Summarize monologue, retrying if the report contains hallucinated URLs."""
+        """Summarize monologue, retrying on empty, missing Topic:, or hallucinated URLs."""
         source_text = self._get_source_text()
         report = ""
         for attempt in range(1 + self.SUMMARY_URL_RETRIES):
+            label = (
+                f"[inner_monologue] summary attempt {attempt + 1}/{1 + self.SUMMARY_URL_RETRIES}"
+            )
             report = await self._summarize_text(
                 combined, Prompt.THINKING_REPORT_PROMPT, run_id, prompt_type
             )
             if not report:
-                return ""
+                logger.warning("%s returned empty, retrying", label)
+                continue
+            title, _ = self._parse_title(report)
+            if not title:
+                logger.warning("%s missing Topic: line, retrying", label)
+                continue
             bad_urls = self._find_hallucinated_urls(report, source_text)
             if not bad_urls:
                 return report
             logger.warning(
-                "[inner_monologue] summary attempt %d/%d has %d hallucinated URL(s): %s",
-                attempt + 1,
-                1 + self.SUMMARY_URL_RETRIES,
+                "%s has %d hallucinated URL(s): %s",
+                label,
                 len(bad_urls),
                 ", ".join(u[:80] for u in bad_urls),
             )
-        logger.warning("[inner_monologue] exhausted URL validation retries, using last attempt")
+        if report:
+            logger.warning("[inner_monologue] exhausted summary retries, using last attempt")
         return report
 
     async def _embed_and_serialize(self, text: str) -> bytes | None:
@@ -322,17 +351,29 @@ class ThinkingAgent(Agent):
             return None
         return serialize_embedding(vec)
 
-    # Pattern to match "Topic: <title>" on the last line
-    _TOPIC_LINE_PATTERN = re.compile(r"\n?Topic:\s*(.+?)\s*$")
+    # Pattern to match "Topic: <title>" anywhere in the text
+    _TOPIC_LINE_PATTERN = re.compile(r"^Topic:\s*(.+?)\s*$", re.MULTILINE)
+
+    # How many lines from the end to search for the Topic: line
+    TOPIC_SEARCH_LINES = 5
 
     @classmethod
     def _parse_title(cls, report: str) -> tuple[str | None, str]:
-        """Extract 'Topic: ...' from the last line, return (title, content)."""
-        match = cls._TOPIC_LINE_PATTERN.search(report)
+        """Extract 'Topic: ...' from the last few lines, return (title, content).
+
+        The model sometimes puts sources or emoji after the Topic: line,
+        so we search the last TOPIC_SEARCH_LINES lines instead of
+        requiring it at the very end.
+        """
+        lines = report.rstrip().split("\n")
+        tail = "\n".join(lines[-cls.TOPIC_SEARCH_LINES :])
+        match = cls._TOPIC_LINE_PATTERN.search(tail)
         if not match:
             return None, report
         title = match.group(1).strip()
-        content = report[: match.start()].rstrip()
+        # Remove everything from the Topic: line onwards
+        topic_line_start = report.rindex(f"Topic: {match.group(1).rstrip()}")
+        content = report[:topic_line_start].rstrip()
         return title, content
 
     def _find_duplicate_thought(

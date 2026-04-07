@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from penny.constants import PennyConstants
 from penny.email.protocol import EmailClient
 from penny.llm.client import LlmClient
 from penny.prompts import Prompt
@@ -60,7 +61,7 @@ class ReadEmailsTool(Tool):
         if not emails:
             return NO_EMAILS_TO_READ
 
-        raw_content = "\n\n---\n\n".join(str(e) for e in emails)
+        raw_content = PennyConstants.SECTION_SEPARATOR.join(str(e) for e in emails)
         prompt = Prompt.EMAIL_SUMMARIZE_PROMPT.format(
             query=self._user_query,
             emails=raw_content,
