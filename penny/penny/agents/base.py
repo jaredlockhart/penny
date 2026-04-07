@@ -12,11 +12,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from similarity.embeddings import find_similar
+
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
 from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
 from penny.llm import LlmClient
+from penny.llm.embeddings import deserialize_embedding
+from penny.llm.similarity import embed_text
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -984,6 +988,63 @@ class Agent:
         except Exception:
             logger.warning("Dislike context retrieval failed, proceeding without")
             return None
+
+    async def _related_messages_section(self, sender: str, content: str) -> str | None:
+        """Retrieve past user messages semantically similar to the current message."""
+        if not self._embedding_model_client:
+            return None
+        try:
+            return await self._build_related_messages(sender, content)
+        except Exception:
+            logger.warning("Related messages retrieval failed, proceeding without")
+            return None
+
+    async def _build_related_messages(self, sender: str, content: str) -> str | None:
+        """Embed current message, find similar past messages, format as context."""
+        query_vec = await embed_text(self._embedding_model_client, content)
+        if query_vec is None:
+            return None
+
+        messages = self.db.messages.get_incoming_with_embeddings(sender)
+        if not messages:
+            return None
+
+        cutoff = self._conversation_start(sender)
+        candidates = [
+            (message.id, deserialize_embedding(message.embedding))
+            for message in messages
+            if message.embedding and message.timestamp < cutoff and message.id is not None
+        ]
+        if not candidates:
+            return None
+
+        limit = int(self.config.runtime.RELATED_MESSAGES_LIMIT)
+        results = find_similar(query_vec, candidates, top_k=limit)
+        if not results:
+            return None
+
+        messages_by_id = {message.id: message for message in messages if message.id is not None}
+        return self._format_related_messages(results, messages_by_id)
+
+    @staticmethod
+    def _format_related_messages(
+        results: list[tuple[int, float]],
+        messages_by_id: dict[int, Any],
+    ) -> str:
+        """Format similarity results as dated message quotes, ordered chronologically."""
+        matched = []
+        for message_id, _score in results:
+            message = messages_by_id.get(message_id)
+            if message:
+                matched.append(message)
+        matched.sort(key=lambda message: message.timestamp)
+        lines: list[str] = []
+        for message in matched:
+            date_label = message.timestamp.strftime("%b %-d")
+            lines.append(f'{date_label}: "{message.content}"')
+        if not lines:
+            return "### Related Past Messages"
+        return "### Related Past Messages\n" + "\n".join(lines)
 
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
         """Build conversation history as strict user/assistant alternation.
