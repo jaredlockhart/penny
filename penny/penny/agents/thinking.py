@@ -68,6 +68,7 @@ class ThinkingAgent(Agent):
         self._keep_tools_on_final_step = True
         self._seed_topic: str | None = None
         self._seed_pref_id: int | None = None
+        self._seed_prompt: str | None = None
 
     def get_max_steps(self) -> int:
         """Read from config each cycle so /config changes take effect immediately."""
@@ -99,11 +100,15 @@ class ThinkingAgent(Agent):
         """
         self._seed_topic = None
         self._seed_pref_id = None
+        self._seed_prompt = None
 
         total = self.db.thoughts.count_unnotified(user)
         if self._should_think_free(user, total):
-            return Prompt.THINKING_FREE
-        return self._pick_seeded_prompt(user)
+            self._seed_prompt = Prompt.THINKING_FREE
+            return self._seed_prompt
+        prompt = self._pick_seeded_prompt(user)
+        self._seed_prompt = prompt
+        return prompt
 
     def _should_think_free(self, user: str, total_unnotified: int) -> bool:
         """Decide free vs seeded based on distribution gap, random as tiebreak."""
@@ -186,13 +191,14 @@ class ThinkingAgent(Agent):
             self._record_outcome(run_id, "Discard: no image")
             return False
         report = await self._summarize_with_url_validation(combined, run_id, prompt_type)
-        if report and len(report.split()) < PennyConstants.MIN_THOUGHT_WORDS:
+        if not report:
+            self._record_outcome(run_id, "Discard: no thought generated")
+        elif len(report.split()) < PennyConstants.MIN_THOUGHT_WORDS:
             logger.info(
                 "[inner_monologue] report too short (%d words), skipping", len(report.split())
             )
             self._record_outcome(run_id, f"Discard: too short ({len(report.split())} words)")
-            report = ""
-        if report:
+        else:
             title, content = self._parse_title(report)
             content_vec = await embed_text(self._embedding_model_client, content)
             duplicate_match = self._find_duplicate_thought(user, title, content_vec)
@@ -278,17 +284,17 @@ class ThinkingAgent(Agent):
         return None
 
     def _filter_page_reads(self) -> str:
-        """Extract only page-read sections from tool results, excluding search snippets.
+        """Extract only page-read sections from tool results.
 
-        Search snippets are titles+links only — summarizing from them produces
-        shallow output. Page reads have the actual content worth distilling.
+        Only includes sections starting with BROWSE_PAGE_HEADER — these are
+        actual page content. Search snippets and other sections are excluded.
         Returns empty string if no page reads were captured.
         """
         separator = PennyConstants.SECTION_SEPARATOR
         page_sections: list[str] = []
         for tool_result in self._tool_result_text:
             for section in tool_result.split(separator):
-                if not section.startswith(PennyConstants.BROWSE_SEARCH_HEADER):
+                if section.startswith(PennyConstants.BROWSE_PAGE_HEADER):
                     page_sections.append(section)
         return separator.join(page_sections)
 
@@ -311,19 +317,25 @@ class ThinkingAgent(Agent):
             logger.error("Summarization failed: %s", e)
             return ""
 
+    def _build_report_prompt(self) -> str:
+        """Build the summarization system prompt, including the original seed prompt."""
+        parts = [Prompt.THINKING_REPORT_PROMPT]
+        if self._seed_prompt:
+            parts.append(f"Original research goal:\n{self._seed_prompt}")
+        return "\n\n".join(parts)
+
     async def _summarize_with_url_validation(
         self, combined: str, run_id: str, prompt_type: str | None = None
     ) -> str:
         """Summarize monologue, retrying on empty, missing Topic:, or hallucinated URLs."""
         source_text = self._get_source_text()
+        report_prompt = self._build_report_prompt()
         report = ""
         for attempt in range(1 + self.SUMMARY_URL_RETRIES):
             label = (
                 f"[inner_monologue] summary attempt {attempt + 1}/{1 + self.SUMMARY_URL_RETRIES}"
             )
-            report = await self._summarize_text(
-                combined, Prompt.THINKING_REPORT_PROMPT, run_id, prompt_type
-            )
+            report = await self._summarize_text(combined, report_prompt, run_id, prompt_type)
             if not report:
                 logger.warning("%s returned empty, retrying", label)
                 continue

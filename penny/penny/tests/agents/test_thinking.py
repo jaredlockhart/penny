@@ -213,6 +213,12 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert "Mock search results" in summary_user_msg  # raw tool output
         assert "Found interesting" not in summary_user_msg  # not model text
 
+        # -- Summary system prompt includes seed research goal
+        summary_system = [m for m in summary_request["messages"] if m.get("role") == "system"][0][
+            "content"
+        ]
+        assert "Quantum gravity experiments" in summary_system
+
         # -- Storage: summary stored (not raw monologue), with correct preference_id
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
         stored = [t for t in thoughts if t.content != "Previous thought about gravity"]
@@ -1103,7 +1109,108 @@ async def test_dislike_veto_allows_thought_below_threshold(
         assert len(thoughts) == 1, "Thought should be stored when title is far from dislikes"
 
 
-# ── 5. URL validation (unit tests) ───────────────────────────────────────
+# ── 5. Abort and outcome cases ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_search_only_results_abort_with_no_page_reads(
+    signal_server,
+    mock_llm,
+    make_config,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """Thinking run aborts with 'no page reads' when only search snippets were returned."""
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=2,
+        free_thinking_probability=0.0,
+    )
+
+    def handler(request, count):
+        if count == 1:
+            # Search query (not a URL) — will be classified as ## search: section
+            return mock_llm._make_tool_call_response(
+                request,
+                "browse",
+                {"queries": ["guitar pedals 2026"], "reasoning": "Searching"},
+            )
+        return mock_llm._make_text_response(request, "Nothing found.")
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+
+        await penny.thinking_agent.execute()
+
+        # No thought stored
+        thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        assert len(thoughts) == 0
+
+        # run_outcome records the abort reason
+        with Session(penny.db.engine) as session:
+            outcomes = [
+                log.run_outcome for log in session.exec(select(PromptLog)).all() if log.run_outcome
+            ]
+        assert len(outcomes) == 1
+        assert outcomes[0] == "Discard: no page reads"
+
+
+@pytest.mark.asyncio
+async def test_empty_summary_records_no_thought_generated(
+    signal_server,
+    mock_llm,
+    make_config,
+    test_user_info,
+    running_penny,
+    monkeypatch,
+):
+    """When summary returns empty after all retries, outcome is 'no thought generated'."""
+    monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
+    config = make_config(
+        inner_monologue_interval=99999.0,
+        inner_monologue_max_steps=2,
+        free_thinking_probability=0.0,
+    )
+
+    request_count = [0]
+
+    def handler(request, count):
+        request_count[0] += 1
+        if request_count[0] == 1:
+            # Page read (URL) so it passes the page-read filter
+            return mock_llm._make_tool_call_response(
+                request,
+                "browse",
+                {"queries": ["https://example.com/article"], "reasoning": "Reading article"},
+            )
+        # All subsequent calls (summary retries) return empty
+        return mock_llm._make_text_response(request, "")
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _seed_thinking(penny)
+
+        await penny.thinking_agent.execute()
+
+        # No thought stored
+        thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
+        assert len(thoughts) == 0
+
+        # run_outcome records exhausted retries
+        with Session(penny.db.engine) as session:
+            outcomes = [
+                log.run_outcome for log in session.exec(select(PromptLog)).all() if log.run_outcome
+            ]
+        assert len(outcomes) == 1
+        assert outcomes[0] == "Discard: no thought generated"
+
+
+# ── 6. URL validation (unit tests) ───────────────────────────────────────
 
 
 class TestSummaryUrlValidation:
