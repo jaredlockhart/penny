@@ -154,7 +154,8 @@ export type WsIncomingType =
   | "permission_dismiss"
   | "schedules_response"
   | "prompt_logs_response"
-  | "prompt_log_update";
+  | "prompt_log_update"
+  | "run_outcome_update";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
@@ -169,6 +170,7 @@ export const WsIncomingType = {
   SchedulesResponse: "schedules_response",
   PromptLogsResponse: "prompt_logs_response",
   PromptLogUpdate: "prompt_log_update",
+  RunOutcomeUpdate: "run_outcome_update",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -310,6 +312,12 @@ export interface WsIncomingPromptLogUpdatePayload {
   prompt: PromptLogEntry & { run_id: string };
 }
 
+export interface WsIncomingRunOutcomePayload {
+  type: typeof WsIncomingType.RunOutcomeUpdate;
+  run_id: string;
+  outcome: string;
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
@@ -323,7 +331,8 @@ export type WsIncomingPayload =
   | WsIncomingPermissionDismissPayload
   | WsIncomingSchedulesPayload
   | WsIncomingPromptLogsPayload
-  | WsIncomingPromptLogUpdatePayload;
+  | WsIncomingPromptLogUpdatePayload
+  | WsIncomingRunOutcomePayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
@@ -359,7 +368,8 @@ export type RuntimeMessageType =
   | "schedule_delete"
   | "prompt_logs_request"
   | "prompt_logs_response"
-  | "prompt_log_update";
+  | "prompt_log_update"
+  | "run_outcome_update";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -394,6 +404,7 @@ export const RuntimeMessageType = {
   PromptLogsRequest: "prompt_logs_request",
   PromptLogsResponse: "prompt_logs_response",
   PromptLogUpdate: "prompt_log_update",
+  RunOutcomeUpdate: "run_outcome_update",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -603,6 +614,13 @@ export interface RuntimePromptLogUpdate {
   prompt: PromptLogEntry & { run_id: string };
 }
 
+/** Background → prompts page: run outcome set (stored/discarded) */
+export interface RuntimeRunOutcomeUpdate {
+  type: typeof RuntimeMessageType.RunOutcomeUpdate;
+  run_id: string;
+  outcome: string;
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -635,7 +653,8 @@ export type RuntimeMessage =
   | RuntimeScheduleDelete
   | RuntimePromptLogsRequest
   | RuntimePromptLogsResponse
-  | RuntimePromptLogUpdate;
+  | RuntimePromptLogUpdate
+  | RuntimeRunOutcomeUpdate;
 
 // --- Domain permissions ---
 

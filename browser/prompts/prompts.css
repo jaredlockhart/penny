@@ -139,6 +139,10 @@ h1 {
   overflow: hidden;
 }
 
+.run-header:has(+ .run-outcome) {
+  padding-bottom: 4px;
+}
+
 .run-header:hover {
   background: var(--bg-tertiary);
 }
@@ -192,7 +196,7 @@ h1 {
   display: inline-block;
   font-size: 10px;
   padding: 2px 8px;
-  margin: 0 0 4px 44px;
+  margin: 0 0 8px 44px;
   border-radius: 10px;
 }
 

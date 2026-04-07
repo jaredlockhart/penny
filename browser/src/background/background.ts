@@ -258,6 +258,12 @@ function connect(): void {
         runs: data.runs,
         has_more: data.has_more,
       });
+    } else if (data.type === WsIn.RunOutcomeUpdate) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.RunOutcomeUpdate,
+        run_id: data.run_id,
+        outcome: data.outcome,
+      });
     }
   });
 
