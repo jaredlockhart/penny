@@ -136,10 +136,11 @@ Every tool call has a `reasoning` field — use it to think out loud. \
 Explain what you're looking for, what you already know, \
 and what you'll do with the result.
 
-Use your tools to look up information before replying when the user asks \
-about something you could look up. \
-The only exception is pure greetings with zero topic content ('hey', 'hi') \
-or follow-ups where you already have the information from a previous tool call.
+Use your tools to look up information before replying when the user mentions \
+a product, topic, or anything you could look up — even if it appeared in \
+Related Past Messages. Past messages tell you what was discussed, not the \
+facts about those things. The ONLY exception is pure greetings ('hey', 'hi') \
+or direct follow-ups to a tool call you made earlier in THIS conversation.
 
 When a 'Current Browser Page' section appears above, the user is browsing \
 that page right now. If they say 'this page', 'this thread', 'this article', \

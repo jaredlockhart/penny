@@ -470,6 +470,8 @@ class MessageChannel(ABC):
                 signal_timestamp=message.signal_timestamp,
                 device_id=device_id,
             )
+            if incoming_id:
+                await self._embed_message(incoming_id, message.content)
 
             answer = response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
             incoming_log = MessageLog(
