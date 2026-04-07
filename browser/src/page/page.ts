@@ -60,14 +60,14 @@ const runsContainer = document.getElementById("runs")!;
 const promptsLoading = document.getElementById("prompts-loading")!;
 const promptsLoadMore = document.getElementById("prompts-load-more")!;
 const promptsLoadMoreBtn = document.getElementById("prompts-load-more-btn")!;
-const agentFilterEl = document.getElementById("agent-filter") as HTMLSelectElement;
+let activeAgentFilter = "";
 
 const AGENT_LABELS: Record<string, string> = {
-  inner_monologue: "Thinking",
-  chat: "Chat",
-  history: "History",
-  notify: "Notify",
-  startup: "Startup",
+  inner_monologue: '<i class="fa-regular fa-lightbulb"></i> Thinking',
+  chat: '<i class="fa-solid fa-comment"></i> Chat',
+  history: '<i class="fa-solid fa-clock-rotate-left"></i> History',
+  notify: '<i class="fa-solid fa-bell"></i> Notify',
+  startup: '<i class="fa-solid fa-rocket"></i> Startup',
 };
 
 const ACTIVE_TIMEOUT_MS = 60_000;
@@ -153,7 +153,6 @@ function handleMessage(message: RuntimeMessage): void {
     }
     hasMore = message.has_more;
     promptsLoadMore.classList.toggle("hidden", !hasMore);
-    populateFilter(message.agent_names);
   } else if (message.type === RuntimeMessageType.PromptLogUpdate) {
     handlePromptUpdate(message.prompt);
   } else if (message.type === RuntimeMessageType.RunOutcomeUpdate) {
@@ -386,17 +385,23 @@ function formatDate(iso: string): string {
 // ============================================================
 
 function setupPrompts(): void {
-  agentFilterEl.addEventListener("change", () => {
-    allRuns = [];
-    requestPromptLogs(0);
-  });
+  for (const btn of Array.from(document.querySelectorAll("#agent-tabs .sub-tab"))) {
+    btn.addEventListener("click", () => {
+      activeAgentFilter = btn.getAttribute("data-agent") ?? "";
+      for (const b of Array.from(document.querySelectorAll("#agent-tabs .sub-tab"))) {
+        b.classList.toggle("active", b === btn);
+      }
+      allRuns = [];
+      requestPromptLogs(0);
+    });
+  }
   promptsLoadMoreBtn.addEventListener("click", () => {
     requestPromptLogs(allRuns.length);
   });
 }
 
 function requestPromptLogs(offset: number): void {
-  const agentName = agentFilterEl.value || undefined;
+  const agentName = activeAgentFilter || undefined;
   browser.runtime.sendMessage({
     type: RuntimeMessageType.PromptLogsRequest,
     agent_name: agentName,
@@ -405,8 +410,7 @@ function requestPromptLogs(offset: number): void {
 }
 
 function handlePromptUpdate(prompt: PromptLogEntry & { run_id: string }): void {
-  const filter = agentFilterEl.value;
-  if (filter && prompt.agent_name !== filter) return;
+  if (activeAgentFilter && prompt.agent_name !== activeAgentFilter) return;
 
   const existingRun = allRuns.find((r) => r.run_id === prompt.run_id);
   if (existingRun) {
@@ -505,7 +509,7 @@ function renderPrompts(): void {
   activeRunId = null;
 
   if (allRuns.length === 0) {
-    const label = agentFilterEl.value || "any agent";
+    const label = activeAgentFilter || "any agent";
     promptsLoading.textContent = `No prompt logs for ${label}.`;
     promptsLoading.classList.remove("hidden");
     return;
@@ -574,7 +578,7 @@ function createRunHeader(run: PromptLogRun): HTMLElement {
 
   const agent = document.createElement("span");
   agent.className = "run-agent";
-  agent.textContent = AGENT_LABELS[run.agent_name] ?? run.agent_name;
+  agent.innerHTML = AGENT_LABELS[run.agent_name] ?? run.agent_name;
   const spinner = document.createElement("span");
   spinner.className = "run-spinner";
   spinner.innerHTML = ' <i class="fa-solid fa-spinner fa-spin"></i>';
@@ -747,17 +751,6 @@ function renderResponse(response: Record<string, unknown>): string {
   return extractMessageContent(message);
 }
 
-function populateFilter(agentNames: string[]): void {
-  const previous = agentFilterEl.value;
-  agentFilterEl.innerHTML = '<option value="">All agents</option>';
-  for (const agent of agentNames) {
-    const option = document.createElement("option");
-    option.value = agent;
-    option.textContent = AGENT_LABELS[agent] ?? agent;
-    agentFilterEl.appendChild(option);
-  }
-  agentFilterEl.value = previous;
-}
 
 const SNIPPET_MAX_CHARS = 80;
 
@@ -899,6 +892,7 @@ function setupPreferences(valence: string, prefix: string): void {
     if (!content) return;
     browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceAdd, valence, content });
     input.value = "";
+    showToast(`Added ${valence === "positive" ? "like" : "dislike"}: ${content}`);
   }
 
   btn.addEventListener("click", add);
@@ -1044,6 +1038,7 @@ function setupSchedules(): void {
     browser.runtime.sendMessage({ type: RuntimeMessageType.ScheduleAdd, command });
     input.value = "";
     setScheduleAddEnabled(false);
+    showToast(`Adding schedule: ${command}`);
 
     const listEl = document.getElementById("schedules-list")!;
     const empty = listEl.querySelector(".schedules-empty");
@@ -1130,6 +1125,8 @@ function setupDomains(): void {
       permission: select.value,
     });
     input.value = "";
+    const label = select.value === "allowed" ? "Allowed" : "Blocked";
+    showToast(`${label}: ${domain}`);
   }
 
   btn.addEventListener("click", add);

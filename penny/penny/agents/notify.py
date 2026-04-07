@@ -459,22 +459,23 @@ class NotifyAgent(Agent):
     # ── Thought candidates ────────────────────────────────────────────
 
     async def _send_best_candidate(self, user: str, run_id: str) -> bool:
-        """Score thoughts by embedding, then generate and send the best."""
-        self._last_tools_unavailable: str | None = None
+        """Score thoughts by embedding, pick the best, and send it directly.
+
+        Thoughts are already user-facing quality from the thinking agent's
+        summary step — no agentic loop or LLM rewrite needed.
+        """
         n = int(self.config.runtime.NOTIFY_CANDIDATES)
         thoughts = self._get_top_thoughts(user, n)
         if not thoughts:
             logger.warning("No viable notification candidates for %s", user)
             return False
         winner = await self._pick_best_thought(user, thoughts)
-        thought_label = winner.title if winner and winner.title else NotifyPromptType.THOUGHT
-        candidate = await self._execute_mode(
-            user, ThoughtMode(winner, self.config), run_id, thought_label
+        attachments = [winner.image] if winner.image else []
+        candidate = NotifyCandidate(
+            answer=winner.content,
+            thought=winner,
+            attachments=attachments,
         )
-        if not candidate:
-            if self._last_tools_unavailable:
-                return await self._send_tools_unavailable(user, self._last_tools_unavailable)
-            return False
         return await self._send_candidate(user, candidate)
 
     def _get_top_thoughts(self, user: str, n: int) -> list[Thought]:
