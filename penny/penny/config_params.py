@@ -339,6 +339,15 @@ ConfigParam(
     group=GROUP_HISTORY,
 )
 
+ConfigParam(
+    key="RELATED_MESSAGES_LIMIT",
+    description="Max similar past messages to inject into chat context",
+    type=int,
+    default=10,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
+)
+
 
 # ── Notify ───────────────────────────────────────────────────────────────────
 

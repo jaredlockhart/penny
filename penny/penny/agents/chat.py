@@ -166,13 +166,15 @@ class ChatAgent(Agent):
         content: str | None = None,
         instructions: str | None = None,
     ) -> str:
-        """Identity + profile + page hint + instructions."""
+        """Identity + profile + related messages + page hint + instructions."""
+        related = await self._related_messages_section(user, content) if content else None
         return "\n\n".join(
             s
             for s in [
                 self._identity_section(),
                 self._context_block(
                     self._profile_section(user),
+                    related,
                     self._page_hint_section(),
                 ),
                 self._instructions_section(instructions),
