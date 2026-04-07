@@ -133,34 +133,34 @@ class BrowseTool(Tool):
         tasks: list[tuple[str, str, Any]] = []
         for q in args.queries[:cap]:
             if _URL_PATTERN.match(q):
-                tasks.append(("browse", q, self._read_page(q)))
+                tasks.append((PennyConstants.BROWSE_PAGE_HEADER, q, self._read_page(q)))
             else:
                 search_url = self._search_url + urllib.parse.quote(q)
-                tasks.append(("search", q, self._read_page(search_url)))
+                tasks.append((PennyConstants.BROWSE_SEARCH_HEADER, q, self._read_page(search_url)))
 
         results = await asyncio.gather(*[coro for _, _, coro in tasks], return_exceptions=True)
 
         sections: list[str] = []
         all_urls: list[str] = []
         first_image: str | None = None
-        for (kind, value, _), result in zip(tasks, results, strict=True):
-            label = f"{kind}: {value}"
+        for (header, value, _), result in zip(tasks, results, strict=True):
+            label = f"{header}{value}"
             if isinstance(result, Exception):
                 logger.warning("Browse sub-call failed (%s): %s", label, result)
-                sections.append(f"## {label}\nError: {result}")
+                sections.append(f"{label}\nError: {result}")
             elif isinstance(result, SearchResult):
                 text = result.text
-                if kind == "search":
+                if header == PennyConstants.BROWSE_SEARCH_HEADER:
                     text = _trim_search_result(text)
                 all_urls.extend(result.urls)
-                sections.append(f"## {label}\n{text}")
+                sections.append(f"{label}\n{text}")
                 if not first_image and result.image_base64:
                     first_image = result.image_base64
             else:
-                sections.append(f"## {label}\n{result}")
+                sections.append(f"{label}\n{result}")
 
         return SearchResult(
-            text="\n\n---\n\n".join(sections),
+            text=PennyConstants.SECTION_SEPARATOR.join(sections),
             urls=all_urls,
             image_base64=first_image,
         )

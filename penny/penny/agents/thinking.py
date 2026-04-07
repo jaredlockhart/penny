@@ -277,9 +277,6 @@ class ThinkingAgent(Agent):
                 return pref.content
         return None
 
-    # Section prefix for search result snippets (vs page reads)
-    _SEARCH_SECTION_PREFIX = "## search:"
-
     def _filter_page_reads(self) -> str:
         """Extract only page-read sections from tool results, excluding search snippets.
 
@@ -287,11 +284,11 @@ class ThinkingAgent(Agent):
         shallow output. Page reads have the actual content worth distilling.
         Returns empty string if no page reads were captured.
         """
-        separator = "\n\n---\n\n"
+        separator = PennyConstants.SECTION_SEPARATOR
         page_sections: list[str] = []
         for tool_result in self._tool_result_text:
             for section in tool_result.split(separator):
-                if not section.startswith(self._SEARCH_SECTION_PREFIX):
+                if not section.startswith(PennyConstants.BROWSE_SEARCH_HEADER):
                     page_sections.append(section)
         return separator.join(page_sections)
 

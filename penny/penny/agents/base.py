@@ -958,7 +958,7 @@ class Agent:
                 return None
             lines = [t.content for t in thoughts]
             logger.debug("Built thought context (%d thoughts)", len(thoughts))
-            return "### Recent Background Thinking\n" + "\n\n---\n\n".join(lines)
+            return "### Recent Background Thinking\n" + PennyConstants.SECTION_SEPARATOR.join(lines)
         except Exception:
             logger.warning("Thought context retrieval failed, proceeding without")
             return None
