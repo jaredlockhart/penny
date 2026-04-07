@@ -314,32 +314,34 @@ class ThinkingAgent(Agent):
     async def _summarize_with_url_validation(
         self, combined: str, run_id: str, prompt_type: str | None = None
     ) -> str:
-        """Summarize monologue, retrying on empty or hallucinated URLs."""
+        """Summarize monologue, retrying on empty, missing Topic:, or hallucinated URLs."""
         source_text = self._get_source_text()
         report = ""
         for attempt in range(1 + self.SUMMARY_URL_RETRIES):
+            label = (
+                f"[inner_monologue] summary attempt {attempt + 1}/{1 + self.SUMMARY_URL_RETRIES}"
+            )
             report = await self._summarize_text(
                 combined, Prompt.THINKING_REPORT_PROMPT, run_id, prompt_type
             )
             if not report:
-                logger.warning(
-                    "[inner_monologue] summary attempt %d/%d returned empty, retrying",
-                    attempt + 1,
-                    1 + self.SUMMARY_URL_RETRIES,
-                )
+                logger.warning("%s returned empty, retrying", label)
+                continue
+            title, _ = self._parse_title(report)
+            if not title:
+                logger.warning("%s missing Topic: line, retrying", label)
                 continue
             bad_urls = self._find_hallucinated_urls(report, source_text)
             if not bad_urls:
                 return report
             logger.warning(
-                "[inner_monologue] summary attempt %d/%d has %d hallucinated URL(s): %s",
-                attempt + 1,
-                1 + self.SUMMARY_URL_RETRIES,
+                "%s has %d hallucinated URL(s): %s",
+                label,
                 len(bad_urls),
                 ", ".join(u[:80] for u in bad_urls),
             )
         if report:
-            logger.warning("[inner_monologue] exhausted URL validation retries, using last attempt")
+            logger.warning("[inner_monologue] exhausted summary retries, using last attempt")
         return report
 
     async def _embed_and_serialize(self, text: str) -> bytes | None:
@@ -349,17 +351,29 @@ class ThinkingAgent(Agent):
             return None
         return serialize_embedding(vec)
 
-    # Pattern to match "Topic: <title>" on the last line
-    _TOPIC_LINE_PATTERN = re.compile(r"\n?Topic:\s*(.+?)\s*$")
+    # Pattern to match "Topic: <title>" anywhere in the text
+    _TOPIC_LINE_PATTERN = re.compile(r"^Topic:\s*(.+?)\s*$", re.MULTILINE)
+
+    # How many lines from the end to search for the Topic: line
+    TOPIC_SEARCH_LINES = 5
 
     @classmethod
     def _parse_title(cls, report: str) -> tuple[str | None, str]:
-        """Extract 'Topic: ...' from the last line, return (title, content)."""
-        match = cls._TOPIC_LINE_PATTERN.search(report)
+        """Extract 'Topic: ...' from the last few lines, return (title, content).
+
+        The model sometimes puts sources or emoji after the Topic: line,
+        so we search the last TOPIC_SEARCH_LINES lines instead of
+        requiring it at the very end.
+        """
+        lines = report.rstrip().split("\n")
+        tail = "\n".join(lines[-cls.TOPIC_SEARCH_LINES :])
+        match = cls._TOPIC_LINE_PATTERN.search(tail)
         if not match:
             return None, report
         title = match.group(1).strip()
-        content = report[: match.start()].rstrip()
+        # Remove everything from the Topic: line onwards
+        topic_line_start = report.rindex(f"Topic: {match.group(1).rstrip()}")
+        content = report[:topic_line_start].rstrip()
         return title, content
 
     def _find_duplicate_thought(
