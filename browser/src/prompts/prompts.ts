@@ -11,7 +11,15 @@ import {
   RuntimeMessageType,
 } from "../protocol.js";
 
-const runsContainer = document.getElementById("runs")!;
+const AGENT_LABELS: Record<string, string> = {
+  inner_monologue: "Thinking",
+  chat: "Chat",
+  history: "History",
+  notify: "Notify",
+  startup: "Startup",
+};
+
+const runsContainer = document.getElementById("runs")!
 const loading = document.getElementById("loading")!;
 const agentFilter = document.getElementById("agent-filter") as HTMLSelectElement;
 
@@ -23,7 +31,7 @@ let hasMore = false;
 const runElements = new Map<string, HTMLElement>();
 let activeRunId: string | null = null;
 let activeTimer: ReturnType<typeof setTimeout> | null = null;
-const ACTIVE_TIMEOUT_MS = 10_000;
+const ACTIVE_TIMEOUT_MS = 30_000;
 
 // --- Init ---
 
@@ -61,6 +69,8 @@ function handleMessage(message: RuntimeMessage): void {
     populateFilter(message.agent_names);
   } else if (message.type === RuntimeMessageType.PromptLogUpdate) {
     handlePromptUpdate(message.prompt);
+  } else if (message.type === RuntimeMessageType.RunOutcomeUpdate) {
+    handleRunOutcome(message.run_id, message.outcome);
   }
 }
 
@@ -72,7 +82,7 @@ function populateFilter(agentNames: string[]): void {
   for (const agent of agentNames) {
     const option = document.createElement("option");
     option.value = agent;
-    option.textContent = agent;
+    option.textContent = AGENT_LABELS[agent] ?? agent;
     agentFilter.appendChild(option);
   }
   agentFilter.value = previous;
@@ -133,6 +143,20 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
   const row = createRunRow(run);
   runsContainer.prepend(row);
   markRunActive(run.run_id, row);
+}
+
+function handleRunOutcome(runId: string, outcome: string): void {
+  const run = allRuns.find((r) => r.run_id === runId);
+  if (!run) return;
+  run.run_outcome = outcome;
+
+  const row = runElements.get(runId);
+  if (!row) return;
+
+  const promptsContainer = row.querySelector(".run-prompts");
+  if (promptsContainer) {
+    row.insertBefore(createRunOutcome(outcome), promptsContainer);
+  }
 }
 
 function markRunActive(runId: string, row: HTMLElement): void {
@@ -225,7 +249,7 @@ function createRunHeader(run: PromptLogRun): HTMLElement {
 
   const agent = document.createElement("span");
   agent.className = "run-agent";
-  agent.textContent = run.agent_name;
+  agent.textContent = AGENT_LABELS[run.agent_name] ?? run.agent_name;
   const spinner = document.createElement("span");
   spinner.className = "run-spinner";
   spinner.innerHTML = ' <i class="fa-solid fa-spinner fa-spin"></i>';

@@ -46,6 +46,7 @@ from penny.channels.browser.models import (
     BROWSER_RESP_TYPE_PREFERENCES,
     BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE,
     BROWSER_RESP_TYPE_PROMPT_LOGS,
+    BROWSER_RESP_TYPE_RUN_OUTCOME,
     BROWSER_RESP_TYPE_SCHEDULES,
     BROWSER_RESP_TYPE_STATUS,
     BROWSER_RESP_TYPE_THOUGHTS,
@@ -128,10 +129,19 @@ class BrowserChannel(MessageChannel):
         self._pending_requests: dict[str, asyncio.Future[tuple[str, str | None]]] = {}
         self._permission_manager: PermissionManager | None = None
         db.messages._on_prompt_logged = self._on_prompt_logged
+        db.messages._on_run_outcome_set = self._on_run_outcome_set
 
     def _on_prompt_logged(self, prompt_data: dict) -> None:
         """Callback fired after each prompt is logged — broadcast to browsers."""
         message = json.dumps({"type": BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE, "prompt": prompt_data})
+        for conn in self._connections.values():
+            asyncio.ensure_future(conn.ws.send(message))
+
+    def _on_run_outcome_set(self, run_id: str, outcome: str) -> None:
+        """Callback fired when a run outcome is set — broadcast to browsers."""
+        message = json.dumps(
+            {"type": BROWSER_RESP_TYPE_RUN_OUTCOME, "run_id": run_id, "outcome": outcome}
+        )
         for conn in self._connections.values():
             asyncio.ensure_future(conn.ws.send(message))
 

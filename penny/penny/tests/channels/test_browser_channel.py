@@ -1329,6 +1329,18 @@ class TestBrowserPromptLogHandlers:
         assert logs[0].run_outcome is None
         assert logs[1].run_outcome == "Discard: duplicate of 'test'"
 
+    def test_on_run_outcome_set_callback(self, tmp_path):
+        """_on_run_outcome_set callback fires when outcome is set."""
+        _, db = self._channel(tmp_path)
+        received: list[tuple[str, str]] = []
+        db.messages._on_run_outcome_set = lambda run_id, outcome: received.append((run_id, outcome))
+
+        self._log_prompt(db, "inner_monologue", "run1")
+        db.messages.set_run_outcome("run1", "Stored: test topic")
+
+        assert len(received) == 1
+        assert received[0] == ("run1", "Stored: test topic")
+
     def test_on_prompt_logged_callback(self, tmp_path):
         """_on_prompt_logged callback fires with prompt data for prompts with run_id."""
         _, db = self._channel(tmp_path)
