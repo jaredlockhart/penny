@@ -1,25 +1,19 @@
 /**
- * Sidebar script — pure UI layer.
+ * Sidebar script — minimal chat UI.
+ * Clicking the Penny logo opens the full page with all panels.
  * Communicates with the background script via browser.runtime messaging.
- * No direct WebSocket connection.
  */
 
 import {
   type ConnectionState,
   ConnectionState as CS,
-  type DomainAllowlist,
-  DomainPermission as DP,
   MAX_STORED_MESSAGES,
   type MessageSender,
   MessageSender as MS,
-  type PreferenceItem,
-  type RuntimeConfigParam,
   type RuntimeMessage,
   RuntimeMessageType,
-  type ScheduleItem,
   STORAGE_KEY_CHAT_HISTORY,
   STORAGE_KEY_DEVICE_LABEL,
-  STORAGE_KEY_DOMAIN_ALLOWLIST,
   type StoredMessage,
   TEXTAREA_LINE_HEIGHT,
   TEXTAREA_MAX_ROWS,
@@ -35,37 +29,6 @@ let statusEl: HTMLElement;
 let pendingPageRef: { title: string; url: string; image: string } | null = null;
 let currentPageImage = "";
 
-// Toast
-let toastTimer: ReturnType<typeof setTimeout> | null = null;
-
-function showToast(text: string): void {
-  const toast = document.getElementById("toast")!;
-  toast.textContent = text;
-  toast.classList.add("visible");
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove("visible"), 2000);
-}
-
-let promptPulseTimer: ReturnType<typeof setTimeout> | null = null;
-
-function pulsePromptIcon(): void {
-  const icon = document.getElementById("nav-prompts");
-  if (!icon) return;
-  icon.classList.add("pulsing");
-  if (promptPulseTimer) clearTimeout(promptPulseTimer);
-  promptPulseTimer = setTimeout(() => icon.classList.remove("pulsing"), 10_000);
-}
-
-// View state
-type View = "register" | "chat" | "settings";
-type MainTab = "conversation" | "schedules";
-type SettingsTab = "likes" | "dislikes" | "domains" | "config";
-
-let activeView: View = "register";
-let activeMainTab: MainTab = "conversation";
-let activeSettingsTab: SettingsTab = "likes";
-let pendingConfigSave = false;
-
 // --- Registration ---
 
 async function init(): Promise<void> {
@@ -78,12 +41,9 @@ async function init(): Promise<void> {
   }
 }
 
-function showView(view: View): void {
+function showView(view: "register" | "chat"): void {
   document.getElementById("register")!.classList.toggle("hidden", view !== "register");
   document.getElementById("chat")!.classList.toggle("hidden", view !== "chat");
-  document.getElementById("settings")!.classList.toggle("hidden", view !== "settings");
-  document.getElementById("nav-settings")?.classList.toggle("active", view === "settings");
-  activeView = view;
 }
 
 function showRegister(): void {
@@ -124,440 +84,13 @@ async function showChat(): Promise<void> {
   });
   inputEl.addEventListener("input", autoResize);
 
-  document.getElementById("nav-thoughts")!.addEventListener("click", () => {
-    browser.tabs.create({ url: browser.runtime.getURL("feed/feed.html") });
+  // Penny logo opens the full page
+  document.getElementById("nav-logo")!.addEventListener("click", () => {
+    browser.tabs.create({ url: browser.runtime.getURL("page/page.html") });
   });
-  document.getElementById("nav-prompts")!.addEventListener("click", () => {
-    browser.tabs.create({ url: browser.runtime.getURL("prompts/prompts.html") });
-  });
-  document.getElementById("nav-settings")!.addEventListener("click", () => {
-    showView("settings");
-    activateSettingsTab(activeSettingsTab);
-  });
-
-  document.getElementById("settings-back")!.addEventListener("click", () => showView("chat"));
-
-  for (const btn of Array.from(document.querySelectorAll(".main-tab"))) {
-    btn.addEventListener("click", () => {
-      activateMainTab(btn.getAttribute("data-mtab") as MainTab);
-    });
-  }
-
-  for (const btn of Array.from(document.querySelectorAll(".settings-tab"))) {
-    btn.addEventListener("click", () => {
-      activateSettingsTab(btn.getAttribute("data-stab") as SettingsTab);
-    });
-  }
-
-  setupPrefsAdd("positive", "likes");
-  setupPrefsAdd("negative", "dislikes");
-  setupSchedulesAdd();
-  setupDomainsAdd();
-  setupToolUseToggle();
 
   await rehydrateHistory();
   listenToBackground();
-}
-
-// --- Main tab switching (Chat / Schedules) ---
-
-function activateMainTab(tab: MainTab): void {
-  activeMainTab = tab;
-
-  for (const btn of Array.from(document.querySelectorAll(".main-tab"))) {
-    btn.classList.toggle("active", btn.getAttribute("data-mtab") === tab);
-  }
-
-  document.getElementById("conversation-panel")!.classList.toggle("hidden", tab !== "conversation");
-  document.getElementById("schedules-panel")!.classList.toggle("hidden", tab !== "schedules");
-
-  if (tab === "schedules") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.SchedulesRequest });
-  }
-}
-
-// --- Settings tab switching ---
-
-function activateSettingsTab(tab: SettingsTab): void {
-  activeSettingsTab = tab;
-
-  for (const btn of Array.from(document.querySelectorAll(".settings-tab"))) {
-    btn.classList.toggle("active", btn.getAttribute("data-stab") === tab);
-  }
-
-  document.getElementById("stab-likes")!.classList.toggle("hidden", tab !== "likes");
-  document.getElementById("stab-dislikes")!.classList.toggle("hidden", tab !== "dislikes");
-  document.getElementById("stab-domains")!.classList.toggle("hidden", tab !== "domains");
-  document.getElementById("stab-config")!.classList.toggle("hidden", tab !== "config");
-
-  if (tab === "likes") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferencesRequest, valence: "positive" });
-  } else if (tab === "dislikes") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferencesRequest, valence: "negative" });
-  } else if (tab === "domains") {
-    loadDomainsFromCache();
-  } else if (tab === "config") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.ConfigRequest });
-  }
-}
-
-// --- Preferences UI ---
-
-function renderPreferences(valence: string, prefs: PreferenceItem[]): void {
-  const listEl = document.getElementById(valence === "positive" ? "likes-list" : "dislikes-list")!;
-  listEl.innerHTML = "";
-
-  if (prefs.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "prefs-empty";
-    empty.textContent = valence === "positive" ? "No likes yet." : "No dislikes yet.";
-    listEl.appendChild(empty);
-    return;
-  }
-
-  for (const pref of prefs) {
-    const row = document.createElement("div");
-    row.className = "pref-row";
-
-    const name = document.createElement("span");
-    name.className = "pref-name";
-    name.textContent = pref.content;
-
-    const count = document.createElement("span");
-    count.className = "pref-count";
-    count.textContent = `(${pref.mention_count})`;
-
-    const del = document.createElement("button");
-    del.className = "pref-delete";
-    del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-    del.setAttribute("aria-label", `Remove ${pref.content}`);
-    del.addEventListener("click", () => {
-      browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceDelete, preference_id: pref.id });
-    });
-
-    row.appendChild(name);
-    row.appendChild(count);
-    row.appendChild(del);
-    listEl.appendChild(row);
-  }
-}
-
-function setupPrefsAdd(valence: string, prefix: string): void {
-  const input = document.getElementById(`${prefix}-input`) as HTMLInputElement;
-  const btn = document.getElementById(`${prefix}-add-btn`) as HTMLButtonElement;
-
-  function add(): void {
-    const content = input.value.trim();
-    if (!content) return;
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceAdd, valence, content });
-    input.value = "";
-  }
-
-  btn.addEventListener("click", add);
-  input.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter") add();
-  });
-}
-
-// --- Domains UI ---
-
-async function loadDomainsFromCache(): Promise<void> {
-  const stored = await browser.storage.local.get(STORAGE_KEY_DOMAIN_ALLOWLIST);
-  const allowlist: DomainAllowlist = (stored[STORAGE_KEY_DOMAIN_ALLOWLIST] as DomainAllowlist) ?? {};
-  const permissions = Object.entries(allowlist).map(([domain, permission]) => ({ domain, permission }));
-  renderDomains(permissions);
-}
-
-function renderDomains(permissions: { domain: string; permission: string }[]): void {
-  const listEl = document.getElementById("domains-list")!;
-  listEl.innerHTML = "";
-
-  const sorted = [...permissions].sort((a, b) => a.domain.localeCompare(b.domain));
-
-  if (sorted.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "prefs-empty";
-    empty.textContent = "No domains saved yet.";
-    listEl.appendChild(empty);
-    return;
-  }
-
-  for (const { domain, permission } of sorted) {
-    const row = document.createElement("div");
-    row.className = "domain-row";
-
-    const name = document.createElement("span");
-    name.className = "domain-name";
-    name.textContent = domain;
-
-    const status = document.createElement("button");
-    status.className = `domain-status ${permission}`;
-    status.textContent = permission === DP.Allowed ? "Allowed" : "Blocked";
-    status.title = "Click to toggle";
-    status.addEventListener("click", () => {
-      const next = permission === DP.Allowed ? DP.Blocked : DP.Allowed;
-      browser.runtime.sendMessage({ type: RuntimeMessageType.DomainUpdate, domain, permission: next });
-    });
-
-    const del = document.createElement("button");
-    del.className = "pref-delete";
-    del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-    del.setAttribute("aria-label", `Remove ${domain}`);
-    del.addEventListener("click", () => {
-      browser.runtime.sendMessage({ type: RuntimeMessageType.DomainDelete, domain });
-    });
-
-    row.appendChild(name);
-    row.appendChild(status);
-    row.appendChild(del);
-    listEl.appendChild(row);
-  }
-}
-
-function setupDomainsAdd(): void {
-  const input = document.getElementById("domains-input") as HTMLInputElement;
-  const select = document.getElementById("domains-permission") as HTMLSelectElement;
-  const btn = document.getElementById("domains-add-btn")!;
-
-  function add(): void {
-    const raw = input.value.trim().toLowerCase();
-    if (!raw) return;
-    const domain = raw.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-    if (!domain) return;
-    browser.runtime.sendMessage({
-      type: RuntimeMessageType.DomainUpdate,
-      domain,
-      permission: select.value,
-    });
-    input.value = "";
-  }
-
-  btn.addEventListener("click", add);
-  input.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter") add();
-  });
-}
-
-// --- Schedules UI ---
-
-function setScheduleAddEnabled(enabled: boolean): void {
-  const input = document.getElementById("schedules-input") as HTMLInputElement | null;
-  const btn = document.getElementById("schedules-add-btn") as HTMLButtonElement | null;
-  if (input) input.disabled = !enabled;
-  if (btn) btn.disabled = !enabled;
-}
-
-function renderSchedules(schedules: ScheduleItem[], error: string | null): void {
-  const listEl = document.getElementById("schedules-list")!;
-  listEl.innerHTML = "";
-  setScheduleAddEnabled(true);
-
-  if (error) {
-    const errEl = document.createElement("div");
-    errEl.className = "schedule-error";
-    errEl.textContent = error;
-    listEl.appendChild(errEl);
-  }
-
-  if (schedules.length === 0 && !error) {
-    const empty = document.createElement("div");
-    empty.className = "schedules-empty";
-    empty.textContent = "No scheduled tasks yet.";
-    listEl.appendChild(empty);
-    return;
-  }
-
-  for (const schedule of schedules) {
-    listEl.appendChild(createScheduleRow(schedule));
-  }
-}
-
-function createScheduleRow(schedule: ScheduleItem): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "schedule-row";
-
-  const header = document.createElement("div");
-  header.className = "schedule-header";
-
-  const timing = document.createElement("span");
-  timing.className = "schedule-timing";
-  timing.textContent = schedule.timing_description;
-
-  const prompt = document.createElement("span");
-  prompt.className = "schedule-prompt";
-  prompt.textContent = schedule.prompt_text;
-
-  const del = document.createElement("button");
-  del.className = "schedule-delete";
-  del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-  del.setAttribute("aria-label", `Delete schedule: ${schedule.prompt_text}`);
-  del.addEventListener("click", (e) => {
-    e.stopPropagation();
-    browser.runtime.sendMessage({
-      type: RuntimeMessageType.ScheduleDelete,
-      schedule_id: schedule.id,
-    });
-  });
-
-  header.appendChild(timing);
-  header.appendChild(prompt);
-  header.appendChild(del);
-
-  const detail = document.createElement("div");
-  detail.className = "schedule-detail";
-
-  const cron = document.createElement("div");
-  cron.className = "schedule-cron";
-  cron.textContent = schedule.cron_expression;
-
-  const editInput = document.createElement("textarea");
-  editInput.className = "schedule-edit-input";
-  editInput.value = schedule.prompt_text;
-  editInput.rows = 2;
-
-  const saveBtn = document.createElement("button");
-  saveBtn.className = "schedule-save";
-  saveBtn.textContent = "Save";
-  saveBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const newText = editInput.value.trim();
-    if (newText && newText !== schedule.prompt_text) {
-      browser.runtime.sendMessage({
-        type: RuntimeMessageType.ScheduleUpdate,
-        schedule_id: schedule.id,
-        prompt_text: newText,
-      });
-    }
-  });
-
-  detail.appendChild(cron);
-  detail.appendChild(editInput);
-  detail.appendChild(saveBtn);
-
-  row.appendChild(header);
-  row.appendChild(detail);
-
-  header.addEventListener("click", () => {
-    row.classList.toggle("expanded");
-  });
-
-  return row;
-}
-
-function createSkeletonRow(): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "schedule-row schedule-skeleton";
-
-  const header = document.createElement("div");
-  header.className = "schedule-header";
-
-  const timing = document.createElement("span");
-  timing.className = "skeleton-block skeleton-timing";
-
-  const prompt = document.createElement("span");
-  prompt.className = "skeleton-block skeleton-prompt";
-
-  header.appendChild(timing);
-  header.appendChild(prompt);
-  row.appendChild(header);
-  return row;
-}
-
-function setupSchedulesAdd(): void {
-  const input = document.getElementById("schedules-input") as HTMLInputElement;
-  const btn = document.getElementById("schedules-add-btn")!;
-
-  function add(): void {
-    const command = input.value.trim();
-    if (!command) return;
-    browser.runtime.sendMessage({ type: RuntimeMessageType.ScheduleAdd, command });
-    input.value = "";
-    setScheduleAddEnabled(false);
-
-    const listEl = document.getElementById("schedules-list")!;
-    const empty = listEl.querySelector(".schedules-empty");
-    if (empty) empty.remove();
-    listEl.appendChild(createSkeletonRow());
-  }
-
-  btn.addEventListener("click", add);
-  input.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter") add();
-  });
-}
-
-// --- Tool use toggle ---
-
-function setupToolUseToggle(): void {
-  const toggle = document.getElementById("tool-use-toggle") as HTMLInputElement;
-  toggle.addEventListener("change", () => {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.ToolUseToggle, enabled: toggle.checked });
-  });
-}
-
-// --- Config UI ---
-
-function renderConfig(params: RuntimeConfigParam[]): void {
-  const panel = document.getElementById("config-list")!;
-  panel.innerHTML = "";
-
-  const groups = new Map<string, RuntimeConfigParam[]>();
-  for (const param of params) {
-    if (!groups.has(param.group)) groups.set(param.group, []);
-    groups.get(param.group)!.push(param);
-  }
-
-  for (const [group, groupParams] of groups) {
-    const groupEl = document.createElement("div");
-    groupEl.className = "config-group";
-
-    const title = document.createElement("div");
-    title.className = "config-group-title";
-    title.textContent = group;
-    groupEl.appendChild(title);
-
-    for (const param of groupParams) {
-      groupEl.appendChild(createConfigItem(param));
-    }
-    panel.appendChild(groupEl);
-  }
-}
-
-function createConfigItem(param: RuntimeConfigParam): HTMLElement {
-  const item = document.createElement("div");
-  item.className = "config-item";
-
-  const label = document.createElement("label");
-  label.className = "config-label";
-  label.textContent = param.description;
-  label.htmlFor = `config-${param.key}`;
-
-  const key = document.createElement("div");
-  key.className = "config-key";
-  key.textContent = param.key;
-
-  const input = document.createElement("input");
-  input.id = `config-${param.key}`;
-  input.className = "config-input";
-  input.type = param.type === "str" ? "text" : "number";
-  if (param.type === "int") input.step = "1";
-  if (param.type === "float") input.step = "any";
-  input.value = param.value;
-  if (param.value !== param.default) input.classList.add("modified");
-
-  input.addEventListener("change", () => {
-    pendingConfigSave = true;
-    browser.runtime.sendMessage({
-      type: RuntimeMessageType.ConfigUpdate,
-      key: param.key,
-      value: input.value,
-    });
-  });
-
-  item.appendChild(label);
-  item.appendChild(key);
-  item.appendChild(input);
-  return item;
 }
 
 // --- Background communication ---
@@ -578,8 +111,6 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
   if (message.type === RuntimeMessageType.ConnectionState) {
     setStatus(message.state);
   } else if (message.type === RuntimeMessageType.ChatMessage) {
-    if (activeView === "settings") showView("chat");
-    if (activeMainTab !== "conversation") activateMainTab("conversation");
     setTyping(false);
     let content = message.content;
     if (pendingPageRef) {
@@ -591,36 +122,16 @@ function handleBackgroundMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.Typing) {
     setTyping(message.active, message.content);
   } else if (message.type === RuntimeMessageType.PermissionRequest) {
-    if (activeView === "settings") showView("chat");
-    if (activeMainTab !== "conversation") activateMainTab("conversation");
     showPermissionDialog(message.request_id, message.domain, message.url);
   } else if (message.type === RuntimeMessageType.PermissionDismiss) {
     document.getElementById("permission-dialog")?.classList.add("hidden");
   } else if (message.type === RuntimeMessageType.ThoughtCount) {
     const countEl = document.getElementById("nav-thoughts-count");
     if (countEl) countEl.textContent = message.count > 0 ? ` (${message.count})` : "";
-  } else if (message.type === RuntimeMessageType.PromptLogUpdate) {
-    pulsePromptIcon();
+  } else if (message.type === RuntimeMessageType.ToolUseState) {
+    document.getElementById("tool-use-icon")?.classList.toggle("hidden", !message.enabled);
   } else if (message.type === RuntimeMessageType.PageInfo) {
     updatePageContextBar(message.title, message.url, message.favicon, message.image, message.available);
-  } else if (message.type === RuntimeMessageType.PreferencesResponse) {
-    renderPreferences(message.valence, message.preferences);
-  } else if (message.type === RuntimeMessageType.ConfigResponse) {
-    renderConfig(message.params);
-    if (pendingConfigSave) {
-      pendingConfigSave = false;
-      showToast("Saved");
-    }
-  } else if (message.type === RuntimeMessageType.ToolUseState) {
-    const toggle = document.getElementById("tool-use-toggle") as HTMLInputElement | null;
-    if (toggle) toggle.checked = message.enabled;
-    document.getElementById("tool-use-icon")?.classList.toggle("hidden", !message.enabled);
-  } else if (message.type === RuntimeMessageType.DomainPermissionsSync) {
-    renderDomains(message.permissions);
-    // A sync means the server resolved a permission — dismiss any open dialog
-    document.getElementById("permission-dialog")?.classList.add("hidden");
-  } else if (message.type === RuntimeMessageType.SchedulesResponse) {
-    renderSchedules(message.schedules, message.error);
   }
 }
 
@@ -636,7 +147,7 @@ function updatePageContextBar(
 
   currentPageImage = image;
 
-  if (!available || !title || activeView !== "chat") {
+  if (!available || !title) {
     bar.classList.add("hidden");
     if (!available || !title) toggle.checked = false;
     return;

@@ -16,17 +16,13 @@
     <div id="chat" class="hidden">
       <div id="nav-bar">
         <div id="nav-top">
-          <img src="../penny.svg" alt="Penny" class="nav-icon">
-          <span id="nav-title">Penny</span>
+          <a id="nav-logo" class="nav-link" title="Open Penny page">
+            <img src="../penny.svg" alt="Penny" class="nav-icon">
+            <span id="nav-title">Penny</span>
+            <span id="nav-thoughts-count"></span>
+          </a>
           <span id="status" class="disconnected"></span>
           <span id="tool-use-icon" class="hidden" title="Tool use enabled"><i class="fa-solid fa-wrench"></i></span>
-          <button id="nav-prompts"><i class="fa-solid fa-scroll"></i></button>
-          <button id="nav-settings" aria-label="Settings"><i class="fa-solid fa-gear"></i></button>
-        </div>
-        <div id="main-tabs">
-          <button class="main-tab active" data-mtab="conversation"><i class="fa-solid fa-comment"></i> Chat</button>
-          <button class="main-tab" data-mtab="schedules"><i class="fa-solid fa-clock"></i> Schedules</button>
-          <button id="nav-thoughts" class="main-tab-link"><i class="fa-regular fa-lightbulb"></i> Thoughts<span id="nav-thoughts-count"></span></button>
         </div>
       </div>
       <div id="conversation-panel">
@@ -56,65 +52,8 @@
           <button id="send"><i class="fa-solid fa-paper-plane"></i></button>
         </div>
       </div>
-      <div id="schedules-panel" class="hidden">
-        <div class="schedules-list" id="schedules-list"></div>
-        <div class="schedules-add">
-          <input type="text" id="schedules-input" placeholder="daily 9am check the news">
-          <button id="schedules-add-btn"><i class="fa-solid fa-plus"></i></button>
-        </div>
-      </div>
-    </div>
-
-    <div id="settings" class="hidden">
-      <div id="settings-header">
-        <button id="settings-back" aria-label="Back"><i class="fa-solid fa-arrow-left"></i></button>
-        <span id="settings-title">Settings</span>
-      </div>
-      <div id="settings-tabs">
-        <button class="settings-tab active" data-stab="likes"><i class="fa-solid fa-heart"></i> Likes</button>
-        <button class="settings-tab" data-stab="dislikes"><i class="fa-solid fa-heart-crack"></i> Dislikes</button>
-        <button class="settings-tab" data-stab="domains"><i class="fa-solid fa-globe"></i> Domains</button>
-        <button class="settings-tab" data-stab="config"><i class="fa-solid fa-sliders"></i> Config</button>
-      </div>
-
-      <div id="stab-likes" class="stab-panel">
-        <div class="prefs-list" id="likes-list"></div>
-        <div class="prefs-add">
-          <input type="text" id="likes-input" placeholder="Add a like...">
-          <button id="likes-add-btn"><i class="fa-solid fa-plus"></i></button>
-        </div>
-      </div>
-
-      <div id="stab-dislikes" class="stab-panel hidden">
-        <div class="prefs-list" id="dislikes-list"></div>
-        <div class="prefs-add">
-          <input type="text" id="dislikes-input" placeholder="Add a dislike...">
-          <button id="dislikes-add-btn"><i class="fa-solid fa-plus"></i></button>
-        </div>
-      </div>
-
-      <div id="stab-domains" class="stab-panel hidden">
-        <div class="domains-list" id="domains-list"></div>
-        <div class="domains-add">
-          <input type="text" id="domains-input" placeholder="example.com">
-          <select id="domains-permission">
-            <option value="allowed">Allow</option>
-            <option value="blocked">Block</option>
-          </select>
-          <button id="domains-add-btn"><i class="fa-solid fa-plus"></i></button>
-        </div>
-      </div>
-
-      <div id="stab-config" class="stab-panel hidden">
-        <div id="tool-use-row" class="config-toggle-row">
-          <label for="tool-use-toggle"><i class="fa-solid fa-wrench"></i> Allow tool use</label>
-          <input type="checkbox" id="tool-use-toggle">
-        </div>
-        <div id="config-list"></div>
-      </div>
     </div>
   </div>
-  <div id="toast"></div>
   <script type="module" src="../dist/sidebar/sidebar.js"></script>
 </body>
 </html>
