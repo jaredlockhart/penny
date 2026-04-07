@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from penny.constants import PennyConstants
 from penny.email.protocol import EmailClient
 from penny.tools.base import Tool
 
