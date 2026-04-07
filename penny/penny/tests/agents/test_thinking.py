@@ -213,10 +213,14 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert "Mock search results" in summary_user_msg  # raw tool output
         assert "Found interesting" not in summary_user_msg  # not model text
 
-        # -- Summary system prompt includes seed research goal
+        # -- Summary system prompt: identity, profile, instructions, and seed goal
         summary_system = [m for m in summary_request["messages"] if m.get("role") == "system"][0][
             "content"
         ]
+        assert summary_system.startswith("Current date and time: ")
+        assert "## Identity" in summary_system
+        assert "Test User" in summary_system
+        assert "## Instructions" in summary_system
         assert "Quantum gravity experiments" in summary_system
 
         # -- Storage: summary stored (not raw monologue), with correct preference_id
@@ -233,6 +237,13 @@ If nothing interesting comes up, that's fine — quiet cycles are normal."""
         # -- Preference marked as thought-about
         pool = penny.db.preferences.get_least_recent_positive(TEST_SENDER)
         assert any(p.last_thought_at is not None for p in pool)
+
+        # -- prompt_type is the title-cased seed topic, not "seeded"
+        with Session(penny.db.engine) as session:
+            prompt_types = [
+                log.prompt_type for log in session.exec(select(PromptLog)).all() if log.prompt_type
+            ]
+        assert "Quantum Gravity Experiments" in prompt_types
 
 
 @pytest.mark.asyncio
@@ -1257,3 +1268,53 @@ class TestSummaryUrlValidation:
         source = "URL: https://example.com/article"
         report = "Check https://example.com/article."
         assert ThinkingAgent._find_hallucinated_urls(report, source) == []
+
+
+# ── 7. Malformed tool call extraction (unit tests) ──────────────────────
+
+
+class TestMalformedToolCallExtraction:
+    """Test regex extraction of queries from malformed JSON arguments."""
+
+    def test_unescaped_quotes_in_array(self):
+        """Queries extracted despite unescaped quotes corrupting JSON."""
+        from penny.llm.client import LlmClient
+
+        raw = '{"queries":["Shadowrun Returns Anthology signed hardcover", "Kickstarter $100"}]'
+        result = LlmClient._extract_malformed_arguments(raw)
+        assert "queries" in result
+        assert "Shadowrun Returns Anthology signed hardcover" in result["queries"]
+
+    def test_unescaped_quotes_in_reasoning(self):
+        """Queries extracted when reasoning field has unescaped quotes."""
+        from penny.llm.client import LlmClient
+
+        raw = (
+            '{"reasoning":"searching for "Cyberpunk" details",'
+            ' "queries":["Cyberpunk release","Cyberpunk cast"]}'
+        )
+        result = LlmClient._extract_malformed_arguments(raw)
+        assert result["queries"] == ["Cyberpunk release", "Cyberpunk cast"]
+
+    def test_truncated_json(self):
+        """Partial queries extracted from truncated JSON."""
+        from penny.llm.client import LlmClient
+
+        raw = '{"queries": ["first query", "second qu'
+        result = LlmClient._extract_malformed_arguments(raw)
+        assert result["queries"] == ["first query"]
+
+    def test_no_queries_key(self):
+        """Returns empty dict when no queries array is found."""
+        from penny.llm.client import LlmClient
+
+        raw = '{"reasoning": "just thinking"'
+        result = LlmClient._extract_malformed_arguments(raw)
+        assert result == {}
+
+    def test_completely_garbled(self):
+        """Returns empty dict for completely unparseable input."""
+        from penny.llm.client import LlmClient
+
+        result = LlmClient._extract_malformed_arguments("not json at all")
+        assert result == {}
