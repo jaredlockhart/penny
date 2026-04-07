@@ -215,6 +215,7 @@ export interface PreferenceItem {
   id: number;
   content: string;
   mention_count: number;
+  source: string;
 }
 
 export interface WsIncomingPreferencesPayload {
