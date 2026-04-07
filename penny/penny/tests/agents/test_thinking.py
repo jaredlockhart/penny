@@ -93,11 +93,14 @@ async def test_seeded_thinking_full_loop(
     def handler(request, count):
         requests_seen.append(request)
         if count == 1:
-            # Step 1: tool call
+            # Step 1: tool call — URL so it's classified as a page read
             return mock_llm._make_tool_call_response(
                 request,
                 "browse",
-                {"queries": ["quantum gravity 2026"], "reasoning": "Researching seed topic"},
+                {
+                    "queries": ["https://example.com/quantum-gravity"],
+                    "reasoning": "Reading article",
+                },
             )
         if count == 2:
             # Step 2: text reflecting on search results
@@ -117,7 +120,9 @@ async def test_seeded_thinking_full_loop(
         _add_dislike(penny)
 
         # Mock browse provider so BrowseTool can dispatch text queries
-        mock_request_fn = AsyncMock(return_value=("Mock search results", None))
+        mock_request_fn = AsyncMock(
+            return_value=("Mock search results", "data:image/png;base64,mock")
+        )
         mock_perm = MagicMock(check_domain=AsyncMock())
         penny.thinking_agent._browse_provider = lambda: (mock_request_fn, mock_perm)
 
@@ -250,7 +255,7 @@ async def test_free_thinking_full_loop(
             return mock_llm._make_tool_call_response(
                 request,
                 "browse",
-                {"queries": ["interesting science 2026"], "reasoning": "Exploring freely"},
+                {"queries": ["https://example.com/science"], "reasoning": "Reading article"},
             )
         if count == 2:
             return mock_llm._make_text_response(
@@ -385,7 +390,7 @@ async def test_no_preferences_falls_back_to_free_thinking(
             return mock_llm._make_tool_call_response(
                 request,
                 "browse",
-                {"queries": ["interesting discovery"], "reasoning": "Exploring"},
+                {"queries": ["https://example.com/discovery"], "reasoning": "Reading article"},
             )
         if count == 2:
             return mock_llm._make_text_response(request, "Found something cool.")
@@ -437,7 +442,7 @@ async def test_preference_rotation_via_last_thought_at(
             return mock_llm._make_tool_call_response(
                 request,
                 "browse",
-                {"queries": ["astrophysics 2026"], "reasoning": "Researching"},
+                {"queries": ["https://example.com/astrophysics"], "reasoning": "Reading article"},
             )
         if count == 2:
             return mock_llm._make_text_response(request, "ok")
@@ -709,7 +714,10 @@ async def test_seeded_duplicate_thought_skips_storage(
             return mock_llm._make_tool_call_response(
                 request,
                 "browse",
-                {"queries": ["quantum gravity"], "reasoning": "Researching"},
+                {
+                    "queries": ["https://example.com/quantum-gravity"],
+                    "reasoning": "Reading article",
+                },
             )
         if count == 2:
             return mock_llm._make_text_response(request, "Found some results.")
@@ -778,7 +786,7 @@ async def test_free_duplicate_thought_skips_storage(
             return mock_llm._make_tool_call_response(
                 request,
                 "browse",
-                {"queries": ["interesting science"], "reasoning": "Exploring"},
+                {"queries": ["https://example.com/science"], "reasoning": "Reading article"},
             )
         if count == 2:
             return mock_llm._make_text_response(request, "Found some results.")
@@ -835,7 +843,10 @@ async def test_cross_preference_duplicate_skips_storage(
             return mock_llm._make_tool_call_response(
                 request,
                 "browse",
-                {"queries": ["quantum gravity"], "reasoning": "Researching"},
+                {
+                    "queries": ["https://example.com/quantum-gravity"],
+                    "reasoning": "Reading article",
+                },
             )
         if count == 2:
             return mock_llm._make_text_response(request, "Found some results.")
@@ -903,7 +914,10 @@ async def test_novel_thought_is_stored(
             return mock_llm._make_tool_call_response(
                 request,
                 "browse",
-                {"queries": ["quantum gravity"], "reasoning": "Researching"},
+                {
+                    "queries": ["https://example.com/quantum-gravity"],
+                    "reasoning": "Reading article",
+                },
             )
         if count == 2:
             return mock_llm._make_text_response(request, "Found something new!")
@@ -963,7 +977,9 @@ async def test_dislike_veto_allows_thought_with_no_dislikes(
     def handler(request, count):
         if count == 1:
             return mock_llm._make_tool_call_response(
-                request, "browse", {"queries": ["test"], "reasoning": "x"}
+                request,
+                "browse",
+                {"queries": ["https://example.com/test"], "reasoning": "Reading article"},
             )
         return mock_llm._make_text_response(request, MOCK_REPORT)
 
@@ -1009,7 +1025,9 @@ async def test_dislike_veto_rejects_thought_matching_dislike(
     def handler(request, count):
         if count == 1:
             return mock_llm._make_tool_call_response(
-                request, "browse", {"queries": ["test"], "reasoning": "x"}
+                request,
+                "browse",
+                {"queries": ["https://example.com/test"], "reasoning": "Reading article"},
             )
         return mock_llm._make_text_response(request, MOCK_REPORT)
 
@@ -1061,7 +1079,9 @@ async def test_dislike_veto_allows_thought_below_threshold(
     def handler(request, count):
         if count == 1:
             return mock_llm._make_tool_call_response(
-                request, "browse", {"queries": ["test"], "reasoning": "x"}
+                request,
+                "browse",
+                {"queries": ["https://example.com/test"], "reasoning": "Reading article"},
             )
         return mock_llm._make_text_response(request, MOCK_REPORT)
 

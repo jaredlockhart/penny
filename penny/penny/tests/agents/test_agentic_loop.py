@@ -546,7 +546,9 @@ class TestParallelToolCalls:
         agent._tool_executor.execute = AsyncMock(
             return_value=ToolResult(
                 tool="browse",
-                result=SearchResult(text=f"## page A\n{page_a}\n\n---\n\n## page B\n{page_b}"),
+                result=SearchResult(
+                    text=f"## page A\n{page_a}{PennyConstants.SECTION_SEPARATOR}## page B\n{page_b}"
+                ),
             )
         )
 
