@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -283,9 +284,10 @@ class LlmClient:
                 arguments = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
                 logger.warning(
-                    "Failed to parse tool call arguments: %s", tool_call.function.arguments
+                    "Malformed tool call arguments, extracting via regex: %s",
+                    tool_call.function.arguments[:200],
                 )
-                arguments = {"raw": tool_call.function.arguments}
+                arguments = LlmClient._extract_malformed_arguments(tool_call.function.arguments)
 
         return LlmToolCall(
             id=tool_call.id,
@@ -294,6 +296,23 @@ class LlmClient:
                 arguments=arguments,
             ),
         )
+
+    # Regex to extract quoted strings from a queries array
+    _QUERY_PATTERN = re.compile(r'"queries"\s*:\s*\[([^\]]*)', re.DOTALL)
+    _QUOTED_STRING = re.compile(r'"([^"]+)"')
+
+    @staticmethod
+    def _extract_malformed_arguments(raw: str) -> dict[str, Any]:
+        """Best-effort extraction of queries from malformed JSON arguments.
+
+        Falls back to empty dict if nothing can be extracted.
+        """
+        match = LlmClient._QUERY_PATTERN.search(raw)
+        if match:
+            items = LlmClient._QUOTED_STRING.findall(match.group(1))
+            if items:
+                return {"queries": items}
+        return {}
 
     # ── Internal: logging ────────────────────────────────────────────────
 

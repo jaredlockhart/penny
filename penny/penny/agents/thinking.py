@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import random
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from similarity.dedup import DedupStrategy, is_embedding_duplicate
@@ -75,9 +76,9 @@ class ThinkingAgent(Agent):
         return int(self.config.runtime.INNER_MONOLOGUE_MAX_STEPS)
 
     def get_prompt_type(self) -> str:
-        """Free or seeded, based on whether a seed preference was selected."""
-        if self._seed_pref_id is not None:
-            return ThinkingPromptType.SEEDED
+        """Seed topic or 'free', used as the prompt_type label in prompt logs."""
+        if self._seed_topic is not None:
+            return self._seed_topic.title()
         return ThinkingPromptType.FREE
 
     # ── Execution hooks ──────────────────────────────────────────────────
@@ -190,7 +191,7 @@ class ThinkingAgent(Agent):
         if not self._tool_result_images:
             self._record_outcome(run_id, "Discard: no image")
             return False
-        report = await self._summarize_with_url_validation(combined, run_id, prompt_type)
+        report = await self._summarize_with_url_validation(combined, user, run_id, prompt_type)
         if not report:
             self._record_outcome(run_id, "Discard: no thought generated")
         elif len(report.split()) < PennyConstants.MIN_THOUGHT_WORDS:
@@ -317,19 +318,29 @@ class ThinkingAgent(Agent):
             logger.error("Summarization failed: %s", e)
             return ""
 
-    def _build_report_prompt(self) -> str:
-        """Build the summarization system prompt, including the original seed prompt."""
-        parts = [Prompt.THINKING_REPORT_PROMPT]
+    def _build_report_prompt(self, user: str) -> str:
+        """Build the summarization system prompt with identity, profile, and seed context.
+
+        The report is user-facing content, so it gets the same identity and
+        profile context as other user-facing prompts (chat, notify).
+        """
+        now = datetime.now(UTC).strftime("%A, %B %d, %Y at %I:%M %p UTC")
+        parts = [
+            f"Current date and time: {now}",
+            self._identity_section(),
+            self._context_block(self._profile_section(user)),
+            f"## Instructions\n{Prompt.THINKING_REPORT_PROMPT}",
+        ]
         if self._seed_prompt:
             parts.append(f"Original research goal:\n{self._seed_prompt}")
-        return "\n\n".join(parts)
+        return "\n\n".join(s for s in parts if s)
 
     async def _summarize_with_url_validation(
-        self, combined: str, run_id: str, prompt_type: str | None = None
+        self, combined: str, user: str, run_id: str, prompt_type: str | None = None
     ) -> str:
         """Summarize monologue, retrying on empty, missing Topic:, or hallucinated URLs."""
         source_text = self._get_source_text()
-        report_prompt = self._build_report_prompt()
+        report_prompt = self._build_report_prompt(user)
         report = ""
         for attempt in range(1 + self.SUMMARY_URL_RETRIES):
             label = (

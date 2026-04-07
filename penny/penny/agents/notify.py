@@ -467,8 +467,9 @@ class NotifyAgent(Agent):
             logger.warning("No viable notification candidates for %s", user)
             return False
         winner = await self._pick_best_thought(user, thoughts)
+        thought_label = winner.title if winner and winner.title else NotifyPromptType.THOUGHT
         candidate = await self._execute_mode(
-            user, ThoughtMode(winner, self.config), run_id, NotifyPromptType.THOUGHT
+            user, ThoughtMode(winner, self.config), run_id, thought_label
         )
         if not candidate:
             if self._last_tools_unavailable:

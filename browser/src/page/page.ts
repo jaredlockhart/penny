@@ -70,7 +70,7 @@ const AGENT_LABELS: Record<string, string> = {
   startup: "Startup",
 };
 
-const ACTIVE_TIMEOUT_MS = 30_000;
+const ACTIVE_TIMEOUT_MS = 60_000;
 
 let allRuns: PromptLogRun[] = [];
 let hasMore = false;
@@ -427,10 +427,10 @@ function updateExistingRun(run: PromptLogRun, prompt: PromptLogEntry): void {
   const row = runElements.get(run.run_id);
   if (!row) return;
 
-  const oldHeader = row.querySelector(".run-header")!;
+  const summary = row.querySelector(".run-summary")!;
+  const oldHeader = summary.querySelector(".run-header")!;
   const newHeader = createRunHeader(run);
-  row.replaceChild(newHeader, oldHeader);
-  newHeader.addEventListener("click", () => row.classList.toggle("expanded"));
+  summary.replaceChild(newHeader, oldHeader);
 
   const promptsContainer = row.querySelector(".run-prompts")!;
   promptsContainer.appendChild(createPromptRow(prompt, run.prompts.length));
@@ -467,9 +467,17 @@ function handleRunOutcome(runId: string, outcome: string): void {
   const row = runElements.get(runId);
   if (!row) return;
 
-  const promptsContainer = row.querySelector(".run-prompts");
-  if (promptsContainer) {
-    row.insertBefore(createRunOutcome(outcome), promptsContainer);
+  const summary = row.querySelector(".run-summary");
+  if (summary) {
+    summary.appendChild(createRunOutcome(outcome));
+  }
+
+  // Dismiss spinner — run is complete
+  row.classList.remove("active-run");
+  if (activeRunId === runId) {
+    if (activeTimer) clearTimeout(activeTimer);
+    activeRunId = null;
+    activeTimer = null;
   }
 }
 
@@ -520,12 +528,17 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   row.className = "run";
   runElements.set(run.run_id, row);
 
+  const summary = document.createElement("div");
+  summary.className = "run-summary";
+
   const header = createRunHeader(run);
-  row.appendChild(header);
+  summary.appendChild(header);
 
   if (run.run_outcome) {
-    row.appendChild(createRunOutcome(run.run_outcome));
+    summary.appendChild(createRunOutcome(run.run_outcome));
   }
+
+  row.appendChild(summary);
 
   const promptsContainer = document.createElement("div");
   promptsContainer.className = "run-prompts";
@@ -534,7 +547,7 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   }
   row.appendChild(promptsContainer);
 
-  header.addEventListener("click", () => {
+  summary.addEventListener("click", () => {
     row.classList.toggle("expanded");
   });
 
@@ -608,18 +621,20 @@ function createPromptRow(prompt: PromptLogEntry, step: number): HTMLElement {
   stepEl.textContent = String(step);
   header.appendChild(stepEl);
 
-  if (prompt.prompt_type) {
-    const typeEl = document.createElement("span");
-    typeEl.className = "prompt-type";
-    typeEl.textContent = prompt.prompt_type;
-    header.appendChild(typeEl);
-  }
+  const iconEl = document.createElement("span");
+  iconEl.className = "prompt-tools";
+  iconEl.innerHTML = prompt.has_tools
+    ? '<i class="fa-solid fa-wrench"></i>'
+    : '<i class="fa-solid fa-comment"></i>';
+  header.appendChild(iconEl);
 
-  if (prompt.has_tools) {
-    const toolsEl = document.createElement("span");
-    toolsEl.className = "prompt-tools";
-    toolsEl.innerHTML = '<i class="fa-solid fa-wrench"></i>';
-    header.appendChild(toolsEl);
+  const snippet = extractLastTurnSnippet(prompt);
+  if (snippet) {
+    const snippetEl = document.createElement("span");
+    snippetEl.className = "prompt-snippet";
+    snippetEl.textContent = snippet;
+    snippetEl.title = snippet;
+    header.appendChild(snippetEl);
   }
 
   const meta = document.createElement("span");
@@ -742,6 +757,50 @@ function populateFilter(agentNames: string[]): void {
     agentFilterEl.appendChild(option);
   }
   agentFilterEl.value = previous;
+}
+
+const SNIPPET_MAX_CHARS = 80;
+
+function extractLastTurnSnippet(prompt: PromptLogEntry): string {
+  const response = prompt.response as Record<string, unknown>;
+  const choices = response.choices as Record<string, unknown>[] | undefined;
+  if (!choices || choices.length === 0) return "";
+  const message = choices[0].message as Record<string, unknown> | undefined;
+  if (!message) return "";
+
+  // Check for tool calls first
+  const toolCalls = message.tool_calls as Record<string, unknown>[] | undefined;
+  if (toolCalls && toolCalls.length > 0) {
+    const names = toolCalls.map((tc) => {
+      const fn = tc.function as Record<string, unknown> | undefined;
+      return fn?.name ?? "tool";
+    });
+    const args = toolCalls.map((tc) => {
+      const fn = tc.function as Record<string, unknown> | undefined;
+      const raw = fn?.arguments;
+      if (typeof raw === "string") {
+        try {
+          const parsed = JSON.parse(raw);
+          return parsed.queries ? parsed.queries.join(", ") : raw;
+        } catch { return raw; }
+      }
+      if (typeof raw === "object" && raw !== null) {
+        const obj = raw as Record<string, unknown>;
+        return obj.queries ? (obj.queries as string[]).join(", ") : JSON.stringify(raw);
+      }
+      return "";
+    });
+    const text = names.map((n, i) => `${n}(${args[i]})`).join(", ");
+    if (text.length <= SNIPPET_MAX_CHARS) return text;
+    return text.slice(0, SNIPPET_MAX_CHARS) + "…";
+  }
+
+  // Fall back to text content
+  const content = message.content as string | null;
+  if (!content) return "";
+  const text = content.replace(/\s+/g, " ").trim();
+  if (text.length <= SNIPPET_MAX_CHARS) return text;
+  return text.slice(0, SNIPPET_MAX_CHARS) + "…";
 }
 
 function extractPromptType(run: PromptLogRun): string {
@@ -1127,27 +1186,25 @@ function createConfigItem(param: RuntimeConfigParam): HTMLElement {
   const item = document.createElement("div");
   item.className = "config-item";
 
-  const info = document.createElement("div");
-  info.className = "config-info";
+  const header = document.createElement("div");
+  header.className = "config-header";
 
   const label = document.createElement("label");
   label.className = "config-label";
   label.textContent = param.description;
   label.htmlFor = `config-${param.key}`;
 
-  const key = document.createElement("div");
+  const key = document.createElement("span");
   key.className = "config-key";
   key.textContent = param.key;
-
-  info.appendChild(label);
-  info.appendChild(key);
-
-  const controls = document.createElement("div");
-  controls.className = "config-controls";
 
   const defaultVal = document.createElement("span");
   defaultVal.className = "config-default";
   defaultVal.textContent = `default: ${param.default}`;
+
+  header.appendChild(label);
+  header.appendChild(key);
+  header.appendChild(defaultVal);
 
   const input = document.createElement("input");
   input.id = `config-${param.key}`;
@@ -1156,6 +1213,7 @@ function createConfigItem(param: RuntimeConfigParam): HTMLElement {
   if (param.type === "int") input.step = "1";
   if (param.type === "float") input.step = "any";
   input.value = param.value;
+  input.placeholder = param.default;
   if (param.value !== param.default) input.classList.add("modified");
 
   input.addEventListener("change", () => {
@@ -1167,11 +1225,8 @@ function createConfigItem(param: RuntimeConfigParam): HTMLElement {
     });
   });
 
-  controls.appendChild(defaultVal);
-  controls.appendChild(input);
-
-  item.appendChild(info);
-  item.appendChild(controls);
+  item.appendChild(header);
+  item.appendChild(input);
   return item;
 }
 

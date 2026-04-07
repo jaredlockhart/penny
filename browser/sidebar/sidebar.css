@@ -124,6 +124,7 @@ body {
   color: var(--text-muted);
   flex-shrink: 0;
   margin-left: auto;
+  margin-right: 4px;
 }
 
 /* --- Status indicator --- */
