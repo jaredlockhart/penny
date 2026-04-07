@@ -178,7 +178,13 @@ class ThinkingAgent(Agent):
         if not self._tool_result_text:
             self._record_outcome(run_id, "Discard: no search results")
             return False
-        combined = "\n\n---\n\n".join(self._tool_result_text)
+        combined = self._filter_page_reads()
+        if not combined:
+            self._record_outcome(run_id, "Discard: no page reads")
+            return False
+        if not self._tool_result_images:
+            self._record_outcome(run_id, "Discard: no image")
+            return False
         report = await self._summarize_with_url_validation(combined, run_id, prompt_type)
         if report and len(report.split()) < PennyConstants.MIN_THOUGHT_WORDS:
             logger.info(
@@ -271,6 +277,24 @@ class ThinkingAgent(Agent):
                 return pref.content
         return None
 
+    # Section prefix for search result snippets (vs page reads)
+    _SEARCH_SECTION_PREFIX = "## search:"
+
+    def _filter_page_reads(self) -> str:
+        """Extract only page-read sections from tool results, excluding search snippets.
+
+        Search snippets are titles+links only — summarizing from them produces
+        shallow output. Page reads have the actual content worth distilling.
+        Returns empty string if no page reads were captured.
+        """
+        separator = "\n\n---\n\n"
+        page_sections: list[str] = []
+        for tool_result in self._tool_result_text:
+            for section in tool_result.split(separator):
+                if not section.startswith(self._SEARCH_SECTION_PREFIX):
+                    page_sections.append(section)
+        return separator.join(page_sections)
+
     # ── Model calls ────────────────────────────────────────────────────────
 
     async def _summarize_text(
@@ -293,7 +317,7 @@ class ThinkingAgent(Agent):
     async def _summarize_with_url_validation(
         self, combined: str, run_id: str, prompt_type: str | None = None
     ) -> str:
-        """Summarize monologue, retrying if the report contains hallucinated URLs."""
+        """Summarize monologue, retrying on empty or hallucinated URLs."""
         source_text = self._get_source_text()
         report = ""
         for attempt in range(1 + self.SUMMARY_URL_RETRIES):
@@ -301,7 +325,12 @@ class ThinkingAgent(Agent):
                 combined, Prompt.THINKING_REPORT_PROMPT, run_id, prompt_type
             )
             if not report:
-                return ""
+                logger.warning(
+                    "[inner_monologue] summary attempt %d/%d returned empty, retrying",
+                    attempt + 1,
+                    1 + self.SUMMARY_URL_RETRIES,
+                )
+                continue
             bad_urls = self._find_hallucinated_urls(report, source_text)
             if not bad_urls:
                 return report
@@ -312,7 +341,8 @@ class ThinkingAgent(Agent):
                 len(bad_urls),
                 ", ".join(u[:80] for u in bad_urls),
             )
-        logger.warning("[inner_monologue] exhausted URL validation retries, using last attempt")
+        if report:
+            logger.warning("[inner_monologue] exhausted URL validation retries, using last attempt")
         return report
 
     async def _embed_and_serialize(self, text: str) -> bytes | None:

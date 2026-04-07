@@ -190,7 +190,7 @@ def running_penny(signal_server) -> Callable[[Config], AbstractAsyncContextManag
             # real retry/sleep loops when no browser extension is connected
             def mock_browse():
                 return (
-                    AsyncMock(return_value=("Mock search results", None)),
+                    AsyncMock(return_value=("Mock search results", "data:image/png;base64,mock")),
                     MagicMock(check_domain=AsyncMock()),
                 )
 
