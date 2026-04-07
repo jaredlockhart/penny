@@ -111,18 +111,8 @@ async def test_send_notify_thought_candidate(
     running_penny,
     monkeypatch,
 ):
-    """Thought candidate generates and sends a message."""
+    """Thought notification sends the thought content directly — no LLM rewrite."""
     config = make_config(notify_candidates=1)
-
-    requests_seen: list[dict] = []
-
-    def handler(request, count):
-        requests_seen.append(request)
-        return mock_llm._make_text_response(
-            request, "hey, i was just thinking about quantum computing!"
-        )
-
-    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_notify(penny)
@@ -131,72 +121,17 @@ async def test_send_notify_thought_candidate(
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
         assert result is True
 
-        # Verify message was sent via the mock Signal server
+        # Thought content sent directly via Signal — no LLM rewrite
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
         response = signal_server.outgoing_messages[-1]
-        assert "quantum" in response["message"].lower()
+        assert "quantum computing" in response["message"].lower()
 
         # Thought should be marked as notified
         unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
         assert unnotified is None
 
-        # prompt_type should be the thought title, not generic "thought"
-        from sqlmodel import Session, select
-
-        from penny.database.models import PromptLog
-
-        with Session(penny.db.engine) as session:
-            prompt_types = [
-                log.prompt_type for log in session.exec(select(PromptLog)).all() if log.prompt_type
-            ]
-        assert "Quantum Computing Advances" in prompt_types
-
-        # Full system prompt structure assertion
-        system_text = [
-            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
-        ][0]
-        lines = system_text.split("\n")
-        assert lines[0].startswith("Current date and time: ")
-        rest = "\n".join(lines[1:])
-        max_q = int(penny.config.runtime.CHAT_MAX_QUERIES)
-        expected = f"""\
-
-## Identity
-You are Penny. You and the user are friends who text regularly. \
-This is mid-conversation — not a fresh chat.
-
-Voice:
-- Reply like you're continuing a text thread.
-- React to what the user actually said before giving information. \
-If they corrected you, own it. If they expressed excitement, match it. \
-If they asked a follow-up, connect it to what came before.
-- Present information naturally but you can still use short formatted blocks \
-(bold names, links) when listing products or facts. \
-Just wrap them in conversational text, not a clinical dump.
-- Finish every message with an emoji.
-
-## Context
-### User Profile
-The user's name is Test User.
-
-### Your Latest Thought
-I've been thinking about quantum computing
-
-## Instructions
-You are reaching out to a friend proactively — sharing something \
-interesting you've been thinking about or found in the news.
-
-You have tools available:
-- **browse**: Look things up. Pass up to {max_q} queries and/or URLs.
-
-If your context includes 'Your Latest Thought', share it with the \
-user. Start with a casual greeting, then tell them the whole thing \
-— don't compress or summarize it, just relay the details in your \
-own voice. You can search to add a fresh angle or find a link, but \
-avoid re-searching the same topic.
-
-Every fact and detail in your message must come from your context."""
-        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
+        # No LLM chat calls — thought sent as-is
+        assert len(mock_llm.requests) == 0
 
 
 @pytest.mark.asyncio
@@ -208,15 +143,10 @@ async def test_multiple_candidates_scored_by_embedding(
     running_penny,
     monkeypatch,
 ):
-    """Multiple thoughts scored by cached embedding; only winner
-    goes through the model and gets sent."""
+    """Multiple thoughts scored by cached embedding; winner sent directly."""
     config = make_config(
         notify_candidates=3,
         llm_embedding_model="test-embedding",
-    )
-
-    mock_llm.set_response_handler(
-        lambda request, count: mock_llm._make_text_response(request, "here's something cool!")
     )
 
     async with running_penny(config) as penny:
@@ -255,11 +185,8 @@ async def test_multiple_candidates_scored_by_embedding(
 
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
 
-        # -- Only 1 Ollama chat call (the winner), not 3
-        assert len(mock_llm.requests) == 1
-
-        # -- 1 embed call: the outgoing message (at send time), not during scoring
-        assert len(mock_llm.embed_requests) == 1
+        # -- No LLM chat calls — thoughts sent directly
+        assert len(mock_llm.requests) == 0
 
         # -- Notification was sent via Signal
         msg = signal_server.outgoing_messages[-1]
@@ -553,7 +480,7 @@ async def test_notify_thought_context_shows_specific_thought(
 
 
 @pytest.mark.asyncio
-async def test_disqualified_candidates_excluded(
+async def test_thought_sent_directly_without_llm(
     signal_server,
     mock_llm,
     make_config,
@@ -561,23 +488,20 @@ async def test_disqualified_candidates_excluded(
     running_penny,
     monkeypatch,
 ):
-    """Error fallbacks and model refusals are excluded from candidates."""
+    """Thought content sent as-is — no LLM rewrite, always succeeds."""
     config = make_config(notify_candidates=1)
-
-    def handler(request, count):
-        return mock_llm._make_text_response(
-            request, "Sorry, I couldn't complete that request within the allowed steps."
-        )
-
-    mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
         _seed_notify(penny)
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
 
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
-        assert result is False
-        assert len(signal_server.outgoing_messages) == 0
+        assert result is True
+
+        await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
+        msg = signal_server.outgoing_messages[-1]["message"]
+        assert "quantum computing" in msg.lower()
+        assert len(mock_llm.requests) == 0
 
 
 def test_is_disqualified_error_strings():
@@ -607,7 +531,7 @@ def test_is_disqualified_allows_normal_messages():
 
 
 @pytest.mark.asyncio
-async def test_thought_tools_unavailable_sends_message(
+async def test_thought_with_image_includes_attachment(
     signal_server,
     mock_llm,
     make_config,
@@ -615,27 +539,30 @@ async def test_thought_tools_unavailable_sends_message(
     running_penny,
     monkeypatch,
 ):
-    """Thought candidate sends tools-unavailable message when search API fails."""
-    from penny.responses import PennyResponse
-
+    """Thought with an image sends it as an attachment."""
     config = make_config(notify_candidates=1)
 
-    # Force thought candidate path
-    def handler(request, count):
-        return mock_llm._make_text_response(
-            request, PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(tools="search")
-        )
-
-    mock_llm.set_response_handler(handler)
-
     async with running_penny(config) as penny:
-        _seed_notify(penny)
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello"
+        )
+        pref = penny.db.preferences.add(user=TEST_SENDER, content="space", valence="positive")
+        penny.db.thoughts.add(
+            TEST_SENDER,
+            "Cool space discovery",
+            preference_id=pref.id if pref else None,
+            title="Space Discovery",
+            image="data:image/png;base64,mockimage",
+        )
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
 
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
         assert result is True
 
         await wait_until(lambda: len(signal_server.outgoing_messages) > 0)
-        msg = signal_server.outgoing_messages[-1]["message"]
-        assert "wasn't able to get results" in msg
-        assert "search" in msg
+        msg = signal_server.outgoing_messages[-1]
+        assert "space" in msg["message"].lower()
+
+        # Thought should be marked as notified
+        unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
+        assert unnotified is None

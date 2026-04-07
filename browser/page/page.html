@@ -38,10 +38,12 @@
 
   <!-- Prompts panel -->
   <div id="panel-prompts" class="panel hidden">
-    <div id="prompts-header">
-      <select id="agent-filter">
-        <option value="">All agents</option>
-      </select>
+    <div id="agent-tabs">
+      <button class="sub-tab active" data-agent=""><i class="fa-solid fa-layer-group"></i> All</button>
+      <button class="sub-tab" data-agent="inner_monologue"><i class="fa-regular fa-lightbulb"></i> Thinking</button>
+      <button class="sub-tab" data-agent="chat"><i class="fa-solid fa-comment"></i> Chat</button>
+      <button class="sub-tab" data-agent="notify"><i class="fa-solid fa-bell"></i> Notify</button>
+      <button class="sub-tab" data-agent="history"><i class="fa-solid fa-clock-rotate-left"></i> History</button>
     </div>
     <div id="prompts-loading" class="panel-loading">Loading prompt logs...</div>
     <div id="runs"></div>
