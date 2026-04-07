@@ -79,8 +79,8 @@ h1 {
 }
 
 #header-icon {
-  width: 32px;
-  height: 32px;
+  width: 48px;
+  height: 48px;
 }
 
 .hidden {
@@ -125,33 +125,37 @@ h1 {
   padding: 48px 0;
 }
 
-/* --- Thought sub-tabs --- */
+/* --- Sub-tabs (thoughts new/archive, prompts agent filter) --- */
 
-#thought-tabs {
+#thought-tabs,
+#agent-tabs {
   display: flex;
-  gap: 4px;
+  border-bottom: 1px solid var(--border);
   margin-bottom: 16px;
 }
 
-.thought-tab {
-  padding: 6px 16px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+.thought-tab,
+.sub-tab {
+  padding: 8px 16px;
+  border: none;
   background: none;
   color: var(--text-muted);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
 }
 
-.thought-tab:hover {
+.thought-tab:hover,
+.sub-tab:hover {
   color: var(--text-primary);
 }
 
-.thought-tab.active {
-  background: var(--accent);
-  color: var(--bg-primary);
-  border-color: var(--accent);
+.thought-tab.active,
+.sub-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 /* --- Load more button --- */
@@ -402,26 +406,6 @@ h1 {
 
 /* --- Prompts --- */
 
-#prompts-header {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 16px;
-}
-
-#agent-filter {
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 13px;
-  cursor: pointer;
-  outline: none;
-}
-
-#agent-filter:hover {
-  border-color: var(--accent);
-}
 
 #runs {
   display: flex;
