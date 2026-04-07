@@ -166,17 +166,18 @@ class BrowseTool(Tool):
         )
 
     async def _read_page(self, url: str) -> SearchResult | str:
-        """Read a single URL via the browser extension, retrying on disconnect."""
+        """Read a single URL via the browser extension, retrying with backoff on disconnect."""
         for attempt in range(1 + PennyConstants.BROWSE_RETRIES):
+            delay = PennyConstants.BROWSE_RETRY_DELAY * (2**attempt)
             connection = self._browse_provider() if self._browse_provider else None
             if not connection:
                 if attempt < PennyConstants.BROWSE_RETRIES:
                     logger.info(
                         "No browser connection, retrying in %.0fs (%s)",
-                        PennyConstants.BROWSE_RETRY_DELAY,
+                        delay,
                         url,
                     )
-                    await asyncio.sleep(PennyConstants.BROWSE_RETRY_DELAY)
+                    await asyncio.sleep(delay)
                     continue
                 return f"No browser connected — cannot read {url}."
 
@@ -189,10 +190,10 @@ class BrowseTool(Tool):
                 if attempt < PennyConstants.BROWSE_RETRIES:
                     logger.info(
                         "Browser disconnected, retrying in %.0fs (%s)",
-                        PennyConstants.BROWSE_RETRY_DELAY,
+                        delay,
                         url,
                     )
-                    await asyncio.sleep(PennyConstants.BROWSE_RETRY_DELAY)
+                    await asyncio.sleep(delay)
                     continue
                 raise
 

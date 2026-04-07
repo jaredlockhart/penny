@@ -5,6 +5,7 @@ import contextlib
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -184,6 +185,31 @@ def running_penny(signal_server) -> Callable[[Config], AbstractAsyncContextManag
         try:
             # Wait for WebSocket connection to establish
             await wait_until(lambda: len(signal_server._websockets) > 0)
+
+            # Mock browse provider on all agents so tool calls don't hit
+            # real retry/sleep loops when no browser extension is connected
+            def mock_browse():
+                return (
+                    AsyncMock(return_value=("Mock search results", None)),
+                    MagicMock(check_domain=AsyncMock()),
+                )
+
+            penny.chat_agent._browse_provider = mock_browse
+            penny.thinking_agent._browse_provider = mock_browse
+
+            # Wrap the chat agent factory so /test command agents also
+            # get the mock browse provider
+            test_cmd = penny.command_registry.get("test")
+            if test_cmd:
+                original_factory = test_cmd._message_agent_factory
+
+                def patched_factory(db):
+                    agent = original_factory(db)
+                    agent._browse_provider = mock_browse
+                    return agent
+
+                test_cmd._message_agent_factory = patched_factory  # ty: ignore[invalid-assignment]
+
             yield penny
         finally:
             penny_task.cancel()

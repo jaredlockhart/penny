@@ -48,7 +48,7 @@ class PennyConstants:
         "play.google.com",
         "apps.apple.com",
     )
-    BROWSE_RETRIES = 2
+    BROWSE_RETRIES = 4
     BROWSE_RETRY_DELAY = 1.0
     MAX_SEARCH_LINKS = 10
     DISLIKE_FILTER_THRESHOLD = 0.8
