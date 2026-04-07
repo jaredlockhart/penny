@@ -26,6 +26,7 @@ def _seed_notify(penny):
         TEST_SENDER,
         "I've been thinking about quantum computing",
         preference_id=pref.id if pref else None,
+        title="Quantum Computing Advances",
     )
 
 
@@ -138,6 +139,17 @@ async def test_send_notify_thought_candidate(
         # Thought should be marked as notified
         unnotified = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
         assert unnotified is None
+
+        # prompt_type should be the thought title, not generic "thought"
+        from sqlmodel import Session, select
+
+        from penny.database.models import PromptLog
+
+        with Session(penny.db.engine) as session:
+            prompt_types = [
+                log.prompt_type for log in session.exec(select(PromptLog)).all() if log.prompt_type
+            ]
+        assert "Quantum Computing Advances" in prompt_types
 
         # Full system prompt structure assertion
         system_text = [
