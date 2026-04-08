@@ -53,6 +53,7 @@ class PennyConstants:
     MAX_SEARCH_LINKS = 10
     BROWSE_SEARCH_HEADER = "## search: "
     BROWSE_PAGE_HEADER = "## browse: "
+    BROWSE_TITLE_PREFIX = "Title: "
     SECTION_SEPARATOR = "\n\n---\n\n"
     DISLIKE_FILTER_THRESHOLD = 0.8
 
@@ -70,13 +71,6 @@ class PennyConstants:
     # GitHub constants
     GITHUB_REPO_OWNER = "jaredlockhart"
     GITHUB_REPO_NAME = "penny"
-
-    class HistoryDuration(StrEnum):
-        """Duration granularity for conversation history summaries."""
-
-        DAILY = "daily"
-        WEEKLY = "weekly"
-        MONTHLY = "monthly"
 
     class PreferenceValence(StrEnum):
         """Valence of a user preference."""
@@ -126,7 +120,6 @@ class PennyConstants:
     VISION_SUPPORTED_CONTENT_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
 
     # Agent loop constants
-    HISTORY_MAX_STEPS = 1
     VISION_MAX_STEPS = 1
     CHECKIN_MAX_STEPS = 1
     RESPONSE_VALIDATION_RETRIES = 5
@@ -143,9 +136,6 @@ class PennyConstants:
     CHECKIN_COOLDOWN_SECONDS = 86400
     THOUGHT_TOPIC_COOLDOWN_SECONDS = 86400
     NOTIFY_URL_RETRIES = 2
-
-    # History constants
-    MAX_WEEKLY_ROLLUPS_PER_RUN = 2
 
     # Browser channel constants
     TOOL_REQUEST_TIMEOUT = 60.0

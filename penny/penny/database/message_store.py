@@ -354,49 +354,6 @@ class MessageStore:
             ).all()
         )
 
-    def get_messages_in_range(
-        self, sender: str, start: datetime, end: datetime
-    ) -> list[MessageLog]:
-        """Get user messages within a date range, oldest first.
-
-        Returns only incoming messages from the user — outgoing (Penny's
-        responses and proactive notifications) are excluded so history
-        summaries reflect what the user actually talked about.
-        """
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.sender == sender,
-                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
-                        MessageLog.is_reaction == False,  # noqa: E712
-                        MessageLog.timestamp >= start,
-                        MessageLog.timestamp < end,
-                    )
-                    .order_by(MessageLog.timestamp)  # ty: ignore[invalid-argument-type]
-                ).all()
-            )
-
-    def get_reactions_in_range(
-        self, sender: str, start: datetime, end: datetime
-    ) -> list[MessageLog]:
-        """Get reaction messages from a user within a date range, oldest first."""
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.sender == sender,
-                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
-                        MessageLog.is_reaction == True,  # noqa: E712
-                        MessageLog.timestamp >= start,
-                        MessageLog.timestamp < end,
-                    )
-                    .order_by(MessageLog.timestamp)  # ty: ignore[invalid-argument-type]
-                ).all()
-            )
-
     def get_messages_since(
         self, sender: str, since: datetime, limit: int = 100
     ) -> list[MessageLog]:
@@ -567,6 +524,22 @@ class MessageStore:
                         self._on_run_outcome_set(run_id, outcome)
         except Exception as e:
             logger.error("Failed to set run_outcome for %s: %s", run_id, e)
+
+    def get_prompts_with_browse_after(self, after: datetime, limit: int) -> list[PromptLog]:
+        """Get prompts containing browse results after a timestamp, oldest first."""
+        browse_pattern = f"%{PennyConstants.BROWSE_PAGE_HEADER}%"
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(PromptLog)
+                    .where(
+                        PromptLog.timestamp > after,
+                        PromptLog.messages.like(browse_pattern),  # ty: ignore[union-attribute]
+                    )
+                    .order_by(PromptLog.timestamp.asc())
+                    .limit(limit)
+                ).all()
+            )
 
     def get_prompt_log_agent_names(self) -> list[str]:
         """Get distinct agent names from prompt logs."""
@@ -773,40 +746,3 @@ class MessageStore:
                     .order_by(MessageLog.timestamp.desc())
                 ).all()
             )
-
-    def get_latest_message_time_in_range(
-        self, sender: str, start: datetime, end: datetime
-    ) -> datetime | None:
-        """Get timestamp of the most recent incoming user message in a range.
-
-        Must match the same filters as get_messages_in_range (incoming,
-        non-reaction) so _already_rolled_up correctly detects when there
-        are no new messages to summarize.
-        """
-        with self._session() as session:
-            return session.exec(
-                select(MessageLog.timestamp)
-                .where(
-                    MessageLog.sender == sender,
-                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
-                    MessageLog.is_reaction == False,  # noqa: E712
-                    MessageLog.timestamp >= start,
-                    MessageLog.timestamp < end,
-                )
-                .order_by(MessageLog.timestamp.desc())
-                .limit(1)
-            ).first()
-
-    def get_first_message_time(self, sender: str) -> datetime | None:
-        """Get timestamp of the earliest incoming message from a user."""
-        with self._session() as session:
-            return session.exec(
-                select(MessageLog.timestamp)
-                .where(
-                    MessageLog.sender == sender,
-                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
-                    MessageLog.is_reaction == False,  # noqa: E712
-                )
-                .order_by(MessageLog.timestamp)  # ty: ignore[invalid-argument-type]
-                .limit(1)
-            ).first()

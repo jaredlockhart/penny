@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from similarity.embeddings import find_similar
+from similarity.embeddings import cosine_similarity
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
@@ -20,7 +20,7 @@ from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.llm.embeddings import deserialize_embedding
-from penny.llm.similarity import embed_text
+from penny.llm.models import LlmError
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -829,7 +829,6 @@ class Agent:
             self._identity_section(),
             self._context_block(
                 self._profile_section(user),
-                self._history_section(user),
                 self._thought_section(user),
                 self._dislike_section(user),
             ),
@@ -873,87 +872,6 @@ class Agent:
         except Exception:
             return None
 
-    def _history_section(self, sender: str) -> str | None:
-        """Build conversation history with weekly summaries and daily details.
-
-        Weekly rollups replace their constituent daily entries to avoid
-        duplication. Only daily entries outside any weekly range are shown.
-
-        Format:
-            Week of Mar 3:
-            - weekly theme 1
-            Mar 15:
-            - daily topic 1
-            Today:
-            - daily topic 2
-        """
-        try:
-            lines: list[str] = []
-            weekly_entries = self._get_weekly_entries(sender)
-            lines.extend(self._format_weekly_entries(weekly_entries))
-            lines.extend(self._format_daily_entries(sender, weekly_entries))
-            if not lines:
-                return None
-
-            logger.debug("Built history context")
-            return "### Conversation History\n" + "\n".join(lines)
-        except Exception:
-            logger.warning("History context retrieval failed, proceeding without")
-            return None
-
-    def _get_weekly_entries(self, sender: str) -> list:
-        """Fetch weekly history entries."""
-        weekly_limit = int(self.config.runtime.WEEKLY_CONTEXT_LIMIT)
-        return self.db.history.get_recent(
-            sender, PennyConstants.HistoryDuration.WEEKLY, limit=weekly_limit
-        )
-
-    def _format_weekly_entries(self, entries: list) -> list[str]:
-        """Format weekly history entries with 'Week of' date labels."""
-        lines: list[str] = []
-        for entry in entries:
-            date_label = f"Week of {entry.period_start.strftime('%b %-d')}"
-            topics = self._extract_topic_lines(entry.topics)
-            if topics:
-                lines.append(f"{date_label}:")
-                lines.extend(f"- {t}" for t in topics)
-        return lines
-
-    def _format_daily_entries(self, sender: str, weekly_entries: list) -> list[str]:
-        """Format daily history entries, skipping days covered by a weekly rollup."""
-        daily_limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
-        entries = self.db.history.get_recent(
-            sender, PennyConstants.HistoryDuration.DAILY, limit=daily_limit
-        )
-        today = self._midnight_today()
-        weekly_ranges = [(w.period_start, w.period_end) for w in weekly_entries]
-        lines: list[str] = []
-        for entry in entries:
-            if self._covered_by_weekly(entry.period_start, weekly_ranges):
-                continue
-            is_today = entry.period_start == today
-            date_label = "Today" if is_today else entry.period_start.strftime("%b %-d")
-            topics = self._extract_topic_lines(entry.topics)
-            if topics:
-                lines.append(f"{date_label}:")
-                lines.extend(f"- {t}" for t in topics)
-        return lines
-
-    @staticmethod
-    def _covered_by_weekly(day_start, weekly_ranges: list[tuple]) -> bool:
-        """Check if a daily entry falls within a completed weekly rollup."""
-        return any(week_start <= day_start < week_end for week_start, week_end in weekly_ranges)
-
-    @staticmethod
-    def _extract_topic_lines(topics: str) -> list[str]:
-        """Parse topic bullet text into clean topic strings."""
-        result: list[str] = []
-        for line in topics.strip().splitlines():
-            topic = line.strip().lstrip("- ").strip()
-            if topic:
-                result.append(topic)
-        return result
-
     def _thought_section(self, sender: str) -> str | None:
         """Build recent thinking summary context. Overridden by ChatAgent and ThinkingAgent."""
         try:
@@ -989,76 +907,173 @@ class Agent:
             logger.warning("Dislike context retrieval failed, proceeding without")
             return None
 
-    async def _related_messages_section(self, sender: str, content: str) -> str | None:
-        """Retrieve past user messages semantically similar to the current message."""
-        if not self._embedding_model_client:
+    async def _related_knowledge_section(
+        self, conversation_embeddings: list[list[float]] | None
+    ) -> str | None:
+        """Retrieve knowledge entries relevant to the current conversation."""
+        if not conversation_embeddings:
             return None
         try:
-            return await self._build_related_messages(sender, content)
+            return self._build_related_knowledge(conversation_embeddings)
+        except Exception:
+            logger.warning("Knowledge retrieval failed, proceeding without")
+            return None
+
+    def _build_related_knowledge(self, conversation_embeddings: list[list[float]]) -> str | None:
+        """Score knowledge entries against conversation, return top N formatted."""
+        entries = self.db.knowledge.get_with_embeddings()
+        if not entries:
+            return None
+
+        limit = int(self.config.runtime.RELATED_KNOWLEDGE_LIMIT)
+        scored = self._score_candidates_weighted(
+            conversation_embeddings, entries, lambda entry: deserialize_embedding(entry.embedding)
+        )
+        top = scored[:limit]
+        if not top:
+            return None
+        return self._format_knowledge(top)
+
+    async def _related_messages_section(
+        self, sender: str, conversation_embeddings: list[list[float]] | None
+    ) -> str | None:
+        """Retrieve past user messages semantically similar to the conversation."""
+        if not conversation_embeddings:
+            return None
+        try:
+            return self._build_related_messages(sender, conversation_embeddings)
         except Exception:
             logger.warning("Related messages retrieval failed, proceeding without")
             return None
 
-    async def _build_related_messages(self, sender: str, content: str) -> str | None:
-        """Embed current message, find similar past messages, format as context."""
-        query_vec = await embed_text(self._embedding_model_client, content)
-        if query_vec is None:
-            return None
-
+    def _build_related_messages(
+        self, sender: str, conversation_embeddings: list[list[float]]
+    ) -> str | None:
+        """Score past messages against conversation, return top N formatted."""
         messages = self.db.messages.get_incoming_with_embeddings(sender)
         if not messages:
             return None
 
-        cutoff = self._conversation_start(sender)
+        conversation_ids = self._get_conversation_message_ids(sender)
         candidates = [
-            (message.id, deserialize_embedding(message.embedding))
+            message
             for message in messages
-            if message.embedding and message.timestamp < cutoff and message.id is not None
+            if message.embedding and message.id not in conversation_ids and message.id is not None
         ]
         if not candidates:
             return None
 
         limit = int(self.config.runtime.RELATED_MESSAGES_LIMIT)
-        results = find_similar(query_vec, candidates, top_k=limit)
-        if not results:
+        scored = self._score_candidates_weighted(
+            conversation_embeddings,
+            candidates,
+            lambda message: deserialize_embedding(message.embedding),
+        )
+        top = scored[:limit]
+        if not top:
             return None
 
-        messages_by_id = {message.id: message for message in messages if message.id is not None}
-        return self._format_related_messages(results, messages_by_id)
+        return self._format_related_messages(top)
+
+    # ── Weighted scoring helpers ──────────────────────────────────────────
+
+    async def _embed_conversation(self, sender: str, content: str) -> list[list[float]] | None:
+        """Embed each message in the current conversation + the new message."""
+        if not self._embedding_model_client:
+            return None
+        conversation = self._build_conversation(sender)
+        texts = [text for _role, text in conversation] + [content]
+        try:
+            return await self._embedding_model_client.embed(texts)
+        except LlmError:
+            logger.warning("Conversation embedding failed")
+            return None
+
+    def _score_candidates_weighted(
+        self,
+        conversation_embeddings: list[list[float]],
+        candidates: list,
+        get_embedding: Callable,
+        decay: float = 0.5,
+    ) -> list:
+        """Score candidates using exponentially-decayed conversation similarity.
+
+        Returns candidates sorted by weighted score descending.
+        """
+        scored: list[tuple[float, Any]] = []
+        for candidate in candidates:
+            candidate_vec = get_embedding(candidate)
+            score = self._weighted_similarity(conversation_embeddings, candidate_vec, decay)
+            scored.append((score, candidate))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [candidate for _score, candidate in scored]
 
     @staticmethod
-    def _format_related_messages(
-        results: list[tuple[int, float]],
-        messages_by_id: dict[int, Any],
-    ) -> str:
-        """Format similarity results as dated message quotes, ordered chronologically."""
-        matched = []
-        for message_id, _score in results:
-            message = messages_by_id.get(message_id)
-            if message:
-                matched.append(message)
-        matched.sort(key=lambda message: message.timestamp)
+    def _weighted_similarity(
+        message_embeddings: list[list[float]],
+        candidate_embedding: list[float],
+        decay: float = 0.5,
+    ) -> float:
+        """Compute exponentially-decayed weighted average of cosine similarities.
+
+        Most recent message gets weight 1.0, previous gets decay,
+        before that decay^2, etc.
+        """
+        count = len(message_embeddings)
+        if count == 0:
+            return 0.0
+        total = 0.0
+        weight_sum = 0.0
+        for index, message_vec in enumerate(message_embeddings):
+            age = count - 1 - index
+            weight = decay**age
+            total += cosine_similarity(message_vec, candidate_embedding) * weight
+            weight_sum += weight
+        return total / weight_sum
+
+    # ── Context formatters ────────────────────────────────────────────────
+
+    @staticmethod
+    def _format_knowledge(entries: list) -> str:
+        """Format knowledge entries as titled paragraphs."""
+        sections: list[str] = []
+        for entry in entries:
+            sections.append(f"{entry.title}\n{entry.url}\n{entry.summary}")
+        if not sections:
+            return "### Knowledge"
+        return "### Knowledge\n" + "\n\n".join(sections)
+
+    @staticmethod
+    def _format_related_messages(messages: list) -> str:
+        """Format messages as dated quotes, ordered chronologically."""
+        messages_sorted = sorted(messages, key=lambda message: message.timestamp)
         lines: list[str] = []
-        for message in matched:
+        for message in messages_sorted:
             date_label = message.timestamp.strftime("%b %-d")
             lines.append(f'{date_label}: "{message.content}"')
         if not lines:
             return "### Related Past Messages"
         return "### Related Past Messages\n" + "\n".join(lines)
 
+    def _get_conversation_message_ids(self, sender: str) -> set[int]:
+        """Get IDs of messages in the current conversation window (last N)."""
+        try:
+            limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
+            messages = self.db.messages.get_messages_since(sender, since=datetime.min, limit=limit)
+            return {msg.id for msg in messages if msg.id is not None}
+        except Exception:
+            return set()
+
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
         """Build conversation history as strict user/assistant alternation.
 
-        Only includes messages since the last history rollup (or midnight
-        if no rollup exists), so rolled-up content isn't duplicated.
-        Consecutive same-role messages are merged with newlines to maintain
-        valid turn structure for the model.
+        Fetches the last N messages (no time boundary). Consecutive same-role
+        messages are merged with newlines to maintain valid turn structure.
         """
         conversation: list[tuple[str, str]] = []
         try:
             limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
-            since = self._conversation_start(sender)
-            messages = self.db.messages.get_messages_since(sender, since=since, limit=limit)
+            messages = self.db.messages.get_messages_since(sender, since=datetime.min, limit=limit)
             for msg in messages:
                 role = (
                     MessageRole.USER
@@ -1071,31 +1086,12 @@ class Agent:
                 else:
                     conversation.append((role, msg.content))
             if conversation:
-                logger.debug("Built conversation (%d turns since %s)", len(conversation), since)
+                logger.debug("Built conversation (%d turns)", len(conversation))
         except Exception:
             logger.warning("Conversation building failed, proceeding without")
         return conversation
 
-    def _conversation_start(self, sender: str) -> datetime:
-        """Determine where raw message history should begin.
-
-        Returns the latest rollup's period_end (so we don't duplicate
-        summarized content), or midnight today if no rollup exists.
-        """
-        latest = self.db.history.get_latest(sender, PennyConstants.HistoryDuration.DAILY)
-        if latest is not None:
-            return latest.period_end
-        return self._midnight_today()
-
     # ── Utilities ────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _midnight_today() -> datetime:
-        """Return midnight UTC for today as a naive datetime.
-
-        Naive because SQLite strips timezone info — all stored datetimes are naive UTC.
-        """
-        return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
