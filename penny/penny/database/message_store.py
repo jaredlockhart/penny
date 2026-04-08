@@ -525,13 +525,17 @@ class MessageStore:
         except Exception as e:
             logger.error("Failed to set run_outcome for %s: %s", run_id, e)
 
-    def get_prompts_after(self, after: datetime, limit: int) -> list[PromptLog]:
-        """Get prompts with timestamp > after, oldest first, for knowledge extraction."""
+    def get_prompts_with_browse_after(self, after: datetime, limit: int) -> list[PromptLog]:
+        """Get prompts containing browse results after a timestamp, oldest first."""
+        browse_pattern = f"%{PennyConstants.BROWSE_PAGE_HEADER}%"
         with self._session() as session:
             return list(
                 session.exec(
                     select(PromptLog)
-                    .where(PromptLog.timestamp > after)
+                    .where(
+                        PromptLog.timestamp > after,
+                        PromptLog.messages.like(browse_pattern),  # ty: ignore[union-attribute]
+                    )
                     .order_by(PromptLog.timestamp.asc())
                     .limit(limit)
                 ).all()

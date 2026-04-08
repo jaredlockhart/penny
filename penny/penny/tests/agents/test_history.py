@@ -551,3 +551,57 @@ async def test_extract_knowledge_respects_watermark(
         # Only the new prompt should be processed
         assert len(summaries_generated) == 1
         assert penny.db.knowledge.get_by_url("https://c.com") is not None
+
+
+def _insert_prompt_without_browse(penny):
+    """Insert a prompt log with no browse tool results."""
+    messages = json.dumps(
+        [
+            {"role": "system", "content": "test"},
+            {"role": "user", "content": "hey penny what's up"},
+            {"role": "assistant", "content": "not much!"},
+        ]
+    )
+    with penny.db.get_session() as session:
+        prompt = PromptLog(
+            model="test",
+            messages=messages,
+            response=json.dumps({"choices": []}),
+            agent_name="chat",
+            prompt_type="user_message",
+        )
+        session.add(prompt)
+        session.commit()
+        session.refresh(prompt)
+        return prompt.id
+
+
+@pytest.mark.asyncio
+async def test_extract_knowledge_skips_prompts_without_browse(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Knowledge extraction only queries prompts containing browse results."""
+    config = make_config(history_interval=99999.0)
+
+    summaries_generated = []
+
+    def handler(request, count):
+        summary = f"Summary {len(summaries_generated) + 1}"
+        summaries_generated.append(summary)
+        return mock_llm._make_text_response(request, summary)
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Insert many prompts without browse results
+        for _ in range(10):
+            _insert_prompt_without_browse(penny)
+
+        # Insert one prompt with browse results
+        _insert_prompt_with_browse(penny, "https://found.com", "Found Page", "Content")
+
+        await penny.history_agent._extract_knowledge()
+
+        # Only the browse-containing prompt should be processed
+        assert len(summaries_generated) == 1
+        assert penny.db.knowledge.get_by_url("https://found.com") is not None

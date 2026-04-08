@@ -307,7 +307,7 @@ ConfigParam(
     key="HISTORY_INTERVAL",
     description="Interval in seconds between history agent runs (preferences + knowledge)",
     type=float,
-    default=3600.0,
+    default=900.0,
     validator=_validate_positive_float,
     group=GROUP_HISTORY,
 )
@@ -332,9 +332,9 @@ ConfigParam(
 
 ConfigParam(
     key="KNOWLEDGE_EXTRACTION_BATCH_LIMIT",
-    description="Max prompts to process per knowledge extraction cycle",
+    description="Max browse-containing prompts to process per knowledge extraction cycle",
     type=int,
-    default=3,
+    default=20,
     validator=_validate_positive_int,
     group=GROUP_HISTORY,
 )

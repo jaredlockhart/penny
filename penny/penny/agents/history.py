@@ -83,7 +83,7 @@ class HistoryAgent(Agent):
         """Scan prompt logs for browse results and summarize into knowledge entries."""
         watermark = self.db.knowledge.get_latest_prompt_timestamp() or datetime.min
         batch_limit = int(self.config.runtime.KNOWLEDGE_EXTRACTION_BATCH_LIMIT)
-        prompts = self.db.messages.get_prompts_after(watermark, batch_limit)
+        prompts = self.db.messages.get_prompts_with_browse_after(watermark, batch_limit)
         if not prompts:
             return False
 
