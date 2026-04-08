@@ -305,37 +305,10 @@ ConfigParam(
 
 ConfigParam(
     key="HISTORY_INTERVAL",
-    description="Interval in seconds between history summarization runs",
+    description="Interval in seconds between history agent runs (preferences + knowledge)",
     type=float,
-    default=3600.0,
+    default=900.0,
     validator=_validate_positive_float,
-    group=GROUP_HISTORY,
-)
-
-ConfigParam(
-    key="HISTORY_MAX_DAYS_PER_RUN",
-    description="Max days to summarize per history agent execution",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
-    group=GROUP_HISTORY,
-)
-
-ConfigParam(
-    key="HISTORY_CONTEXT_LIMIT",
-    description="Max daily history entries to show in context",
-    type=int,
-    default=7,
-    validator=_validate_positive_int,
-    group=GROUP_HISTORY,
-)
-
-ConfigParam(
-    key="WEEKLY_CONTEXT_LIMIT",
-    description="Max weekly history entries to show in context",
-    type=int,
-    default=4,
-    validator=_validate_positive_int,
     group=GROUP_HISTORY,
 )
 
@@ -344,6 +317,24 @@ ConfigParam(
     description="Max similar past messages to inject into chat context",
     type=int,
     default=10,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
+)
+
+ConfigParam(
+    key="RELATED_KNOWLEDGE_LIMIT",
+    description="Max knowledge entries to inject into chat context",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
+)
+
+ConfigParam(
+    key="KNOWLEDGE_EXTRACTION_BATCH_LIMIT",
+    description="Max browse-containing prompts to process per knowledge extraction cycle",
+    type=int,
+    default=20,
     validator=_validate_positive_int,
     group=GROUP_HISTORY,
 )

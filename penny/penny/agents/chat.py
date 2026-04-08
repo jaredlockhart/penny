@@ -166,14 +166,21 @@ class ChatAgent(Agent):
         content: str | None = None,
         instructions: str | None = None,
     ) -> str:
-        """Identity + profile + related messages + page hint + instructions."""
-        related = await self._related_messages_section(user, content) if content else None
+        """Identity + profile + knowledge + related messages + page hint + instructions."""
+        conversation_embeddings = await self._embed_conversation(user, content) if content else None
+        knowledge = (
+            await self._related_knowledge_section(conversation_embeddings) if content else None
+        )
+        related = (
+            await self._related_messages_section(user, conversation_embeddings) if content else None
+        )
         return "\n\n".join(
             s
             for s in [
                 self._identity_section(),
                 self._context_block(
                     self._profile_section(user),
+                    knowledge,
                     related,
                     self._page_hint_section(),
                 ),

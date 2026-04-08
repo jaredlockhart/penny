@@ -1,12 +1,12 @@
-"""Integration tests for HistoryAgent: daily/weekly summarization and preference extraction."""
+"""Integration tests for HistoryAgent: preference extraction and knowledge extraction."""
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
 from penny.constants import PennyConstants
-from penny.database.models import MessageLog
+from penny.database.models import MessageLog, PromptLog
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -24,245 +24,6 @@ def _insert_message(penny, sender, content, direction, timestamp, **kwargs):
         session.commit()
         session.refresh(msg)
         return msg.id
-
-
-# ── Summarization ────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_summarize_today_creates_history_entry(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """HistoryAgent summarizes today's messages and stores a history entry."""
-    config = make_config(history_interval=99999.0)
-
-    requests_seen: list[dict] = []
-
-    def handler(request, count):
-        requests_seen.append(request)
-        return mock_llm._make_text_response(request, "- Discussed quantum physics")
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "tell me about quantum physics",
-        )
-
-        await penny.history_agent.execute()
-
-        entries = penny.db.history.get_recent(
-            TEST_SENDER, PennyConstants.HistoryDuration.DAILY, limit=10
-        )
-        assert len(entries) >= 1
-        assert "quantum physics" in entries[0].topics
-
-        # Full system prompt structure assertion
-        system_text = [
-            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
-        ][0]
-        lines = system_text.split("\n")
-        assert lines[0].startswith("Current date and time: ")
-        rest = "\n".join(lines[1:])
-        expected = """\
-
-## Instructions
-Summarize what the user said as a short bullet list of topics. \
-Each bullet should be 5-10 words. \
-Keep the user's exact wording for names, brands, and descriptors \
-— do not paraphrase or correct unfamiliar words. \
-Omit greetings, small talk, and meta-conversation. \
-Return ONLY the bullet list, one topic per line, prefixed with "- "."""
-        assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
-
-
-@pytest.mark.asyncio
-async def test_summarize_today_skips_when_already_rolled_up(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """HistoryAgent skips summarization when history is already up-to-date."""
-    config = make_config(history_interval=99999.0)
-
-    summarize_calls: list[dict] = []
-
-    def handler(request, count):
-        messages = request.get("messages", [])
-        system_msgs = [m for m in messages if m.get("role") == "system"]
-        system_text = " ".join(m.get("content", "") for m in system_msgs)
-        # Track only summarization calls (system prompt contains "bullet list")
-        if "bullet list" in system_text.lower():
-            summarize_calls.append(request)
-        return mock_llm._make_text_response(request, "- Topics discussed")
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "hello penny",
-        )
-
-        # First run: should summarize
-        await penny.history_agent.execute()
-        assert len(summarize_calls) == 1
-
-        # Second run (no new messages): should skip summarization
-        await penny.history_agent.execute()
-        assert len(summarize_calls) == 1
-
-        # Outgoing message (Penny's response/notification) should NOT
-        # trigger re-summarization — only incoming user messages count.
-        # Regression: outgoing timestamps were checked by _already_rolled_up,
-        # causing the same input to be re-summarized on every cycle.
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.OUTGOING,
-            penny.config.signal_number,
-            "here's something interesting I found",
-            recipient=TEST_SENDER,
-        )
-        await penny.history_agent.execute()
-        assert len(summarize_calls) == 1  # Still no additional calls
-
-
-@pytest.mark.asyncio
-async def test_backfill_summarizes_past_days(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """HistoryAgent backfills past days even when today already has an entry.
-
-    Regression: after a history reset, _summarize_today creates today's entry
-    first.  _resolve_start_date used to return today's period_end, which is
-    *after* midnight — so the backfill loop (cursor < midnight_today) found
-    zero days.
-    """
-    config = make_config(history_interval=99999.0)
-
-    def handler(request, count):
-        return mock_llm._make_text_response(request, "- Historical topics")
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        # Seed a message from 2 days ago using direct insert
-        two_days_ago = datetime.now(UTC).replace(
-            hour=12, minute=0, second=0, microsecond=0, tzinfo=None
-        ) - timedelta(days=2)
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "old message from two days ago",
-            PennyConstants.MessageDirection.INCOMING,
-            two_days_ago,
-        )
-
-        # Also add a today message so _summarize_today creates today's entry
-        # before backfill runs — this is the scenario that triggers the bug
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "message from today",
-        )
-
-        await penny.history_agent.execute()
-
-        entries = penny.db.history.get_recent(
-            TEST_SENDER, PennyConstants.HistoryDuration.DAILY, limit=10
-        )
-        # Should have today's entry AND the backfilled past day
-        past_entries = [e for e in entries if e.period_start.date() != datetime.now(UTC).date()]
-        assert len(past_entries) >= 1, "Backfill must create entries for past days"
-
-
-@pytest.mark.asyncio
-async def test_backfill_skips_empty_days_without_consuming_budget(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Days with no messages must not consume max_days budget.
-
-    Regression: _find_unsummarized_days returned empty days (no history entry,
-    no messages) which counted toward max_days, preventing the scanner from
-    reaching days that actually had messages to summarize.
-    """
-    config = make_config(history_interval=99999.0, history_max_days_per_run=1)
-
-    def handler(request, count):
-        return mock_llm._make_text_response(request, "- Historical topics")
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        # Day with messages: 4 days ago
-        four_days_ago = datetime.now(UTC).replace(
-            hour=12, minute=0, second=0, microsecond=0, tzinfo=None
-        ) - timedelta(days=4)
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "message from four days ago",
-            PennyConstants.MessageDirection.INCOMING,
-            four_days_ago,
-        )
-        # Days 3 and 2 ago have NO messages — these are the empty gaps
-        # Today message so _summarize_today runs first
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "message from today",
-        )
-
-        # With max_days=1 and old bug, the first empty day would consume the
-        # budget and the 4-days-ago message would never get backfilled
-        await penny.history_agent.execute()
-
-        entries = penny.db.history.get_recent(
-            TEST_SENDER, PennyConstants.HistoryDuration.DAILY, limit=10
-        )
-        past_entries = [e for e in entries if e.period_start.date() != datetime.now(UTC).date()]
-        assert len(past_entries) >= 1, (
-            "Backfill must reach past days even when empty days exist in between"
-        )
-
-
-@pytest.mark.asyncio
-async def test_summarize_uses_only_user_messages(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """HistoryAgent summarizes only user messages, not Penny's responses."""
-    config = make_config(history_interval=99999.0)
-
-    requests_seen: list[dict] = []
-
-    def handler(request, count):
-        requests_seen.append(request)
-        return mock_llm._make_text_response(request, "- Topics")
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "hello there",
-        )
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.OUTGOING,
-            penny.config.signal_number,
-            "hey back!",
-            parent_id=1,
-            recipient=TEST_SENDER,
-        )
-
-        await penny.history_agent.execute()
-
-        assert len(requests_seen) >= 1
-        first_msgs = requests_seen[0]["messages"]
-        user_msgs = [m for m in first_msgs if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-        assert "hello there" in prompt_text
-        assert "hey back" not in prompt_text
 
 
 # ── Preference extraction ────────────────────────────────────────────────
@@ -652,157 +413,195 @@ async def test_known_preferences_context(
         assert penny.history_agent._build_known_preferences_context([]) == ""
 
 
+# ── Knowledge extraction ────────────────────────────────────────────────
+
+
+def _insert_prompt_with_browse(penny, url, title, page_content):
+    """Insert a prompt log with a browse tool result."""
+    browse_header = PennyConstants.BROWSE_PAGE_HEADER
+    tool_content = f"{browse_header}{url}\nTitle: {title}\nURL: {url}\n\n{page_content}"
+    messages = json.dumps(
+        [
+            {"role": "system", "content": "test"},
+            {"role": "user", "content": "test"},
+            {"role": "assistant", "content": None, "tool_calls": []},
+            {"role": "tool", "tool_call_id": "call_1", "content": tool_content},
+        ]
+    )
+    with penny.db.get_session() as session:
+        prompt = PromptLog(
+            model="test",
+            messages=messages,
+            response=json.dumps({"choices": []}),
+            agent_name="chat",
+            prompt_type="user_message",
+        )
+        session.add(prompt)
+        session.commit()
+        session.refresh(prompt)
+        return prompt.id
+
+
 @pytest.mark.asyncio
-async def test_no_messages_produces_no_history(
+async def test_extract_knowledge_from_browse_results(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """HistoryAgent does nothing when there are no messages to summarize."""
+    """Knowledge extraction creates an entry from browse tool results."""
     config = make_config(history_interval=99999.0)
 
-    requests_seen: list[dict] = []
-
     def handler(request, count):
-        requests_seen.append(request)
-        return mock_llm._make_text_response(request, "- Topics")
+        return mock_llm._make_text_response(
+            request, "The Eggnog is a tube overdrive pedal by TubeSteader."
+        )
 
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        await penny.history_agent.execute()
-
-        entries = penny.db.history.get_recent(
-            TEST_SENDER, PennyConstants.HistoryDuration.DAILY, limit=10
+        _insert_prompt_with_browse(
+            penny,
+            "https://tubesteader.com/products/eggnog",
+            "TubeSteader Eggnog",
+            "The Eggnog uses a 12AX7 tube driven at 250 VDC.",
         )
-        assert len(entries) == 0
 
+        await penny.history_agent._extract_knowledge()
 
-# ── Weekly rollup ─────────────────────────────────────────────────────────
-
-
-def _seed_daily_entries(penny, user, monday):
-    """Seed daily history entries for a full Mon-Sun week starting at monday."""
-    for i in range(7):
-        day = monday + timedelta(days=i)
-        penny.db.history.add(
-            user=user,
-            period_start=day,
-            period_end=day + timedelta(days=1),
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics=f"- Topic from {day.strftime('%b %-d')}",
-        )
+        entry = penny.db.knowledge.get_by_url("https://tubesteader.com/products/eggnog")
+        assert entry is not None
+        assert entry.title == "TubeSteader Eggnog"
+        assert "tube overdrive" in entry.summary
 
 
 @pytest.mark.asyncio
-async def test_weekly_rollup_creates_entry_from_daily_entries(
+async def test_extract_knowledge_upserts_existing_url(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """Weekly rollup summarizes a completed week's daily entries into a weekly entry.
-
-    Seeds both a completed past week AND current-week entries to ensure
-    the scan starts from the earliest entry, not the most recent.
-    """
+    """Re-browsing the same URL aggregates into the existing knowledge entry."""
     config = make_config(history_interval=99999.0)
 
+    call_count = 0
+
     def handler(request, count):
-        return mock_llm._make_text_response(request, "- Weekly themes discussed")
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return mock_llm._make_text_response(request, "First summary of the page.")
+        return mock_llm._make_text_response(request, "Updated summary with new info.")
 
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-        two_weeks_ago_monday = today - timedelta(days=today.weekday() + 14)
-        _seed_daily_entries(penny, TEST_SENDER, two_weeks_ago_monday)
-
-        # Also seed a current-week entry — the scan must still find the past week
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=today,
-            period_end=today + timedelta(hours=12),
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics="- Current week topic",
+        _insert_prompt_with_browse(
+            penny,
+            "https://example.com/page",
+            "Example Page",
+            "Original content.",
         )
+        await penny.history_agent._extract_knowledge()
 
-        system_prompt = await penny.history_agent._build_system_prompt(TEST_SENDER)
-        await penny.history_agent._rollup_completed_weeks(TEST_SENDER, system_prompt, "test-run-id")
+        entry = penny.db.knowledge.get_by_url("https://example.com/page")
+        assert entry is not None
+        assert entry.summary == "First summary of the page."
 
-        weekly_entries = penny.db.history.get_recent(
-            TEST_SENDER, PennyConstants.HistoryDuration.WEEKLY, limit=10
+        # Insert another prompt with the same URL
+        _insert_prompt_with_browse(
+            penny,
+            "https://example.com/page",
+            "Example Page",
+            "Updated content with more details.",
         )
-        assert len(weekly_entries) == 1
-        assert weekly_entries[0].period_start == two_weeks_ago_monday
-        assert "Weekly themes" in weekly_entries[0].topics
+        await penny.history_agent._extract_knowledge()
+
+        entry = penny.db.knowledge.get_by_url("https://example.com/page")
+        assert entry is not None
+        assert entry.summary == "Updated summary with new info."
 
 
 @pytest.mark.asyncio
-async def test_weekly_rollup_skips_incomplete_week(
+async def test_extract_knowledge_respects_watermark(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """Weekly rollup does not create an entry for the current (incomplete) week."""
+    """Knowledge extraction only processes prompts after the watermark."""
     config = make_config(history_interval=99999.0)
 
+    summaries_generated = []
+
     def handler(request, count):
-        return mock_llm._make_text_response(request, "- Should not appear")
+        summary = f"Summary {len(summaries_generated) + 1}"
+        summaries_generated.append(summary)
+        return mock_llm._make_text_response(request, summary)
 
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Seed daily entries for the current week only
-        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-        this_monday = today - timedelta(days=today.weekday())
-        for i in range(today.weekday() + 1):
-            day = this_monday + timedelta(days=i)
-            penny.db.history.add(
-                user=TEST_SENDER,
-                period_start=day,
-                period_end=day + timedelta(days=1),
-                duration=PennyConstants.HistoryDuration.DAILY,
-                topics=f"- Topic from today's week day {i}",
-            )
+        _insert_prompt_with_browse(penny, "https://a.com", "Page A", "Content A")
+        _insert_prompt_with_browse(penny, "https://b.com", "Page B", "Content B")
 
-        system_prompt = await penny.history_agent._build_system_prompt(TEST_SENDER)
-        await penny.history_agent._rollup_completed_weeks(TEST_SENDER, system_prompt, "test-run-id")
+        # First extraction processes both
+        await penny.history_agent._extract_knowledge()
+        assert penny.db.knowledge.get_by_url("https://a.com") is not None
+        assert penny.db.knowledge.get_by_url("https://b.com") is not None
 
-        weekly_entries = penny.db.history.get_recent(
-            TEST_SENDER, PennyConstants.HistoryDuration.WEEKLY, limit=10
+        summaries_generated.clear()
+
+        # Add a third prompt
+        _insert_prompt_with_browse(penny, "https://c.com", "Page C", "Content C")
+        await penny.history_agent._extract_knowledge()
+
+        # Only the new prompt should be processed
+        assert len(summaries_generated) == 1
+        assert penny.db.knowledge.get_by_url("https://c.com") is not None
+
+
+def _insert_prompt_without_browse(penny):
+    """Insert a prompt log with no browse tool results."""
+    messages = json.dumps(
+        [
+            {"role": "system", "content": "test"},
+            {"role": "user", "content": "hey penny what's up"},
+            {"role": "assistant", "content": "not much!"},
+        ]
+    )
+    with penny.db.get_session() as session:
+        prompt = PromptLog(
+            model="test",
+            messages=messages,
+            response=json.dumps({"choices": []}),
+            agent_name="chat",
+            prompt_type="user_message",
         )
-        assert len(weekly_entries) == 0
+        session.add(prompt)
+        session.commit()
+        session.refresh(prompt)
+        return prompt.id
 
 
 @pytest.mark.asyncio
-async def test_history_context_includes_weekly_entries(
+async def test_extract_knowledge_skips_prompts_without_browse(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """_history_section includes both weekly and daily entries."""
+    """Knowledge extraction only queries prompts containing browse results."""
     config = make_config(history_interval=99999.0)
 
+    summaries_generated = []
+
+    def handler(request, count):
+        summary = f"Summary {len(summaries_generated) + 1}"
+        summaries_generated.append(summary)
+        return mock_llm._make_text_response(request, summary)
+
+    mock_llm.set_response_handler(handler)
+
     async with running_penny(config) as penny:
-        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        # Insert many prompts without browse results
+        for _ in range(10):
+            _insert_prompt_without_browse(penny)
 
-        # Seed a weekly entry from 2 weeks ago
-        two_weeks_ago_monday = today - timedelta(days=today.weekday() + 14)
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=two_weeks_ago_monday,
-            period_end=two_weeks_ago_monday + timedelta(days=7),
-            duration=PennyConstants.HistoryDuration.WEEKLY,
-            topics="- Discussed AI developments\n- Talked about cooking",
-        )
+        # Insert one prompt with browse results
+        _insert_prompt_with_browse(penny, "https://found.com", "Found Page", "Content")
 
-        # Seed a daily entry for today
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=today,
-            period_end=today + timedelta(hours=12),
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics="- Morning coffee chat",
-        )
+        await penny.history_agent._extract_knowledge()
 
-        context = penny.chat_agent._history_section(TEST_SENDER)
-        assert context is not None
-        assert "Week of" in context
-        assert "AI developments" in context
-        assert "Morning coffee chat" in context
-        # Weekly entries should appear before daily
-        week_pos = context.index("Week of")
-        daily_pos = context.index("Morning coffee chat")
-        assert week_pos < daily_pos
+        # Only the browse-containing prompt should be processed
+        assert len(summaries_generated) == 1
+        assert penny.db.knowledge.get_by_url("https://found.com") is not None
