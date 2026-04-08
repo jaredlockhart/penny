@@ -1,4 +1,4 @@
-"""Integration tests for Agent context building (history, conversation, dislikes)."""
+"""Integration tests for Agent context building (conversation, dislikes, knowledge)."""
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
@@ -23,110 +23,6 @@ def _insert_message(penny, sender, content, direction, timestamp, **kwargs):
         )
         session.add(msg)
         session.commit()
-
-
-# ── History context ──────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_history_context_formats_dates_and_topics(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """History context includes date labels and topic bullets."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        # Add a past history entry
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=datetime(2026, 3, 1),
-            period_end=datetime(2026, 3, 2),
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics="- Quantum physics\n- Machine learning",
-        )
-
-        context = penny.chat_agent._history_section(TEST_SENDER)
-        assert context is not None
-        assert "Conversation History" in context
-        assert "Mar 1" in context
-        assert "Quantum physics" in context
-        assert "Machine learning" in context
-
-
-@pytest.mark.asyncio
-async def test_history_context_labels_today(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Today's history entry gets 'Today' label instead of date."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=today,
-            period_end=today + timedelta(days=1),
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics="- Current events",
-        )
-
-        context = penny.chat_agent._history_section(TEST_SENDER)
-        assert context is not None
-        assert "Today" in context
-        assert "Current events" in context
-
-
-@pytest.mark.asyncio
-async def test_history_context_skips_daily_covered_by_weekly(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Daily entries within a weekly rollup range are excluded from context."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        # Weekly rollup covering Mar 9-16
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=datetime(2026, 3, 9),
-            period_end=datetime(2026, 3, 16),
-            duration=PennyConstants.HistoryDuration.WEEKLY,
-            topics="- Weekly guitar topics\n- Weekly pedal topics",
-        )
-        # Daily entry INSIDE the weekly range — should be excluded
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=datetime(2026, 3, 10),
-            period_end=datetime(2026, 3, 11),
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics="- Daily guitar detail",
-        )
-        # Daily entry OUTSIDE the weekly range — should be included
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=datetime(2026, 3, 17),
-            period_end=datetime(2026, 3, 18),
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics="- Amp shopping",
-        )
-
-        context = penny.chat_agent._history_section(TEST_SENDER)
-        assert context is not None
-        assert "Weekly guitar topics" in context
-        assert "Weekly pedal topics" in context
-        assert "Amp shopping" in context
-        assert "Daily guitar detail" not in context
-
-
-@pytest.mark.asyncio
-async def test_history_context_none_when_no_entries(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """History context returns None when there are no entries."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        context = penny.chat_agent._history_section(TEST_SENDER)
-        assert context is None
 
 
 # ── Conversation building ────────────────────────────────────────────────
@@ -206,47 +102,6 @@ async def test_conversation_merges_consecutive_same_role(
         assert "second message" in conversation[0][1]
         assert "response" in contents
         assert "proactive thought" not in contents
-
-
-@pytest.mark.asyncio
-async def test_conversation_starts_after_rollup(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Conversation history starts after the latest history rollup."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        # Create a rollup that covers earlier messages
-        now = datetime.now(UTC).replace(tzinfo=None)
-        rollup_end = now - timedelta(minutes=5)
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=now - timedelta(hours=1),
-            period_end=rollup_end,
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics="- Old topics",
-        )
-
-        # Insert a message before the rollup end (should be excluded)
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "old message before rollup",
-            PennyConstants.MessageDirection.INCOMING,
-            rollup_end - timedelta(minutes=10),
-        )
-
-        # Insert a message after the rollup end (should be included)
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "new message after rollup",
-        )
-
-        conversation = penny.chat_agent._build_conversation(TEST_SENDER)
-        contents = " ".join(c for _, c in conversation)
-        assert "new message after rollup" in contents
-        assert "old message before rollup" not in contents
 
 
 # ── Dislike context ──────────────────────────────────────────────────────
@@ -521,18 +376,20 @@ async def test_related_messages_retrieves_similar_past_messages(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Related messages section includes semantically similar past messages."""
-    config = make_config()
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
 
     async with running_penny(config) as penny:
         _seed_past_messages(penny)
 
         mock_client = AsyncMock()
-        mock_client.embed = AsyncMock(return_value=[_QUERY_VEC])
+        # Return query vec for each text (just the current content since context limit is 0)
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
         penny.chat_agent._embedding_model_client = mock_client
 
-        context = await penny.chat_agent._related_messages_section(
+        embeddings = await penny.chat_agent._embed_conversation(
             TEST_SENDER, "the pedals finally arrived"
         )
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
         assert context is not None
         assert "Related Past Messages" in context
         # Full message content shown (no truncation)
@@ -566,13 +423,14 @@ async def test_related_messages_excludes_current_conversation(
         penny.db.messages.update_embedding(1, serialize_embedding(_PEDAL_VEC))
 
         mock_client = AsyncMock()
-        mock_client.embed = AsyncMock(return_value=[_QUERY_VEC])
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
         penny.chat_agent._embedding_model_client = mock_client
 
-        context = await penny.chat_agent._related_messages_section(
+        embeddings = await penny.chat_agent._embed_conversation(
             TEST_SENDER, "the pedals finally arrived"
         )
-        # Current session message should be excluded, so no results
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
+        # Current session message should be excluded (in conversation window), so no results
         assert context is None
 
 
@@ -588,9 +446,8 @@ async def test_related_messages_none_without_embedding_client(
 
         penny.chat_agent._embedding_model_client = None
 
-        context = await penny.chat_agent._related_messages_section(
-            TEST_SENDER, "the pedals finally arrived"
-        )
+        # No embedding client → None embeddings → no related messages
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, None)
         assert context is None
 
 
@@ -599,13 +456,13 @@ async def test_related_messages_in_chat_system_prompt(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Related messages section appears in ChatAgent system prompt."""
-    config = make_config()
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
 
     async with running_penny(config) as penny:
         _seed_past_messages(penny)
 
         mock_client = AsyncMock()
-        mock_client.embed = AsyncMock(return_value=[_QUERY_VEC])
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
         penny.chat_agent._embedding_model_client = mock_client
         penny.chat_agent._pending_page_context = None
 
@@ -621,7 +478,7 @@ async def test_related_messages_date_ordering_with_multiple_dates(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Related messages are sorted chronologically after similarity selection."""
-    config = make_config()
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
 
     async with running_penny(config) as penny:
         # Insert 3 messages on different days — all similar to query
@@ -653,10 +510,11 @@ async def test_related_messages_date_ordering_with_multiple_dates(
         )
 
         mock_client = AsyncMock()
-        mock_client.embed = AsyncMock(return_value=[_QUERY_VEC])
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
         penny.chat_agent._embedding_model_client = mock_client
 
-        context = await penny.chat_agent._related_messages_section(TEST_SENDER, "pedals")
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "pedals")
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
         assert context is not None
         # Messages should appear in chronological order regardless of insertion order
         first_pos = context.index("first message")
@@ -798,3 +656,159 @@ async def test_backfill_incoming_message_embeddings(
         count = await penny._backfill_incoming_message_embeddings(batch_limit=50)
         assert count == 2
         assert len(penny.db.messages.get_incoming_without_embeddings()) == 0
+
+
+# ── Knowledge context ───────────────────────────────────────────────────
+
+
+def _seed_knowledge(penny):
+    """Insert knowledge entries with deterministic embeddings for tests."""
+    penny.db.knowledge.upsert_by_url(
+        url="https://tubesteader.com/products/eggnog",
+        title="TubeSteader Eggnog",
+        summary="The Eggnog is a single-channel tube overdrive pedal using a 12AX7 tube.",
+        embedding=serialize_embedding(_PEDAL_VEC),
+        source_prompt_id=1,
+    )
+    penny.db.knowledge.upsert_by_url(
+        url="https://sci.news/astronomy/d9-binary-star",
+        title="Binary Star D9",
+        summary="A binary star system designated D9 orbits Sagittarius A*.",
+        embedding=serialize_embedding(_SPACE_VEC),
+        source_prompt_id=2,
+    )
+
+
+@pytest.mark.asyncio
+async def test_knowledge_section_returns_matching_entries(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Knowledge section includes entries relevant to the conversation."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+
+        mock_client = AsyncMock()
+        # Return pedal-like vector for the conversation embedding
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_PEDAL_VEC] * len(texts))
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(
+            TEST_SENDER, "tell me about the eggnog pedal"
+        )
+        context = await penny.chat_agent._related_knowledge_section(embeddings)
+        assert context is not None
+        assert "### Knowledge" in context
+        assert "TubeSteader Eggnog" in context
+        assert "tubesteader.com" in context
+        assert "tube overdrive" in context
+
+
+@pytest.mark.asyncio
+async def test_knowledge_weighted_scoring_favors_conversation_context(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Weighted scoring uses conversation context, not just the last message."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+
+        # Seed conversation history: earlier messages about pedals
+        past = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=5)
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "i love my tubesteader pedals",
+            PennyConstants.MessageDirection.INCOMING,
+            past,
+        )
+        _insert_message(
+            penny,
+            penny.config.signal_number,
+            "nice! which ones?",
+            PennyConstants.MessageDirection.OUTGOING,
+            past + timedelta(minutes=1),
+            recipient=TEST_SENDER,
+        )
+
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "the eggnog sounds amazing",
+            PennyConstants.MessageDirection.INCOMING,
+            past + timedelta(minutes=2),
+        )
+        _insert_message(
+            penny,
+            penny.config.signal_number,
+            "yeah the tweed tone is great",
+            PennyConstants.MessageDirection.OUTGOING,
+            past + timedelta(minutes=3),
+            recipient=TEST_SENDER,
+        )
+
+        mock_client = AsyncMock()
+        # 4 conversation messages + 1 new content = 5 embeddings
+        # First 4 are pedal-like, last (new content) is a neutral/vague vector
+        # that doesn't strongly match either knowledge entry
+        neutral_vec = [0.5, 0.5, 0.0]  # roughly equidistant from pedal and space
+        mock_client.embed = AsyncMock(
+            return_value=[_PEDAL_VEC, _PEDAL_VEC, _PEDAL_VEC, _PEDAL_VEC, neutral_vec]
+        )
+        penny.chat_agent._embedding_model_client = mock_client
+
+        # Last message is vague but 4 prior conversation messages are about pedals
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "yeah they're great")
+        context = await penny.chat_agent._related_knowledge_section(embeddings)
+        assert context is not None
+        # Pedal knowledge should rank higher due to conversation context
+        eggnog_pos = context.find("TubeSteader Eggnog")
+        star_pos = context.find("Binary Star D9")
+        assert eggnog_pos >= 0
+        assert eggnog_pos < star_pos
+
+
+@pytest.mark.asyncio
+async def test_knowledge_none_without_embedding_client(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Knowledge section returns None when no embedding client is configured."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+        penny.chat_agent._embedding_model_client = None
+
+        # No embedding client → _embed_conversation returns None → no knowledge
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "tell me about pedals")
+        assert embeddings is None
+        context = await penny.chat_agent._related_knowledge_section(embeddings)
+        assert context is None
+
+
+@pytest.mark.asyncio
+async def test_knowledge_in_chat_system_prompt(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Knowledge section appears in ChatAgent system prompt."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(return_value=[_PEDAL_VEC])
+        penny.chat_agent._embedding_model_client = mock_client
+        penny.chat_agent._pending_page_context = None
+
+        prompt = await penny.chat_agent._build_system_prompt(
+            TEST_SENDER, content="the eggnog pedal"
+        )
+        assert "### Knowledge" in prompt
+        assert "TubeSteader Eggnog" in prompt
+        # Knowledge appears before Related Past Messages (or Instructions if no messages)
+        knowledge_pos = prompt.find("### Knowledge")
+        instructions_pos = prompt.find("## Instructions")
+        assert knowledge_pos < instructions_pos

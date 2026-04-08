@@ -2,6 +2,9 @@
 .env
 *.pem
 
+# Quality review output
+QUALITY-REVIEW.md
+
 # Data directory (SQLite database)
 data/
 

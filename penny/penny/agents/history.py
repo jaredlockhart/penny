@@ -1,24 +1,22 @@
-"""HistoryAgent — daily conversation topic summarization and preference extraction.
+"""HistoryAgent — preference extraction and knowledge extraction.
 
-Runs on a schedule. Each cycle, for each user:
-1. Summarizes today's messages (midnight to now) via upsert — rolling update
-2. Backfills completed past days that lack history entries
-3. Extracts user preferences from text messages only
+Runs on a schedule. Each cycle:
+1. Extracts knowledge from browse tool results (user-independent)
+2. Per user: extracts preferences from unprocessed text messages
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import datetime
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
-from penny.database.models import Preference
+from penny.database.models import Preference, PromptLog
 from penny.llm.embeddings import deserialize_embedding, serialize_embedding
 from penny.llm.similarity import DedupStrategy, is_embedding_duplicate
 from penny.prompts import Prompt
@@ -58,211 +56,121 @@ class ClassifiedPreferences(BaseModel):
 class HistoryPromptType:
     """Prompt types for HistoryAgent flows."""
 
-    DAILY_SUMMARY = "daily_summary"
-    DAILY_BACKFILL = "daily_backfill"
-    WEEKLY_ROLLUP = "weekly_rollup"
     PREFERENCE_IDENTIFICATION = "preference_identification"
     PREFERENCE_VALENCE = "preference_valence"
+    KNOWLEDGE_SUMMARIZE = "knowledge_summarize"
 
 
 class HistoryAgent(Agent):
-    """Background worker that compacts daily conversations into topic summaries."""
+    """Background worker that extracts knowledge and user preferences."""
 
     name = "history"
 
-    def get_max_steps(self) -> int:
-        return PennyConstants.HISTORY_MAX_STEPS
-
-    def __init__(self, **kwargs: Any) -> None:
-        kwargs["system_prompt"] = Prompt.SUMMARIZE_TO_BULLETS
-        super().__init__(**kwargs)
-
-    async def _build_system_prompt(self, user: str) -> str:
-        """Instructions only — no identity, profile, history, thoughts, or dislikes.
-
-        The history agent summarizes raw user messages and extracts preferences.
-        It doesn't need any conversational context.
-        """
-        return self._instructions_section()
+    async def execute(self) -> bool:
+        """Extract knowledge (user-independent), then run per-user work."""
+        knowledge_work = await self._extract_knowledge()
+        user_work = await super().execute()
+        return knowledge_work or user_work
 
     async def execute_for_user(self, user: str) -> bool:
-        """Summarize today's conversation, extract preferences, backfill days and weeks."""
+        """Extract preferences from unprocessed messages."""
         run_id = uuid.uuid4().hex
-        system_prompt = await self._build_system_prompt(user)
+        return await self._extract_today_preferences(user, run_id)
 
-        did_work = await self._summarize_today(user, system_prompt, run_id)
-        did_work = await self._extract_today_preferences(user, run_id) or did_work
+    # ── Knowledge extraction ──────────────────────────────────────────────
 
-        max_days = int(self.config.runtime.HISTORY_MAX_DAYS_PER_RUN)
-        days = self._find_unsummarized_days(user, max_days)
-        for day_start, day_end in days:
-            await self._summarize_day(user, day_start, day_end, system_prompt, run_id)
-            did_work = True
-
-        did_work = await self._rollup_completed_weeks(user, system_prompt, run_id) or did_work
-
-        return did_work
-
-    # ── Topic summarization ───────────────────────────────────────────────
-
-    async def _summarize_today(self, user: str, system_prompt: str, run_id: str) -> bool:
-        """Summarize messages from midnight to now, upserting today's history entry."""
-        day_start = self._midnight_today()
-        day_end = datetime.now(UTC).replace(tzinfo=None)
-
-        if self._already_rolled_up(user, day_start, day_end):
+    async def _extract_knowledge(self) -> bool:
+        """Scan prompt logs for browse results and summarize into knowledge entries."""
+        watermark = self.db.knowledge.get_latest_prompt_timestamp() or datetime.min
+        batch_limit = int(self.config.runtime.KNOWLEDGE_EXTRACTION_BATCH_LIMIT)
+        prompts = self.db.messages.get_prompts_with_browse_after(watermark, batch_limit)
+        if not prompts:
             return False
 
-        messages = self.db.messages.get_messages_in_range(user, day_start, day_end)
-        if not messages:
-            return False
-
-        message_text = self._format_messages(messages)
-        response = await self.run(
-            prompt=message_text,
-            max_steps=self.get_max_steps(),
-            system_prompt=system_prompt,
-            run_id=run_id,
-            prompt_type=HistoryPromptType.DAILY_SUMMARY,
-        )
-        topics = response.answer.strip()
-        if not topics:
-            return False
-
-        embedding = await self._embed_text(topics)
-        self.db.history.upsert(
-            user=user,
-            period_start=day_start,
-            period_end=day_end,
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics=topics,
-            embedding=embedding,
-        )
-        logger.info("Today's history updated for %s", user)
-        return True
-
-    def _already_rolled_up(self, user: str, day_start: datetime, day_end: datetime) -> bool:
-        """Check if the history entry is already up-to-date with the latest message."""
-        existing = self.db.history.get_latest(user, PennyConstants.HistoryDuration.DAILY)
-        if not existing or existing.period_start != day_start:
-            return False
-        latest_msg = self.db.messages.get_latest_message_time_in_range(user, day_start, day_end)
-        if not latest_msg:
-            return True
-        return existing.created_at >= latest_msg
-
-    async def _summarize_day(
-        self, user: str, day_start: datetime, day_end: datetime, system_prompt: str, run_id: str
-    ) -> None:
-        """Get messages for a day and call model to summarize topics."""
-        messages = self.db.messages.get_messages_in_range(user, day_start, day_end)
-        if not messages:
-            logger.debug("No messages for %s on %s, skipping", user, day_start.date())
-            return
-
-        message_text = self._format_messages(messages)
-        response = await self.run(
-            prompt=message_text,
-            max_steps=self.get_max_steps(),
-            system_prompt=system_prompt,
-            run_id=run_id,
-            prompt_type=HistoryPromptType.DAILY_BACKFILL,
-        )
-        topics = response.answer.strip()
-        if not topics:
-            logger.debug("Model returned empty topics for %s on %s", user, day_start.date())
-            return
-
-        embedding = await self._embed_text(topics)
-        self.db.history.add(
-            user=user,
-            period_start=day_start,
-            period_end=day_end,
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics=topics,
-            embedding=embedding,
-        )
-        logger.info("History entry created for %s on %s", user, day_start.date())
-
-    # ── Weekly rollup ──────────────────────────────────────────────────────
-
-    async def _rollup_completed_weeks(self, user: str, system_prompt: str, run_id: str) -> bool:
-        """Summarize completed weeks from daily entries into weekly history entries."""
-        max_weeks = PennyConstants.MAX_WEEKLY_ROLLUPS_PER_RUN
-        weeks = self._find_unrolled_weeks(user, max_weeks)
-        if not weeks:
-            return False
-
+        run_id = uuid.uuid4().hex
         did_work = False
-        for week_start, week_end in weeks:
-            input_text = self._gather_weekly_input(user, week_start, week_end)
-            if not input_text:
-                continue
-
-            response = await self.run(
-                prompt=input_text,
-                max_steps=self.get_max_steps(),
-                system_prompt=system_prompt,
-                run_id=run_id,
-                prompt_type=HistoryPromptType.WEEKLY_ROLLUP,
-            )
-            topics = response.answer.strip()
-            if not topics:
-                continue
-
-            embedding = await self._embed_text(topics)
-            self.db.history.add(
-                user=user,
-                period_start=week_start,
-                period_end=week_end,
-                duration=PennyConstants.HistoryDuration.WEEKLY,
-                topics=topics,
-                embedding=embedding,
-            )
-            logger.info("Weekly rollup created for %s: %s", user, week_start.date())
-            did_work = True
+        for prompt in prompts:
+            browse_results = self._parse_browse_results(prompt)
+            for url, title, content in browse_results:
+                assert prompt.id is not None
+                await self._summarize_knowledge(url, title, content, prompt.id, run_id)
+                did_work = True
         return did_work
 
-    def _find_unrolled_weeks(self, user: str, max_weeks: int) -> list[tuple[datetime, datetime]]:
-        """Find completed ISO weeks with daily entries but no weekly entry."""
-        daily = PennyConstants.HistoryDuration.DAILY
-        weekly = PennyConstants.HistoryDuration.WEEKLY
+    @staticmethod
+    def _parse_browse_results(prompt: PromptLog) -> list[tuple[str, str, str]]:
+        """Extract (url, title, page_content) tuples from browse tool results."""
+        results: list[tuple[str, str, str]] = []
+        header = PennyConstants.BROWSE_PAGE_HEADER
+        for message in prompt.get_messages():
+            if message.get("role") != "tool":
+                continue
+            content = message.get("content", "")
+            for section in content.split(PennyConstants.SECTION_SEPARATOR):
+                if section.startswith(header):
+                    parsed = HistoryAgent._parse_browse_section(section, header)
+                    if parsed:
+                        results.append(parsed)
+        return results
 
-        earliest_daily = self.db.history.get_earliest(user, daily)
-        if not earliest_daily:
-            return []
+    @staticmethod
+    def _parse_browse_section(section: str, header: str) -> tuple[str, str, str] | None:
+        """Parse a single browse section into (url, title, page_content)."""
+        lines = section.split("\n", 3)
+        url = lines[0][len(header) :].strip()
+        if not url:
+            return None
+        title = url
+        title_prefix = PennyConstants.BROWSE_TITLE_PREFIX
+        if len(lines) > 1 and lines[1].startswith(title_prefix):
+            title = lines[1][len(title_prefix) :]
+        page_content = "\n".join(lines[1:]) if len(lines) > 1 else ""
+        return (url, title, page_content)
 
-        first_start = earliest_daily.period_start
-        first_monday = first_start - timedelta(days=first_start.weekday())
-        first_monday = first_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    async def _summarize_knowledge(
+        self, url: str, title: str, content: str, prompt_id: int, run_id: str
+    ) -> None:
+        """Summarize page content and upsert into knowledge store."""
+        existing = self.db.knowledge.get_by_url(url)
+        if existing:
+            summary = await self._aggregate_knowledge(existing.summary, content, run_id)
+        else:
+            summary = await self._summarize_page(content, run_id)
+        if not summary:
+            return
+        embedding = await self._embed_text(summary)
+        self.db.knowledge.upsert_by_url(url, title, summary, embedding, prompt_id)
 
-        today = self._midnight_today()
-        current_monday = today - timedelta(days=today.weekday())
+    async def _summarize_page(self, content: str, run_id: str) -> str | None:
+        """Summarize a single page via LLM."""
+        messages = [
+            {"role": "system", "content": Prompt.KNOWLEDGE_SUMMARIZE},
+            {"role": "user", "content": content},
+        ]
+        response = await self._model_client.chat(
+            messages,
+            agent_name=self.name,
+            prompt_type=HistoryPromptType.KNOWLEDGE_SUMMARIZE,
+            run_id=run_id,
+        )
+        return response.content.strip() if response.content else None
 
-        weeks: list[tuple[datetime, datetime]] = []
-        cursor = first_monday
-        while cursor < current_monday and len(weeks) < max_weeks:
-            week_end = cursor + timedelta(days=7)
-            has_daily = bool(self.db.history.get_in_range(user, daily, cursor, week_end))
-            has_weekly = self.db.history.exists(user, cursor, weekly)
-            if has_daily and not has_weekly:
-                weeks.append((cursor, week_end))
-            cursor = week_end
-        return weeks
-
-    def _gather_weekly_input(self, user: str, week_start: datetime, week_end: datetime) -> str:
-        """Concatenate daily topic entries for a week as input text."""
-        daily = PennyConstants.HistoryDuration.DAILY
-        entries = self.db.history.get_in_range(user, daily, week_start, week_end)
-        if not entries:
-            return ""
-
-        lines: list[str] = []
-        for entry in entries:
-            date_label = entry.period_start.strftime("%b %-d")
-            lines.append(f"{date_label}:")
-            lines.append(entry.topics.strip())
-        return "\n".join(lines)
+    async def _aggregate_knowledge(
+        self, existing_summary: str, new_content: str, run_id: str
+    ) -> str | None:
+        """Merge existing summary with new page content via LLM."""
+        user_content = f"Existing summary:\n{existing_summary}\n\nNew content:\n{new_content}"
+        messages = [
+            {"role": "system", "content": Prompt.KNOWLEDGE_AGGREGATE},
+            {"role": "user", "content": user_content},
+        ]
+        response = await self._model_client.chat(
+            messages,
+            agent_name=self.name,
+            prompt_type=HistoryPromptType.KNOWLEDGE_SUMMARIZE,
+            run_id=run_id,
+        )
+        return response.content.strip() if response.content else None
 
     # ── Preference extraction ─────────────────────────────────────────────
 
@@ -554,39 +462,6 @@ class HistoryAgent(Agent):
         except Exception as e:
             logger.warning("Failed to embed text: %s", e)
             return None
-
-    def _find_unsummarized_days(self, user: str, max_days: int) -> list[tuple[datetime, datetime]]:
-        """Find completed calendar days (UTC) without history entries that have messages."""
-        duration = PennyConstants.HistoryDuration.DAILY
-        start = self._resolve_start_date(user)
-        if start is None:
-            return []
-
-        yesterday_end = self._midnight_today()
-        days: list[tuple[datetime, datetime]] = []
-        cursor = start
-        while cursor < yesterday_end and len(days) < max_days:
-            day_end = cursor + timedelta(days=1)
-            if not self.db.history.exists(user, cursor, duration):
-                has_messages = bool(self.db.messages.get_messages_in_range(user, cursor, day_end))
-                if has_messages:
-                    days.append((cursor, day_end))
-            cursor = day_end
-
-        return days
-
-    def _resolve_start_date(self, user: str) -> datetime | None:
-        """Determine where to start scanning for un-rolled-up days.
-
-        Always starts from the first message — the exists() check in the
-        scanning loop skips days that already have entries.  This avoids
-        the edge case where a history reset leaves today as the only entry
-        and period_end is *after* midnight, blocking all backfill.
-        """
-        first_msg_time = self.db.messages.get_first_message_time(user)
-        if first_msg_time is None:
-            return None
-        return first_msg_time.replace(hour=0, minute=0, second=0, microsecond=0)
 
     @staticmethod
     def _format_messages(messages: list) -> str:
