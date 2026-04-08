@@ -13,11 +13,10 @@ from datetime import datetime
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
-from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
-from penny.database.models import Preference, PromptLog, RuntimeConfig
+from penny.database.models import Preference, PromptLog
 from penny.llm.embeddings import deserialize_embedding, serialize_embedding
 from penny.llm.similarity import DedupStrategy, is_embedding_duplicate
 from penny.prompts import Prompt
@@ -82,7 +81,7 @@ class HistoryAgent(Agent):
 
     async def _extract_knowledge(self) -> bool:
         """Scan prompt logs for browse results and summarize into knowledge entries."""
-        watermark = self._get_knowledge_watermark()
+        watermark = self.db.knowledge.get_latest_prompt_timestamp() or datetime.min
         batch_limit = int(self.config.runtime.KNOWLEDGE_EXTRACTION_BATCH_LIMIT)
         prompts = self.db.messages.get_prompts_after(watermark, batch_limit)
         if not prompts:
@@ -96,7 +95,6 @@ class HistoryAgent(Agent):
                 assert prompt.id is not None
                 await self._summarize_knowledge(url, title, content, prompt.id, run_id)
                 did_work = True
-        self._set_knowledge_watermark(prompts[-1].timestamp)
         return did_work
 
     @staticmethod
@@ -173,37 +171,6 @@ class HistoryAgent(Agent):
             run_id=run_id,
         )
         return response.content.strip() if response.content else None
-
-    def _get_knowledge_watermark(self) -> datetime:
-        """Get the timestamp of the last processed prompt for knowledge extraction."""
-        with Session(self.db.engine) as session:
-            row = session.exec(
-                select(RuntimeConfig).where(
-                    RuntimeConfig.key == PennyConstants.KNOWLEDGE_WATERMARK_KEY
-                )
-            ).first()
-            if row:
-                return datetime.fromisoformat(row.value)
-            return datetime.min
-
-    def _set_knowledge_watermark(self, timestamp: datetime) -> None:
-        """Advance the knowledge extraction watermark to this timestamp."""
-        with Session(self.db.engine) as session:
-            row = session.exec(
-                select(RuntimeConfig).where(
-                    RuntimeConfig.key == PennyConstants.KNOWLEDGE_WATERMARK_KEY
-                )
-            ).first()
-            if row:
-                row.value = timestamp.isoformat()
-            else:
-                row = RuntimeConfig(
-                    key=PennyConstants.KNOWLEDGE_WATERMARK_KEY,
-                    value=timestamp.isoformat(),
-                    description="Last processed prompt timestamp for knowledge extraction",
-                )
-                session.add(row)
-            session.commit()
 
     # ── Preference extraction ─────────────────────────────────────────────
 

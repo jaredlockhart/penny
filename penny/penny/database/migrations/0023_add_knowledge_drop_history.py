@@ -1,7 +1,8 @@
-"""Add knowledge table for storing summarized web page content.
+"""Add knowledge table and drop conversationhistory.
 
-Stores prose summaries of browsed pages with embeddings for semantic retrieval.
-One entry per URL (upsert on revisit). source_prompt_id tracks extraction progress.
+Knowledge stores prose summaries of browsed pages with embeddings for semantic
+retrieval. ConversationHistory (daily/weekly topic rollups) is replaced by
+knowledge extraction and embedding-based related message retrieval.
 """
 
 
@@ -26,3 +27,5 @@ def up(conn):
         """)
         conn.execute("CREATE UNIQUE INDEX ix_knowledge_url ON knowledge (url)")
         conn.execute("CREATE INDEX ix_knowledge_source_prompt_id ON knowledge (source_prompt_id)")
+
+    conn.execute("DROP TABLE IF EXISTS conversationhistory")

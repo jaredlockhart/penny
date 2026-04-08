@@ -118,7 +118,7 @@ penny/
     user_store.py     — UserStore: get_info, save_info, mute/unmute
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0024)
+    migrations/       — Numbered migration files (0001–0023)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client (chat, generate, embed)
     models.py         — ChatResponse, ChatResponseMessage
@@ -388,8 +388,7 @@ Notable migrations:
 - 0006: `messagelog.thought_id` FK (links messages to notification thoughts)
 - 0007: `thought.preference_id` FK (links thoughts to seed preferences)
 - 0008: `preference.source` + `preference.mention_count` (mention threshold gating)
-- 0023: `knowledge` table (summarized web page content for factual recall)
-- 0024: Drop `conversationhistory` table (replaced by knowledge + related messages)
+- 0023: Add `knowledge` table, drop `conversationhistory` (replaced by knowledge + related messages)
 
 ## Extending
 

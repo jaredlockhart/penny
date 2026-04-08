@@ -504,7 +504,6 @@ async def test_extract_knowledge_upserts_existing_url(
         assert entry.summary == "First summary of the page."
 
         # Insert another prompt with the same URL
-        penny.chat_agent.clear_conversation_embedding_cache()
         _insert_prompt_with_browse(
             penny,
             "https://example.com/page",

@@ -177,7 +177,6 @@ class Agent:
     THOUGHT_CONTEXT_LIMIT = PennyConstants.THOUGHT_CONTEXT_LIMIT
     PREFERRED_POOL_SIZE = PennyConstants.PREFERRED_POOL_SIZE
     name: str = "Agent"
-    _cached_conversation_embeddings: list[list[float]] | None = None
 
     def __init__(
         self,
@@ -908,22 +907,20 @@ class Agent:
             logger.warning("Dislike context retrieval failed, proceeding without")
             return None
 
-    async def _related_knowledge_section(self, sender: str, content: str) -> str | None:
+    async def _related_knowledge_section(
+        self, conversation_embeddings: list[list[float]] | None
+    ) -> str | None:
         """Retrieve knowledge entries relevant to the current conversation."""
-        if not self._embedding_model_client:
+        if not conversation_embeddings:
             return None
         try:
-            return await self._build_related_knowledge(sender, content)
+            return self._build_related_knowledge(conversation_embeddings)
         except Exception:
             logger.warning("Knowledge retrieval failed, proceeding without")
             return None
 
-    async def _build_related_knowledge(self, sender: str, content: str) -> str | None:
+    def _build_related_knowledge(self, conversation_embeddings: list[list[float]]) -> str | None:
         """Score knowledge entries against conversation, return top N formatted."""
-        conversation_embeddings = await self._embed_conversation(sender, content)
-        if not conversation_embeddings:
-            return None
-
         entries = self.db.knowledge.get_with_embeddings()
         if not entries:
             return None
@@ -937,22 +934,22 @@ class Agent:
             return None
         return self._format_knowledge(top)
 
-    async def _related_messages_section(self, sender: str, content: str) -> str | None:
+    async def _related_messages_section(
+        self, sender: str, conversation_embeddings: list[list[float]] | None
+    ) -> str | None:
         """Retrieve past user messages semantically similar to the conversation."""
-        if not self._embedding_model_client:
+        if not conversation_embeddings:
             return None
         try:
-            return await self._build_related_messages(sender, content)
+            return self._build_related_messages(sender, conversation_embeddings)
         except Exception:
             logger.warning("Related messages retrieval failed, proceeding without")
             return None
 
-    async def _build_related_messages(self, sender: str, content: str) -> str | None:
+    def _build_related_messages(
+        self, sender: str, conversation_embeddings: list[list[float]]
+    ) -> str | None:
         """Score past messages against conversation, return top N formatted."""
-        conversation_embeddings = await self._embed_conversation(sender, content)
-        if not conversation_embeddings:
-            return None
-
         messages = self.db.messages.get_incoming_with_embeddings(sender)
         if not messages:
             return None
@@ -981,26 +978,16 @@ class Agent:
     # ── Weighted scoring helpers ──────────────────────────────────────────
 
     async def _embed_conversation(self, sender: str, content: str) -> list[list[float]] | None:
-        """Embed each message in the current conversation + the new message.
-
-        Caches result on instance so both knowledge and related messages
-        can reuse the same embeddings within a single request.
-        """
-        if self._cached_conversation_embeddings is not None:
-            return self._cached_conversation_embeddings
+        """Embed each message in the current conversation + the new message."""
+        if not self._embedding_model_client:
+            return None
         conversation = self._build_conversation(sender)
         texts = [text for _role, text in conversation] + [content]
         try:
-            vecs = await self._embedding_model_client.embed(texts)
-            self._cached_conversation_embeddings = vecs
-            return vecs
+            return await self._embedding_model_client.embed(texts)
         except LlmError:
             logger.warning("Conversation embedding failed")
             return None
-
-    def clear_conversation_embedding_cache(self) -> None:
-        """Clear cached conversation embeddings after a request completes."""
-        self._cached_conversation_embeddings = None
 
     def _score_candidates_weighted(
         self,

@@ -102,7 +102,15 @@ class KnowledgeStore:
                 ).all()
             )
 
-    def count(self) -> int:
-        """Count total knowledge entries."""
+    def get_latest_prompt_timestamp(self) -> datetime | None:
+        """Get the timestamp of the most recently processed prompt via FK join."""
+        from penny.database.models import PromptLog
+
         with self._session() as session:
-            return len(list(session.exec(select(Knowledge)).all()))
+            result = session.exec(
+                select(PromptLog.timestamp)
+                .join(Knowledge, Knowledge.source_prompt_id == PromptLog.id)  # ty: ignore[invalid-argument-type]
+                .order_by(PromptLog.timestamp.desc())
+                .limit(1)
+            ).first()
+            return result

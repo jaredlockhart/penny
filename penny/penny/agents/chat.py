@@ -103,7 +103,6 @@ class ChatAgent(Agent):
         finally:
             self._current_user = None
             self._pending_page_context = None
-            self.clear_conversation_embedding_cache()
 
     # ── Message building ────────────────────────────────────────────────
 
@@ -168,8 +167,13 @@ class ChatAgent(Agent):
         instructions: str | None = None,
     ) -> str:
         """Identity + profile + knowledge + related messages + page hint + instructions."""
-        knowledge = await self._related_knowledge_section(user, content) if content else None
-        related = await self._related_messages_section(user, content) if content else None
+        conversation_embeddings = await self._embed_conversation(user, content) if content else None
+        knowledge = (
+            await self._related_knowledge_section(conversation_embeddings) if content else None
+        )
+        related = (
+            await self._related_messages_section(user, conversation_embeddings) if content else None
+        )
         return "\n\n".join(
             s
             for s in [

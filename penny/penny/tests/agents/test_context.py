@@ -386,9 +386,10 @@ async def test_related_messages_retrieves_similar_past_messages(
         mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
         penny.chat_agent._embedding_model_client = mock_client
 
-        context = await penny.chat_agent._related_messages_section(
+        embeddings = await penny.chat_agent._embed_conversation(
             TEST_SENDER, "the pedals finally arrived"
         )
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
         assert context is not None
         assert "Related Past Messages" in context
         # Full message content shown (no truncation)
@@ -422,13 +423,14 @@ async def test_related_messages_excludes_current_conversation(
         penny.db.messages.update_embedding(1, serialize_embedding(_PEDAL_VEC))
 
         mock_client = AsyncMock()
-        mock_client.embed = AsyncMock(return_value=[_QUERY_VEC])
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
         penny.chat_agent._embedding_model_client = mock_client
 
-        context = await penny.chat_agent._related_messages_section(
+        embeddings = await penny.chat_agent._embed_conversation(
             TEST_SENDER, "the pedals finally arrived"
         )
-        # Current session message should be excluded, so no results
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
+        # Current session message should be excluded (in conversation window), so no results
         assert context is None
 
 
@@ -444,9 +446,8 @@ async def test_related_messages_none_without_embedding_client(
 
         penny.chat_agent._embedding_model_client = None
 
-        context = await penny.chat_agent._related_messages_section(
-            TEST_SENDER, "the pedals finally arrived"
-        )
+        # No embedding client → None embeddings → no related messages
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, None)
         assert context is None
 
 
@@ -512,7 +513,8 @@ async def test_related_messages_date_ordering_with_multiple_dates(
         mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
         penny.chat_agent._embedding_model_client = mock_client
 
-        context = await penny.chat_agent._related_messages_section(TEST_SENDER, "pedals")
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "pedals")
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
         assert context is not None
         # Messages should appear in chronological order regardless of insertion order
         first_pos = context.index("first message")
@@ -689,12 +691,13 @@ async def test_knowledge_section_returns_matching_entries(
 
         mock_client = AsyncMock()
         # Return pedal-like vector for the conversation embedding
-        mock_client.embed = AsyncMock(return_value=[_PEDAL_VEC])
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_PEDAL_VEC] * len(texts))
         penny.chat_agent._embedding_model_client = mock_client
 
-        context = await penny.chat_agent._related_knowledge_section(
+        embeddings = await penny.chat_agent._embed_conversation(
             TEST_SENDER, "tell me about the eggnog pedal"
         )
+        context = await penny.chat_agent._related_knowledge_section(embeddings)
         assert context is not None
         assert "### Knowledge" in context
         assert "TubeSteader Eggnog" in context
@@ -730,8 +733,6 @@ async def test_knowledge_weighted_scoring_favors_conversation_context(
             recipient=TEST_SENDER,
         )
 
-        penny.chat_agent.clear_conversation_embedding_cache()
-
         _insert_message(
             penny,
             TEST_SENDER,
@@ -759,9 +760,8 @@ async def test_knowledge_weighted_scoring_favors_conversation_context(
         penny.chat_agent._embedding_model_client = mock_client
 
         # Last message is vague but 4 prior conversation messages are about pedals
-        context = await penny.chat_agent._related_knowledge_section(
-            TEST_SENDER, "yeah they're great"
-        )
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "yeah they're great")
+        context = await penny.chat_agent._related_knowledge_section(embeddings)
         assert context is not None
         # Pedal knowledge should rank higher due to conversation context
         eggnog_pos = context.find("TubeSteader Eggnog")
@@ -781,9 +781,10 @@ async def test_knowledge_none_without_embedding_client(
         _seed_knowledge(penny)
         penny.chat_agent._embedding_model_client = None
 
-        context = await penny.chat_agent._related_knowledge_section(
-            TEST_SENDER, "tell me about pedals"
-        )
+        # No embedding client → _embed_conversation returns None → no knowledge
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "tell me about pedals")
+        assert embeddings is None
+        context = await penny.chat_agent._related_knowledge_section(embeddings)
         assert context is None
 
 

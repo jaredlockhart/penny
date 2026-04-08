@@ -55,10 +55,12 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 - [ ] Migration files have a `def up(conn)` function
 - [ ] No duplicate migration number prefixes (enforced by `make migrate-validate`)
 - [ ] Schema migrations use DDL (ALTER TABLE, CREATE INDEX); data migrations use DML (UPDATE, backfills)
+- [ ] A single PR introduces at most one migration — multiple schema changes should be combined into one migration file
 
 ### Production Data
 - [ ] **NEVER** modify production DB (runtime_config, preferences, thoughts, etc.) without explicit user approval
 - [ ] Don't question or investigate whether runtime_config values are "taking effect" — if a value exists in the DB, the user put it there intentionally
+- [ ] Never use RuntimeConfig to store application state (watermarks, cursors, progress trackers) — derive state from the relevant domain table's timestamps and foreign keys
 
 ---
 
