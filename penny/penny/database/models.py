@@ -184,6 +184,19 @@ class Device(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class Knowledge(SQLModel, table=True):
+    """A summarized web page stored for factual recall during conversation."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    url: str = Field(unique=True, index=True)  # Upsert key — one entry per URL
+    title: str
+    summary: str  # Dense prose paragraph (8-12 sentences)
+    embedding: bytes | None = None  # Serialized float32 embedding vector
+    source_prompt_id: int = Field(foreign_key="promptlog.id", index=True)  # High-water mark
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class ConversationHistory(SQLModel, table=True):
     """A topic summary for a conversation period (daily, weekly, monthly)."""
 

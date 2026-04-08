@@ -1,4 +1,4 @@
-"""Integration tests for Agent context building (history, conversation, dislikes)."""
+"""Integration tests for Agent context building (history, conversation, dislikes, knowledge)."""
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
@@ -798,3 +798,160 @@ async def test_backfill_incoming_message_embeddings(
         count = await penny._backfill_incoming_message_embeddings(batch_limit=50)
         assert count == 2
         assert len(penny.db.messages.get_incoming_without_embeddings()) == 0
+
+
+# ── Knowledge context ───────────────────────────────────────────────────
+
+
+def _seed_knowledge(penny):
+    """Insert knowledge entries with deterministic embeddings for tests."""
+    penny.db.knowledge.upsert_by_url(
+        url="https://tubesteader.com/products/eggnog",
+        title="TubeSteader Eggnog",
+        summary="The Eggnog is a single-channel tube overdrive pedal using a 12AX7 tube.",
+        embedding=serialize_embedding(_PEDAL_VEC),
+        source_prompt_id=1,
+    )
+    penny.db.knowledge.upsert_by_url(
+        url="https://sci.news/astronomy/d9-binary-star",
+        title="Binary Star D9",
+        summary="A binary star system designated D9 orbits Sagittarius A*.",
+        embedding=serialize_embedding(_SPACE_VEC),
+        source_prompt_id=2,
+    )
+
+
+@pytest.mark.asyncio
+async def test_knowledge_section_returns_matching_entries(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Knowledge section includes entries relevant to the conversation."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+
+        mock_client = AsyncMock()
+        # Return pedal-like vector for the conversation embedding
+        mock_client.embed = AsyncMock(return_value=[_PEDAL_VEC])
+        penny.chat_agent._embedding_model_client = mock_client
+
+        context = await penny.chat_agent._related_knowledge_section(
+            TEST_SENDER, "tell me about the eggnog pedal"
+        )
+        assert context is not None
+        assert "### Knowledge" in context
+        assert "TubeSteader Eggnog" in context
+        assert "tubesteader.com" in context
+        assert "tube overdrive" in context
+
+
+@pytest.mark.asyncio
+async def test_knowledge_weighted_scoring_favors_conversation_context(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Weighted scoring uses conversation context, not just the last message."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+
+        # Seed conversation history: earlier messages about pedals
+        past = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=5)
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "i love my tubesteader pedals",
+            PennyConstants.MessageDirection.INCOMING,
+            past,
+        )
+        _insert_message(
+            penny,
+            penny.config.signal_number,
+            "nice! which ones?",
+            PennyConstants.MessageDirection.OUTGOING,
+            past + timedelta(minutes=1),
+            recipient=TEST_SENDER,
+        )
+
+        penny.chat_agent.clear_conversation_embedding_cache()
+
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "the eggnog sounds amazing",
+            PennyConstants.MessageDirection.INCOMING,
+            past + timedelta(minutes=2),
+        )
+        _insert_message(
+            penny,
+            penny.config.signal_number,
+            "yeah the tweed tone is great",
+            PennyConstants.MessageDirection.OUTGOING,
+            past + timedelta(minutes=3),
+            recipient=TEST_SENDER,
+        )
+
+        mock_client = AsyncMock()
+        # 4 conversation messages + 1 new content = 5 embeddings
+        # First 4 are pedal-like, last (new content) is a neutral/vague vector
+        # that doesn't strongly match either knowledge entry
+        neutral_vec = [0.5, 0.5, 0.0]  # roughly equidistant from pedal and space
+        mock_client.embed = AsyncMock(
+            return_value=[_PEDAL_VEC, _PEDAL_VEC, _PEDAL_VEC, _PEDAL_VEC, neutral_vec]
+        )
+        penny.chat_agent._embedding_model_client = mock_client
+
+        # Last message is vague but 4 prior conversation messages are about pedals
+        context = await penny.chat_agent._related_knowledge_section(
+            TEST_SENDER, "yeah they're great"
+        )
+        assert context is not None
+        # Pedal knowledge should rank higher due to conversation context
+        eggnog_pos = context.find("TubeSteader Eggnog")
+        star_pos = context.find("Binary Star D9")
+        assert eggnog_pos >= 0
+        assert eggnog_pos < star_pos
+
+
+@pytest.mark.asyncio
+async def test_knowledge_none_without_embedding_client(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Knowledge section returns None when no embedding client is configured."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+        penny.chat_agent._embedding_model_client = None
+
+        context = await penny.chat_agent._related_knowledge_section(
+            TEST_SENDER, "tell me about pedals"
+        )
+        assert context is None
+
+
+@pytest.mark.asyncio
+async def test_knowledge_in_chat_system_prompt(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Knowledge section appears in ChatAgent system prompt."""
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(return_value=[_PEDAL_VEC])
+        penny.chat_agent._embedding_model_client = mock_client
+        penny.chat_agent._pending_page_context = None
+
+        prompt = await penny.chat_agent._build_system_prompt(
+            TEST_SENDER, content="the eggnog pedal"
+        )
+        assert "### Knowledge" in prompt
+        assert "TubeSteader Eggnog" in prompt
+        # Knowledge appears before Related Past Messages (or Instructions if no messages)
+        knowledge_pos = prompt.find("### Knowledge")
+        instructions_pos = prompt.find("## Instructions")
+        assert knowledge_pos < instructions_pos

@@ -29,8 +29,11 @@ class Prompt:
         "and what you'll do with the result.\n\n"
         "Use your tools to look up information before replying when the user mentions "
         "a product, topic, or anything you could look up — even if it appeared in "
-        "Related Past Messages. Past messages tell you what was discussed, not the "
-        "facts about those things. The ONLY exception is pure greetings ('hey', 'hi') "
+        "Related Past Messages or Knowledge. Past messages tell you what was discussed, "
+        "not the facts about those things. The Knowledge section contains factual "
+        "summaries of pages previously read — use this as background context but always "
+        "verify with fresh lookups when the user asks specific questions. "
+        "The ONLY exception is pure greetings ('hey', 'hi') "
         "or direct follow-ups to a tool call you made earlier in THIS conversation.\n\n"
         "When a 'Current Browser Page' section appears above, the user is browsing "
         "that page right now. If they say 'this page', 'this thread', 'this article', "
@@ -201,6 +204,34 @@ Examples:
         "— do not paraphrase or correct unfamiliar words. "
         "Omit greetings, small talk, and meta-conversation. "
         'Return ONLY the bullet list, one topic per line, prefixed with "- ".'
+    )
+
+    KNOWLEDGE_SUMMARIZE = (
+        "You are summarizing a web page for a personal knowledge base. "
+        "Your summary will be stored and retrieved later to help answer "
+        "questions about this topic.\n\n"
+        "Write a single dense paragraph of 8-12 sentences capturing the key "
+        "factual content of this page. Focus on:\n"
+        "- What the thing IS (product, article, concept, etc.)\n"
+        "- Specific details that would be useful to recall later "
+        "(specs, names, dates, claims, findings)\n"
+        "- What makes it notable or distinctive\n\n"
+        "Do NOT include:\n"
+        "- Navigation elements, ads, or site chrome\n"
+        '- "This page describes..." or "The article discusses..." meta-framing\n'
+        "- Opinions about the content quality\n"
+        "- Anything not actually on the page\n\n"
+        "Write in plain declarative prose. No bullet points, no markdown "
+        "formatting, no headers."
+    )
+
+    KNOWLEDGE_AGGREGATE = (
+        "You are updating a knowledge base summary. Below is the existing "
+        "summary followed by new content from the same page. Write a single "
+        "updated paragraph that incorporates any new information while "
+        "preserving existing details.\n\n"
+        "Same rules: 8-12 sentences, dense factual prose, no meta-framing, "
+        "no bullet points, no markdown formatting, no headers."
     )
 
     # Thinking seed prompts

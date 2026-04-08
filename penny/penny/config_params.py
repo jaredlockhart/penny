@@ -348,6 +348,24 @@ ConfigParam(
     group=GROUP_HISTORY,
 )
 
+ConfigParam(
+    key="RELATED_KNOWLEDGE_LIMIT",
+    description="Max knowledge entries to inject into chat context",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
+)
+
+ConfigParam(
+    key="KNOWLEDGE_EXTRACTION_BATCH_LIMIT",
+    description="Max prompts to process per knowledge extraction cycle",
+    type=int,
+    default=3,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
+)
+
 
 # ── Notify ───────────────────────────────────────────────────────────────────
 

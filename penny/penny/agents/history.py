@@ -18,7 +18,7 @@ from pydantic import Field as PydanticField
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
-from penny.database.models import Preference
+from penny.database.models import Preference, PromptLog
 from penny.llm.embeddings import deserialize_embedding, serialize_embedding
 from penny.llm.similarity import DedupStrategy, is_embedding_duplicate
 from penny.prompts import Prompt
@@ -63,6 +63,7 @@ class HistoryPromptType:
     WEEKLY_ROLLUP = "weekly_rollup"
     PREFERENCE_IDENTIFICATION = "preference_identification"
     PREFERENCE_VALENCE = "preference_valence"
+    KNOWLEDGE_SUMMARIZE = "knowledge_summarize"
 
 
 class HistoryAgent(Agent):
@@ -85,6 +86,12 @@ class HistoryAgent(Agent):
         """
         return self._instructions_section()
 
+    async def execute(self) -> bool:
+        """Extract knowledge (user-independent), then run per-user work."""
+        knowledge_work = await self._extract_knowledge()
+        user_work = await super().execute()
+        return knowledge_work or user_work
+
     async def execute_for_user(self, user: str) -> bool:
         """Summarize today's conversation, extract preferences, backfill days and weeks."""
         run_id = uuid.uuid4().hex
@@ -102,6 +109,139 @@ class HistoryAgent(Agent):
         did_work = await self._rollup_completed_weeks(user, system_prompt, run_id) or did_work
 
         return did_work
+
+    # ── Knowledge extraction ──────────────────────────────────────────────
+
+    async def _extract_knowledge(self) -> bool:
+        """Scan prompt logs for browse results and summarize into knowledge entries."""
+        watermark = self._get_knowledge_watermark()
+        batch_limit = int(self.config.runtime.KNOWLEDGE_EXTRACTION_BATCH_LIMIT)
+        prompts = self.db.messages.get_prompts_after(watermark, batch_limit)
+        if not prompts:
+            return False
+
+        run_id = uuid.uuid4().hex
+        did_work = False
+        for prompt in prompts:
+            browse_results = self._parse_browse_results(prompt)
+            for url, title, content in browse_results:
+                assert prompt.id is not None
+                await self._summarize_knowledge(url, title, content, prompt.id, run_id)
+                did_work = True
+        self._set_knowledge_watermark(prompts[-1])
+        return did_work
+
+    @staticmethod
+    def _parse_browse_results(prompt: PromptLog) -> list[tuple[str, str, str]]:
+        """Extract (url, title, page_content) tuples from browse tool results."""
+        results: list[tuple[str, str, str]] = []
+        header = PennyConstants.BROWSE_PAGE_HEADER
+        for message in prompt.get_messages():
+            if message.get("role") != "tool":
+                continue
+            content = message.get("content", "")
+            for section in content.split(PennyConstants.SECTION_SEPARATOR):
+                if section.startswith(header):
+                    parsed = HistoryAgent._parse_browse_section(section, header)
+                    if parsed:
+                        results.append(parsed)
+        return results
+
+    @staticmethod
+    def _parse_browse_section(section: str, header: str) -> tuple[str, str, str] | None:
+        """Parse a single browse section into (url, title, page_content)."""
+        lines = section.split("\n", 3)
+        url = lines[0][len(header) :].strip()
+        if not url:
+            return None
+        title = url
+        if len(lines) > 1 and lines[1].startswith("Title: "):
+            title = lines[1][len("Title: ") :]
+        page_content = "\n".join(lines[1:]) if len(lines) > 1 else ""
+        return (url, title, page_content)
+
+    async def _summarize_knowledge(
+        self, url: str, title: str, content: str, prompt_id: int, run_id: str
+    ) -> None:
+        """Summarize page content and upsert into knowledge store."""
+        existing = self.db.knowledge.get_by_url(url)
+        if existing:
+            summary = await self._aggregate_knowledge(existing.summary, content, run_id)
+        else:
+            summary = await self._summarize_page(content, run_id)
+        if not summary:
+            return
+        embedding = await self._embed_text(summary)
+        self.db.knowledge.upsert_by_url(url, title, summary, embedding, prompt_id)
+
+    async def _summarize_page(self, content: str, run_id: str) -> str | None:
+        """Summarize a single page via LLM."""
+        messages = [
+            {"role": "system", "content": Prompt.KNOWLEDGE_SUMMARIZE},
+            {"role": "user", "content": content},
+        ]
+        response = await self._model_client.chat(
+            messages,
+            agent_name=self.name,
+            prompt_type=HistoryPromptType.KNOWLEDGE_SUMMARIZE,
+            run_id=run_id,
+        )
+        return response.content.strip() if response.content else None
+
+    async def _aggregate_knowledge(
+        self, existing_summary: str, new_content: str, run_id: str
+    ) -> str | None:
+        """Merge existing summary with new page content via LLM."""
+        user_content = f"Existing summary:\n{existing_summary}\n\nNew content:\n{new_content}"
+        messages = [
+            {"role": "system", "content": Prompt.KNOWLEDGE_AGGREGATE},
+            {"role": "user", "content": user_content},
+        ]
+        response = await self._model_client.chat(
+            messages,
+            agent_name=self.name,
+            prompt_type=HistoryPromptType.KNOWLEDGE_SUMMARIZE,
+            run_id=run_id,
+        )
+        return response.content.strip() if response.content else None
+
+    def _get_knowledge_watermark(self) -> int:
+        """Get the last processed prompt ID for knowledge extraction."""
+        from sqlmodel import Session, select
+
+        from penny.database.models import RuntimeConfig
+
+        with Session(self.db.engine) as session:
+            row = session.exec(
+                select(RuntimeConfig).where(
+                    RuntimeConfig.key == PennyConstants.KNOWLEDGE_WATERMARK_KEY
+                )
+            ).first()
+            return int(row.value) if row else 0
+
+    def _set_knowledge_watermark(self, prompt: PromptLog) -> None:
+        """Advance the knowledge extraction watermark to this prompt's ID."""
+        assert prompt.id is not None
+        from sqlmodel import Session, select
+
+        from penny.database.models import RuntimeConfig
+
+        with Session(self.db.engine) as session:
+            row = session.exec(
+                select(RuntimeConfig).where(
+                    RuntimeConfig.key == PennyConstants.KNOWLEDGE_WATERMARK_KEY
+                )
+            ).first()
+            if row:
+                row.value = str(prompt.id)
+            else:
+                row = RuntimeConfig(
+                    key=PennyConstants.KNOWLEDGE_WATERMARK_KEY,
+                    value=str(prompt.id),
+                    description="Last processed prompt ID for knowledge extraction",
+                )
+                session.add(row)
+            session.commit()
 
     # ── Topic summarization ───────────────────────────────────────────────
 

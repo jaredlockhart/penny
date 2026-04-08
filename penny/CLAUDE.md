@@ -111,6 +111,7 @@ penny/
       models.py       — DiscordMessage, DiscordUser Pydantic models
   database/
     database.py       — Database facade: thin wrapper creating domain stores
+    knowledge_store.py — KnowledgeStore: summarized web page content for factual recall
     message_store.py  — MessageStore: log_message, log_prompt, log_command, threads
     thought_store.py  — ThoughtStore: inner monologue persistence
     history_store.py  — HistoryStore: daily/weekly conversation topic summaries
@@ -118,7 +119,7 @@ penny/
     user_store.py     — UserStore: get_info, save_info, mute/unmute
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0008)
+    migrations/       — Numbered migration files (0001–0023)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client (chat, generate, embed)
     models.py         — ChatResponse, ChatResponseMessage
@@ -160,7 +161,9 @@ The base `Agent` class implements the core agentic loop:
 - Appends source URLs to responses when model omits them
 
 **System prompt building (template method pattern):**
-Each agent overrides `_build_system_prompt(user)` to compose its prompt from reusable building blocks on the base class: `_identity_section()`, `_profile_section()`, `_history_section()`, `_thought_section()`, `_dislike_section()`, `_instructions_section()`, `_context_block()`. No flags or conditionals — each agent explicitly declares what goes in its prompt. Tests assert on the exact full system prompt string to catch structural drift.
+Each agent overrides `_build_system_prompt(user)` to compose its prompt from reusable building blocks on the base class: `_identity_section()`, `_profile_section()`, `_history_section()`, `_thought_section()`, `_dislike_section()`, `_related_knowledge_section()`, `_related_messages_section()`, `_instructions_section()`, `_context_block()`. No flags or conditionals — each agent explicitly declares what goes in its prompt. Tests assert on the exact full system prompt string to catch structural drift.
+
+**Weighted conversation scoring**: Both knowledge and related message retrieval use exponentially-decayed weighted scoring (decay=0.5) against the full conversation history, not just the last message. This handles both "vague message with prior context" and "topic pivot" scenarios. Conversation embeddings are cached per request and shared between knowledge and message retrieval.
 
 ### Shared Ollama Client Instances
 
@@ -175,7 +178,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 
 **ChatAgent** (`agents/chat.py`)
 - Handles incoming user messages with tools (BrowseTool for search and page reading)
-- Prompt: identity + profile + history + notified thoughts + conversation instructions
+- Prompt: identity + profile + knowledge + related messages + page hint + conversation instructions
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the Ollama
 
 **NotifyAgent** (`agents/notify.py`)
@@ -204,7 +207,8 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Only user messages are included — Penny's responses and proactive notifications are excluded
 - No identity, profile, or conversation context — overrides `_build_system_prompt()` to include only instructions
 - Runs on a PeriodicSchedule (highest priority among idle tasks — before notify and thinking)
-- Each cycle per user: (1) summarize today, (2) extract today's preferences, (3) backfill past days, (4) roll up completed weeks
+- Each cycle: (0) extract knowledge from browse results (user-independent), then per user: (1) summarize today, (2) extract today's preferences, (3) backfill past days, (4) roll up completed weeks
+- Knowledge extraction: scans prompt logs incrementally (watermark in RuntimeConfig), extracts browse tool results, summarizes page content into prose paragraphs via LLM, embeds summaries, upserts by URL
 - Daily summaries: messages midnight-to-now, upserted (rolling update); backfill for completed days without entries
 - Weekly rollups: consolidates daily entries from completed ISO weeks into weekly summary entries (max 2 per cycle)
 - Preference extraction: two-pass LLM pipeline — (1) identify new topics from user messages + reactions, (2) classify valence (positive/negative). Topics are deduped against existing preferences via TCR + embedding similarity before storage
@@ -320,6 +324,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **MuteState**: Per-user mute state — row exists = muted, delete = unmuted
 - **Thought**: Inner monologue entries — `content` (full monologue), `preference_id` FK (seed preference), `notified_at`
 - **Preference**: User sentiment signals — `content`, `valence` (positive/negative), `source` (manual/extracted), `mention_count`, `embedding` (serialized float32 vector), `source_period_start`/`end`, `last_thought_at`. Extracted preferences must reach `PREFERENCE_MENTION_THRESHOLD` mentions before becoming thinking candidates; manual (`/like`) preferences bypass this gate
+- **Knowledge**: Summarized web page content — `url` (unique), `title`, `summary` (prose paragraph), `embedding`, `source_prompt_id` FK (extraction watermark). One entry per URL, upserted on revisit
 - **ConversationHistory**: Topic summaries — `period_start`, `period_end`, `duration` (daily/weekly/monthly), `topics` (bullet-point list), `embedding`
 
 ## Message Flow
@@ -390,6 +395,7 @@ Notable migrations:
 - 0006: `messagelog.thought_id` FK (links messages to notification thoughts)
 - 0007: `thought.preference_id` FK (links thoughts to seed preferences)
 - 0008: `preference.source` + `preference.mention_count` (mention threshold gating)
+- 0023: `knowledge` table (summarized web page content for factual recall)
 
 ## Extending
 

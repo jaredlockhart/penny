@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from penny.constants import PennyConstants
-from penny.database.models import MessageLog
+from penny.database.models import MessageLog, PromptLog
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -806,3 +806,144 @@ async def test_history_context_includes_weekly_entries(
         week_pos = context.index("Week of")
         daily_pos = context.index("Morning coffee chat")
         assert week_pos < daily_pos
+
+
+# ── Knowledge extraction ────────────────────────────────────────────────
+
+
+def _insert_prompt_with_browse(penny, url, title, page_content):
+    """Insert a prompt log with a browse tool result."""
+    browse_header = PennyConstants.BROWSE_PAGE_HEADER
+    tool_content = f"{browse_header}{url}\nTitle: {title}\nURL: {url}\n\n{page_content}"
+    messages = json.dumps(
+        [
+            {"role": "system", "content": "test"},
+            {"role": "user", "content": "test"},
+            {"role": "assistant", "content": None, "tool_calls": []},
+            {"role": "tool", "tool_call_id": "call_1", "content": tool_content},
+        ]
+    )
+    with penny.db.get_session() as session:
+        prompt = PromptLog(
+            model="test",
+            messages=messages,
+            response=json.dumps({"choices": []}),
+            agent_name="chat",
+            prompt_type="user_message",
+        )
+        session.add(prompt)
+        session.commit()
+        session.refresh(prompt)
+        return prompt.id
+
+
+@pytest.mark.asyncio
+async def test_extract_knowledge_from_browse_results(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Knowledge extraction creates an entry from browse tool results."""
+    config = make_config(history_interval=99999.0)
+
+    def handler(request, count):
+        return mock_llm._make_text_response(
+            request, "The Eggnog is a tube overdrive pedal by TubeSteader."
+        )
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _insert_prompt_with_browse(
+            penny,
+            "https://tubesteader.com/products/eggnog",
+            "TubeSteader Eggnog",
+            "The Eggnog uses a 12AX7 tube driven at 250 VDC.",
+        )
+
+        await penny.history_agent._extract_knowledge()
+
+        entry = penny.db.knowledge.get_by_url("https://tubesteader.com/products/eggnog")
+        assert entry is not None
+        assert entry.title == "TubeSteader Eggnog"
+        assert "tube overdrive" in entry.summary
+
+
+@pytest.mark.asyncio
+async def test_extract_knowledge_upserts_existing_url(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Re-browsing the same URL aggregates into the existing knowledge entry."""
+    config = make_config(history_interval=99999.0)
+
+    call_count = 0
+
+    def handler(request, count):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return mock_llm._make_text_response(request, "First summary of the page.")
+        return mock_llm._make_text_response(request, "Updated summary with new info.")
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _insert_prompt_with_browse(
+            penny,
+            "https://example.com/page",
+            "Example Page",
+            "Original content.",
+        )
+        await penny.history_agent._extract_knowledge()
+
+        entry = penny.db.knowledge.get_by_url("https://example.com/page")
+        assert entry is not None
+        assert entry.summary == "First summary of the page."
+
+        # Insert another prompt with the same URL
+        penny.chat_agent.clear_conversation_embedding_cache()
+        _insert_prompt_with_browse(
+            penny,
+            "https://example.com/page",
+            "Example Page",
+            "Updated content with more details.",
+        )
+        await penny.history_agent._extract_knowledge()
+
+        entry = penny.db.knowledge.get_by_url("https://example.com/page")
+        assert entry is not None
+        assert entry.summary == "Updated summary with new info."
+
+
+@pytest.mark.asyncio
+async def test_extract_knowledge_respects_watermark(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Knowledge extraction only processes prompts after the watermark."""
+    config = make_config(history_interval=99999.0)
+
+    summaries_generated = []
+
+    def handler(request, count):
+        summary = f"Summary {len(summaries_generated) + 1}"
+        summaries_generated.append(summary)
+        return mock_llm._make_text_response(request, summary)
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _insert_prompt_with_browse(penny, "https://a.com", "Page A", "Content A")
+        _insert_prompt_with_browse(penny, "https://b.com", "Page B", "Content B")
+
+        # First extraction processes both
+        await penny.history_agent._extract_knowledge()
+        assert penny.db.knowledge.get_by_url("https://a.com") is not None
+        assert penny.db.knowledge.get_by_url("https://b.com") is not None
+
+        summaries_generated.clear()
+
+        # Add a third prompt
+        _insert_prompt_with_browse(penny, "https://c.com", "Page C", "Content C")
+        await penny.history_agent._extract_knowledge()
+
+        # Only the new prompt should be processed
+        assert len(summaries_generated) == 1
+        assert penny.db.knowledge.get_by_url("https://c.com") is not None

@@ -55,6 +55,7 @@ class PennyConstants:
     BROWSE_PAGE_HEADER = "## browse: "
     SECTION_SEPARATOR = "\n\n---\n\n"
     DISLIKE_FILTER_THRESHOLD = 0.8
+    KNOWLEDGE_WATERMARK_KEY = "knowledge_extraction_watermark"
 
     # Email command constants
     JMAP_SESSION_URL = "https://api.fastmail.com/jmap/session"

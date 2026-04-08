@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from similarity.embeddings import find_similar
+from similarity.embeddings import cosine_similarity
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
@@ -20,7 +20,6 @@ from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.llm.embeddings import deserialize_embedding
-from penny.llm.similarity import embed_text
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -989,8 +988,37 @@ class Agent:
             logger.warning("Dislike context retrieval failed, proceeding without")
             return None
 
+    async def _related_knowledge_section(self, sender: str, content: str) -> str | None:
+        """Retrieve knowledge entries relevant to the current conversation."""
+        if not self._embedding_model_client:
+            return None
+        try:
+            return await self._build_related_knowledge(sender, content)
+        except Exception:
+            logger.warning("Knowledge retrieval failed, proceeding without")
+            return None
+
+    async def _build_related_knowledge(self, sender: str, content: str) -> str | None:
+        """Score knowledge entries against conversation, return top N formatted."""
+        conversation_embeddings = await self._embed_conversation(sender, content)
+        if not conversation_embeddings:
+            return None
+
+        entries = self.db.knowledge.get_with_embeddings()
+        if not entries:
+            return None
+
+        limit = int(self.config.runtime.RELATED_KNOWLEDGE_LIMIT)
+        scored = self._score_candidates_weighted(
+            conversation_embeddings, entries, lambda entry: deserialize_embedding(entry.embedding)
+        )
+        top = scored[:limit]
+        if not top:
+            return None
+        return self._format_knowledge(top)
+
     async def _related_messages_section(self, sender: str, content: str) -> str | None:
-        """Retrieve past user messages semantically similar to the current message."""
+        """Retrieve past user messages semantically similar to the conversation."""
         if not self._embedding_model_client:
             return None
         try:
@@ -1000,9 +1028,9 @@ class Agent:
             return None
 
     async def _build_related_messages(self, sender: str, content: str) -> str | None:
-        """Embed current message, find similar past messages, format as context."""
-        query_vec = await embed_text(self._embedding_model_client, content)
-        if query_vec is None:
+        """Score past messages against conversation, return top N formatted."""
+        conversation_embeddings = await self._embed_conversation(sender, content)
+        if not conversation_embeddings:
             return None
 
         messages = self.db.messages.get_incoming_with_embeddings(sender)
@@ -1011,7 +1039,7 @@ class Agent:
 
         cutoff = self._conversation_start(sender)
         candidates = [
-            (message.id, deserialize_embedding(message.embedding))
+            message
             for message in messages
             if message.embedding and message.timestamp < cutoff and message.id is not None
         ]
@@ -1019,27 +1047,102 @@ class Agent:
             return None
 
         limit = int(self.config.runtime.RELATED_MESSAGES_LIMIT)
-        results = find_similar(query_vec, candidates, top_k=limit)
-        if not results:
+        scored = self._score_candidates_weighted(
+            conversation_embeddings,
+            candidates,
+            lambda message: deserialize_embedding(message.embedding),
+        )
+        top = scored[:limit]
+        if not top:
             return None
 
-        messages_by_id = {message.id: message for message in messages if message.id is not None}
-        return self._format_related_messages(results, messages_by_id)
+        return self._format_related_messages(top)
+
+    # ── Weighted scoring helpers ──────────────────────────────────────────
+
+    async def _embed_conversation(self, sender: str, content: str) -> list[list[float]] | None:
+        """Embed each message in the current conversation + the new message.
+
+        Caches result on instance so both knowledge and related messages
+        can reuse the same embeddings within a single request.
+        """
+        if hasattr(self, "_cached_conversation_embeddings"):
+            return self._cached_conversation_embeddings
+        conversation = self._build_conversation(sender)
+        texts = [text for _role, text in conversation] + [content]
+        try:
+            vecs = await self._embedding_model_client.embed(texts)
+            self._cached_conversation_embeddings = vecs
+            return vecs
+        except Exception:
+            logger.warning("Conversation embedding failed")
+            return None
+
+    def clear_conversation_embedding_cache(self) -> None:
+        """Clear cached conversation embeddings after a request completes."""
+        if hasattr(self, "_cached_conversation_embeddings"):
+            del self._cached_conversation_embeddings
+
+    def _score_candidates_weighted(
+        self,
+        conversation_embeddings: list[list[float]],
+        candidates: list,
+        get_embedding: Callable,
+        decay: float = 0.5,
+    ) -> list:
+        """Score candidates using exponentially-decayed conversation similarity.
+
+        Returns candidates sorted by weighted score descending.
+        """
+        scored: list[tuple[float, Any]] = []
+        for candidate in candidates:
+            candidate_vec = get_embedding(candidate)
+            score = self._weighted_similarity(conversation_embeddings, candidate_vec, decay)
+            scored.append((score, candidate))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [candidate for _score, candidate in scored]
 
     @staticmethod
-    def _format_related_messages(
-        results: list[tuple[int, float]],
-        messages_by_id: dict[int, Any],
-    ) -> str:
-        """Format similarity results as dated message quotes, ordered chronologically."""
-        matched = []
-        for message_id, _score in results:
-            message = messages_by_id.get(message_id)
-            if message:
-                matched.append(message)
-        matched.sort(key=lambda message: message.timestamp)
+    def _weighted_similarity(
+        message_embeddings: list[list[float]],
+        candidate_embedding: list[float],
+        decay: float = 0.5,
+    ) -> float:
+        """Compute exponentially-decayed weighted average of cosine similarities.
+
+        Most recent message gets weight 1.0, previous gets decay,
+        before that decay^2, etc.
+        """
+        count = len(message_embeddings)
+        if count == 0:
+            return 0.0
+        total = 0.0
+        weight_sum = 0.0
+        for index, message_vec in enumerate(message_embeddings):
+            age = count - 1 - index
+            weight = decay**age
+            total += cosine_similarity(message_vec, candidate_embedding) * weight
+            weight_sum += weight
+        return total / weight_sum
+
+    # ── Context formatters ────────────────────────────────────────────────
+
+    @staticmethod
+    def _format_knowledge(entries: list) -> str:
+        """Format knowledge entries as titled paragraphs."""
+        sections: list[str] = []
+        for entry in entries:
+            sections.append(f"{entry.title}\n{entry.url}\n{entry.summary}")
+        if not sections:
+            return "### Knowledge"
+        return "### Knowledge\n" + "\n\n".join(sections)
+
+    @staticmethod
+    def _format_related_messages(messages: list) -> str:
+        """Format messages as dated quotes, ordered chronologically."""
+        messages_sorted = sorted(messages, key=lambda message: message.timestamp)
         lines: list[str] = []
-        for message in matched:
+        for message in messages_sorted:
             date_label = message.timestamp.strftime("%b %-d")
             lines.append(f'{date_label}: "{message.content}"')
         if not lines:
