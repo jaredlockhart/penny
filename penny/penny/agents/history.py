@@ -15,10 +15,11 @@ from typing import Any
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
+from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.constants import PennyConstants
-from penny.database.models import Preference, PromptLog
+from penny.database.models import Preference, PromptLog, RuntimeConfig
 from penny.llm.embeddings import deserialize_embedding, serialize_embedding
 from penny.llm.similarity import DedupStrategy, is_embedding_duplicate
 from penny.prompts import Prompt
@@ -128,7 +129,7 @@ class HistoryAgent(Agent):
                 assert prompt.id is not None
                 await self._summarize_knowledge(url, title, content, prompt.id, run_id)
                 did_work = True
-        self._set_knowledge_watermark(prompts[-1])
+        self._set_knowledge_watermark(prompts[-1].timestamp)
         return did_work
 
     @staticmethod
@@ -155,8 +156,9 @@ class HistoryAgent(Agent):
         if not url:
             return None
         title = url
-        if len(lines) > 1 and lines[1].startswith("Title: "):
-            title = lines[1][len("Title: ") :]
+        title_prefix = PennyConstants.BROWSE_TITLE_PREFIX
+        if len(lines) > 1 and lines[1].startswith(title_prefix):
+            title = lines[1][len(title_prefix) :]
         page_content = "\n".join(lines[1:]) if len(lines) > 1 else ""
         return (url, title, page_content)
 
@@ -205,27 +207,8 @@ class HistoryAgent(Agent):
         )
         return response.content.strip() if response.content else None
 
-    def _get_knowledge_watermark(self) -> int:
-        """Get the last processed prompt ID for knowledge extraction."""
-        from sqlmodel import Session, select
-
-        from penny.database.models import RuntimeConfig
-
-        with Session(self.db.engine) as session:
-            row = session.exec(
-                select(RuntimeConfig).where(
-                    RuntimeConfig.key == PennyConstants.KNOWLEDGE_WATERMARK_KEY
-                )
-            ).first()
-            return int(row.value) if row else 0
-
-    def _set_knowledge_watermark(self, prompt: PromptLog) -> None:
-        """Advance the knowledge extraction watermark to this prompt's ID."""
-        assert prompt.id is not None
-        from sqlmodel import Session, select
-
-        from penny.database.models import RuntimeConfig
-
+    def _get_knowledge_watermark(self) -> datetime:
+        """Get the timestamp of the last processed prompt for knowledge extraction."""
         with Session(self.db.engine) as session:
             row = session.exec(
                 select(RuntimeConfig).where(
@@ -233,12 +216,24 @@ class HistoryAgent(Agent):
                 )
             ).first()
             if row:
-                row.value = str(prompt.id)
+                return datetime.fromisoformat(row.value)
+            return datetime.min
+
+    def _set_knowledge_watermark(self, timestamp: datetime) -> None:
+        """Advance the knowledge extraction watermark to this timestamp."""
+        with Session(self.db.engine) as session:
+            row = session.exec(
+                select(RuntimeConfig).where(
+                    RuntimeConfig.key == PennyConstants.KNOWLEDGE_WATERMARK_KEY
+                )
+            ).first()
+            if row:
+                row.value = timestamp.isoformat()
             else:
                 row = RuntimeConfig(
                     key=PennyConstants.KNOWLEDGE_WATERMARK_KEY,
-                    value=str(prompt.id),
-                    description="Last processed prompt ID for knowledge extraction",
+                    value=timestamp.isoformat(),
+                    description="Last processed prompt timestamp for knowledge extraction",
                 )
                 session.add(row)
             session.commit()

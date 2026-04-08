@@ -3,6 +3,7 @@
 import logging
 from datetime import UTC, datetime
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from penny.database.models import Knowledge
@@ -36,7 +37,7 @@ class KnowledgeStore:
                         session, existing, title, summary, embedding, source_prompt_id
                     )
                 return self._insert_new(session, url, title, summary, embedding, source_prompt_id)
-        except Exception as error:
+        except SQLAlchemyError as error:
             logger.error("Failed to upsert knowledge for %s: %s", url, error)
             return None
 

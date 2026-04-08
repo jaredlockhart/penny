@@ -568,14 +568,14 @@ class MessageStore:
         except Exception as e:
             logger.error("Failed to set run_outcome for %s: %s", run_id, e)
 
-    def get_prompts_after(self, after_id: int, limit: int) -> list[PromptLog]:
-        """Get prompts with id > after_id, ordered ascending, for knowledge extraction."""
+    def get_prompts_after(self, after: datetime, limit: int) -> list[PromptLog]:
+        """Get prompts with timestamp > after, oldest first, for knowledge extraction."""
         with self._session() as session:
             return list(
                 session.exec(
                     select(PromptLog)
-                    .where(PromptLog.id > after_id)  # ty: ignore[unsupported-operator]
-                    .order_by(PromptLog.id.asc())  # ty: ignore[unsupported-operator]
+                    .where(PromptLog.timestamp > after)
+                    .order_by(PromptLog.timestamp.asc())
                     .limit(limit)
                 ).all()
             )

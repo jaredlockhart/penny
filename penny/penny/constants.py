@@ -53,6 +53,7 @@ class PennyConstants:
     MAX_SEARCH_LINKS = 10
     BROWSE_SEARCH_HEADER = "## search: "
     BROWSE_PAGE_HEADER = "## browse: "
+    BROWSE_TITLE_PREFIX = "Title: "
     SECTION_SEPARATOR = "\n\n---\n\n"
     DISLIKE_FILTER_THRESHOLD = 0.8
     KNOWLEDGE_WATERMARK_KEY = "knowledge_extraction_watermark"

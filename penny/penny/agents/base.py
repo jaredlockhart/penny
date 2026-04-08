@@ -20,6 +20,7 @@ from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.llm.embeddings import deserialize_embedding
+from penny.llm.models import LlmError
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -176,6 +177,7 @@ class Agent:
     THOUGHT_CONTEXT_LIMIT = PennyConstants.THOUGHT_CONTEXT_LIMIT
     PREFERRED_POOL_SIZE = PennyConstants.PREFERRED_POOL_SIZE
     name: str = "Agent"
+    _cached_conversation_embeddings: list[list[float]] | None = None
 
     def __init__(
         self,
@@ -1066,7 +1068,7 @@ class Agent:
         Caches result on instance so both knowledge and related messages
         can reuse the same embeddings within a single request.
         """
-        if hasattr(self, "_cached_conversation_embeddings"):
+        if self._cached_conversation_embeddings is not None:
             return self._cached_conversation_embeddings
         conversation = self._build_conversation(sender)
         texts = [text for _role, text in conversation] + [content]
@@ -1074,14 +1076,13 @@ class Agent:
             vecs = await self._embedding_model_client.embed(texts)
             self._cached_conversation_embeddings = vecs
             return vecs
-        except Exception:
+        except LlmError:
             logger.warning("Conversation embedding failed")
             return None
 
     def clear_conversation_embedding_cache(self) -> None:
         """Clear cached conversation embeddings after a request completes."""
-        if hasattr(self, "_cached_conversation_embeddings"):
-            del self._cached_conversation_embeddings
+        self._cached_conversation_embeddings = None
 
     def _score_candidates_weighted(
         self,
