@@ -197,12 +197,9 @@ Examples:
         "If nothing noteworthy was found, say so briefly."
     )
 
-    KNOWLEDGE_SUMMARIZE = (
-        "You are summarizing a web page for a personal knowledge base. "
-        "Your summary will be stored and retrieved later to help answer "
-        "questions about this topic.\n\n"
+    _KNOWLEDGE_RULES = (
         "Write a single dense paragraph of 8-12 sentences capturing the key "
-        "factual content of this page. Focus on:\n"
+        "factual content. Focus on:\n"
         "- What the thing IS (product, article, concept, etc.)\n"
         "- Specific details that would be useful to recall later "
         "(specs, names, dates, claims, findings)\n"
@@ -216,13 +213,17 @@ Examples:
         "formatting, no headers."
     )
 
+    KNOWLEDGE_SUMMARIZE = (
+        "You are summarizing a web page for a personal knowledge base. "
+        "Your summary will be stored and retrieved later to help answer "
+        f"questions about this topic.\n\n{_KNOWLEDGE_RULES}"
+    )
+
     KNOWLEDGE_AGGREGATE = (
         "You are updating a knowledge base summary. Below is the existing "
         "summary followed by new content from the same page. Write a single "
         "updated paragraph that incorporates any new information while "
-        "preserving existing details.\n\n"
-        "Same rules: 8-12 sentences, dense factual prose, no meta-framing, "
-        "no bullet points, no markdown formatting, no headers."
+        f"preserving existing details.\n\n{_KNOWLEDGE_RULES}"
     )
 
     # Thinking seed prompts
