@@ -7,7 +7,6 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from penny.database.device_store import DeviceStore
 from penny.database.domain_permission_store import DomainPermissionStore
-from penny.database.history_store import HistoryStore
 from penny.database.knowledge_store import KnowledgeStore
 from penny.database.message_store import MessageStore
 from penny.database.preference_store import PreferenceStore
@@ -23,7 +22,6 @@ class Database:
     Stores:
         devices: Device registration and lookup
         domain_permissions: Domain access permissions for browser tools
-        history: Conversation topic summaries for long-term context
         knowledge: Summarized web page content for factual recall
         messages: Message/prompt/command logging, threading, queries
         preferences: User preference CRUD and dedup
@@ -38,7 +36,6 @@ class Database:
 
         self.devices = DeviceStore(self.engine)
         self.domain_permissions = DomainPermissionStore(self.engine)
-        self.history = HistoryStore(self.engine)
         self.knowledge = KnowledgeStore(self.engine)
         self.messages = MessageStore(self.engine)
         self.preferences = PreferenceStore(self.engine)

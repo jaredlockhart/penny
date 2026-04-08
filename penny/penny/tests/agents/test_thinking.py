@@ -7,7 +7,6 @@ Test organization:
 4. URL validation — unit tests for hallucinated URL detection
 """
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -37,16 +36,9 @@ MOCK_REPORT = (
 
 
 def _seed_thinking(penny):
-    """Seed a message (so user exists), history, and preference (so seed topic exists)."""
+    """Seed a message (so user exists) and preference (so seed topic exists)."""
     penny.db.messages.log_message(
         PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hello penny"
-    )
-    penny.db.history.add(
-        user=TEST_SENDER,
-        period_start=datetime(2026, 3, 3),
-        period_end=datetime(2026, 3, 4),
-        duration=PennyConstants.HistoryDuration.DAILY,
-        topics="- Quantum gravity experiments\n- Cyberpunk anime releases",
     )
     penny.db.preferences.add(
         user=TEST_SENDER,

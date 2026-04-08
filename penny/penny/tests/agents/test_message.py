@@ -6,12 +6,9 @@ Test organization:
 3. Error / edge cases — XML leak regression, short response warning, delivery failure
 """
 
-from datetime import datetime
-
 import pytest
 from sqlmodel import select
 
-from penny.constants import PennyConstants
 from penny.database.models import MessageLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -46,21 +43,7 @@ async def test_basic_message_flow(
         # Verify we have a WebSocket connection
         assert len(signal_server._websockets) == 1, "Penny should have connected to WebSocket"
 
-        # Seed full context: weekly history, daily history, notified thought, dislike
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=datetime(2026, 3, 16),
-            period_end=datetime(2026, 3, 23),
-            duration=PennyConstants.HistoryDuration.WEEKLY,
-            topics="- Guitar pedal research\n- Quantum computing news",
-        )
-        penny.db.history.add(
-            user=TEST_SENDER,
-            period_start=datetime(2026, 3, 23),
-            period_end=datetime(2026, 3, 24),
-            duration=PennyConstants.HistoryDuration.DAILY,
-            topics="- Tone King Royalist amp",
-        )
+        # Seed full context: notified thought, dislike
         thought = penny.db.thoughts.add(TEST_SENDER, "Recent thought about amps")
         if thought:
             penny.db.thoughts.mark_notified(thought.id)

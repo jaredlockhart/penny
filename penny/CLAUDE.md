@@ -114,12 +114,11 @@ penny/
     knowledge_store.py — KnowledgeStore: summarized web page content for factual recall
     message_store.py  — MessageStore: log_message, log_prompt, log_command, threads
     thought_store.py  — ThoughtStore: inner monologue persistence
-    history_store.py  — HistoryStore: daily/weekly conversation topic summaries
     preference_store.py — PreferenceStore: add, query, dedup, embedding management
     user_store.py     — UserStore: get_info, save_info, mute/unmute
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0023)
+    migrations/       — Numbered migration files (0001–0024)
   ollama/
     client.py         — OllamaClient: wraps official ollama SDK async client (chat, generate, embed)
     models.py         — ChatResponse, ChatResponseMessage
@@ -207,12 +206,9 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Only user messages are included — Penny's responses and proactive notifications are excluded
 - No identity, profile, or conversation context — overrides `_build_system_prompt()` to include only instructions
 - Runs on a PeriodicSchedule (highest priority among idle tasks — before notify and thinking)
-- Each cycle: (0) extract knowledge from browse results (user-independent), then per user: (1) summarize today, (2) extract today's preferences, (3) backfill past days, (4) roll up completed weeks
+- Each cycle: (0) extract knowledge from browse results (user-independent), then per user: (1) extract preferences from unprocessed messages
 - Knowledge extraction: scans prompt logs incrementally (watermark in RuntimeConfig), extracts browse tool results, summarizes page content into prose paragraphs via LLM, embeds summaries, upserts by URL
-- Daily summaries: messages midnight-to-now, upserted (rolling update); backfill for completed days without entries
-- Weekly rollups: consolidates daily entries from completed ISO weeks into weekly summary entries (max 2 per cycle)
 - Preference extraction: two-pass LLM pipeline — (1) identify new topics from user messages + reactions, (2) classify valence (positive/negative). Topics are deduped against existing preferences via TCR + embedding similarity before storage
-- Stored summaries used as seed topics for ThinkingAgent and as context for ChatAgent
 
 **ScheduleExecutor** (`scheduler/schedule_runner.py`)
 - Background task: runs user-created cron-based scheduled tasks
@@ -325,7 +321,6 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **Thought**: Inner monologue entries — `content` (full monologue), `preference_id` FK (seed preference), `notified_at`
 - **Preference**: User sentiment signals — `content`, `valence` (positive/negative), `source` (manual/extracted), `mention_count`, `embedding` (serialized float32 vector), `source_period_start`/`end`, `last_thought_at`. Extracted preferences must reach `PREFERENCE_MENTION_THRESHOLD` mentions before becoming thinking candidates; manual (`/like`) preferences bypass this gate
 - **Knowledge**: Summarized web page content — `url` (unique), `title`, `summary` (prose paragraph), `embedding`, `source_prompt_id` FK (extraction watermark). One entry per URL, upserted on revisit
-- **ConversationHistory**: Topic summaries — `period_start`, `period_end`, `duration` (daily/weekly/monthly), `topics` (bullet-point list), `embedding`
 
 ## Message Flow
 
@@ -396,6 +391,7 @@ Notable migrations:
 - 0007: `thought.preference_id` FK (links thoughts to seed preferences)
 - 0008: `preference.source` + `preference.mention_count` (mention threshold gating)
 - 0023: `knowledge` table (summarized web page content for factual recall)
+- 0024: Drop `conversationhistory` table (replaced by knowledge + related messages)
 
 ## Extending
 

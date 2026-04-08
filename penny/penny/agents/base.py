@@ -830,7 +830,6 @@ class Agent:
             self._identity_section(),
             self._context_block(
                 self._profile_section(user),
-                self._history_section(user),
                 self._thought_section(user),
                 self._dislike_section(user),
             ),
@@ -873,87 +872,6 @@ class Agent:
             return f"### User Profile\nThe user's name is {user_info.name}."
         except Exception:
             return None
-
-    def _history_section(self, sender: str) -> str | None:
-        """Build conversation history with weekly summaries and daily details.
-
-        Weekly rollups replace their constituent daily entries to avoid
-        duplication. Only daily entries outside any weekly range are shown.
-
-        Format:
-            Week of Mar 3:
-            - weekly theme 1
-            Mar 15:
-            - daily topic 1
-            Today:
-            - daily topic 2
-        """
-        try:
-            lines: list[str] = []
-            weekly_entries = self._get_weekly_entries(sender)
-            lines.extend(self._format_weekly_entries(weekly_entries))
-            lines.extend(self._format_daily_entries(sender, weekly_entries))
-            if not lines:
-                return None
-
-            logger.debug("Built history context")
-            return "### Conversation History\n" + "\n".join(lines)
-        except Exception:
-            logger.warning("History context retrieval failed, proceeding without")
-            return None
-
-    def _get_weekly_entries(self, sender: str) -> list:
-        """Fetch weekly history entries."""
-        weekly_limit = int(self.config.runtime.WEEKLY_CONTEXT_LIMIT)
-        return self.db.history.get_recent(
-            sender, PennyConstants.HistoryDuration.WEEKLY, limit=weekly_limit
-        )
-
-    def _format_weekly_entries(self, entries: list) -> list[str]:
-        """Format weekly history entries with 'Week of' date labels."""
-        lines: list[str] = []
-        for entry in entries:
-            date_label = f"Week of {entry.period_start.strftime('%b %-d')}"
-            topics = self._extract_topic_lines(entry.topics)
-            if topics:
-                lines.append(f"{date_label}:")
-                lines.extend(f"- {t}" for t in topics)
-        return lines
-
-    def _format_daily_entries(self, sender: str, weekly_entries: list) -> list[str]:
-        """Format daily history entries, skipping days covered by a weekly rollup."""
-        daily_limit = int(self.config.runtime.HISTORY_CONTEXT_LIMIT)
-        entries = self.db.history.get_recent(
-            sender, PennyConstants.HistoryDuration.DAILY, limit=daily_limit
-        )
-        today = self._midnight_today()
-        weekly_ranges = [(w.period_start, w.period_end) for w in weekly_entries]
-        lines: list[str] = []
-        for entry in entries:
-            if self._covered_by_weekly(entry.period_start, weekly_ranges):
-                continue
-            is_today = entry.period_start == today
-            date_label = "Today" if is_today else entry.period_start.strftime("%b %-d")
-            topics = self._extract_topic_lines(entry.topics)
-            if topics:
-                lines.append(f"{date_label}:")
-                lines.extend(f"- {t}" for t in topics)
-        return lines
-
-    @staticmethod
-    def _covered_by_weekly(day_start, weekly_ranges: list[tuple]) -> bool:
-        """Check if a daily entry falls within a completed weekly rollup."""
-        return any(week_start <= day_start < week_end for week_start, week_end in weekly_ranges)
-
-    @staticmethod
-    def _extract_topic_lines(topics: str) -> list[str]:
-        """Parse topic bullet text into clean topic strings."""
-        result: list[str] = []
-        for line in topics.strip().splitlines():
-            topic = line.strip().lstrip("- ").strip()
-            if topic:
-                result.append(topic)
-        return result
 
     def _thought_section(self, sender: str) -> str | None:
         """Build recent thinking summary context. Overridden by ChatAgent and ThinkingAgent."""
@@ -1039,11 +957,11 @@ class Agent:
         if not messages:
             return None
 
-        cutoff = self._conversation_start(sender)
+        conversation_ids = self._get_conversation_message_ids(sender)
         candidates = [
             message
             for message in messages
-            if message.embedding and message.timestamp < cutoff and message.id is not None
+            if message.embedding and message.id not in conversation_ids and message.id is not None
         ]
         if not candidates:
             return None
@@ -1150,19 +1068,25 @@ class Agent:
             return "### Related Past Messages"
         return "### Related Past Messages\n" + "\n".join(lines)
 
+    def _get_conversation_message_ids(self, sender: str) -> set[int]:
+        """Get IDs of messages in the current conversation window (last N)."""
+        try:
+            limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
+            messages = self.db.messages.get_messages_since(sender, since=datetime.min, limit=limit)
+            return {msg.id for msg in messages if msg.id is not None}
+        except Exception:
+            return set()
+
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
         """Build conversation history as strict user/assistant alternation.
 
-        Only includes messages since the last history rollup (or midnight
-        if no rollup exists), so rolled-up content isn't duplicated.
-        Consecutive same-role messages are merged with newlines to maintain
-        valid turn structure for the model.
+        Fetches the last N messages (no time boundary). Consecutive same-role
+        messages are merged with newlines to maintain valid turn structure.
         """
         conversation: list[tuple[str, str]] = []
         try:
             limit = int(self.config.runtime.MESSAGE_CONTEXT_LIMIT)
-            since = self._conversation_start(sender)
-            messages = self.db.messages.get_messages_since(sender, since=since, limit=limit)
+            messages = self.db.messages.get_messages_since(sender, since=datetime.min, limit=limit)
             for msg in messages:
                 role = (
                     MessageRole.USER
@@ -1175,31 +1099,12 @@ class Agent:
                 else:
                     conversation.append((role, msg.content))
             if conversation:
-                logger.debug("Built conversation (%d turns since %s)", len(conversation), since)
+                logger.debug("Built conversation (%d turns)", len(conversation))
         except Exception:
             logger.warning("Conversation building failed, proceeding without")
         return conversation
 
-    def _conversation_start(self, sender: str) -> datetime:
-        """Determine where raw message history should begin.
-
-        Returns the latest rollup's period_end (so we don't duplicate
-        summarized content), or midnight today if no rollup exists.
-        """
-        latest = self.db.history.get_latest(sender, PennyConstants.HistoryDuration.DAILY)
-        if latest is not None:
-            return latest.period_end
-        return self._midnight_today()
-
     # ── Utilities ────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _midnight_today() -> datetime:
-        """Return midnight UTC for today as a naive datetime.
-
-        Naive because SQLite strips timezone info — all stored datetimes are naive UTC.
-        """
-        return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 

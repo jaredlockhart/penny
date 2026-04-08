@@ -197,15 +197,6 @@ Examples:
         "If nothing noteworthy was found, say so briefly."
     )
 
-    SUMMARIZE_TO_BULLETS = (
-        "Summarize what the user said as a short bullet list of topics. "
-        "Each bullet should be 5-10 words. "
-        "Keep the user's exact wording for names, brands, and descriptors "
-        "— do not paraphrase or correct unfamiliar words. "
-        "Omit greetings, small talk, and meta-conversation. "
-        'Return ONLY the bullet list, one topic per line, prefixed with "- ".'
-    )
-
     KNOWLEDGE_SUMMARIZE = (
         "You are summarizing a web page for a personal knowledge base. "
         "Your summary will be stored and retrieved later to help answer "

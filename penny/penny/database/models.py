@@ -195,18 +195,3 @@ class Knowledge(SQLModel, table=True):
     source_prompt_id: int = Field(foreign_key="promptlog.id", index=True)  # High-water mark
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class ConversationHistory(SQLModel, table=True):
-    """A topic summary for a conversation period (daily, weekly, monthly)."""
-
-    __tablename__ = "conversationhistory"
-
-    id: int | None = Field(default=None, primary_key=True)
-    user: str = Field(index=True)
-    period_start: datetime = Field(index=True)
-    period_end: datetime
-    duration: str  # PennyConstants.HistoryDuration enum value
-    topics: str  # Bullet-point list of topics discussed
-    embedding: bytes | None = None  # Serialized float32 embedding vector
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
