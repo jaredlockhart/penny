@@ -52,7 +52,7 @@ penny/
   penny.py            — Entry point. Penny class: creates agents, channel, scheduler
   config.py           — Config dataclass loaded from .env, channel auto-detection
   config_params.py    — ConfigParam + RuntimeParams: runtime-configurable settings with 3-tier lookup
-  constants.py        — Enums (SearchTrigger, HistoryDuration, PreferenceValence), reaction emojis
+  constants.py        — Enums (SearchTrigger, PreferenceValence), reaction emojis, browse constants
   prompts.py          — LLM prompt templates (thinking, history, preference extraction)
   responses.py        — All user-facing response strings (PennyResponse class)
   startup.py          — Startup announcement message generation (git commit info)
@@ -160,7 +160,7 @@ The base `Agent` class implements the core agentic loop:
 - Appends source URLs to responses when model omits them
 
 **System prompt building (template method pattern):**
-Each agent overrides `_build_system_prompt(user)` to compose its prompt from reusable building blocks on the base class: `_identity_section()`, `_profile_section()`, `_history_section()`, `_thought_section()`, `_dislike_section()`, `_related_knowledge_section()`, `_related_messages_section()`, `_instructions_section()`, `_context_block()`. No flags or conditionals — each agent explicitly declares what goes in its prompt. Tests assert on the exact full system prompt string to catch structural drift.
+Each agent overrides `_build_system_prompt(user)` to compose its prompt from reusable building blocks on the base class: `_identity_section()`, `_profile_section()`, `_thought_section()`, `_dislike_section()`, `_related_knowledge_section()`, `_related_messages_section()`, `_instructions_section()`, `_context_block()`. No flags or conditionals — each agent explicitly declares what goes in its prompt. Tests assert on the exact full system prompt string to catch structural drift.
 
 **Weighted conversation scoring**: Both knowledge and related message retrieval use exponentially-decayed weighted scoring (decay=0.5) against the full conversation history, not just the last message. This handles both "vague message with prior context" and "topic pivot" scenarios. Conversation embeddings are cached per request and shared between knowledge and message retrieval.
 
@@ -202,9 +202,7 @@ All OllamaClient instances are created centrally in `Penny.__init__()` and share
 - Stored thought summaries bleed into chat context, giving Penny continuity of inner reasoning
 
 **HistoryAgent** (`agents/history.py`)
-- Background worker that summarizes user messages into topic summaries and extracts user preferences
-- Only user messages are included — Penny's responses and proactive notifications are excluded
-- No identity, profile, or conversation context — overrides `_build_system_prompt()` to include only instructions
+- Background worker that extracts knowledge from browse results and user preferences from messages
 - Runs on a PeriodicSchedule (highest priority among idle tasks — before notify and thinking)
 - Each cycle: (0) extract knowledge from browse results (user-independent), then per user: (1) extract preferences from unprocessed messages
 - Knowledge extraction: scans prompt logs incrementally (watermark in RuntimeConfig), extracts browse tool results, summarizes page content into prose paragraphs via LLM, embeds summaries, upserts by URL
