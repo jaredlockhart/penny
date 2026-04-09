@@ -101,30 +101,36 @@ class HistoryAgent(Agent):
     def _parse_browse_results(prompt: PromptLog) -> list[tuple[str, str, str]]:
         """Extract (url, title, page_content) tuples from browse tool results."""
         results: list[tuple[str, str, str]] = []
-        header = PennyConstants.BROWSE_PAGE_HEADER
         for message in prompt.get_messages():
             if message.get("role") != "tool":
                 continue
             content = message.get("content", "")
             for section in content.split(PennyConstants.SECTION_SEPARATOR):
-                if section.startswith(header):
-                    parsed = HistoryAgent._parse_browse_section(section, header)
+                if section.startswith(PennyConstants.BROWSE_PAGE_HEADER):
+                    parsed = HistoryAgent._parse_browse_section(section)
                     if parsed:
                         results.append(parsed)
         return results
 
     @staticmethod
-    def _parse_browse_section(section: str, header: str) -> tuple[str, str, str] | None:
-        """Parse a single browse section into (url, title, page_content)."""
+    def _parse_browse_section(section: str) -> tuple[str, str, str] | None:
+        """Parse a successful browse section into (url, title, page_content).
+
+        Only matches the healthy format: header + Title: + URL: + content.
+        Error responses (disconnects, timeouts, blocked domains) are skipped.
+        """
         lines = section.split("\n", 3)
-        url = lines[0][len(header) :].strip()
+        if len(lines) < 3:
+            return None
+        url = lines[0][len(PennyConstants.BROWSE_PAGE_HEADER) :].strip()
         if not url:
             return None
-        title = url
-        title_prefix = PennyConstants.BROWSE_TITLE_PREFIX
-        if len(lines) > 1 and lines[1].startswith(title_prefix):
-            title = lines[1][len(title_prefix) :]
-        page_content = "\n".join(lines[1:]) if len(lines) > 1 else ""
+        if not lines[1].startswith(PennyConstants.BROWSE_TITLE_PREFIX):
+            return None
+        if not lines[2].startswith(PennyConstants.BROWSE_URL_PREFIX):
+            return None
+        title = lines[1][len(PennyConstants.BROWSE_TITLE_PREFIX) :]
+        page_content = lines[3] if len(lines) > 3 else ""
         return (url, title, page_content)
 
     async def _summarize_knowledge(
