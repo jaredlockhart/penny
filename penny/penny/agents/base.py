@@ -386,7 +386,7 @@ class Agent:
                 source_urls.extend(result.source_urls)
                 attachments.extend(result.attachments)
                 self._tool_result_images.extend(result.attachments)
-                await self.after_step(result.records, result.messages)
+                await self.after_step(result.records, result.messages, messages)
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
                     break
@@ -433,11 +433,16 @@ class Agent:
         """
         return False
 
-    async def after_step(self, step_records: list[ToolCallRecord], messages: list[dict]) -> None:
+    async def after_step(
+        self,
+        step_records: list[ToolCallRecord],
+        step_messages: list[dict],
+        conversation: list[dict] | None = None,
+    ) -> None:
         """Capture tool result text for URL validation. Override in subclasses (call super)."""
-        for msg in messages:
-            if msg.get("role") == MessageRole.TOOL:
-                content = msg.get("content", "")
+        for message in step_messages:
+            if message.get("role") == MessageRole.TOOL:
+                content = message.get("content", "")
                 if content:
                     self._tool_result_text.append(content)
 
