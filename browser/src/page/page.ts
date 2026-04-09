@@ -676,11 +676,11 @@ function createPromptDetail(prompt: PromptLogEntry): HTMLElement {
     detail.appendChild(createPromptSection(role, content));
   }
 
-  detail.appendChild(createPromptSection("response", renderResponse(prompt.response)));
-
   if (prompt.thinking) {
     detail.appendChild(createPromptSection("thinking", prompt.thinking));
   }
+
+  detail.appendChild(createPromptSection("response", renderResponse(prompt.response)));
 
   return detail;
 }

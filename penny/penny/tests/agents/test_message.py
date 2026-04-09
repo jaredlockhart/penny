@@ -134,11 +134,12 @@ or anything ambiguous, they mean the Current Browser Page — not something \
 from earlier in the conversation.
 
 How to use your tools:
-1. If the user gave you URLs, read them directly — pass the URLs to your \
-tool. Do NOT search for a site the user already linked.
+1. If the user gave you URLs, read them directly — pass the URLs in the \
+queries array. Do NOT search for a site the user already linked.
 2. If the user gave you a topic (no URLs), search first to discover \
 relevant pages.
-3. Read the most promising pages by passing their URLs back to your tool. \
+3. Read the most promising pages by passing their URLs in the queries \
+array (e.g., queries: ["https://example.com/page"]). \
 Real pages have full details that search snippets leave out.
 
 After reading pages, you MUST respond with what you found. Do not make \

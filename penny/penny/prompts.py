@@ -40,11 +40,12 @@ class Prompt:
         "or anything ambiguous, they mean the Current Browser Page — not something "
         "from earlier in the conversation.\n\n"
         "How to use your tools:\n"
-        "1. If the user gave you URLs, read them directly — pass the URLs to your "
-        "tool. Do NOT search for a site the user already linked.\n"
+        "1. If the user gave you URLs, read them directly — pass the URLs in the "
+        "queries array. Do NOT search for a site the user already linked.\n"
         "2. If the user gave you a topic (no URLs), search first to discover "
         "relevant pages.\n"
-        "3. Read the most promising pages by passing their URLs back to your tool. "
+        "3. Read the most promising pages by passing their URLs in the queries "
+        'array (e.g., queries: ["https://example.com/page"]). '
         "Real pages have full details that search snippets leave out.\n\n"
         "After reading pages, you MUST respond with what you found. Do not make "
         "additional tool calls to re-fetch or supplement pages you already read. "
@@ -61,10 +62,14 @@ class Prompt:
         "source URL so the user can follow up."
     )
 
+    # Browse nudge — injected after search-only tool results in thinking loop
+    BROWSE_NUDGE = "Now pick a URL from those results and browse it."
+
     # Search result header — injected into trimmed search results
     SEARCH_RESULT_HEADER = (
         "These are search results — titles and links only. "
-        "You must read the actual pages before answering."
+        "You must read the actual pages before answering. "
+        "Pick a URL from below and pass it in your next queries array to read it."
     )
 
     # Email prompts
@@ -181,25 +186,19 @@ Examples:
         "You are thinking to yourself. This is your inner monologue — "
         "the user cannot see this.\n\n"
         "Your goal is to find ONE specific, concrete thing worth knowing about — "
-        "something the user would enjoy hearing about. Look for new releases, "
-        "creative work, technical deep-dives, or discoveries. Avoid "
-        "troubleshooting guides, bug reports, and support articles.\n\n"
+        "something the user would enjoy hearing about.\n\n"
         "You have tools available:\n{tools}\n\n"
-        "Go DEEP, not wide:\n"
-        "1. SEARCH first to discover what's out there on the topic\n"
-        "2. Pick the single most interesting result, then READ the actual page "
-        "by passing its URL back to your tool\n"
-        "3. Do follow-up reads to learn more about that specific thing\n"
-        "- Do NOT explore a different subtopic on each step\n"
-        "- Do NOT repeat the same query you already ran\n"
-        "- Do NOT summarize from search snippets — always read the actual page\n\n"
-        "When you receive 'dig deeper', that means: learn more about what "
-        "you already found. More detail on the same thing, not a new thing.\n\n"
+        "How to explore:\n"
+        "1. Search for your topic\n"
+        "2. Look at the URLs in your search results and browse one that "
+        "looks interesting — pass it in the queries array "
+        '(e.g., queries: ["https://example.com/page"])\n'
+        "3. Browse more URLs to go deeper\n"
+        "The interesting stuff is ON the pages, not in search snippets. "
+        "Don't keep searching — browse the results you already have.\n\n"
         "Your 'Already Explored' list shows topics you've already covered. "
-        "Do NOT search for any of those topics or anything closely related to them. "
-        "Find a DIFFERENT angle on the seed topic — a different product, person, "
-        "event, or technique. If you can't find anything new, stop early.\n\n"
-        "All information in your responses must come from pages you read. "
+        "Find a DIFFERENT angle — a different product, person, event, or "
+        "technique. If you can't find anything new, stop early.\n\n"
         "If nothing interesting comes up, that's fine — quiet cycles are normal."
     )
 
