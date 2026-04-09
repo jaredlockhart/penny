@@ -439,6 +439,33 @@ class ThinkingAgent(Agent):
 
     # ── Loop hooks ─────────────────────────────────────────────────────────
 
+    async def after_step(
+        self,
+        step_records: list,
+        step_messages: list[dict],
+        conversation: list[dict] | None = None,
+    ) -> None:
+        """After tool execution, nudge model to browse if it only searched."""
+        await super().after_step(step_records, step_messages, conversation)
+        if conversation is None:
+            return
+        last_tool = next(
+            (m for m in reversed(step_messages) if m.get("role") == MessageRole.TOOL),
+            None,
+        )
+        if last_tool is None:
+            return
+        content = last_tool.get("content", "")
+        has_page_read = PennyConstants.BROWSE_PAGE_HEADER in content
+        has_search = PennyConstants.BROWSE_SEARCH_HEADER in content
+        if has_search and not has_page_read:
+            conversation.append(
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=Prompt.BROWSE_NUDGE,
+                ).to_dict()
+            )
+
     async def handle_text_step(
         self, response, messages: list[dict], step: int, is_final: bool
     ) -> bool:

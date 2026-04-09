@@ -61,10 +61,8 @@ browser/                        — Firefox browser extension
     protocol.ts                 — Typed WebSocket + runtime messaging protocol
     background/                 — WebSocket owner, tool dispatch, tab tracking
     sidebar/                    — Chat UI, page context toggle
-    feed/                       — Thought card grid, reactions, modal
     content/                    — Defuddle-based page extraction (esbuild bundled)
   sidebar/                      — Sidebar HTML + CSS
-  feed/                         — Feed page HTML + CSS
   icons/                        — Extension icons (rendered from SVG)
   manifest.json                 — WebExtensions manifest
   tsconfig.json                 — Strict TypeScript config
