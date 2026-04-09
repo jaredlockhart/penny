@@ -54,6 +54,7 @@ class PennyConstants:
     BROWSE_SEARCH_HEADER = "## search: "
     BROWSE_PAGE_HEADER = "## browse: "
     BROWSE_TITLE_PREFIX = "Title: "
+    BROWSE_URL_PREFIX = "URL: "
     SECTION_SEPARATOR = "\n\n---\n\n"
     DISLIKE_FILTER_THRESHOLD = 0.8
 
