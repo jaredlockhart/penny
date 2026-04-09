@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from penny.agents.history import HistoryAgent
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog, PromptLog
 from penny.tests.conftest import TEST_SENDER
@@ -605,3 +606,89 @@ async def test_extract_knowledge_skips_prompts_without_browse(
         # Only the browse-containing prompt should be processed
         assert len(summaries_generated) == 1
         assert penny.db.knowledge.get_by_url("https://found.com") is not None
+
+
+# ── Browse section parsing (unit tests) ─────────────────────────────────
+
+
+_HEADER = PennyConstants.BROWSE_PAGE_HEADER
+
+
+def test_parse_browse_section_healthy():
+    """Healthy browse result with Title + URL + content is parsed."""
+    section = (
+        f"{_HEADER}https://example.com/page\n"
+        "Title: Example Page\n"
+        "URL: https://example.com/page\n"
+        "\nThis is the page content with lots of useful information."
+    )
+    result = HistoryAgent._parse_browse_section(section)
+    assert result is not None
+    url, title, content = result
+    assert url == "https://example.com/page"
+    assert title == "Example Page"
+    assert "useful information" in content
+
+
+def test_parse_browse_section_error_disconnected():
+    """Browser disconnected error is rejected."""
+    section = f"{_HEADER}https://example.com\nError: Browser disconnected"
+    assert HistoryAgent._parse_browse_section(section) is None
+
+
+def test_parse_browse_section_error_timeout():
+    """Browser timeout error is rejected."""
+    section = (
+        f"{_HEADER}https://example.com\nError: Browser tool 'browse_url' timed out after 60.0s"
+    )
+    assert HistoryAgent._parse_browse_section(section) is None
+
+
+def test_parse_browse_section_error_domain_blocked():
+    """Blocked domain error is rejected."""
+    section = (
+        f"{_HEADER}https://r.jina.ai/http://example.com\nError: Domain r.jina.ai is blocked by user"
+    )
+    assert HistoryAgent._parse_browse_section(section) is None
+
+
+def test_parse_browse_section_error_no_browser():
+    """No browser connected error is rejected."""
+    section = (
+        f"{_HEADER}https://example.com\nNo browser connected — cannot read https://example.com."
+    )
+    assert HistoryAgent._parse_browse_section(section) is None
+
+
+def test_parse_browse_section_error_failed_to_read():
+    """Failed to read error is rejected."""
+    section = (
+        f"{_HEADER}https://example.com\n"
+        "Failed to read https://example.com: Error: Missing host permission"
+    )
+    assert HistoryAgent._parse_browse_section(section) is None
+
+
+def test_parse_browse_section_cloudflare_block():
+    """Cloudflare challenge page (Title but no URL line) is rejected."""
+    section = (
+        f"{_HEADER}https://example.com\n"
+        "Title: Checking your connection\n"
+        "Failed to extract page content"
+    )
+    assert HistoryAgent._parse_browse_section(section) is None
+
+
+def test_parse_browse_section_empty_body():
+    """Page with Title + URL but empty body is still parsed (model handles it)."""
+    section = f"{_HEADER}https://example.com\nTitle: Some Page\nURL: https://example.com\n"
+    result = HistoryAgent._parse_browse_section(section)
+    assert result is not None
+    assert result[0] == "https://example.com"
+    assert result[1] == "Some Page"
+
+
+def test_parse_browse_section_single_line():
+    """Single-line browse header with no content is rejected."""
+    section = f"{_HEADER}https://example.com"
+    assert HistoryAgent._parse_browse_section(section) is None
