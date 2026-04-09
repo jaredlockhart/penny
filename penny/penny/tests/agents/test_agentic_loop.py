@@ -368,7 +368,7 @@ class TestAfterStepHook:
 
         captured_step_records = []
 
-        async def captureafter_step(step_records, messages):
+        async def captureafter_step(step_records, messages, conversation=None):
             captured_step_records.append(list(step_records))
 
         agent.after_step = captureafter_step

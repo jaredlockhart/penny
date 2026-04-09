@@ -469,7 +469,7 @@ export interface RuntimeThoughtsRequest {
   type: typeof RuntimeMessageType.ThoughtsRequest;
 }
 
-/** Background → feed page: thoughts data */
+/** Background → page: thoughts data */
 export interface RuntimeThoughtsResponse {
   type: typeof RuntimeMessageType.ThoughtsResponse;
   thoughts: ThoughtCard[];

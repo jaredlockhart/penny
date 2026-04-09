@@ -154,31 +154,24 @@ You are thinking to yourself. This is your inner monologue — \
 the user cannot see this.
 
 Your goal is to find ONE specific, concrete thing worth knowing about — \
-something the user would enjoy hearing about. Look for new releases, \
-creative work, technical deep-dives, or discoveries. Avoid \
-troubleshooting guides, bug reports, and support articles.
+something the user would enjoy hearing about.
 
 You have tools available:
 - **browse**: Look things up. Pass up to 3 queries and/or URLs.
 
-Go DEEP, not wide:
-1. SEARCH first to discover what's out there on the topic
-2. Pick the single most interesting result, then READ the actual page \
-by passing its URL back to your tool
-3. Do follow-up reads to learn more about that specific thing
-- Do NOT explore a different subtopic on each step
-- Do NOT repeat the same query you already ran
-- Do NOT summarize from search snippets — always read the actual page
-
-When you receive 'dig deeper', that means: learn more about what \
-you already found. More detail on the same thing, not a new thing.
+How to explore:
+1. Search for your topic
+2. Look at the URLs in your search results and browse one that \
+looks interesting — pass it in the queries array \
+(e.g., queries: ["https://example.com/page"])
+3. Browse more URLs to go deeper
+The interesting stuff is ON the pages, not in search snippets. \
+Don't keep searching — browse the results you already have.
 
 Your 'Already Explored' list shows topics you've already covered. \
-Do NOT search for any of those topics or anything closely related to them. \
-Find a DIFFERENT angle on the seed topic — a different product, person, \
-event, or technique. If you can't find anything new, stop early.
+Find a DIFFERENT angle — a different product, person, event, or \
+technique. If you can't find anything new, stop early.
 
-All information in your responses must come from pages you read. \
 If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
@@ -314,31 +307,24 @@ You are thinking to yourself. This is your inner monologue — \
 the user cannot see this.
 
 Your goal is to find ONE specific, concrete thing worth knowing about — \
-something the user would enjoy hearing about. Look for new releases, \
-creative work, technical deep-dives, or discoveries. Avoid \
-troubleshooting guides, bug reports, and support articles.
+something the user would enjoy hearing about.
 
 You have tools available:
 - **browse**: Look things up. Pass up to 3 queries and/or URLs.
 
-Go DEEP, not wide:
-1. SEARCH first to discover what's out there on the topic
-2. Pick the single most interesting result, then READ the actual page \
-by passing its URL back to your tool
-3. Do follow-up reads to learn more about that specific thing
-- Do NOT explore a different subtopic on each step
-- Do NOT repeat the same query you already ran
-- Do NOT summarize from search snippets — always read the actual page
-
-When you receive 'dig deeper', that means: learn more about what \
-you already found. More detail on the same thing, not a new thing.
+How to explore:
+1. Search for your topic
+2. Look at the URLs in your search results and browse one that \
+looks interesting — pass it in the queries array \
+(e.g., queries: ["https://example.com/page"])
+3. Browse more URLs to go deeper
+The interesting stuff is ON the pages, not in search snippets. \
+Don't keep searching — browse the results you already have.
 
 Your 'Already Explored' list shows topics you've already covered. \
-Do NOT search for any of those topics or anything closely related to them. \
-Find a DIFFERENT angle on the seed topic — a different product, person, \
-event, or technique. If you can't find anything new, stop early.
+Find a DIFFERENT angle — a different product, person, event, or \
+technique. If you can't find anything new, stop early.
 
-All information in your responses must come from pages you read. \
 If nothing interesting comes up, that's fine — quiet cycles are normal."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
@@ -1124,7 +1110,11 @@ async def test_search_only_results_abort_with_no_page_reads(
     running_penny,
     monkeypatch,
 ):
-    """Thinking run aborts with 'no page reads' when only search snippets were returned."""
+    """Thinking run aborts with 'no page reads' when only search snippets were returned.
+
+    Also verifies the browse nudge: after a search-only tool result,
+    a user message is injected telling the model to browse a URL.
+    """
     monkeypatch.setattr("penny.agents.thinking.random.random", lambda: 0.99)
     config = make_config(
         inner_monologue_interval=99999.0,
@@ -1132,7 +1122,10 @@ async def test_search_only_results_abort_with_no_page_reads(
         free_thinking_probability=0.0,
     )
 
+    requests_seen: list[dict] = []
+
     def handler(request, count):
+        requests_seen.append(request)
         if count == 1:
             # Search query (not a URL) — will be classified as ## search: section
             return mock_llm._make_tool_call_response(
@@ -1160,6 +1153,12 @@ async def test_search_only_results_abort_with_no_page_reads(
             ]
         assert len(outcomes) == 1
         assert outcomes[0] == "Discard: no page reads"
+
+        # Browse nudge: step 2 should contain a user message telling model to browse
+        step2_msgs = requests_seen[1]["messages"]
+        user_msgs = [m for m in step2_msgs if m.get("role") == "user"]
+        nudge_msgs = [m for m in user_msgs if "browse" in m.get("content", "").lower()]
+        assert len(nudge_msgs) == 1, f"Expected browse nudge, got user msgs: {user_msgs}"
 
 
 @pytest.mark.asyncio
