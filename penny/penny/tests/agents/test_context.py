@@ -1011,7 +1011,13 @@ async def test_knowledge_section_returns_matching_entries(
 async def test_knowledge_weighted_scoring_favors_conversation_context(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """Weighted scoring uses conversation context, not just the last message."""
+    """Conversation context still wins for vague follow-ups under hybrid scoring.
+
+    The hybrid scorer takes max(weighted, current_cosine), so a vague new message
+    that doesn't strongly match either entry directly should still resolve to the
+    entry the conversation has been about — preserving the storm-glass-style
+    "vague follow-up" case that motivated weighted-decay scoring originally.
+    """
     config = make_config()
 
     async with running_penny(config) as penny:
@@ -1070,6 +1076,71 @@ async def test_knowledge_weighted_scoring_favors_conversation_context(
         star_pos = context.find("Binary Star D9")
         assert eggnog_pos >= 0
         assert eggnog_pos < star_pos
+
+
+@pytest.mark.asyncio
+async def test_knowledge_hybrid_strong_direct_match_overrides_drift(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """A strong cosine to the current message wins over conversation-context drift.
+
+    Hybrid scoring takes max(weighted, current_cosine) per candidate, so an entry
+    that directly matches the live question can outscore an entry that the prior
+    conversation kept dragging up via weighted decay.
+    """
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+
+        # Conversation: 4 prior pedal-aligned messages + 1 current message that
+        # strongly matches the SPACE entry (cosine ~0.95) and only weakly matches
+        # the PEDAL entry (cosine ~0.20).
+        current_vec = [0.20, 0.95, 0.234]
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(
+            return_value=[_PEDAL_VEC, _PEDAL_VEC, _PEDAL_VEC, _PEDAL_VEC, current_vec]
+        )
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(
+            TEST_SENDER, "what about that binary star"
+        )
+        context = await penny.chat_agent._related_knowledge_section(embeddings)
+        assert context is not None
+        # Space entry wins because its current-message cosine dominates
+        # the pedal entry's conversation-weighted score.
+        space_pos = context.find("Binary Star D9")
+        eggnog_pos = context.find("TubeSteader Eggnog")
+        assert space_pos >= 0
+        assert space_pos < eggnog_pos
+
+
+@pytest.mark.asyncio
+async def test_knowledge_suppressed_when_all_entries_below_floor(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Nothing gets injected when no entry clears the score floor.
+
+    Without a floor, retrieval was forced to surface its top-N picks even on
+    greetings or off-topic chatter, polluting the chat prompt with unrelated
+    knowledge entries.
+    """
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        _seed_knowledge(penny)
+
+        # Embedding orthogonal to both seeded knowledge vectors → cosine 0.0,
+        # below the 0.34 floor.
+        unrelated_vec = [0.0, 0.0, 1.0]
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(return_value=[unrelated_vec])
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "hi penny")
+        context = await penny.chat_agent._related_knowledge_section(embeddings)
+        assert context is None
 
 
 @pytest.mark.asyncio
