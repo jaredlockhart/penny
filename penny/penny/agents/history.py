@@ -80,22 +80,44 @@ class HistoryAgent(Agent):
     # ── Knowledge extraction ──────────────────────────────────────────────
 
     async def _extract_knowledge(self) -> bool:
-        """Scan prompt logs for browse results and summarize into knowledge entries."""
+        """Scan prompt logs for browse results and summarize into knowledge entries.
+
+        Within a batch the same URL often appears in many prompts because each
+        step of an agentic loop re-logs the prior tool result messages. Dedup by
+        URL keeping the latest occurrence so each page is summarized at most once
+        per batch instead of re-aggregating identical content N times.
+        """
         watermark = self.db.knowledge.get_latest_prompt_timestamp() or datetime.min
         batch_limit = int(self.config.runtime.KNOWLEDGE_EXTRACTION_BATCH_LIMIT)
         prompts = self.db.messages.get_prompts_with_browse_after(watermark, batch_limit)
         if not prompts:
             return False
 
+        unique_by_url = self._dedup_browse_results_by_url(prompts)
+        if not unique_by_url:
+            return False
+
         run_id = uuid.uuid4().hex
-        did_work = False
+        for url, (title, content, prompt_id) in unique_by_url.items():
+            await self._summarize_knowledge(url, title, content, prompt_id, run_id)
+        return True
+
+    @staticmethod
+    def _dedup_browse_results_by_url(
+        prompts: list[PromptLog],
+    ) -> dict[str, tuple[str, str, int]]:
+        """Collapse browse results across the batch to one entry per URL.
+
+        Iterates prompts in order; later occurrences overwrite earlier ones so
+        the freshest content for each URL wins. Returns {url: (title, content,
+        prompt_id)}.
+        """
+        unique: dict[str, tuple[str, str, int]] = {}
         for prompt in prompts:
-            browse_results = self._parse_browse_results(prompt)
-            for url, title, content in browse_results:
-                assert prompt.id is not None
-                await self._summarize_knowledge(url, title, content, prompt.id, run_id)
-                did_work = True
-        return did_work
+            assert prompt.id is not None
+            for url, title, content in HistoryAgent._parse_browse_results(prompt):
+                unique[url] = (title, content, prompt.id)
+        return unique
 
     @staticmethod
     def _parse_browse_results(prompt: PromptLog) -> list[tuple[str, str, str]]:
