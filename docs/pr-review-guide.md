@@ -132,6 +132,13 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 - [ ] When adding a new library dependency, verify the import resolves correctly (default vs named exports)
 - [ ] Check the actual export shape — don't assume
 
+### No Asserts in Production Code
+- [ ] No `assert` statements in production (non-test) code — assertions get stripped under `python -O` and silently disable runtime checks
+- [ ] Never use `assert x is not None` to satisfy a typechecker. Healthier patterns:
+  - If the value being None is unreachable in practice but the type is `T | None`: narrow with `if x is None: continue` (skip), `raise ValueError(...)` (fail loudly with context), or refactor the upstream type so `None` isn't possible
+  - If the value being None means a real bug: `raise` with a descriptive message, never `assert`
+- [ ] `assert` is reserved for tests, where strip-on-optimize doesn't apply
+
 ---
 
 ## 5. Testing
