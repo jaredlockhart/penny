@@ -519,6 +519,50 @@ async def test_extract_knowledge_upserts_existing_url(
 
 
 @pytest.mark.asyncio
+async def test_extract_knowledge_dedupes_same_url_within_batch(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Same URL re-logged across an agentic loop's steps is summarized once.
+
+    Each step of an agentic loop re-logs the prior tool result messages, so a
+    single browse appears in multiple PromptLog rows. Knowledge extraction must
+    process that URL exactly once per batch (latest content wins) instead of
+    re-aggregating identical content for every step.
+    """
+    config = make_config(history_interval=99999.0)
+
+    summaries_generated = []
+
+    def handler(request, count):
+        summary = f"Summary {len(summaries_generated) + 1}"
+        summaries_generated.append(summary)
+        return mock_llm._make_text_response(request, summary)
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        # Simulate three steps of an agentic loop, each re-logging the same
+        # browse tool result. The third step has the freshest content.
+        _insert_prompt_with_browse(
+            penny, "https://loop.example/page", "Loop Page", "Step 1 content"
+        )
+        _insert_prompt_with_browse(
+            penny, "https://loop.example/page", "Loop Page", "Step 2 content"
+        )
+        _insert_prompt_with_browse(
+            penny, "https://loop.example/page", "Loop Page", "Step 3 content"
+        )
+
+        await penny.history_agent._extract_knowledge()
+
+        # Exactly one LLM call (the dedup), not three.
+        assert len(summaries_generated) == 1
+        entry = penny.db.knowledge.get_by_url("https://loop.example/page")
+        assert entry is not None
+        assert entry.summary == "Summary 1"
+
+
+@pytest.mark.asyncio
 async def test_extract_knowledge_respects_watermark(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
