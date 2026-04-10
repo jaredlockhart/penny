@@ -18,6 +18,7 @@ interface PageData {
   text: string;
   image: string;
   ready: boolean;
+  extracted: boolean;
 }
 
 /** Domain-specific readiness locators. For JS-rendered pages, Defuddle may
@@ -79,17 +80,25 @@ function extractMetaImage(): string {
 function extract(): PageData {
   const readinessSelector = findReadinessSelector();
   if (readinessSelector && !document.querySelector(readinessSelector)) {
-    return { title: document.title, url: location.href, text: "", image: "", ready: false };
+    return {
+      title: document.title,
+      url: location.href,
+      text: "",
+      image: "",
+      ready: false,
+      extracted: false,
+    };
   }
 
-  const text = extractXml() ?? extractWithDefuddle() ?? "Failed to extract page content";
+  const text = extractXml() ?? extractWithDefuddle();
 
   return {
     title: document.title,
     url: location.href,
-    text: text.slice(0, MAX_CHARS),
+    text: (text ?? "").slice(0, MAX_CHARS),
     image: extractMetaImage(),
     ready: true,
+    extracted: text !== null,
   };
 }
 

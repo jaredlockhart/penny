@@ -98,7 +98,19 @@ async function extractFromActiveTab(): Promise<void> {
     });
 
     if (results?.[0]) {
-      const data = results[0] as { title: string; url: string; text: string; image: string };
+      const data = results[0] as {
+        title: string;
+        url: string;
+        text: string;
+        image: string;
+        ready: boolean;
+        extracted: boolean;
+      };
+      if (!data.ready || !data.extracted) {
+        currentPageContext = null;
+        broadcastPageInfo("", "", "", "", false);
+        return;
+      }
       currentPageContext = {
         title: data.title,
         url: data.url,

@@ -279,14 +279,21 @@ class TestBrowseTool:
         assert result.image_base64 is None
 
     @pytest.mark.asyncio
-    async def test_returns_no_content_message_for_empty(self):
-        """Tool returns a SearchResult with no-content message when channel returns empty."""
-        request_fn = AsyncMock(return_value=("  ", None))
+    async def test_browser_runtime_error_becomes_error_section(self, monkeypatch):
+        """A RuntimeError from request_fn (structured browser failure) is surfaced
+        under the dedicated error header, not the success header."""
+        from penny.constants import PennyConstants
+
+        monkeypatch.setattr(PennyConstants, "BROWSE_RETRIES", 0)
+        monkeypatch.setattr(PennyConstants, "BROWSE_RETRY_DELAY", 0.0)
+        request_fn = AsyncMock(side_effect=RuntimeError("extraction failed after 10 retries"))
         tool = self._make_tool(request_fn)
         result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
-        assert "no content" in result.text.lower()
+        assert PennyConstants.BROWSE_ERROR_HEADER + "https://example.com" in result.text
+        assert "extraction failed" in result.text
+        assert PennyConstants.BROWSE_PAGE_HEADER + "https://example.com" not in result.text
 
     @pytest.mark.asyncio
     async def test_checks_permission_before_browsing(self):
@@ -301,8 +308,12 @@ class TestBrowseTool:
         request_fn.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_permission_denied_reports_error_in_result(self):
-        """Permission denial appears as error in result, request_fn not called."""
+    async def test_permission_denied_reports_error_in_result(self, monkeypatch):
+        """Permission denial appears under the browse error header, request_fn not called."""
+        from penny.constants import PennyConstants
+
+        monkeypatch.setattr(PennyConstants, "BROWSE_RETRIES", 0)
+        monkeypatch.setattr(PennyConstants, "BROWSE_RETRY_DELAY", 0.0)
         mock_perm = MagicMock()
         mock_perm.check_domain = AsyncMock(side_effect=RuntimeError("blocked"))
         request_fn = AsyncMock()
@@ -310,7 +321,8 @@ class TestBrowseTool:
 
         result = await tool.execute(queries=["https://blocked.com"])
 
-        assert "Error: blocked" in result.text
+        assert PennyConstants.BROWSE_ERROR_HEADER + "https://blocked.com" in result.text
+        assert "blocked" in result.text
         request_fn.assert_not_called()
 
 

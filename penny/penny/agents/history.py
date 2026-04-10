@@ -131,6 +131,8 @@ class HistoryAgent(Agent):
             return None
         title = lines[1][len(PennyConstants.BROWSE_TITLE_PREFIX) :]
         page_content = lines[3] if len(lines) > 3 else ""
+        if not page_content.strip():
+            return None
         return (url, title, page_content)
 
     async def _summarize_knowledge(
