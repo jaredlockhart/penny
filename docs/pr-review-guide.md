@@ -13,6 +13,7 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 
 ### Constants and Naming
 - [ ] All string literals in logic are defined as constants or enums — no magic strings
+- [ ] **All numeric tuning constants, thresholds, timeouts, magic numbers, batch sizes, and retry counts live in `penny/constants.py` (under `PennyConstants` or a related enum class) — NEVER as module-level `_PRIVATE_CONSTANTS = ...` declarations scattered across other files.** This is a hard rule. If you find yourself adding a constant at the top of `agents/foo.py` or `tools/bar.py`, move it to `constants.py` instead. The only exceptions are file-local regex patterns (`_FOO_PATTERN = re.compile(...)`) that exist purely as a compiled-once optimization.
 - [ ] Variable names are fully spelled out — no abbreviations (`message` not `msg`, `config` not `cfg`, `format_args` not `fmt`). Standard short names (`i`, `n`, `db`) in tight loops or established domain terms are fine
 - [ ] f-strings used everywhere — no string concatenation with `+`
 

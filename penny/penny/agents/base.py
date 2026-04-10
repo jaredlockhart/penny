@@ -21,6 +21,7 @@ from penny.database import Database
 from penny.llm import LlmClient
 from penny.llm.embeddings import deserialize_embedding
 from penny.llm.models import LlmError
+from penny.llm.similarity import centrality_scores
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -214,6 +215,12 @@ class Agent:
 
         self._tool_executor = ToolExecutor(self._tool_registry, timeout=tool_timeout)
         self._keep_tools_on_final_step = False
+        # Lazy in-memory centrality cache for related-message retrieval, keyed by
+        # sender. Computed once on first retrieval per process and reused. Drifts
+        # as new messages arrive — acceptable for the MVP; revisit (DB column,
+        # background refresh) if precision degrades or the corpus grows past a
+        # few thousand messages where O(N²) recomputation becomes painful.
+        self._message_centrality_cache: dict[str, dict[int, float]] = {}
         self._on_tool_start_factory: (
             Callable[
                 [],
@@ -954,31 +961,128 @@ class Agent:
     def _build_related_messages(
         self, sender: str, conversation_embeddings: list[list[float]]
     ) -> str | None:
-        """Score past messages against conversation, return top N formatted."""
+        """Score past messages by current-message cosine minus a centrality penalty.
+
+        Unlike knowledge retrieval (which uses weighted decay over the conversation
+        window to capture topic drift), message retrieval scores against ONLY the
+        current user message — we want messages similar to what's being asked right
+        now, not adjacent topics from earlier in the thread.
+
+        Each candidate's score is `cosine_to_current - α * centrality`, where
+        centrality is the message's mean cosine to the rest of the corpus (a
+        centroid-magnet penalty that suppresses generic boilerplate like
+        "hi penny" / "Hey Penny what are some recent..." which would otherwise
+        leak into every unrelated query).
+
+        Selection is adaptive: a cluster-strength gate suppresses noise plateaus
+        entirely (novel topics with no real history), and the cutoff combines a
+        relative band against the cluster center with an absolute floor — strong
+        clusters return many messages, weak clusters return few, no cluster
+        returns nothing.
+        """
         messages = self.db.messages.get_incoming_with_embeddings(sender)
         if not messages:
             return None
 
-        conversation_ids = self._get_conversation_message_ids(sender)
-        candidates = [
-            message
-            for message in messages
-            if message.embedding and message.id not in conversation_ids and message.id is not None
-        ]
+        candidates = self._eligible_message_candidates(sender, messages)
         if not candidates:
             return None
 
-        limit = int(self.config.runtime.RELATED_MESSAGES_LIMIT)
-        scored = self._score_candidates_weighted(
-            conversation_embeddings,
-            candidates,
-            lambda message: deserialize_embedding(message.embedding),
+        centralities = self._get_message_centralities(sender, messages)
+        scored = self._score_messages_with_centrality_penalty(
+            conversation_embeddings[-1], candidates, centralities
         )
-        top = scored[:limit]
-        if not top:
+        cutoff = self._related_messages_cutoff(scored)
+        if cutoff is None:
             return None
 
+        limit = int(self.config.runtime.RELATED_MESSAGES_LIMIT)
+        top = [message for score, message in scored if score >= cutoff][:limit]
+        if not top:
+            return None
         return self._format_related_messages(top)
+
+    def _eligible_message_candidates(self, sender: str, messages: list) -> list:
+        """Filter to messages outside the current conversation, deduped by content."""
+        conversation_ids = self._get_conversation_message_ids(sender)
+        seen: set[str] = set()
+        candidates: list = []
+        for message in messages:
+            if not message.embedding or message.id is None:
+                continue
+            if message.id in conversation_ids:
+                continue
+            key = message.content.strip().lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(message)
+        return candidates
+
+    def _get_message_centralities(self, sender: str, messages: list) -> dict[int, float]:
+        """Lazily compute and cache per-sender message centralities.
+
+        Centrality = mean cosine to every other message in the sender's corpus.
+        Computed once on first retrieval and cached for the process lifetime.
+        Drifts as new messages arrive — acceptable trade-off for the MVP.
+        """
+        cached = self._message_centrality_cache.get(sender)
+        if cached is not None:
+            return cached
+        vecs: dict[int, list[float]] = {
+            message.id: deserialize_embedding(message.embedding)
+            for message in messages
+            if message.id is not None and message.embedding
+        }
+        cache = centrality_scores(vecs)
+        self._message_centrality_cache[sender] = cache
+        return cache
+
+    @staticmethod
+    def _score_messages_with_centrality_penalty(
+        current_embedding: list[float],
+        candidates: list,
+        centralities: dict[int, float],
+    ) -> list[tuple[float, Any]]:
+        """Score each candidate as `cosine - α * centrality`, sorted descending."""
+        scored: list[tuple[float, Any]] = []
+        for message in candidates:
+            cosine = cosine_similarity(current_embedding, deserialize_embedding(message.embedding))
+            penalty = PennyConstants.RELATED_MESSAGES_CENTRALITY_PENALTY * centralities.get(
+                message.id, 0.0
+            )
+            scored.append((cosine - penalty, message))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return scored
+
+    @staticmethod
+    def _related_messages_cutoff(scored: list[tuple[float, Any]]) -> float | None:
+        """Compute adaptive cutoff for related-message selection.
+
+        With enough candidates (≥20), apply a cluster-strength gate that suppresses
+        flat noise plateaus entirely, then combine a relative band against the
+        cluster center with an absolute floor. With fewer candidates (cold start),
+        skip the gate and use just the absolute floor.
+
+        Returns None if the noise plateau gate fires (no real cluster present).
+        """
+        if not scored:
+            return None
+        head_size = PennyConstants.RELATED_MESSAGES_GATE_HEAD_SIZE
+        sample_size = PennyConstants.RELATED_MESSAGES_GATE_SAMPLE_SIZE
+        if len(scored) >= sample_size:
+            head_mean = sum(score for score, _ in scored[:head_size]) / head_size
+            sample_mean = sum(score for score, _ in scored[:sample_size]) / sample_size
+            if (
+                sample_mean <= 0
+                or head_mean / sample_mean < PennyConstants.RELATED_MESSAGES_CLUSTER_GATE
+            ):
+                return None
+            return max(
+                head_mean * PennyConstants.RELATED_MESSAGES_RELATIVE_RATIO,
+                PennyConstants.RELATED_MESSAGES_ABSOLUTE_FLOOR,
+            )
+        return PennyConstants.RELATED_MESSAGES_ABSOLUTE_FLOOR
 
     # ── Weighted scoring helpers ──────────────────────────────────────────
 

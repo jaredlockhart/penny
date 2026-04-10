@@ -184,7 +184,12 @@ The base `Agent` class implements the core agentic loop:
 **System prompt building (template method pattern):**
 Each agent overrides `_build_system_prompt(user)` to compose its prompt from reusable building blocks on the base class: `_identity_section()`, `_profile_section()`, `_thought_section()`, `_dislike_section()`, `_related_knowledge_section()`, `_related_messages_section()`, `_instructions_section()`, `_context_block()`. No flags or conditionals — each agent explicitly declares what goes in its prompt. Tests assert on the exact full system prompt string to catch structural drift.
 
-**Weighted conversation scoring**: Both knowledge and related message retrieval use exponentially-decayed weighted scoring (decay=0.5) against the full conversation history, not just the last message. This handles both "vague message with prior context" and "topic pivot" scenarios. Conversation embeddings are cached per request and shared between knowledge and message retrieval.
+**Knowledge vs related-message retrieval scoring**: These use deliberately different algorithms:
+
+- **Knowledge retrieval** uses exponentially-decayed weighted scoring (decay=0.5) against the full conversation window. Knowledge is factual context, and topic drift across the recent conversation should bias which facts are surfaced — earlier turns still matter, just less than the most recent.
+- **Related-message retrieval** scores by `cosine_to_current_message - α × centrality`, where centrality is the candidate's mean cosine to the rest of the corpus. Past messages should match what's being asked right now, not adjacent topics from earlier in the thread (which caused derailment when the model latched onto a stale prior turn). The centrality penalty (α=0.5) suppresses generic centroid-magnet boilerplate that would otherwise leak into every unrelated query. After scoring, an adaptive cutoff is applied: a cluster-strength gate (`head_mean / sample_mean ≥ 1.15`, in adjusted-score space, where head=top-5 and sample=top-20) suppresses flat noise plateaus entirely, then `cutoff = max(head_mean × 0.85, 0.25)` combines a relative band against the cluster center with an empirical absolute floor. Strong clusters return many messages, weak clusters return few, no cluster returns nothing. Centrality is cached per-sender in memory (lazy on first retrieval, drifts as new messages arrive — revisit with a DB column or background refresh if precision degrades or the corpus grows past a few thousand messages). Constants live in `penny/constants.py` under `PennyConstants.RELATED_MESSAGES_*`.
+
+Conversation embeddings are computed once per request and shared between knowledge and message retrieval (the message path uses just the last element).
 
 ### Shared Ollama Client Instances
 

@@ -523,6 +523,308 @@ async def test_related_messages_date_ordering_with_multiple_dates(
         assert first_pos < second_pos < third_pos
 
 
+@pytest.mark.asyncio
+async def test_related_messages_scores_against_current_message_only_not_conversation(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Past messages are scored by cosine to the CURRENT user message only.
+
+    The earlier conversation context is used for knowledge retrieval (weighted decay)
+    but NOT for message retrieval — past messages must match what's being asked
+    right now, not adjacent topics from earlier in the thread. This prevents the
+    derailment bug where injecting old similar turns caused the model to latch
+    onto a stale prior topic.
+    """
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
+
+    async with running_penny(config) as penny:
+        past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=3)
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "i ordered a tone king royalist and tubesteader eggnog pedal",
+            PennyConstants.MessageDirection.INCOMING,
+            past,
+            embedding=serialize_embedding(_PEDAL_VEC),
+        )
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "tell me about black holes and neutron stars",
+            PennyConstants.MessageDirection.INCOMING,
+            past + timedelta(hours=1),
+            embedding=serialize_embedding(_SPACE_VEC),
+        )
+
+        # Mock embeds: earlier conversation turns are pedal-shaped, but the CURRENT
+        # message (last in the list) is space-shaped. Pure-cosine-to-current should
+        # therefore surface the SPACE message, not the pedal one. (A weighted-decay
+        # algorithm would surface the pedal because earlier turns dominate.)
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(return_value=[_PEDAL_VEC, _PEDAL_VEC, _PEDAL_VEC, _SPACE_VEC])
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(
+            TEST_SENDER, "what's happening near sagittarius A*"
+        )
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
+        assert context is not None
+        assert "black holes" in context
+        assert "royalist" not in context
+
+
+@pytest.mark.asyncio
+async def test_related_messages_dedupes_exact_text_duplicates(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Multiple message rows with identical text collapse to a single candidate.
+
+    Without dedup, repeated messages like "hi penny" stored as separate rows would
+    each take a slot in the returned set, crowding out genuinely-distinct matches.
+    """
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
+
+    async with running_penny(config) as penny:
+        past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=3)
+        for offset in range(5):
+            _insert_message(
+                penny,
+                TEST_SENDER,
+                "hi penny how are you today friend",
+                PennyConstants.MessageDirection.INCOMING,
+                past + timedelta(minutes=offset),
+                embedding=serialize_embedding(_PEDAL_VEC),
+            )
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "tell me about black holes and neutron stars",
+            PennyConstants.MessageDirection.INCOMING,
+            past + timedelta(hours=1),
+            embedding=serialize_embedding(_SPACE_VEC),
+        )
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "say hi")
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
+        assert context is not None
+        # Even though 5 identical "hi penny" rows exist, only one should appear
+        assert context.count("hi penny how are you today friend") == 1
+
+
+@pytest.mark.asyncio
+async def test_related_messages_excludes_below_absolute_floor(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Adjusted score below the absolute noise floor (0.25) is excluded.
+
+    Even in the cold-start path (few candidates) the floor protects against
+    surfacing matches that are statistically indistinguishable from random.
+    """
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
+
+    async with running_penny(config) as penny:
+        past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=3)
+        # Cosine to query of ~0.20 — below the 0.25 adjusted-score floor.
+        # With only one candidate the centrality penalty is zero (no other
+        # vectors to average against), so cosine equals the adjusted score.
+        weak_vec = [0.20, 0.98, 0.0]
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "this should be excluded as noise",
+            PennyConstants.MessageDirection.INCOMING,
+            past,
+            embedding=serialize_embedding(weak_vec),
+        )
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "anything")
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
+        # Only candidate is below floor → no related messages section
+        assert context is None
+
+
+@pytest.mark.asyncio
+async def test_related_messages_cluster_gate_suppresses_noise_plateau(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """A flat plateau of weak matches (no real cluster) is suppressed entirely.
+
+    With ≥20 candidates the cluster-strength gate (head_mean / sample_mean ≥ 1.15,
+    where head=top-5 and sample=top-20) fires. When every candidate scores roughly
+    equally — the noise-plateau case that derailed Penny on novel topics with no
+    real prior context — the gate returns nothing instead of surfacing arbitrary
+    near-centroid matches.
+    """
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
+
+    async with running_penny(config) as penny:
+        past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=10)
+        # Insert 25 candidates that all score nearly identically (flat plateau).
+        # Each gets a slightly different vector close to the query so cosines land
+        # in [0.42, 0.46] — above the floor but with no cluster shape.
+        for index in range(25):
+            jitter = 0.01 * (index % 5)
+            plateau_vec = [0.45 + jitter, 0.89, 0.0]
+            _insert_message(
+                penny,
+                TEST_SENDER,
+                f"plateau message number {index} with some filler text",
+                PennyConstants.MessageDirection.INCOMING,
+                past + timedelta(minutes=index),
+                embedding=serialize_embedding(plateau_vec),
+            )
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "novel question")
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
+        # 25 weak similar candidates with no real cluster → gate suppresses
+        assert context is None
+
+
+@pytest.mark.asyncio
+async def test_related_messages_centrality_penalty_demotes_centroid_magnets(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """A high-centrality message ranks below a more-novel one with the same cosine.
+
+    Centroid-magnet messages (generic boilerplate that scores moderately against
+    everything in the corpus) get penalized so they stop leaking into unrelated
+    queries — that's the whole point of the centrality term in the score.
+    """
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
+
+    async with running_penny(config) as penny:
+        past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=10)
+        # Two test messages with the SAME cosine to the query but very different
+        # centrality. Both vectors have first coordinate 0.7 (the only one that
+        # matters when dotted with query=[1,0,0]) but spread the remaining
+        # magnitude into different orthogonal directions. The magnet lives in a
+        # crowded corpus neighborhood (many near-twins), so its centrality is
+        # high; the specific vector lives alone, so its centrality is low.
+        # Adjusted score = cos - α*centrality, so the specific one should rank
+        # higher despite identical raw cosine to the query.
+        magnet_vec = [0.7, 0.71, 0.0]  # cos to [1,0,0] ≈ 0.70
+        specific_vec = [0.7, 0.0, 0.71]  # cos to [1,0,0] ≈ 0.70 (orthogonal to magnet)
+        # Seed many near-twins of the magnet so its centrality is high
+        for index in range(10):
+            jitter = 0.01 * index
+            twin_vec = [0.7 + jitter, 0.71 - jitter, 0.0]
+            _insert_message(
+                penny,
+                TEST_SENDER,
+                f"corpus filler twin {index} extra words",
+                PennyConstants.MessageDirection.INCOMING,
+                past + timedelta(minutes=index),
+                embedding=serialize_embedding(twin_vec),
+            )
+        # The magnet itself — surrounded by twins
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "magnet message centroid generic boilerplate text",
+            PennyConstants.MessageDirection.INCOMING,
+            past + timedelta(hours=1),
+            embedding=serialize_embedding(magnet_vec),
+        )
+        # The specific message — far from the magnet cluster, no near-twins
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "specific message novel rare distinctive content",
+            PennyConstants.MessageDirection.INCOMING,
+            past + timedelta(hours=2),
+            embedding=serialize_embedding(specific_vec),
+        )
+        # Pad with orthogonal noise so the corpus has enough candidates for the
+        # gate to engage but neither magnet nor specific is hugged by them
+        for index in range(15):
+            ortho_vec = [0.0, 0.05 * index, 0.0]  # along magnet's axis but tiny
+            _insert_message(
+                penny,
+                TEST_SENDER,
+                f"unrelated noise message {index} more words here",
+                PennyConstants.MessageDirection.INCOMING,
+                past + timedelta(hours=3, minutes=index),
+                embedding=serialize_embedding(ortho_vec),
+            )
+
+        mock_client = AsyncMock()
+        # Query vector is [1, 0, 0] — both magnet and specific have cosine ≈ 0.70
+        query_vec = [1.0, 0.0, 0.0]
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [query_vec] * len(texts))
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "query")
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
+        assert context is not None
+        # The specific message should be returned (it's the most novel match)
+        assert "specific message novel rare distinctive" in context
+        # Verify directly that the magnet was scored lower via centrality
+        all_messages = penny.db.messages.get_incoming_with_embeddings(TEST_SENDER)
+        centralities = penny.chat_agent._get_message_centralities(TEST_SENDER, all_messages)
+        magnet_id = next(m.id for m in all_messages if "magnet message centroid" in m.content)
+        specific_id = next(m.id for m in all_messages if "specific message novel" in m.content)
+        # The magnet's centrality must be measurably higher than the specific's
+        assert centralities[magnet_id] > centralities[specific_id] + 0.05
+
+
+@pytest.mark.asyncio
+async def test_related_messages_real_cluster_passes_gate_and_returns_top(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """A real cluster on top of a noise plateau passes the gate and returns top members."""
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
+
+    async with running_penny(config) as penny:
+        past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=10)
+        # 5 strongly-matching cluster members (cosine ~0.99)
+        for index in range(5):
+            _insert_message(
+                penny,
+                TEST_SENDER,
+                f"strong cluster message {index} with content",
+                PennyConstants.MessageDirection.INCOMING,
+                past + timedelta(minutes=index),
+                embedding=serialize_embedding(_PEDAL_VEC),
+            )
+        # 20 plateau messages just above the floor — same shape as the suppression
+        # test, but now the strong cluster on top elevates head_mean above the gate.
+        for index in range(20):
+            jitter = 0.005 * (index % 4)
+            plateau_vec = [0.42 + jitter, 0.91, 0.0]
+            _insert_message(
+                penny,
+                TEST_SENDER,
+                f"plateau filler message {index} extra words",
+                PennyConstants.MessageDirection.INCOMING,
+                past + timedelta(hours=1, minutes=index),
+                embedding=serialize_embedding(plateau_vec),
+            )
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "pedals question")
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
+        assert context is not None
+        # All 5 strong cluster members should appear; plateau messages should not
+        for index in range(5):
+            assert f"strong cluster message {index}" in context
+        assert "plateau filler" not in context
+
+
 # ── Message store embedding methods ──────────────────────────────────────
 
 
