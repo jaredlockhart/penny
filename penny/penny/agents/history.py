@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
@@ -108,17 +109,35 @@ class HistoryAgent(Agent):
     ) -> dict[str, tuple[str, str, int]]:
         """Collapse browse results across the batch to one entry per URL.
 
-        Iterates prompts in order; later occurrences overwrite earlier ones so
-        the freshest content for each URL wins. Returns {url: (title, content,
-        prompt_id)}.
+        URLs are normalized (fragment stripped, host lowercased) before keying
+        so `/page` and `/page#anchor` collapse to a single entry. Iterates
+        prompts in order; later occurrences overwrite earlier ones so the
+        freshest content for each URL wins. Returns {url: (title, content,
+        prompt_id)} keyed by the normalized URL.
         """
         unique: dict[str, tuple[str, str, int]] = {}
         for prompt in prompts:
             if prompt.id is None:
                 continue
             for url, title, content in HistoryAgent._parse_browse_results(prompt):
-                unique[url] = (title, content, prompt.id)
+                unique[HistoryAgent._normalize_url(url)] = (title, content, prompt.id)
         return unique
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """Canonicalize a URL for dedup and storage.
+
+        Strips the `#fragment` (client-side anchor, never affects page content)
+        and lowercases the scheme and host (case-insensitive per RFC 3986).
+        Path, query, and userinfo are preserved as-is — they can be
+        case-sensitive on the server side. URLs that fail to parse are
+        returned unchanged so a malformed string still keys consistently.
+        """
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            return url
+        return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
 
     @staticmethod
     def _parse_browse_results(prompt: PromptLog) -> list[tuple[str, str, str]]:
