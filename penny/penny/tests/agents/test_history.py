@@ -563,6 +563,73 @@ async def test_extract_knowledge_dedupes_same_url_within_batch(
 
 
 @pytest.mark.asyncio
+async def test_extract_knowledge_dedupes_url_fragments_within_batch(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """`/page` and `/page#anchor` are the same page; collapse to one summarize.
+
+    The browser tool sometimes follows in-page anchor links from search
+    results, producing browse entries whose URLs differ only by `#fragment`.
+    Without normalization the dedup keys them as distinct URLs and the model
+    summarizes byte-identical content N times, also writing N rows to the
+    knowledge table that all point at the same page.
+    """
+    config = make_config(history_interval=99999.0)
+
+    summaries_generated = []
+
+    def handler(request, count):
+        summary = f"Summary {len(summaries_generated) + 1}"
+        summaries_generated.append(summary)
+        return mock_llm._make_text_response(request, summary)
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _insert_prompt_with_browse(penny, "https://Example.com/page", "Example", "Same content")
+        _insert_prompt_with_browse(
+            penny, "https://example.com/page#intro", "Example", "Same content"
+        )
+        _insert_prompt_with_browse(
+            penny, "https://example.com/page#summary", "Example", "Same content"
+        )
+
+        await penny.history_agent._extract_knowledge()
+
+        # Exactly one LLM call across the three fragment variants.
+        assert len(summaries_generated) == 1
+
+        # Knowledge is stored under the canonical (fragment-stripped, lowercase
+        # host) URL and no duplicate rows exist for the fragment variants.
+        entry = penny.db.knowledge.get_by_url("https://example.com/page")
+        assert entry is not None
+        assert penny.db.knowledge.get_by_url("https://example.com/page#intro") is None
+        assert penny.db.knowledge.get_by_url("https://example.com/page#summary") is None
+        assert penny.db.knowledge.get_by_url("https://Example.com/page") is None
+
+
+def test_normalize_url_strips_fragment_and_lowercases_host():
+    """`_normalize_url` canonicalizes URLs for dedup keying."""
+    normalize = HistoryAgent._normalize_url
+    # Fragment stripped
+    assert normalize("https://example.com/page#anchor") == "https://example.com/page"
+    # Host lowercased, scheme lowercased
+    assert normalize("HTTPS://Example.COM/Path") == "https://example.com/Path"
+    # Path case preserved (servers can be case-sensitive)
+    assert (
+        normalize("https://example.com/CaseSensitive/Path#x")
+        == "https://example.com/CaseSensitive/Path"
+    )
+    # Query string preserved
+    assert (
+        normalize("https://example.com/search?q=Foo&p=1#results")
+        == "https://example.com/search?q=Foo&p=1"
+    )
+    # Already-canonical URL is unchanged
+    assert normalize("https://example.com/page") == "https://example.com/page"
+
+
+@pytest.mark.asyncio
 async def test_extract_knowledge_respects_watermark(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
