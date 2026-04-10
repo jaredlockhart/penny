@@ -144,20 +144,19 @@ class BrowseTool(Tool):
         all_urls: list[str] = []
         first_image: str | None = None
         for (header, value, _), result in zip(tasks, results, strict=True):
-            label = f"{header}{value}"
             if isinstance(result, Exception):
-                logger.warning("Browse sub-call failed (%s): %s", label, result)
-                sections.append(f"{label}\nError: {result}")
-            elif isinstance(result, SearchResult):
-                text = result.text
-                if header == PennyConstants.BROWSE_SEARCH_HEADER:
-                    text = _trim_search_result(text)
-                all_urls.extend(result.urls)
-                sections.append(f"{label}\n{text}")
-                if not first_image and result.image_base64:
-                    first_image = result.image_base64
-            else:
-                sections.append(f"{label}\n{result}")
+                logger.warning("Browse sub-call failed (%s%s): %s", header, value, result)
+                error_label = f"{PennyConstants.BROWSE_ERROR_HEADER}{value}"
+                sections.append(f"{error_label}\nCould not read page: {result}")
+                continue
+            label = f"{header}{value}"
+            text = result.text
+            if header == PennyConstants.BROWSE_SEARCH_HEADER:
+                text = _trim_search_result(text)
+            all_urls.extend(result.urls)
+            sections.append(f"{label}\n{text}")
+            if not first_image and result.image_base64:
+                first_image = result.image_base64
 
         return SearchResult(
             text=PennyConstants.SECTION_SEPARATOR.join(sections),
@@ -165,8 +164,14 @@ class BrowseTool(Tool):
             image_base64=first_image,
         )
 
-    async def _read_page(self, url: str) -> SearchResult | str:
-        """Read a single URL via the browser extension, retrying with backoff on disconnect."""
+    async def _read_page(self, url: str) -> SearchResult:
+        """Read a single URL via the browser extension, retrying with backoff on disconnect.
+
+        Raises ConnectionError if no browser is reachable after all retries, and
+        propagates any RuntimeError raised by the browser extension itself (which
+        signals a structured failure: extraction failed, page never became ready,
+        host permission denied, etc.).
+        """
         for attempt in range(1 + PennyConstants.BROWSE_RETRIES):
             delay = PennyConstants.BROWSE_RETRY_DELAY * (2**attempt)
             connection = self._browse_provider() if self._browse_provider else None
@@ -179,7 +184,7 @@ class BrowseTool(Tool):
                     )
                     await asyncio.sleep(delay)
                     continue
-                return f"No browser connected — cannot read {url}."
+                raise ConnectionError("no browser connected")
 
             request_fn, permission_manager = connection
             await permission_manager.check_domain(url)
@@ -197,10 +202,7 @@ class BrowseTool(Tool):
                     continue
                 raise
 
-            if not text.strip():
-                return SearchResult(text=f"Page at {url} returned no content.")
-
             text = clean_browser_content(text)
             return SearchResult(text=text, image_base64=image_url)
 
-        return f"No browser connected — cannot read {url}."
+        raise ConnectionError("no browser connected")
