@@ -630,65 +630,72 @@ def test_parse_browse_section_healthy():
     assert "useful information" in content
 
 
-def test_parse_browse_section_error_disconnected():
-    """Browser disconnected error is rejected."""
-    section = f"{_HEADER}https://example.com\nError: Browser disconnected"
-    assert HistoryAgent._parse_browse_section(section) is None
-
-
-def test_parse_browse_section_error_timeout():
-    """Browser timeout error is rejected."""
+def test_parse_browse_section_rejects_error_section_header():
+    """Sections under the dedicated error header never reach the parser, but if
+    one were passed in directly it would be rejected (no Title:/URL: lines)."""
     section = (
-        f"{_HEADER}https://example.com\nError: Browser tool 'browse_url' timed out after 60.0s"
+        f"{PennyConstants.BROWSE_ERROR_HEADER}https://example.com\n"
+        "Could not read page: extraction failed after 10 retries"
     )
     assert HistoryAgent._parse_browse_section(section) is None
 
 
-def test_parse_browse_section_error_domain_blocked():
-    """Blocked domain error is rejected."""
-    section = (
-        f"{_HEADER}https://r.jina.ai/http://example.com\nError: Domain r.jina.ai is blocked by user"
-    )
+def test_parse_browse_section_missing_title_line():
+    """Sections without a Title: line are rejected."""
+    section = f"{_HEADER}https://example.com\nNo title here\nURL: https://example.com\nbody"
     assert HistoryAgent._parse_browse_section(section) is None
 
 
-def test_parse_browse_section_error_no_browser():
-    """No browser connected error is rejected."""
-    section = (
-        f"{_HEADER}https://example.com\nNo browser connected — cannot read https://example.com."
-    )
-    assert HistoryAgent._parse_browse_section(section) is None
-
-
-def test_parse_browse_section_error_failed_to_read():
-    """Failed to read error is rejected."""
-    section = (
-        f"{_HEADER}https://example.com\n"
-        "Failed to read https://example.com: Error: Missing host permission"
-    )
-    assert HistoryAgent._parse_browse_section(section) is None
-
-
-def test_parse_browse_section_cloudflare_block():
-    """Cloudflare challenge page (Title but no URL line) is rejected."""
-    section = (
-        f"{_HEADER}https://example.com\n"
-        "Title: Checking your connection\n"
-        "Failed to extract page content"
-    )
+def test_parse_browse_section_missing_url_line():
+    """Sections without a URL: line are rejected."""
+    section = f"{_HEADER}https://example.com\nTitle: Some Page\nNo url here\nbody"
     assert HistoryAgent._parse_browse_section(section) is None
 
 
 def test_parse_browse_section_empty_body():
-    """Page with Title + URL but empty body is still parsed (model handles it)."""
+    """Page with Title + URL but empty body is rejected — nothing to summarize."""
     section = f"{_HEADER}https://example.com\nTitle: Some Page\nURL: https://example.com\n"
-    result = HistoryAgent._parse_browse_section(section)
-    assert result is not None
-    assert result[0] == "https://example.com"
-    assert result[1] == "Some Page"
+    assert HistoryAgent._parse_browse_section(section) is None
+
+
+def test_parse_browse_section_whitespace_body():
+    """Page with Title + URL but whitespace-only body is rejected."""
+    section = f"{_HEADER}https://example.com\nTitle: Some Page\nURL: https://example.com\n   \n\n"
+    assert HistoryAgent._parse_browse_section(section) is None
 
 
 def test_parse_browse_section_single_line():
     """Single-line browse header with no content is rejected."""
     section = f"{_HEADER}https://example.com"
     assert HistoryAgent._parse_browse_section(section) is None
+
+
+def test_parse_browse_results_skips_error_sections():
+    """Mixed tool message: a healthy section is parsed, an error section is skipped."""
+    from penny.database.models import PromptLog
+
+    healthy = (
+        f"{PennyConstants.BROWSE_PAGE_HEADER}https://good.com\n"
+        "Title: Good Page\n"
+        "URL: https://good.com\n"
+        "\nReal page content with substance."
+    )
+    error = (
+        f"{PennyConstants.BROWSE_ERROR_HEADER}https://bad.com\n"
+        "Could not read page: extraction failed after 10 retries"
+    )
+    tool_content = PennyConstants.SECTION_SEPARATOR.join([healthy, error])
+    prompt = PromptLog(
+        model="test",
+        messages=json.dumps(
+            [
+                {"role": "user", "content": "test"},
+                {"role": "tool", "tool_call_id": "x", "content": tool_content},
+            ]
+        ),
+        response="{}",
+    )
+    results = HistoryAgent._parse_browse_results(prompt)
+    assert len(results) == 1
+    assert results[0][0] == "https://good.com"
+    assert "substance" in results[0][2]

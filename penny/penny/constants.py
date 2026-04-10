@@ -53,6 +53,7 @@ class PennyConstants:
     MAX_SEARCH_LINKS = 10
     BROWSE_SEARCH_HEADER = "## search: "
     BROWSE_PAGE_HEADER = "## browse: "
+    BROWSE_ERROR_HEADER = "## browse error: "
     BROWSE_TITLE_PREFIX = "Title: "
     BROWSE_URL_PREFIX = "URL: "
     SECTION_SEPARATOR = "\n\n---\n\n"

@@ -595,13 +595,17 @@ class TestParallelToolCalls:
         assert "best%20pizza%20toronto" in search_url
 
     @pytest.mark.asyncio
-    async def test_text_queries_fail_without_browser(self, test_db, mock_llm):
-        """Without a browser, text queries return a 'no browser' message."""
+    async def test_text_queries_fail_without_browser(self, test_db, mock_llm, monkeypatch):
+        """Without a browser, queries surface a structured browse error section."""
+        monkeypatch.setattr(PennyConstants, "BROWSE_RETRIES", 0)
+        monkeypatch.setattr(PennyConstants, "BROWSE_RETRY_DELAY", 0.0)
         tool = BrowseTool(max_calls=5)
 
         result = await tool.execute(queries=["best pizza toronto"])
 
-        assert "No browser connected" in result.text
+        assert PennyConstants.BROWSE_ERROR_HEADER in result.text
+        assert "no browser connected" in result.text
+        assert PennyConstants.BROWSE_PAGE_HEADER not in result.text
 
     @pytest.mark.asyncio
     async def test_urls_always_route_to_browse(self, test_db, mock_llm):
