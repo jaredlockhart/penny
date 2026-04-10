@@ -331,6 +331,15 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="RELATED_KNOWLEDGE_SCORE_FLOOR",
+    description="Minimum hybrid score for a knowledge entry to be injected",
+    type=float,
+    default=0.34,
+    validator=_validate_unit_float,
+    group=GROUP_HISTORY,
+)
+
+ConfigParam(
     key="KNOWLEDGE_EXTRACTION_BATCH_LIMIT",
     description="Max browse-containing prompts to process per knowledge extraction cycle",
     type=int,
