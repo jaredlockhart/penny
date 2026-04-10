@@ -435,15 +435,20 @@ class TestEmptyContentRetry:
 
     @pytest.mark.asyncio
     async def test_empty_content_on_nonfinal_step_retries_with_followup(self, test_db, mock_llm):
-        """When model returns empty content on a non-final step, agent retries with follow-up."""
+        """When model returns empty (or garbage) content mid-loop, agent retries with follow-up.
+
+        Garbage shapes — bare separators, lone punctuation, single emoji — must be
+        treated the same as a literally empty string. Otherwise a model that emits
+        `\n\n---` after a tool call will silently overwrite a real prior answer.
+        """
         agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
 
         def handler(request, count):
             if count == 1:
                 return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
             if count == 2:
-                # Thinking-only response: empty content, no tool calls
-                return mock_llm._make_text_response(request, "")
+                # Garbage response: just a markdown separator. No "real words".
+                return mock_llm._make_text_response(request, "\n\n---")
             # After follow-up injection, model returns actual text
             return mock_llm._make_text_response(request, "here's the answer")
 
