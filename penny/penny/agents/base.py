@@ -932,19 +932,42 @@ class Agent:
             return None
 
     def _build_related_knowledge(self, conversation_embeddings: list[list[float]]) -> str | None:
-        """Score knowledge entries against conversation, return top N formatted."""
+        """Score knowledge entries against conversation, return top N formatted.
+
+        Each candidate is scored as `max(weighted_decay, current_message_cosine)` so
+        that strong direct matches stand on their own merit while vague follow-ups
+        still benefit from conversation-context drift. A floor suppresses noise on
+        greetings and topics the corpus doesn't cover.
+        """
         entries = self.db.knowledge.get_with_embeddings()
         if not entries:
             return None
 
-        limit = int(self.config.runtime.RELATED_KNOWLEDGE_LIMIT)
-        scored = self._score_candidates_weighted(
-            conversation_embeddings, entries, lambda entry: deserialize_embedding(entry.embedding)
-        )
-        top = scored[:limit]
+        scored = self._score_knowledge_hybrid(conversation_embeddings, entries)
+        top = self._filter_knowledge_by_floor(scored)
         if not top:
             return None
         return self._format_knowledge(top)
+
+    def _score_knowledge_hybrid(
+        self, conversation_embeddings: list[list[float]], entries: list
+    ) -> list[tuple[float, Any]]:
+        """Score each entry as max(weighted_decay, cosine_to_current), sorted desc."""
+        current = conversation_embeddings[-1]
+        scored: list[tuple[float, Any]] = []
+        for entry in entries:
+            candidate_vec = deserialize_embedding(entry.embedding)
+            weighted = self._weighted_similarity(conversation_embeddings, candidate_vec)
+            current_cosine = cosine_similarity(current, candidate_vec)
+            scored.append((max(weighted, current_cosine), entry))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return scored
+
+    def _filter_knowledge_by_floor(self, scored: list[tuple[float, Any]]) -> list:
+        """Apply absolute score floor and entry limit."""
+        floor = float(self.config.runtime.RELATED_KNOWLEDGE_SCORE_FLOOR)
+        limit = int(self.config.runtime.RELATED_KNOWLEDGE_LIMIT)
+        return [entry for score, entry in scored[:limit] if score >= floor]
 
     async def _related_messages_section(
         self, sender: str, conversation_embeddings: list[list[float]] | None
@@ -1097,25 +1120,6 @@ class Agent:
         except LlmError:
             logger.warning("Conversation embedding failed")
             return None
-
-    def _score_candidates_weighted(
-        self,
-        conversation_embeddings: list[list[float]],
-        candidates: list,
-        get_embedding: Callable,
-        decay: float = 0.5,
-    ) -> list:
-        """Score candidates using exponentially-decayed conversation similarity.
-
-        Returns candidates sorted by weighted score descending.
-        """
-        scored: list[tuple[float, Any]] = []
-        for candidate in candidates:
-            candidate_vec = get_embedding(candidate)
-            score = self._weighted_similarity(conversation_embeddings, candidate_vec, decay)
-            scored.append((score, candidate))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [candidate for _score, candidate in scored]
 
     @staticmethod
     def _weighted_similarity(
