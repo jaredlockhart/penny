@@ -535,7 +535,11 @@ class Agent:
             return ValidationReason.XML
 
         effective_content, _ = _strip_think_tags(content)
-        if not effective_content and ValidationReason.EMPTY not in already_retried:
+        letter_count = sum(1 for c in effective_content if c.isalpha())
+        if (
+            letter_count < PennyConstants.MIN_RESPONSE_LETTERS
+            and ValidationReason.EMPTY not in already_retried
+        ):
             return ValidationReason.EMPTY
 
         if (

@@ -140,6 +140,12 @@ class PennyConstants:
     VISION_MAX_STEPS = 1
     CHECKIN_MAX_STEPS = 1
     RESPONSE_VALIDATION_RETRIES = 5
+    # Minimum count of alphabetic characters for a model response to be
+    # considered substantive. Catches garbage shapes — bare separators
+    # (`---`), lone punctuation, emoji-only, runs of stars/dashes — without
+    # enumerating them, while still allowing terse legit replies like "done"
+    # or "yes". Anything below this is treated as EMPTY and retried.
+    MIN_RESPONSE_LETTERS = 3
     TOOL_FAILURE_ABORT_THRESHOLD = 2
     THOUGHT_CONTEXT_LIMIT = 10
     PREFERRED_POOL_SIZE = 5
