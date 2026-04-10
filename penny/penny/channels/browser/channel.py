@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 from websockets.asyncio.server import Server, ServerConnection
 
-from penny.channels.base import IncomingMessage, MessageChannel, PageContext
+from penny.channels.base import IncomingMessage, MessageChannel, PageContext, ProgressTracker
 from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_CAPABILITIES_UPDATE,
     BROWSER_MSG_TYPE_CONFIG_REQUEST,
@@ -853,16 +853,17 @@ class BrowserChannel(MessageChannel):
         await self._send_ws(conn.ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_TYPING, active=typing))
         return True
 
-    def _make_handle_kwargs(self, message: IncomingMessage, progress: object | None = None) -> dict:
+    def _make_handle_kwargs(
+        self, message: IncomingMessage, progress: ProgressTracker | None = None
+    ) -> dict:
         """Pass an on_tool_start callback so tool calls update the typing indicator.
 
         Builds a cumulative checklist: prior steps show as completed (checkmark),
-        current step shows as in-progress (dots). The browser channel does its
-        own progress display via the typing indicator HTML and ignores the
-        ``progress`` tracker (which is used by channels that edit messages
-        in place).
+        current step shows as in-progress (dots). The browser channel renders
+        progress directly into the typing indicator HTML rather than going
+        through a ``ProgressTracker``, so ``progress`` is intentionally unused
+        — ``_begin_progress`` returns ``None`` for this channel.
         """
-        del progress  # browser uses its own typing-indicator-based progress UI
         recipient = message.sender
         completed: list[str] = []
 

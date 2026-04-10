@@ -29,6 +29,7 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 ### Dead Code
 - [ ] No unused constants, variables, methods, or imports left behind after changes
 - [ ] Follow the chain — if removing a method, also remove constants it was the only consumer of
+- [ ] No `del param` statements at the top of a function/method body to "consume" an unused argument — this is dead-code dressing for a linter, not real code. If a parameter is genuinely unused but required by the override signature (e.g., parent class contract), document *why* in the docstring and leave the parameter alone. If the parameter isn't required, remove it from the signature
 
 ### Optional Values
 - [ ] Optional fields use `None` (`str | None = None`), never empty string defaults (`""`)
