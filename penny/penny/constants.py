@@ -28,6 +28,21 @@ class ValidationReason(StrEnum):
     HALLUCINATED_URLS = "hallucinated_urls"
 
 
+class ProgressEmoji(StrEnum):
+    """Emojis used by ProgressTracker implementations to surface in-flight work.
+
+    Channels that show progress as reactions on the user's message (e.g.
+    SignalChannel) post one of these and morph between them as the agent's
+    tool calls fire. Tools pick which one applies to their work via
+    ``Tool.to_progress_emoji``.
+    """
+
+    THINKING = "\U0001f4ad"  # 💭 — initial state, before any tool calls
+    SEARCHING = "\U0001f50d"  # 🔍 — running a text search
+    READING = "\U0001f4d6"  # 📖 — reading a specific URL
+    WORKING = "\u2699\ufe0f"  # ⚙️ — generic fallback for other tools
+
+
 class PennyConstants:
     """All constants for the Penny agent."""
 

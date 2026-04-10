@@ -5,6 +5,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
+from penny.constants import ProgressEmoji
 from penny.tools.models import ToolCall, ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -43,10 +44,26 @@ class Tool(ABC):
         return f"Using {cls.name}"
 
     @classmethod
+    def to_progress_emoji(cls, arguments: dict) -> ProgressEmoji:
+        """Return an emoji that represents this tool call as in-flight progress.
+
+        Channels that show progress as reactions on the user's message use
+        this to morph the reaction as the agent moves through tool calls.
+        Override per tool to give a more specific indicator.
+        """
+        return ProgressEmoji.WORKING
+
+    @classmethod
     def format_status(cls, tool_name: str, arguments: dict) -> str:
         """Dispatch to the matching tool's to_action_str via the class registry."""
         tool_cls = cls._registry.get(tool_name)
         return tool_cls.to_action_str(arguments) if tool_cls else f"Using {tool_name}"
+
+    @classmethod
+    def format_progress_emoji(cls, tool_name: str, arguments: dict) -> ProgressEmoji:
+        """Dispatch to the matching tool's to_progress_emoji via the class registry."""
+        tool_cls = cls._registry.get(tool_name)
+        return tool_cls.to_progress_emoji(arguments) if tool_cls else ProgressEmoji.WORKING
 
     def to_definition(self) -> ToolDefinition:
         """Convert to tool definition for prompt."""

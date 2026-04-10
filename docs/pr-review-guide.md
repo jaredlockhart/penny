@@ -13,7 +13,7 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 
 ### Constants and Naming
 - [ ] All string literals in logic are defined as constants or enums — no magic strings
-- [ ] **All numeric tuning constants, thresholds, timeouts, magic numbers, batch sizes, and retry counts live in `penny/constants.py` (under `PennyConstants` or a related enum class) — NEVER as module-level `_PRIVATE_CONSTANTS = ...` declarations scattered across other files.** This is a hard rule. If you find yourself adding a constant at the top of `agents/foo.py` or `tools/bar.py`, move it to `constants.py` instead. The only exceptions are file-local regex patterns (`_FOO_PATTERN = re.compile(...)`) that exist purely as a compiled-once optimization.
+- [ ] **All shared values — strings, numbers, emojis, thresholds, timeouts, magic numbers, batch sizes, retry counts, well-known identifiers — live in `penny/constants.py` (under `PennyConstants` or a related enum class). This applies regardless of where the constant is declared: NEVER as a module-level `_PRIVATE_CONSTANT = ...` at the top of `agents/foo.py` or `tools/bar.py`, AND NEVER as a `class FooThing: SOMETHING = "..."` class attribute on a domain class somewhere.** When a value is shared across more than one call site (or *will be*, e.g. a tool emits a value that another module renders), it belongs in `constants.py`. If the value is enumerable (a fixed small set of options), use a `StrEnum` so consumers reference symbolic names (`ProgressEmoji.THINKING`) rather than raw literals (`"\U0001f4ad"`). The only exceptions are file-local regex patterns (`_FOO_PATTERN = re.compile(...)`) that exist purely as a compiled-once optimization, and truly file-private values that no other module imports or duplicates.
 - [ ] Variable names are fully spelled out — no abbreviations (`message` not `msg`, `config` not `cfg`, `format_args` not `fmt`). Standard short names (`i`, `n`, `db`) in tight loops or established domain terms are fine
 - [ ] f-strings used everywhere — no string concatenation with `+`
 
@@ -29,6 +29,7 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 ### Dead Code
 - [ ] No unused constants, variables, methods, or imports left behind after changes
 - [ ] Follow the chain — if removing a method, also remove constants it was the only consumer of
+- [ ] No `del param` statements at the top of a function/method body to "consume" an unused argument — this is dead-code dressing for a linter, not real code. If a parameter is genuinely unused but required by the override signature (e.g., parent class contract), document *why* in the docstring and leave the parameter alone. If the parameter isn't required, remove it from the signature
 
 ### Optional Values
 - [ ] Optional fields use `None` (`str | None = None`), never empty string defaults (`""`)
