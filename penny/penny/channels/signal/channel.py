@@ -27,7 +27,7 @@ from penny.channels.signal.models import (
     SignalEnvelope,
     TypingIndicatorRequest,
 )
-from penny.constants import ChannelType, PennyConstants
+from penny.constants import ChannelType, PennyConstants, ProgressEmoji
 from penny.tools.base import Tool
 
 # Error substrings that indicate a transient signal-cli transport failure.
@@ -47,10 +47,6 @@ logger = logging.getLogger(__name__)
 
 class SignalChannel(MessageChannel):
     """Signal messenger channel implementation."""
-
-    # Initial reaction posted on the user's incoming message while the agent
-    # spins up — swapped by SignalProgressTracker as tool calls fire.
-    PROGRESS_INITIAL_EMOJI = "\U0001f4ad"  # 💭 thinking
 
     def __init__(
         self,
@@ -785,7 +781,7 @@ class SignalChannel(MessageChannel):
             return None
         ok = await self.send_reaction(
             message.sender,
-            self.PROGRESS_INITIAL_EMOJI,
+            ProgressEmoji.THINKING,
             target_author=message.sender,
             target_timestamp=message.signal_timestamp,
         )
@@ -797,7 +793,7 @@ class SignalChannel(MessageChannel):
             recipient=message.sender,
             target_author=message.sender,
             target_timestamp=message.signal_timestamp,
-            initial_emoji=self.PROGRESS_INITIAL_EMOJI,
+            initial_emoji=ProgressEmoji.THINKING,
         )
 
 
