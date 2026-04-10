@@ -114,7 +114,8 @@ class HistoryAgent(Agent):
         """
         unique: dict[str, tuple[str, str, int]] = {}
         for prompt in prompts:
-            assert prompt.id is not None
+            if prompt.id is None:
+                continue
             for url, title, content in HistoryAgent._parse_browse_results(prompt):
                 unique[url] = (title, content, prompt.id)
         return unique
