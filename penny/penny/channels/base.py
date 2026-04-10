@@ -49,6 +49,30 @@ class IncomingMessage(BaseModel):
     page_context: PageContext | None = None  # Current page the user is viewing (browser only)
 
 
+class ProgressTracker(ABC):
+    """Lightweight in-flight progress indicator for an in-progress agent run.
+
+    Channels return one of these from ``MessageChannel._begin_progress`` to
+    surface what the agent is doing while it works (e.g., emoji reactions on
+    the user's message that morph as tool calls fire). The dispatch loop
+    calls ``update`` whenever a tool batch starts and ``clear`` exactly once
+    when the run finishes — success, delivery failure, or exception. The
+    final response is always delivered via the channel's normal
+    ``send_response`` path so attachments and quotes work correctly.
+
+    ``clear`` must be idempotent — the dispatch loop may invoke it on the
+    success path and again from the ``finally`` cleanup.
+    """
+
+    @abstractmethod
+    async def update(self, tools: list[tuple[str, dict]]) -> None:
+        """Surface that the agent has started a new batch of tool calls."""
+
+    @abstractmethod
+    async def clear(self) -> None:
+        """Remove any in-flight progress indicator. Idempotent."""
+
+
 class MessageChannel(ABC):
     """Abstract base class for communication channels."""
 
@@ -428,9 +452,28 @@ class MessageChannel(ABC):
         primary = self._db.users.get_primary_sender()
         return primary if primary else device_sender
 
-    def _make_handle_kwargs(self, message: IncomingMessage) -> dict:
-        """Return extra kwargs for ChatAgent.handle(). Override in subclasses."""
-        return {}
+    def _make_handle_kwargs(
+        self, message: IncomingMessage, progress: ProgressTracker | None = None
+    ) -> dict:
+        """Return extra kwargs for ChatAgent.handle(). Override in subclasses.
+
+        ``progress`` is the optional tracker returned by ``_begin_progress``.
+        Default forwards ``progress.update`` as ``on_tool_start`` so any
+        channel that returns a tracker gets tool-call progress updates for
+        free; channels with custom progress UI (e.g. browser) can override.
+        """
+        if progress is None:
+            return {}
+        return {"on_tool_start": progress.update}
+
+    async def _begin_progress(self, message: IncomingMessage) -> ProgressTracker | None:
+        """Start an in-flight progress indicator for this message.
+
+        Channels that surface progress (e.g., emoji reactions on the user's
+        message) override this and return a ``ProgressTracker``. Default
+        returns ``None`` — the dispatch loop runs unmodified.
+        """
+        return None
 
     async def _dispatch_to_agent(self, message: IncomingMessage) -> None:
         """Run the message through the agent loop with typing indicators."""
@@ -450,9 +493,12 @@ class MessageChannel(ABC):
             return
 
         typing_task = asyncio.create_task(self._typing_loop(message.sender))
+        progress: ProgressTracker | None = None
         try:
             if self._scheduler:
                 self._scheduler.notify_foreground_start()
+
+            progress = await self._begin_progress(message)
 
             logger.info("Dispatching to message agent for %s", message.sender)
             response = await self._message_agent.handle(
@@ -460,7 +506,7 @@ class MessageChannel(ABC):
                 sender=user_sender,
                 images=message.images or None,
                 page_context=message.page_context,
-                **self._make_handle_kwargs(message),
+                **self._make_handle_kwargs(message, progress),
             )
 
             incoming_id = self._db.messages.log_message(
@@ -481,6 +527,12 @@ class MessageChannel(ABC):
                 content=message.content,
                 signal_timestamp=message.signal_timestamp,
             )
+            # Clear the progress indicator before sending the real response so
+            # the user sees "done working" immediately, even if the send takes
+            # a moment. ``clear`` is idempotent so the finally block can call
+            # it again on exception paths without doing anything.
+            if progress is not None:
+                await progress.clear()
             sent = await self.send_response(
                 message.sender,
                 answer,
@@ -492,6 +544,8 @@ class MessageChannel(ABC):
                 logger.error("Failed to deliver response to %s — notifying user", message.sender)
                 await self.send_status_message(message.sender, PennyResponse.DELIVERY_FAILURE)
         finally:
+            if progress is not None:
+                await progress.clear()
             typing_task.cancel()
             await self.send_typing(message.sender, False)
             if self._scheduler:

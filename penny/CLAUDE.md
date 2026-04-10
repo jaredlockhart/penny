@@ -255,11 +255,13 @@ The `scheduler/` module manages background tasks:
 - Defines interface: `listen()`, `send_message()`, `send_typing()`, `extract_message()`
 - Implements shared logic: `handle_message()`, `send_response()`, `_typing_loop()`
 - Holds references to chat agent, database, and scheduler
+- **Progress tracker hook**: `_begin_progress(message)` is an optional override that returns a `ProgressTracker` (defined in `channels/base.py`). The tracker has two methods: `update(tools)` (called when a tool batch starts) and `clear()` (idempotent, called once on success and once again from the dispatch loop's `finally`). The default `_make_handle_kwargs` wires `progress.update` as `on_tool_start` for free, and the final response is always delivered via `send_response` so attachments and quote-replies work normally. Channels without a progress UI return `None`
 
 ### SignalChannel (`channels/signal/channel.py`)
 - WebSocket connection for receiving messages
-- REST API for sending messages and typing indicators
+- REST API for sending messages, typing indicators, and reactions
 - Handles quote-reply thread reconstruction
+- **In-flight progress as emoji reactions**: when a user message arrives, the channel reacts to it with 💭 (thinking) via `POST /v1/reactions`. As the agent's tool calls fire, `SignalProgressTracker.update()` swaps the reaction to a tool-specific emoji from `Tool.format_progress_emoji()` (BrowseTool returns 🔍 for searches, 📖 for URL reads). Signal limits each user to one reaction per message, so each new emoji cleanly replaces the previous — no clutter. When the agent finishes, `tracker.clear()` issues `DELETE /v1/reactions` to remove the reaction entirely, and the response is sent as a normal new message via `send_response` (with text + attachments + quote-reply, the same shape as before progress was added). The typing indicator runs alongside throughout. Why reactions instead of editing a "thinking..." text bubble: Signal mobile/desktop clients silently drop attachments added via message edit — even though the wire format technically allows them — so any final response with an image would lose its image. Reactions sidestep editing entirely
 
 ### DiscordChannel (`channels/discord/channel.py`)
 - Uses discord.py for bot integration

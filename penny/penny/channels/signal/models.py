@@ -9,6 +9,7 @@ class HttpMethod(StrEnum):
     """HTTP methods for API requests."""
 
     PUT = "PUT"
+    POST = "POST"
     DELETE = "DELETE"
 
 
@@ -145,3 +146,15 @@ class TypingIndicatorRequest(BaseModel):
     """Request to send a typing indicator."""
 
     recipient: str
+
+
+class ReactionRequest(BaseModel):
+    """Request body for POST/DELETE /v1/reactions/{number}.
+
+    Used both for sending a new reaction (POST) and removing one (DELETE).
+    """
+
+    recipient: str
+    reaction: str
+    target_author: str
+    timestamp: int

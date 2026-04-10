@@ -335,6 +335,111 @@ async def test_short_response_logged_as_warning(
 
 
 @pytest.mark.asyncio
+async def test_signal_progress_reactions_track_tool_calls(
+    signal_server, mock_llm, test_config, test_user_info, running_penny
+):
+    """Penny's progress is shown as a morphing emoji reaction on the user's message.
+
+    The dispatch loop reacts to the user's incoming message with 💭 (thinking)
+    immediately, swaps to a tool-specific emoji as each tool batch fires
+    (🔍 for search, 📖 for read), and removes the reaction once the agent
+    finishes. The final response is sent via the normal send path so it
+    carries text + image attachments + quote-replies just like before — no
+    in-place message editing, no orphan thinking bubble.
+    """
+    final_answer = "here's the weather forecast for your area! 🌤️"
+    # set_default_flow returns a single browse tool call (search query),
+    # then the final text response.
+    mock_llm.set_default_flow(final_response=final_answer, search_query="weather today")
+
+    async with running_penny(test_config):
+        await signal_server.push_message(sender=TEST_SENDER, content="what's the weather?")
+
+        final_msg = await signal_server.wait_for_message_containing(final_answer)
+
+        # The final response is a single fresh message (no edit, no
+        # follow-up split). It carries the full agent answer.
+        assert final_msg["recipients"] == [TEST_SENDER]
+        assert final_answer in final_msg["message"]
+
+        # And only one outgoing message — no "thinking..." bubble, no
+        # follow-up image bubble, no edits.
+        response_bubbles = [
+            m for m in signal_server.outgoing_messages if m.get("message") == final_msg["message"]
+        ]
+        assert len(response_bubbles) == 1
+
+        # Reactions: 💭 sent at start, 🔍 swapped in once the search tool
+        # batch fires, then a remove at delivery time. All three target the
+        # same incoming message (the user's question).
+        ops = [(e["op"], e.get("reaction")) for e in signal_server.reaction_events]
+        assert ("send", "\U0001f4ad") in ops, f"expected initial 💭, got {ops}"
+        assert ("send", "\U0001f50d") in ops, f"expected 🔍 search reaction, got {ops}"
+        assert ops[-1][0] == "remove", f"final op should be a clear, got {ops}"
+
+        # Every reaction (send and remove) is targeted at the user's
+        # incoming message — same target_author + target timestamp throughout.
+        targets = {
+            (e.get("target_author"), e.get("timestamp")) for e in signal_server.reaction_events
+        }
+        assert len(targets) == 1, f"reactions should target a single message, got {targets}"
+
+
+@pytest.mark.asyncio
+async def test_signal_progress_reaction_uses_read_emoji_for_url_query(
+    signal_server, mock_llm, test_config, test_user_info, running_penny
+):
+    """When the agent's tool call is a URL fetch (not a text search), the
+    progress reaction morphs to 📖 instead of 🔍.
+
+    Covers the URL branch of BrowseTool.to_progress_emoji — the search-only
+    test above only exercises the text-query branch.
+    """
+    final_answer = "great article! 📖"
+    # Drive the default flow with a URL query so BrowseTool.to_progress_emoji
+    # picks the 📖 (reading) branch instead of 🔍 (searching).
+    mock_llm.set_default_flow(
+        final_response=final_answer,
+        search_query="https://example.com/article",
+    )
+
+    async with running_penny(test_config):
+        await signal_server.push_message(sender=TEST_SENDER, content="read this for me")
+        await signal_server.wait_for_message_containing(final_answer)
+
+        ops = [(e["op"], e.get("reaction")) for e in signal_server.reaction_events]
+        assert ("send", "\U0001f4d6") in ops, f"expected 📖 read reaction, got {ops}"
+        assert ("send", "\U0001f50d") not in ops, (
+            f"URL queries should not trigger the search emoji, got {ops}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_signal_progress_clears_reaction_on_failure(
+    signal_server, mock_llm, test_config, test_user_info, running_penny
+):
+    """If the agent crashes mid-run the dispatch loop must still clear the
+    reaction so the user isn't left with a stale 💭 on their message forever.
+    """
+
+    def boom(request, count):
+        raise RuntimeError("simulated agent failure")
+
+    mock_llm.set_response_handler(boom)
+
+    async with running_penny(test_config):
+        await signal_server.push_message(sender=TEST_SENDER, content="hello there")
+
+        # Wait for the dispatch loop to set the initial reaction and then
+        # clear it from the finally block.
+        await wait_until(lambda: any(e["op"] == "remove" for e in signal_server.reaction_events))
+
+        ops = [(e["op"], e.get("reaction")) for e in signal_server.reaction_events]
+        assert ops[0] == ("send", "\U0001f4ad"), f"expected initial 💭 send, got {ops}"
+        assert any(o[0] == "remove" for o in ops), f"clear must happen on failure, got {ops}"
+
+
+@pytest.mark.asyncio
 async def test_delivery_failure_sends_notice(
     signal_server, mock_llm, test_config, test_user_info, running_penny
 ):
@@ -364,9 +469,6 @@ async def test_delivery_failure_sends_notice(
     async with running_penny(test_config):
         await signal_server.push_message(sender=TEST_SENDER, content="hello there")
 
-        await wait_until(lambda: len(signal_server.outgoing_messages) >= 1)
-
-        notice = signal_server.outgoing_messages[0]
+        notice = await signal_server.wait_for_message_containing("trouble")
         assert notice["recipients"] == [TEST_SENDER]
-        assert "trouble" in notice["message"].lower()
         assert len(mock_llm.requests) == 2

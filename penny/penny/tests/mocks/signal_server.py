@@ -14,6 +14,10 @@ class MockSignalServer:
     def __init__(self) -> None:
         self.outgoing_messages: list[dict] = []
         self.typing_events: list[tuple[str, str]] = []  # (action, recipient)
+        # Append-only log of every reaction op the channel sent. Each entry is
+        # ``{"op": "send"|"remove", "reaction": ..., "target_author": ...,
+        # "timestamp": ...}`` so tests can assert the full progress sequence.
+        self.reaction_events: list[dict] = []
         self._websockets: list[web.WebSocketResponse] = []
         self._attachments: dict[str, bytes] = {}  # attachment_id -> binary data
         self._app: web.Application | None = None
@@ -35,6 +39,8 @@ class MockSignalServer:
         self._app.router.add_post("/v2/send", self._handle_send)
         self._app.router.add_put("/v1/typing-indicator/{phone_number}", self._handle_typing_start)
         self._app.router.add_delete("/v1/typing-indicator/{phone_number}", self._handle_typing_stop)
+        self._app.router.add_post("/v1/reactions/{phone_number}", self._handle_reaction_send)
+        self._app.router.add_delete("/v1/reactions/{phone_number}", self._handle_reaction_remove)
         self._app.router.add_get(
             "/v1/attachments/{attachment_id}", self._handle_attachment_download
         )
@@ -188,6 +194,22 @@ class MockSignalServer:
         msg = f"Timeout waiting for outgoing message after {timeout}s"
         raise TimeoutError(msg)
 
+    async def wait_for_message_containing(self, substring: str, timeout: float = 10.0) -> dict:
+        """Wait for an outgoing message whose body contains ``substring``.
+
+        Useful when the channel sends a sequence of edits to the same
+        message and the test cares about the final form, not the initial
+        "thinking..." placeholder.
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            for msg in reversed(self.outgoing_messages):
+                if substring in (msg.get("message") or ""):
+                    return msg
+            await asyncio.sleep(0.05)
+        msg = f"Timeout waiting for outgoing message containing {substring!r} after {timeout}s"
+        raise TimeoutError(msg)
+
     async def _handle_send(self, request: web.Request) -> web.Response:
         """Handle POST /v2/send - capture outgoing messages."""
         data = await request.json()
@@ -197,6 +219,21 @@ class MockSignalServer:
             return web.json_response(body, status=status)
         self.outgoing_messages.append(data)
         return web.json_response({"timestamp": int(time.time() * 1000)})
+
+    async def _handle_reaction_send(self, request: web.Request) -> web.Response:
+        """Handle POST /v1/reactions/{phone_number}."""
+        data = await request.json()
+        self.reaction_events.append({"op": "send", **data})
+        return web.Response(status=204)
+
+    async def _handle_reaction_remove(self, request: web.Request) -> web.Response:
+        """Handle DELETE /v1/reactions/{phone_number}."""
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            data = {}
+        self.reaction_events.append({"op": "remove", **data})
+        return web.Response(status=204)
 
     async def _handle_attachment_download(self, request: web.Request) -> web.Response:
         """Handle GET /v1/attachments/{attachment_id} - serve attachment data."""
