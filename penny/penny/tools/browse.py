@@ -14,7 +14,7 @@ import urllib.parse
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from penny.constants import PennyConstants
+from penny.constants import PennyConstants, ProgressEmoji
 from penny.prompts import Prompt
 from penny.tools.base import Tool
 from penny.tools.content_cleaning import clean_browser_content
@@ -124,6 +124,14 @@ class BrowseTool(Tool):
             else:
                 parts.append(f'Searching "{q}"')
         return "<br>".join(parts) if parts else "Looking up..."
+
+    @classmethod
+    def to_progress_emoji(cls, arguments: dict) -> ProgressEmoji:
+        """Pick 📖 if any query is a URL (reading), 🔍 otherwise (searching)."""
+        for q in arguments.get("queries", []):
+            if _URL_PATTERN.match(q):
+                return ProgressEmoji.READING
+        return ProgressEmoji.SEARCHING
 
     async def execute(self, **kwargs: Any) -> SearchResult:
         """Dispatch all lookups in parallel via the browser extension."""

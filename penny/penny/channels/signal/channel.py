@@ -16,17 +16,19 @@ import httpx
 import websockets
 from pydantic import ValidationError
 
-from penny.channels.base import IncomingMessage, MessageChannel
+from penny.channels.base import IncomingMessage, MessageChannel, ProgressTracker
 from penny.channels.signal.models import (
     DataMessage,
     HttpMethod,
     Reaction,
+    ReactionRequest,
     SendMessageRequest,
     SendMessageResponse,
     SignalEnvelope,
     TypingIndicatorRequest,
 )
-from penny.constants import ChannelType, PennyConstants
+from penny.constants import ChannelType, PennyConstants, ProgressEmoji
+from penny.tools.base import Tool
 
 # Error substrings that indicate a transient signal-cli transport failure.
 # These appear in the 400 response body when signal-cli's socket to Signal's
@@ -449,6 +451,67 @@ class SignalChannel(MessageChannel):
         except httpx.HTTPError as e:
             logger.warning("Failed to delete Signal message: %s", e)
 
+    async def send_reaction(
+        self,
+        recipient: str,
+        emoji: str,
+        target_author: str,
+        target_timestamp: int,
+    ) -> bool:
+        """Send a reaction emoji on a previously-sent message.
+
+        Sending a new emoji from the same author replaces any prior reaction
+        from that author on the same target — Signal limits each user to one
+        reaction per message. Used for in-flight progress indicators.
+        """
+        return await self._post_reaction(
+            HttpMethod.POST,
+            ReactionRequest(
+                recipient=recipient,
+                reaction=emoji,
+                target_author=target_author,
+                timestamp=target_timestamp,
+            ),
+            verb="Sent",
+        )
+
+    async def remove_reaction(
+        self,
+        recipient: str,
+        emoji: str,
+        target_author: str,
+        target_timestamp: int,
+    ) -> bool:
+        """Remove a previously-sent reaction from a message."""
+        return await self._post_reaction(
+            HttpMethod.DELETE,
+            ReactionRequest(
+                recipient=recipient,
+                reaction=emoji,
+                target_author=target_author,
+                timestamp=target_timestamp,
+            ),
+            verb="Removed",
+        )
+
+    async def _post_reaction(self, method: HttpMethod, request: ReactionRequest, verb: str) -> bool:
+        """Issue a reaction request to signal-cli-rest-api and log the result."""
+        url = f"{self.api_url}/v1/reactions/{self.phone_number}"
+        try:
+            response = await self.http_client.request(method.value, url, json=request.model_dump())
+            response.raise_for_status()
+            logger.debug(
+                "%s reaction %s on target_ts=%d to %s",
+                verb,
+                request.reaction,
+                request.timestamp,
+                request.recipient,
+            )
+            return True
+        except httpx.HTTPError as e:
+            logger.warning("Failed to %s reaction: %s", verb.lower(), e)
+            return False
+
     # --- Permission prompts ---
 
     async def handle_permission_prompt(
@@ -701,3 +764,99 @@ class SignalChannel(MessageChannel):
         self._running = False
         await self.http_client.aclose()
         logger.info("Signal channel closed")
+
+    # --- In-flight progress indicator (emoji reactions on the user's msg) ---
+
+    async def _begin_progress(self, message: IncomingMessage) -> ProgressTracker | None:
+        """Start an emoji-reaction progress indicator on the user's message.
+
+        Reacts to the user's incoming message with the "thinking" emoji and
+        returns a tracker that swaps the reaction as the agent's tool calls
+        fire. The final response is sent through the regular ``send_response``
+        path so attachments and quotes work normally — Signal silently drops
+        attachments added via message edit, so we never edit the response
+        bubble itself.
+        """
+        if message.signal_timestamp is None:
+            return None
+        ok = await self.send_reaction(
+            message.sender,
+            ProgressEmoji.THINKING,
+            target_author=message.sender,
+            target_timestamp=message.signal_timestamp,
+        )
+        if not ok:
+            logger.warning("Failed to set initial progress reaction for %s", message.sender)
+            return None
+        return SignalProgressTracker(
+            channel=self,
+            recipient=message.sender,
+            target_author=message.sender,
+            target_timestamp=message.signal_timestamp,
+            initial_emoji=ProgressEmoji.THINKING,
+        )
+
+
+class SignalProgressTracker(ProgressTracker):
+    """In-flight progress indicator for a Signal response.
+
+    Surfaces what the agent is doing as a single emoji reaction on the
+    user's incoming message: starts at 💭 (thinking), morphs to 🔍/📖 (or
+    whatever the running tool's ``to_progress_emoji`` says) as tool calls
+    fire, and is removed entirely once the agent finishes so the final
+    response (sent as a normal new message via ``send_response``) is the
+    only post-thinking artifact in the chat.
+
+    Why reactions instead of editing a "thinking..." text bubble: Signal
+    clients only render the text of an edit — attachments added via edit
+    are silently dropped at the receiver even though the wire format
+    allows them. Reactions sidestep that entirely and let the final
+    response carry images and quote-replies through the existing send path.
+    """
+
+    def __init__(
+        self,
+        channel: SignalChannel,
+        recipient: str,
+        target_author: str,
+        target_timestamp: int,
+        initial_emoji: str,
+    ):
+        self._channel = channel
+        self._recipient = recipient
+        self._target_author = target_author
+        self._target_timestamp = target_timestamp
+        self._current_emoji: str | None = initial_emoji
+
+    async def update(self, tools: list[tuple[str, dict]]) -> None:
+        """Swap the reaction to match the most relevant of the running tools."""
+        if not tools:
+            return
+        # Use the first tool as the dominant action — overlapping tool calls
+        # in a single batch are rare for chat agents, and a stable single
+        # emoji is more readable than a flicker.
+        name, arguments = tools[0]
+        emoji = Tool.format_progress_emoji(name, arguments)
+        if emoji == self._current_emoji:
+            return
+        ok = await self._channel.send_reaction(
+            self._recipient,
+            emoji,
+            target_author=self._target_author,
+            target_timestamp=self._target_timestamp,
+        )
+        if ok:
+            self._current_emoji = emoji
+
+    async def clear(self) -> None:
+        """Remove the current reaction. Idempotent."""
+        if self._current_emoji is None:
+            return
+        emoji = self._current_emoji
+        self._current_emoji = None
+        await self._channel.remove_reaction(
+            self._recipient,
+            emoji,
+            target_author=self._target_author,
+            target_timestamp=self._target_timestamp,
+        )
