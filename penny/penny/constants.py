@@ -142,3 +142,29 @@ class PennyConstants:
     TOOL_REQUEST_TIMEOUT = 60.0
     PERMISSION_PROMPT_TIMEOUT = 60.0
     MAX_PAGE_CONTENT_CHARS = 100_000
+
+    # Related-messages retrieval constants
+    #
+    # Each candidate is scored as: adjusted = cosine_to_current - α * centrality
+    # where centrality is the message's mean cosine to the rest of the corpus —
+    # the centroid-magnet penalty that suppresses generic boilerplate which
+    # would otherwise leak into every unrelated query. All values calibrated
+    # empirically against the embeddinggemma corpus.
+    RELATED_MESSAGES_CENTRALITY_PENALTY = 0.5
+    # Cluster-strength gate: top_head_mean / top_sample_mean must exceed this
+    # for any messages to be returned — separates real clusters from flat
+    # noise plateaus. Calibrated in adjusted-score space.
+    RELATED_MESSAGES_CLUSTER_GATE = 1.15
+    # Cutoff is max(top_head_mean * RELATIVE_RATIO, ABSOLUTE_FLOOR). The
+    # relative band adapts cluster width to cluster height; the absolute floor
+    # is the empirical noise ceiling below which adjusted scores are
+    # statistically indistinguishable from random.
+    RELATED_MESSAGES_RELATIVE_RATIO = 0.85
+    RELATED_MESSAGES_ABSOLUTE_FLOOR = 0.25
+    # Number of top candidates averaged to estimate the cluster center
+    # (numerator of the gate ratio).
+    RELATED_MESSAGES_GATE_HEAD_SIZE = 5
+    # Number of top candidates averaged to estimate the broader noise floor
+    # (denominator of the gate ratio). Also doubles as the cold-start
+    # threshold — below this we skip the gate and use just the absolute floor.
+    RELATED_MESSAGES_GATE_SAMPLE_SIZE = 20
