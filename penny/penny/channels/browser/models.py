@@ -218,3 +218,35 @@ class ScheduleRecord(BaseModel):
     timing_description: str
     prompt_text: str
     cron_expression: str
+
+
+class BrowserThoughtsRequest(BaseModel):
+    """A request from the addon for thought feed data.
+
+    `notified_pages` controls how many pages of notified thoughts to return.
+    The server owns the page size; the addon only counts pages.
+    """
+
+    type: str
+    notified_pages: int = 1
+
+
+class ThoughtCard(BaseModel):
+    """A single thought as serialized for the addon feed."""
+
+    id: int
+    title: str
+    content: str
+    image: str
+    created_at: str
+    notified: bool
+    seed_topic: str
+
+
+class BrowserThoughtsResponse(BaseModel):
+    """The thoughts feed payload sent to the addon."""
+
+    type: str = BROWSER_RESP_TYPE_THOUGHTS
+    unnotified: list[ThoughtCard]
+    notified: list[ThoughtCard]
+    notified_has_more: bool
