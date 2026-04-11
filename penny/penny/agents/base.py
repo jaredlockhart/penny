@@ -9,7 +9,7 @@ import urllib.parse as _urlparse
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from similarity.embeddings import cosine_similarity
@@ -1027,7 +1027,38 @@ class Agent:
         top = [message for score, message in scored if score >= cutoff][:limit]
         if not top:
             return None
-        return self._format_related_messages(top)
+        expanded = self._expand_with_neighbors(sender, top)
+        return self._format_related_messages(expanded)
+
+    def _expand_with_neighbors(self, sender: str, hits: list) -> list:
+        """Pull user messages within ±N minutes of each hit, deduped and excluding
+        the current conversation window.
+
+        Captures conversational follow-ups that share no entity overlap with the
+        current message ("yeah exactly i can't wait to try it") but live in the
+        same conversation as a real hit. Single pass — neighbors are not themselves
+        expanded.
+        """
+        window = timedelta(minutes=PennyConstants.RELATED_MESSAGES_NEIGHBOR_WINDOW_MINUTES)
+        conversation_ids = self._get_conversation_message_ids(sender)
+        seen_ids: set[int] = {hit.id for hit in hits if hit.id is not None}
+        seen_content: set[str] = {hit.content.strip().lower() for hit in hits}
+        expanded = list(hits)
+        for hit in hits:
+            for neighbor in self.db.messages.get_user_messages_in_window(
+                sender, hit.timestamp, window
+            ):
+                if neighbor.id is None or neighbor.id in seen_ids:
+                    continue
+                if neighbor.id in conversation_ids:
+                    continue
+                content_key = neighbor.content.strip().lower()
+                if content_key in seen_content:
+                    continue
+                seen_ids.add(neighbor.id)
+                seen_content.add(content_key)
+                expanded.append(neighbor)
+        return expanded
 
     def _eligible_message_candidates(self, sender: str, messages: list) -> list:
         """Filter to messages outside the current conversation, deduped by content."""

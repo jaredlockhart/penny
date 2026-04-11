@@ -190,3 +190,8 @@ class PennyConstants:
     # (denominator of the gate ratio). Also doubles as the cold-start
     # threshold — below this we skip the gate and use just the absolute floor.
     RELATED_MESSAGES_GATE_SAMPLE_SIZE = 20
+    # After scoring + cutoff selects hits, expand each hit by ±N minutes of
+    # surrounding user messages. Captures conversational follow-ups that have
+    # no entity overlap with the current message ("yeah exactly i can't wait
+    # to try it") but live in the same conversation as a real hit.
+    RELATED_MESSAGES_NEIGHBOR_WINDOW_MINUTES = 5
