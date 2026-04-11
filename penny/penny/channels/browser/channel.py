@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import websockets
 from pydantic import BaseModel
@@ -68,15 +68,18 @@ from penny.channels.browser.models import (
     BrowserScheduleAdd,
     BrowserScheduleDelete,
     BrowserScheduleUpdate,
+    BrowserThoughtsRequest,
+    BrowserThoughtsResponse,
     BrowserToolRequest,
     BrowserToolResponse,
     DomainPermissionRecord,
     ScheduleRecord,
+    ThoughtCard,
 )
 from penny.channels.permission_manager import PermissionManager
 from penny.commands.schedule import ScheduleParseResult
 from penny.constants import ChannelType, PennyConstants
-from penny.database.models import Schedule, UserInfo
+from penny.database.models import Schedule, Thought, UserInfo
 from penny.prompts import Prompt
 from penny.tools.base import Tool
 
@@ -225,7 +228,7 @@ class BrowserChannel(MessageChannel):
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_THOUGHTS_REQUEST:
-            await self._handle_thoughts_request(ws)
+            await self._handle_thoughts_request(ws, data)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_THOUGHT_REACTION:
@@ -387,31 +390,53 @@ class BrowserChannel(MessageChannel):
         else:
             future.set_result((response.result or "", response.image))
 
-    async def _handle_thoughts_request(self, ws: ServerConnection) -> None:
-        """Query recent thoughts and send them to the browser."""
+    async def _handle_thoughts_request(self, ws: ServerConnection, data: dict) -> None:
+        """Query recent thoughts and send them to the browser.
+
+        Sends every unnotified thought (so the badge count is exact) and the
+        first N pages of notified thoughts. The addon controls how many pages
+        it wants via `notified_pages`, growing it on "load more" so polled
+        refreshes don't reset pagination. Page size lives only on the server.
+        """
         primary = self._db.users.get_primary_sender()
         if not primary:
             await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_THOUGHTS))
             return
 
-        thoughts = self._db.thoughts.get_newest(primary, limit=50)
-        seed_topics = self._resolve_seed_topics(thoughts)
-        cards = [
-            {
-                "id": t.id,
-                "title": t.title or "",
-                "content": self.prepare_outgoing(t.content),
-                "image": t.image or "",
-                "created_at": t.created_at.isoformat() if t.created_at else "",
-                "notified": t.notified_at is not None,
-                "seed_topic": seed_topics.get(t.preference_id, ""),
-            }
-            for t in thoughts
-        ]
+        request = BrowserThoughtsRequest(**data)
+        page_size = PennyConstants.BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE
+        notified_pages = max(request.notified_pages, 1)
+        notified_limit = page_size * notified_pages
 
-        response = {"type": BROWSER_RESP_TYPE_THOUGHTS, "thoughts": cards}
+        unnotified = sorted(
+            self._db.thoughts.get_all_unnotified(primary),
+            key=lambda thought: thought.created_at,
+            reverse=True,
+        )
+        # Fetch one extra to detect whether more notified thoughts exist.
+        notified_plus_one = self._db.thoughts.get_recent_notified(primary, limit=notified_limit + 1)
+        notified_has_more = len(notified_plus_one) > notified_limit
+        notified = notified_plus_one[:notified_limit]
+        seed_topics = self._resolve_seed_topics([*unnotified, *notified])
+
+        def to_card(thought: Thought) -> ThoughtCard:
+            return ThoughtCard(
+                id=cast(int, thought.id),
+                title=thought.title or "",
+                content=self.prepare_outgoing(thought.content),
+                image=thought.image or "",
+                created_at=thought.created_at.isoformat() if thought.created_at else "",
+                notified=thought.notified_at is not None,
+                seed_topic=seed_topics.get(thought.preference_id, ""),
+            )
+
+        response = BrowserThoughtsResponse(
+            unnotified=[to_card(thought) for thought in unnotified],
+            notified=[to_card(thought) for thought in notified],
+            notified_has_more=notified_has_more,
+        )
         with contextlib.suppress(websockets.ConnectionClosed):
-            await ws.send(json.dumps(response))
+            await ws.send(response.model_dump_json())
 
     def _handle_thought_reaction(self, data: dict) -> None:
         """Handle a thumbs up/down reaction to a thought from the feed page."""

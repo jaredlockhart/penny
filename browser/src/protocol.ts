@@ -208,7 +208,9 @@ export interface ThoughtCard {
 
 export interface WsIncomingThoughtsPayload {
   type: typeof WsIncomingType.ThoughtsResponse;
-  thoughts: ThoughtCard[];
+  unnotified: ThoughtCard[];
+  notified: ThoughtCard[];
+  notified_has_more: boolean;
 }
 
 export interface PreferenceItem {
@@ -464,15 +466,21 @@ export interface RuntimePageInfo {
   available: boolean;  // false if extraction failed or on a privileged page
 }
 
-/** Feed page → background: request thoughts */
+/** Feed page → background: request thoughts.
+ *  `notified_pages` lets the page grow the visible notified slice on "load
+ *  more" without losing pagination on subsequent background polls. The
+ *  server owns the page size; the client only counts pages. */
 export interface RuntimeThoughtsRequest {
   type: typeof RuntimeMessageType.ThoughtsRequest;
+  notified_pages?: number;
 }
 
 /** Background → page: thoughts data */
 export interface RuntimeThoughtsResponse {
   type: typeof RuntimeMessageType.ThoughtsResponse;
-  thoughts: ThoughtCard[];
+  unnotified: ThoughtCard[];
+  notified: ThoughtCard[];
+  notified_has_more: boolean;
 }
 
 /** Feed page → background: react to a thought */
