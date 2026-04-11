@@ -825,6 +825,69 @@ async def test_related_messages_real_cluster_passes_gate_and_returns_top(
         assert "plateau filler" not in context
 
 
+@pytest.mark.asyncio
+async def test_related_messages_expands_with_time_window_neighbors(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Hits expand to include nearby user messages even when those neighbors
+    have orthogonal or missing embeddings — captures conversational follow-ups
+    that share no entity overlap with the current message."""
+    config = make_config(MESSAGE_CONTEXT_LIMIT=0)
+
+    async with running_penny(config) as penny:
+        past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=3)
+        # Hit: similar to query
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "topic alpha primary message",
+            PennyConstants.MessageDirection.INCOMING,
+            past,
+            embedding=serialize_embedding(_PEDAL_VEC),
+        )
+        # In-window neighbor: orthogonal embedding (would never match on its own)
+        # but lives 2 minutes after the hit
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "neighbor follow up two minutes after",
+            PennyConstants.MessageDirection.INCOMING,
+            past + timedelta(minutes=2),
+            embedding=serialize_embedding(_SPACE_VEC),
+        )
+        # In-window neighbor with no embedding at all (still pulled in by time proximity)
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "neighbor preceding three minutes before",
+            PennyConstants.MessageDirection.INCOMING,
+            past - timedelta(minutes=3),
+        )
+        # Out-of-window message: 1 hour after, should NOT be pulled in
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "unrelated message far outside window",
+            PennyConstants.MessageDirection.INCOMING,
+            past + timedelta(hours=1),
+            embedding=serialize_embedding(_SPACE_VEC),
+        )
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [_QUERY_VEC] * len(texts))
+        penny.chat_agent._embedding_model_client = mock_client
+
+        embeddings = await penny.chat_agent._embed_conversation(TEST_SENDER, "topic alpha query")
+        context = await penny.chat_agent._related_messages_section(TEST_SENDER, embeddings)
+        assert context is not None
+        assert "topic alpha primary message" in context
+        # Both in-window neighbors pulled in despite orthogonal/missing embeddings
+        assert "neighbor follow up two minutes after" in context
+        assert "neighbor preceding three minutes before" in context
+        # Out-of-window message stays out
+        assert "unrelated message far outside window" not in context
+
+
 # ── Message store embedding methods ──────────────────────────────────────
 
 
