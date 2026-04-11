@@ -91,6 +91,11 @@ class PennyConstants:
     # Test mode constants
     TEST_DB_PATH = Path("data/penny/penny-test.db")
 
+    # Signal API connectivity validation
+    SIGNAL_VALIDATE_MAX_ATTEMPTS = 12
+    SIGNAL_VALIDATE_RETRY_DELAY = 5.0
+    SIGNAL_VALIDATE_HTTP_TIMEOUT = 5.0
+
     # GitHub constants
     GITHUB_REPO_OWNER = "jaredlockhart"
     GITHUB_REPO_NAME = "penny"

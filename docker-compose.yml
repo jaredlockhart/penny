@@ -8,6 +8,12 @@ services:
       - ~/.local/share/signal-cli:/home/.local/share/signal-cli
     environment:
       - MODE=json-rpc
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/v1/about > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
 
   penny:
     build:
@@ -17,6 +23,9 @@ services:
         GIT_COMMIT_MESSAGE: ${GIT_COMMIT_MESSAGE:-unknown}
     image: penny
     restart: unless-stopped
+    depends_on:
+      signal-api:
+        condition: service_healthy
     ports:
       - "9090:9090"
     volumes:
