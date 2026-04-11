@@ -559,3 +559,8 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("Agent stopped by user")
         sys.exit(0)
+    except ConnectionError as connection_error:
+        # Surface startup connectivity failures (e.g. signal-api) in penny.log
+        # so the docker restart loop is debuggable from the file logs alone.
+        logger.error("Startup connectivity check failed: %s", connection_error)
+        sys.exit(1)
