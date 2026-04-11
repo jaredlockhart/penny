@@ -11,6 +11,7 @@ import {
   type DomainPermissionEntry,
   type PageContext,
   RECONNECT_DELAY_MS,
+  THOUGHTS_NOTIFIED_PAGE_SIZE,
   THOUGHTS_POLL_INTERVAL_MS,
   type RuntimeMessage,
   RuntimeMessageType,
@@ -31,6 +32,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let deviceLabel: string | null = null;
 let connectionState: ConnectionState = CS.Disconnected;
 let currentPageContext: PageContext | null = null;
+let notifiedLimit: number = THOUGHTS_NOTIFIED_PAGE_SIZE;
 
 // URLs we should never try to extract from
 const SKIP_URL_PREFIXES = ["about:", "moz-extension:", "chrome:", "data:", "file:"];
@@ -150,6 +152,9 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
   if (message.type === RuntimeMessageType.SendChat) {
     sendChatToServer(message.content, message.include_page);
   } else if (message.type === RuntimeMessageType.ThoughtsRequest) {
+    if (typeof message.notified_limit === "number" && message.notified_limit > 0) {
+      notifiedLimit = message.notified_limit;
+    }
     requestThoughts();
   } else if (message.type === RuntimeMessageType.ThoughtReaction) {
     sendThoughtReaction(message.thought_id, message.emoji);
@@ -226,9 +231,16 @@ function connect(): void {
     } else if (data.type === WsIncomingType.ToolRequest) {
       handleToolRequest(data);
     } else if (data.type === WsIn.ThoughtsResponse) {
-      broadcastToSidebar({ type: RuntimeMessageType.ThoughtsResponse, thoughts: data.thoughts });
-      const unnotified = data.thoughts.filter((t: { notified: boolean }) => !t.notified).length;
-      broadcastToSidebar({ type: RuntimeMessageType.ThoughtCount, count: unnotified });
+      broadcastToSidebar({
+        type: RuntimeMessageType.ThoughtsResponse,
+        unnotified: data.unnotified,
+        notified: data.notified,
+        notified_has_more: data.notified_has_more,
+      });
+      broadcastToSidebar({
+        type: RuntimeMessageType.ThoughtCount,
+        count: data.unnotified.length,
+      });
     } else if (data.type === WsIn.PreferencesResponse) {
       broadcastToSidebar({
         type: RuntimeMessageType.PreferencesResponse,
@@ -322,7 +334,10 @@ function sendHeartbeat(): void {
 
 function requestThoughts(): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.ThoughtsRequest }));
+  ws.send(JSON.stringify({
+    type: WsOutgoingType.ThoughtsRequest,
+    notified_limit: notifiedLimit,
+  }));
 }
 
 function sendThoughtReaction(thoughtId: number, emoji: string): void {

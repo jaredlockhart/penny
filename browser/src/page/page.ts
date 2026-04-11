@@ -17,6 +17,7 @@ import {
   STORAGE_KEY_DOMAIN_ALLOWLIST,
   STORAGE_KEY_TOOL_USE,
   type ThoughtCard,
+  THOUGHTS_NOTIFIED_PAGE_SIZE,
 } from "../protocol.js";
 
 // --- Top-level state ---
@@ -47,11 +48,10 @@ const modalTitle = document.getElementById("modal-title")!;
 const modalDate = document.getElementById("modal-date")!;
 const modalText = document.getElementById("modal-text")!;
 
-const ARCHIVE_PAGE_SIZE = 12;
-
-let allThoughts: ThoughtCard[] = [];
+let unnotifiedThoughts: ThoughtCard[] = [];
+let notifiedThoughts: ThoughtCard[] = [];
+let notifiedHasMore = false;
 let activeThoughtTab: "new" | "archive" = "new";
-let archivePage = 0;
 let modalThought: ThoughtCard | null = null;
 
 // --- Prompts state ---
@@ -141,7 +141,9 @@ function switchTab(tab: Tab): void {
 
 function handleMessage(message: RuntimeMessage): void {
   if (message.type === RuntimeMessageType.ThoughtsResponse) {
-    allThoughts = message.thoughts;
+    unnotifiedThoughts = message.unnotified;
+    notifiedThoughts = message.notified;
+    notifiedHasMore = message.notified_has_more;
     renderThoughts();
   } else if (message.type === RuntimeMessageType.PromptLogsResponse) {
     promptsLoaded = true;
@@ -197,7 +199,6 @@ function setupThoughts(): void {
 
 function switchThoughtTab(tab: "new" | "archive"): void {
   activeThoughtTab = tab;
-  archivePage = 0;
 
   for (const btn of Array.from(document.querySelectorAll(".thought-tab"))) {
     btn.classList.toggle("active", btn.getAttribute("data-ttab") === tab);
@@ -210,11 +211,9 @@ function renderThoughts(): void {
   thoughtsLoading.classList.add("hidden");
   grid.innerHTML = "";
 
-  const filtered = allThoughts.filter((t) =>
-    activeThoughtTab === "new" ? !t.notified : t.notified
-  );
+  const visible = activeThoughtTab === "new" ? unnotifiedThoughts : notifiedThoughts;
 
-  if (filtered.length === 0) {
+  if (visible.length === 0) {
     thoughtsLoading.textContent = activeThoughtTab === "new"
       ? "No new thoughts yet. Penny is still thinking..."
       : "No archived thoughts yet.";
@@ -223,19 +222,16 @@ function renderThoughts(): void {
     return;
   }
 
-  if (activeThoughtTab === "new") {
-    renderCards(filtered);
-    thoughtsLoadMore.classList.add("hidden");
-  } else {
-    const end = (archivePage + 1) * ARCHIVE_PAGE_SIZE;
-    renderCards(filtered.slice(0, end));
-    thoughtsLoadMore.classList.toggle("hidden", end >= filtered.length);
-  }
+  renderCards(visible);
+  const showLoadMore = activeThoughtTab === "archive" && notifiedHasMore;
+  thoughtsLoadMore.classList.toggle("hidden", !showLoadMore);
 }
 
 function loadNextPage(): void {
-  archivePage++;
-  renderThoughts();
+  browser.runtime.sendMessage({
+    type: RuntimeMessageType.ThoughtsRequest,
+    notified_limit: notifiedThoughts.length + THOUGHTS_NOTIFIED_PAGE_SIZE,
+  });
 }
 
 function renderCards(thoughts: ThoughtCard[]): void {
@@ -798,7 +794,25 @@ function extractLastTurnSnippet(prompt: PromptLogEntry): string {
 
 function extractPromptType(run: PromptLogRun): string {
   for (const prompt of run.prompts) {
-    if (prompt.prompt_type) return prompt.prompt_type;
+    if (!prompt.prompt_type) continue;
+    if (prompt.prompt_type === "user_message") {
+      const userText = extractLastUserMessage(prompt);
+      if (userText) return userText;
+    }
+    return prompt.prompt_type;
+  }
+  return "";
+}
+
+function extractLastUserMessage(prompt: PromptLogEntry): string {
+  for (let i = prompt.messages.length - 1; i >= 0; i--) {
+    const message = prompt.messages[i];
+    if (message.role !== "user") continue;
+    const content = message.content;
+    if (typeof content !== "string" || content.length === 0) continue;
+    const text = content.replace(/\s+/g, " ").trim();
+    if (text.length <= SNIPPET_MAX_CHARS) return text;
+    return text.slice(0, SNIPPET_MAX_CHARS) + "…";
   }
   return "";
 }

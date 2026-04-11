@@ -900,6 +900,127 @@ class TestBrowserThoughtReaction:
         assert reactions == []
 
 
+class TestBrowserThoughtsRequest:
+    """_handle_thoughts_request returns all unnotified + paginated notified."""
+
+    USER = "testuser"
+
+    def _setup(self, tmp_path, monkeypatch) -> tuple[BrowserChannel, Database]:
+        db = _make_db(tmp_path)
+        monkeypatch.setattr(db.users, "get_primary_sender", lambda: self.USER)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        return channel, db
+
+    def _add_notified(self, db: Database, content: str) -> None:
+        thought = db.thoughts.add(self.USER, content)
+        assert thought is not None
+        db.thoughts.mark_notified(cast(int, thought.id))
+
+    @pytest.mark.asyncio
+    async def test_returns_all_unnotified_even_beyond_default_limit(self, tmp_path, monkeypatch):
+        """Every unnotified thought ships, regardless of how many notified ones exist.
+
+        Regression: a previous implementation fetched the newest 50 by created_at
+        and let the addon filter for !notified, which silently dropped old
+        unnotified thoughts whenever notified thoughts crowded the top of the
+        feed.
+        """
+        channel, db = self._setup(tmp_path, monkeypatch)
+
+        # 60 notified thoughts (newer) + 20 unnotified (older).
+        for i in range(60):
+            self._add_notified(db, f"notified-{i}")
+        for i in range(20):
+            db.thoughts.add(self.USER, f"unnotified-{i}")
+
+        ws = _MockWs()
+        await channel._handle_thoughts_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "thoughts_request"},
+        )
+
+        resp = ws.sent[0]
+        assert resp["type"] == "thoughts_response"
+        assert len(resp["unnotified"]) == 20
+        assert all(card["notified"] is False for card in resp["unnotified"])
+        # Default page size = 12 notified, with more available.
+        assert len(resp["notified"]) == 12
+        assert resp["notified_has_more"] is True
+
+    @pytest.mark.asyncio
+    async def test_unnotified_sorted_newest_first(self, tmp_path, monkeypatch):
+        channel, db = self._setup(tmp_path, monkeypatch)
+        for i in range(3):
+            db.thoughts.add(self.USER, f"thought-{i}")
+
+        ws = _MockWs()
+        await channel._handle_thoughts_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "thoughts_request"},
+        )
+
+        contents = [card["content"] for card in ws.sent[0]["unnotified"]]
+        # Newest insertion (thought-2) should come first.
+        assert contents[0].endswith("thought-2</p>") or "thought-2" in contents[0]
+        assert "thought-0" in contents[-1]
+
+    @pytest.mark.asyncio
+    async def test_notified_limit_respected_and_has_more_flag(self, tmp_path, monkeypatch):
+        channel, db = self._setup(tmp_path, monkeypatch)
+        for i in range(20):
+            self._add_notified(db, f"notified-{i}")
+
+        ws = _MockWs()
+        await channel._handle_thoughts_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "thoughts_request", "notified_limit": 5},
+        )
+
+        resp = ws.sent[0]
+        assert len(resp["notified"]) == 5
+        assert resp["notified_has_more"] is True
+
+        # Request more than exist → no has_more.
+        ws2 = _MockWs()
+        await channel._handle_thoughts_request(
+            ws2,  # ty: ignore[invalid-argument-type]
+            {"type": "thoughts_request", "notified_limit": 50},
+        )
+        resp2 = ws2.sent[0]
+        assert len(resp2["notified"]) == 20
+        assert resp2["notified_has_more"] is False
+
+    @pytest.mark.asyncio
+    async def test_invalid_notified_limit_falls_back_to_default(self, tmp_path, monkeypatch):
+        channel, db = self._setup(tmp_path, monkeypatch)
+        for i in range(15):
+            self._add_notified(db, f"notified-{i}")
+
+        ws = _MockWs()
+        await channel._handle_thoughts_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "thoughts_request", "notified_limit": -1},
+        )
+
+        # Default page size kicks in (12).
+        assert len(ws.sent[0]["notified"]) == 12
+
+    @pytest.mark.asyncio
+    async def test_no_primary_sender_sends_empty_response(self, tmp_path, monkeypatch):
+        db = _make_db(tmp_path)
+        monkeypatch.setattr(db.users, "get_primary_sender", lambda: None)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+
+        ws = _MockWs()
+        await channel._handle_thoughts_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "thoughts_request"},
+        )
+
+        assert len(ws.sent) == 1
+        assert ws.sent[0]["type"] == "thoughts_response"
+
+
 class TestFormatToolStatus:
     """_format_tool_status produces human-readable labels for each tool."""
 
