@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
@@ -50,6 +51,10 @@ class ChatAgent(Agent):
     """
 
     name: str = "chat"
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pending_page_context: PageContext | None = None
 
     def get_max_steps(self) -> int:
         """Read from config each call so /config changes take effect immediately."""
