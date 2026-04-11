@@ -90,6 +90,9 @@ class PennyConstants:
     SIGNAL_VALIDATE_RETRY_DELAY = 5.0
     SIGNAL_VALIDATE_HTTP_TIMEOUT = 5.0
 
+    # Browser channel constants
+    BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE = 12
+
     # GitHub constants
     GITHUB_REPO_OWNER = "jaredlockhart"
     GITHUB_REPO_NAME = "penny"
