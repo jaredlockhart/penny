@@ -4,6 +4,7 @@ import logging
 import os
 
 from penny.llm.client import LlmClient
+from penny.llm.models import LlmError
 from penny.responses import PennyResponse
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,6 @@ async def get_restart_message(ollama_client: LlmClient) -> str:
         logger.info("Generated restart announcement: %s", announcement)
         return announcement
 
-    except Exception as e:
+    except LlmError as e:
         logger.warning("LLM transformation failed: %s, using fallback", e)
         return PennyResponse.RESTART_FALLBACK

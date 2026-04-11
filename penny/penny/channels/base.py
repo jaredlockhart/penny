@@ -9,17 +9,20 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 
 from penny.config import Config
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog
 from penny.llm import LlmClient
+from penny.llm.embeddings import serialize_embedding
 from penny.llm.image_client import OllamaImageClient
+from penny.llm.similarity import embed_text
 from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
-    from penny.commands import CommandRegistry
+    from penny.commands import Command, CommandRegistry
     from penny.database import Database
     from penny.scheduler import BackgroundScheduler
 
@@ -174,6 +177,14 @@ class MessageChannel(ABC):
             Signal timestamp (ms since epoch) on success, None on failure
         """
         pass
+
+    async def validate_connectivity(self) -> None:
+        """Validate connectivity to the channel's backend.
+
+        No-op by default. Channels with expensive/flaky backends (e.g. Signal)
+        override this to probe the backend at startup and raise on failure.
+        """
+        return
 
     def prepare_outgoing(self, text: str) -> str:
         """
@@ -333,15 +344,9 @@ class MessageChannel(ABC):
         """Compute and cache embedding for an outgoing message."""
         if not self._embedding_model_client:
             return
-        try:
-            from penny.llm.embeddings import serialize_embedding
-            from penny.llm.similarity import embed_text
-
-            vec = await embed_text(self._embedding_model_client, content)
-            if vec is not None:
-                self._db.messages.update_embedding(message_id, serialize_embedding(vec))
-        except Exception:
-            logger.debug("Failed to embed message %d", message_id)
+        vec = await embed_text(self._embedding_model_client, content)
+        if vec is not None:
+            self._db.messages.update_embedding(message_id, serialize_embedding(vec))
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -444,7 +449,8 @@ class MessageChannel(ABC):
         """Check if any user profile exists (Penny is single-user)."""
         try:
             return self._db.users.get_primary_sender() is None
-        except Exception:
+        except SQLAlchemyError:
+            logger.exception("Failed to check for existing user profile")
             return False
 
     def _resolve_user_sender(self, device_sender: str) -> str:
@@ -591,11 +597,13 @@ class MessageChannel(ABC):
         return command_name, command_args
 
     async def _execute_command(
-        self, message: IncomingMessage, command_name: str, command_args: str
+        self,
+        message: IncomingMessage,
+        command_name: str,
+        command_args: str,
+        command: Command,
     ) -> None:
         """Execute a known command with typing indicator and send the result."""
-        assert self._command_registry is not None
-        command = self._command_registry.get(command_name)
         user_sender = self._resolve_user_sender(message.sender)
         typing_task = asyncio.create_task(self._typing_loop(message.sender))
         try:
@@ -603,7 +611,6 @@ class MessageChannel(ABC):
             context.user = user_sender
             context.message = message
 
-            assert command is not None
             result = await command.execute(command_args, context)
             response = result.text
 
@@ -663,4 +670,4 @@ class MessageChannel(ABC):
             )
             return
 
-        await self._execute_command(message, command_name, command_args)
+        await self._execute_command(message, command_name, command_args, command)

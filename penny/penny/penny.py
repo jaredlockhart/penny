@@ -468,9 +468,7 @@ class Penny:
             logger.info("Ollama model: %s (image generation)", self.config.llm_image_model)
 
         # Validate channel connectivity before starting
-        validate_fn = getattr(self.channel, "validate_connectivity", None)
-        if validate_fn and callable(validate_fn):
-            await validate_fn()
+        await self.channel.validate_connectivity()
 
         await self._validate_optional_models()
         await self._backfill_all_embeddings()

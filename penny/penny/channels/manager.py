@@ -179,8 +179,6 @@ class ChannelManager(MessageChannel):
             )
 
     async def validate_connectivity(self) -> None:
-        """Validate connectivity for all channels that support it."""
+        """Validate connectivity for all channels."""
         for channel in self._channels.values():
-            validate_fn = getattr(channel, "validate_connectivity", None)
-            if validate_fn and callable(validate_fn):
-                await validate_fn()
+            await channel.validate_connectivity()

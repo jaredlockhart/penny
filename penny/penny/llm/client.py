@@ -125,7 +125,8 @@ class LlmClient:
                     await asyncio.sleep(self.retry_delay)
 
         logger.error("LLM chat failed after %d attempts: %s", self.max_retries, last_error)
-        assert last_error is not None
+        if last_error is None:
+            raise LlmResponseError("LLM chat exhausted retries without a recorded error")
         raise last_error
 
     # ── Generate (chat wrapper) ──────────────────────────────────────────
@@ -189,7 +190,8 @@ class LlmClient:
                     await asyncio.sleep(self.retry_delay)
 
         logger.error("LLM embed failed after %d attempts: %s", self.max_retries, last_error)
-        assert last_error is not None
+        if last_error is None:
+            raise LlmResponseError("LLM embed exhausted retries without a recorded error")
         raise last_error
 
     # ── Cleanup ──────────────────────────────────────────────────────────

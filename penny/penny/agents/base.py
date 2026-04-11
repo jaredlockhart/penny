@@ -611,7 +611,7 @@ class Agent:
         content = _clean_malformed_urls(content)
 
         if source_urls and "http" not in content:
-            content += "\n\n" + source_urls[0]
+            content = f"{content}\n\n{source_urls[0]}"
 
         word_count = len(content.split())
         if word_count < 10:
@@ -889,7 +889,8 @@ class Agent:
         parts = [s for s in sections if s]
         if not parts:
             return None
-        return "## Context\n" + "\n\n".join(parts)
+        joined = "\n\n".join(parts)
+        return f"## Context\n{joined}"
 
     def _profile_section(self, sender: str) -> str | None:
         """### User Profile — user name."""
@@ -1204,7 +1205,8 @@ class Agent:
             sections.append(f"{entry.title}\n{entry.url}\n{entry.summary}")
         if not sections:
             return "### Knowledge"
-        return "### Knowledge\n" + "\n\n".join(sections)
+        joined = "\n\n".join(sections)
+        return f"### Knowledge\n{joined}"
 
     @staticmethod
     def _format_related_messages(messages: list) -> str:
@@ -1216,7 +1218,8 @@ class Agent:
             lines.append(f'{date_label}: "{message.content}"')
         if not lines:
             return "### Related Past Messages"
-        return "### Related Past Messages\n" + "\n".join(lines)
+        joined = "\n".join(lines)
+        return f"### Related Past Messages\n{joined}"
 
     def _get_conversation_message_ids(self, sender: str) -> set[int]:
         """Get IDs of messages in the current conversation window (last N)."""
@@ -1245,7 +1248,7 @@ class Agent:
                 )
                 if conversation and conversation[-1][0] == role:
                     prev_role, prev_content = conversation[-1]
-                    conversation[-1] = (prev_role, prev_content + "\n" + msg.content)
+                    conversation[-1] = (prev_role, f"{prev_content}\n{msg.content}")
                 else:
                     conversation.append((role, msg.content))
             if conversation:

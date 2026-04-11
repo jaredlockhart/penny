@@ -317,10 +317,7 @@ class NotifyAgent(Agent):
     async def _send_mode(
         self, user: str, mode: NotificationMode, run_id: str, prompt_type: str
     ) -> bool:
-        """Execute a notification mode: generate candidate, validate, send.
-
-        Handles tools-unavailable fallback for single-shot modes (checkin, news).
-        """
+        """Execute a notification mode: generate candidate, validate, send."""
         logger.info("Notify %s for %s", mode.__class__.__name__, user)
         self._last_tools_unavailable = None
         candidate = await self._execute_mode(user, mode, run_id, prompt_type)
@@ -412,7 +409,7 @@ class NotifyAgent(Agent):
                 return response
             source_text = self._get_source_text()
             if extra_source:
-                source_text = extra_source + "\n" + source_text
+                source_text = f"{extra_source}\n{source_text}"
             bad_urls = self._find_hallucinated_urls(answer, source_text)
             if not bad_urls:
                 return response
