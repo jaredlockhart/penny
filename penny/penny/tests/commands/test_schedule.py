@@ -1,11 +1,11 @@
 """Integration tests for /schedule command."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from penny.database.models import UserInfo
+from penny.database.models import Schedule, UserInfo
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
@@ -225,4 +225,51 @@ async def test_schedule_delete_invalid_index(signal_server, test_config, mock_ll
         # Should show empty message (no schedules to delete)
         await wait_until(
             lambda: _has_message(signal_server, "You don't have any scheduled tasks yet")
+        )
+
+
+@pytest.mark.asyncio
+async def test_schedule_executor_fires_through_chat_agent(
+    signal_server, test_config, mock_llm, running_penny
+):
+    """A due schedule must execute through ChatAgent and deliver a response.
+
+    Regression test: ScheduleExecutor calls ``chat_agent.run()`` directly
+    instead of going through ``handle()``, so ``_pending_page_context`` was
+    never initialized as an instance attribute. The first scheduled fire
+    crashed with ``AttributeError: 'ChatAgent' object has no attribute
+    '_pending_page_context'`` and no message was ever delivered.
+    """
+
+    def handler(request, count):
+        return mock_llm._make_text_response(request, "morning! here's the news.")
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(test_config) as penny:
+        with penny.db.get_session() as session:
+            session.add(
+                UserInfo(
+                    sender=TEST_SENDER,
+                    name="Test User",
+                    location="Seattle",
+                    timezone="America/Los_Angeles",
+                    date_of_birth="1990-01-01",
+                )
+            )
+            session.add(
+                Schedule(
+                    user_id=TEST_SENDER,
+                    user_timezone="America/Los_Angeles",
+                    cron_expression="* * * * *",
+                    prompt_text="fetch the news",
+                    timing_description="every minute",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+
+        await wait_until(
+            lambda: _has_message(signal_server, "morning! here's the news."),
+            timeout=5.0,
         )
