@@ -91,7 +91,7 @@ async def test_validate_connectivity_dns_failure(test_db, mock_llm):
     )
 
     with pytest.raises(ConnectionError) as exc_info:
-        await channel.validate_connectivity()
+        await channel.validate_connectivity(max_attempts=1, retry_delay=0)
 
     error_message = str(exc_info.value)
     assert "Cannot resolve Signal API hostname" in error_message
@@ -147,11 +147,135 @@ async def test_validate_connectivity_connection_refused(test_db, mock_llm):
     )
 
     with pytest.raises(ConnectionError) as exc_info:
-        await channel.validate_connectivity()
+        await channel.validate_connectivity(max_attempts=1, retry_delay=0)
 
     error_message = str(exc_info.value)
     assert "Cannot connect to Signal API" in error_message
     assert "http://localhost:19999" in error_message
+
+    await channel.close()
+
+
+@pytest.mark.asyncio
+async def test_validate_connectivity_retries_then_succeeds(
+    signal_server, test_config, mock_llm, monkeypatch, caplog
+):
+    """validate_connectivity retries transient probe failures and recovers.
+
+    Regression: cold-boot startup races signal-cli-rest-api (~30–60s warmup);
+    a single failed attempt would crash the process and docker would respawn
+    it in a tight loop. The retry path should log each failed attempt and
+    recover when the API comes up.
+    """
+    import logging
+
+    from penny.agents import ChatAgent
+    from penny.prompts import Prompt
+
+    db = Database(test_config.db_path)
+    db.create_tables()
+    client = LlmClient(
+        api_url=test_config.llm_api_url,
+        model=test_config.llm_model,
+        db=db,
+        max_retries=test_config.llm_max_retries,
+        retry_delay=test_config.llm_retry_delay,
+    )
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
+        model_client=client,
+        tools=[],
+        db=db,
+        config=test_config,
+    )
+    channel = SignalChannel(
+        api_url=test_config.signal_api_url,
+        phone_number=test_config.signal_number or "+15551234567",
+        message_agent=message_agent,
+        db=db,
+    )
+
+    real_probe = channel._probe_signal_api
+    call_count = {"n": 0}
+
+    async def flaky_probe() -> None:
+        call_count["n"] += 1
+        if call_count["n"] < 3:
+            raise ConnectionError(f"simulated probe failure {call_count['n']}")
+        await real_probe()
+
+    monkeypatch.setattr(channel, "_probe_signal_api", flaky_probe)
+
+    with caplog.at_level(logging.WARNING, logger="penny.channels.signal.channel"):
+        await channel.validate_connectivity(max_attempts=5, retry_delay=0)
+
+    assert call_count["n"] == 3
+    failure_warnings = [
+        record
+        for record in caplog.records
+        if "Signal API validation attempt" in record.message and record.levelno == logging.WARNING
+    ]
+    assert len(failure_warnings) == 2
+
+    await channel.close()
+
+
+@pytest.mark.asyncio
+async def test_validate_connectivity_exhausts_attempts_then_logs_and_raises(
+    test_db, mock_llm, caplog
+):
+    """After exhausting all attempts, the final error is logged and raised."""
+    import logging
+
+    from penny.agents import ChatAgent
+    from penny.config import Config
+    from penny.prompts import Prompt
+
+    config = Config(
+        channel_type="signal",
+        signal_number="+15551234567",
+        signal_api_url="http://localhost:19999",
+        discord_bot_token=None,
+        discord_channel_id=None,
+        llm_api_url="http://localhost:11434",
+        llm_model="test-model",
+        log_level="DEBUG",
+        db_path=test_db,
+    )
+    db = Database(config.db_path)
+    db.create_tables()
+    client = LlmClient(
+        api_url=config.llm_api_url,
+        model=config.llm_model,
+        db=db,
+        max_retries=config.llm_max_retries,
+        retry_delay=config.llm_retry_delay,
+    )
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
+        model_client=client,
+        tools=[],
+        db=db,
+        config=config,
+    )
+    channel = SignalChannel(
+        api_url=config.signal_api_url,
+        phone_number=config.signal_number or "+15551234567",
+        message_agent=message_agent,
+        db=db,
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="penny.channels.signal.channel"),
+        pytest.raises(ConnectionError),
+    ):
+        await channel.validate_connectivity(max_attempts=3, retry_delay=0)
+
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(warnings) == 3
+    assert len(errors) == 1
+    assert "after 3 attempts" in errors[0].message
 
     await channel.close()
 

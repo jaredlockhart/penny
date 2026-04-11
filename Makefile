@@ -47,8 +47,9 @@ RUN = cd penny &&
 TEAM_RUN = cd penny-team &&
 else
 # On host — run tools inside Docker containers
-RUN = docker compose run --rm penny
-TEAM_RUN = docker compose run --rm team
+# --no-deps: dev tools don't need signal-api healthy (would block on first run)
+RUN = docker compose run --rm --no-deps penny
+TEAM_RUN = docker compose run --rm --no-deps team
 endif
 
 fix: $(if $(LOCAL),,build team-build)
