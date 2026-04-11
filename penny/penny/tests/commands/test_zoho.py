@@ -68,6 +68,8 @@ def zoho_context():
     runtime = MagicMock()
     runtime.JMAP_REQUEST_TIMEOUT = 30.0
     runtime.EMAIL_BODY_MAX_LENGTH = 4000
+    runtime.EMAIL_SEARCH_LIMIT = 10
+    runtime.EMAIL_LIST_LIMIT = 10
     config.runtime = runtime
     return CommandContext(
         db=MagicMock(),
@@ -183,4 +185,6 @@ async def test_zoho_client_created_with_credentials(zoho_context):
         FAKE_REFRESH_TOKEN,
         timeout=30.0,
         max_body_length=4000,
+        search_limit=10,
+        list_limit=10,
     )

@@ -17,8 +17,6 @@ from penny.zoho.models import ZohoAccount, ZohoFolder, ZohoSession
 
 logger = logging.getLogger(__name__)
 
-EMAIL_SEARCH_LIMIT = 10
-
 # Regex for Zoho date format DD-MMM-YYYY (e.g., 12-Sep-2017)
 _ZOHO_DATE_RE = re.compile(r"^\d{1,2}-[A-Za-z]{3}-\d{4}$")
 
@@ -54,11 +52,15 @@ class ZohoClient:
         *,
         timeout: float,
         max_body_length: int,
+        search_limit: int,
+        list_limit: int,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._refresh_token = refresh_token
         self._max_body_length = max_body_length
+        self._search_limit = search_limit
+        self._list_limit = list_limit
         self._session: ZohoSession | None = None
         self._account: ZohoAccount | None = None
         self._folders: list[ZohoFolder] | None = None
@@ -187,14 +189,8 @@ class ZohoClient:
     async def list_emails(
         self,
         folder_name: str | None = None,
-        limit: int = EMAIL_SEARCH_LIMIT,
     ) -> list[EmailSummary]:
-        """List emails from a specific folder.
-
-        Args:
-            folder_name: Name of folder to list (default: Inbox)
-            limit: Maximum number of emails to return
-        """
+        """List emails from a specific folder."""
         account = await self._ensure_account()
         headers = await self._get_headers()
 
@@ -216,7 +212,7 @@ class ZohoClient:
         url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages/view"
         params = {
             "folderId": folder_id,
-            "limit": limit,
+            "limit": self._list_limit,
             "includeto": "true",
         }
 
@@ -236,7 +232,6 @@ class ZohoClient:
         subject: str | None = None,
         after: str | None = None,
         before: str | None = None,
-        limit: int = EMAIL_SEARCH_LIMIT,
     ) -> list[EmailSummary]:
         """Search emails and return summaries.
 
@@ -279,7 +274,7 @@ class ZohoClient:
         url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages/search"
         params = {
             "searchKey": search_key,
-            "limit": limit,
+            "limit": self._search_limit,
             "includeto": "true",
         }
 

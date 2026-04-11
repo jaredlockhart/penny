@@ -58,6 +58,8 @@ class ZohoCommand(Command):
             self._refresh_token,
             timeout=context.config.runtime.JMAP_REQUEST_TIMEOUT,
             max_body_length=int(context.config.runtime.EMAIL_BODY_MAX_LENGTH),
+            search_limit=int(context.config.runtime.EMAIL_SEARCH_LIMIT),
+            list_limit=int(context.config.runtime.EMAIL_LIST_LIMIT),
         )
         agent: Agent | None = None
         try:

@@ -13,6 +13,8 @@ from penny.zoho.client import ZohoClient
 
 _ZOHO_TIMEOUT = float(RUNTIME_CONFIG_PARAMS["JMAP_REQUEST_TIMEOUT"].default)
 _EMAIL_MAX_LENGTH = int(RUNTIME_CONFIG_PARAMS["EMAIL_BODY_MAX_LENGTH"].default)
+_EMAIL_SEARCH_LIMIT = int(RUNTIME_CONFIG_PARAMS["EMAIL_SEARCH_LIMIT"].default)
+_EMAIL_LIST_LIMIT = int(RUNTIME_CONFIG_PARAMS["EMAIL_LIST_LIMIT"].default)
 
 FAKE_CLIENT_ID = "1000.TESTCLIENTID"
 FAKE_CLIENT_SECRET = "testsecret123"
@@ -103,6 +105,8 @@ async def test_access_token_refreshed_and_cached():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -135,6 +139,8 @@ async def test_search_emails_returns_summaries():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -166,6 +172,8 @@ async def test_search_emails_builds_search_key():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -204,6 +212,8 @@ async def test_read_emails_returns_details():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     # Use folderId:messageId format (as returned by search)
@@ -236,6 +246,8 @@ async def test_read_emails_strips_html():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     email_id = "F001:M001"
@@ -267,6 +279,8 @@ async def test_read_emails_empty_ids():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     results = await client.read_emails([])
@@ -335,6 +349,8 @@ async def test_get_folders():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -365,6 +381,8 @@ async def test_get_folder_by_name():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -393,6 +411,8 @@ async def test_list_emails_from_folder():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
