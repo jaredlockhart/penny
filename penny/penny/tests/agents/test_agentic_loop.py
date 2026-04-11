@@ -1021,6 +1021,95 @@ class TestRefusalRetry:
         await agent.close()
 
 
+class TestUrlValidationSourceContext:
+    """URL validation must accept URLs from system prompt and history, not only tool results.
+
+    Each test runs a tool call first so `_tool_result_text` is populated and validation
+    actually fires — the production bug only manifests after a real browse turn.
+    """
+
+    @pytest.mark.asyncio
+    async def test_url_from_system_prompt_not_flagged(self, test_db, mock_llm):
+        """A URL provided in the system prompt (e.g. knowledge section) is not hallucinated."""
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
+
+        knowledge_url = (
+            "https://www.henryford.com/Blog/2022/11/Why-Some-People-Get-Colds-and-the-Flu"
+        )
+        system_prompt = (
+            "You are Penny.\n\n### Related Knowledge\n"
+            f"Why Some People Get Colds More Than Others\n{knowledge_url}\n"
+            "Cold seasons trigger viral infections..."
+        )
+        answer = f"Here's what the research says: see {knowledge_url} for the full study."
+
+        def handler(request, count):
+            if count == 1:
+                return mock_llm._make_tool_call_response(request, "search", {"query": "colds"})
+            return mock_llm._make_text_response(request, answer)
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run(
+            "tell me about colds", max_steps=max_steps, system_prompt=system_prompt
+        )
+
+        assert response.answer == answer
+        # Two model calls: tool call + text response. No retry.
+        assert len(mock_llm.requests) == 2
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_url_from_history_not_flagged(self, test_db, mock_llm):
+        """A URL the assistant cited earlier in conversation history is not hallucinated."""
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
+
+        prior_url = "https://pubmed.ncbi.nlm.nih.gov/26118561/"
+        history = [
+            ("user", "what's the data say"),
+            ("assistant", f"I dug into a study at {prior_url} that covers exactly that."),
+        ]
+        answer = f"Following up — the same paper {prior_url} also notes immune signalling."
+
+        def handler(request, count):
+            if count == 1:
+                return mock_llm._make_tool_call_response(request, "search", {"query": "follow"})
+            return mock_llm._make_text_response(request, answer)
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("follow up", max_steps=max_steps, history=history)
+
+        assert response.answer == answer
+        assert len(mock_llm.requests) == 2
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_url_not_in_any_context_still_flagged(self, test_db, mock_llm):
+        """URL with no source anywhere in messages still triggers a retry."""
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=2)
+
+        bad = "Made-up source: https://totally-fake.example/never-seen"
+        good = "Here's a clean answer with no URL."
+
+        def handler(request, count):
+            if count == 1:
+                return mock_llm._make_tool_call_response(request, "search", {"query": "x"})
+            return mock_llm._make_text_response(request, bad if count == 2 else good)
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("question", max_steps=max_steps)
+
+        assert response.answer == good
+        # Tool call + bad text + retry text = 3 model calls
+        assert len(mock_llm.requests) == 3
+
+        await agent.close()
+
+
 class TestMalformedUrlCleaning:
     """Test that truncated or malformed URLs are stripped from final responses."""
 

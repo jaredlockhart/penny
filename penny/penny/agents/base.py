@@ -500,7 +500,7 @@ class Agent:
 
             self.on_response(response)
             content = response.content.strip()
-            reason = self._check_response(content, retried)
+            reason = self._check_response(content, retried, messages)
             if reason is None:
                 return response
 
@@ -528,7 +528,10 @@ class Agent:
         return response
 
     def _check_response(
-        self, content: str, already_retried: set[ValidationReason]
+        self,
+        content: str,
+        already_retried: set[ValidationReason],
+        messages: list[dict] | None = None,
     ) -> ValidationReason | None:
         """Check a text response for problems. Returns reason or None if valid."""
         if _has_xml_tags(content) and ValidationReason.XML not in already_retried:
@@ -549,7 +552,7 @@ class Agent:
         ):
             return ValidationReason.REFUSAL
 
-        source_text = self._get_source_text()
+        source_text = self._get_source_text(messages)
         if source_text and effective_content:
             bad_urls = self._find_hallucinated_urls(effective_content, source_text)
             if bad_urls and ValidationReason.HALLUCINATED_URLS not in already_retried:
@@ -792,9 +795,21 @@ class Agent:
             return []
         return [url for url in urls if url not in source_text]
 
-    def _get_source_text(self) -> str:
-        """Combined tool result text from the current run for URL validation."""
-        return "\n".join(self._tool_result_text)
+    def _get_source_text(self, messages: list[dict] | None = None) -> str:
+        """Combined source text for URL validation.
+
+        Includes the full message context (system prompt, conversation history,
+        tool results) so URLs the model was legitimately shown — e.g. in the
+        knowledge section of the system prompt or in a prior assistant turn —
+        are not flagged as hallucinated.
+        """
+        parts = list(self._tool_result_text)
+        if messages:
+            for message in messages:
+                content = message.get("content")
+                if isinstance(content, str) and content:
+                    parts.append(content)
+        return "\n".join(parts)
 
     # ── Message building ─────────────────────────────────────────────────
 
