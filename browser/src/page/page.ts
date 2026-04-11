@@ -780,14 +780,14 @@ function extractLastTurnSnippet(prompt: PromptLogEntry): string {
       }
       return "";
     });
-    const text = names.map((n, i) => `${n}(${args[i]})`).join(", ");
-    if (text.length <= SNIPPET_MAX_CHARS) return text;
-    return text.slice(0, SNIPPET_MAX_CHARS) + "…";
+    return normalizeSnippet(names.map((n, i) => `${n}(${args[i]})`).join(", "));
   }
 
-  // Fall back to text content
-  const content = message.content as string | null;
-  if (!content) return "";
+  return normalizeSnippet(message.content as string | null);
+}
+
+function normalizeSnippet(content: string | null | undefined): string {
+  if (typeof content !== "string" || content.length === 0) return "";
   const text = content.replace(/\s+/g, " ").trim();
   if (text.length <= SNIPPET_MAX_CHARS) return text;
   return text.slice(0, SNIPPET_MAX_CHARS) + "…";
@@ -809,11 +809,8 @@ function extractLastUserMessage(prompt: PromptLogEntry): string {
   for (let i = prompt.messages.length - 1; i >= 0; i--) {
     const message = prompt.messages[i];
     if (message.role !== "user") continue;
-    const content = message.content;
-    if (typeof content !== "string" || content.length === 0) continue;
-    const text = content.replace(/\s+/g, " ").trim();
-    if (text.length <= SNIPPET_MAX_CHARS) return text;
-    return text.slice(0, SNIPPET_MAX_CHARS) + "…";
+    const snippet = normalizeSnippet(message.content as string | null);
+    if (snippet) return snippet;
   }
   return "";
 }

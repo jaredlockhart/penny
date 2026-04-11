@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import websockets
 from pydantic import BaseModel
@@ -68,10 +68,13 @@ from penny.channels.browser.models import (
     BrowserScheduleAdd,
     BrowserScheduleDelete,
     BrowserScheduleUpdate,
+    BrowserThoughtsRequest,
+    BrowserThoughtsResponse,
     BrowserToolRequest,
     BrowserToolResponse,
     DomainPermissionRecord,
     ScheduleRecord,
+    ThoughtCard,
 )
 from penny.channels.permission_manager import PermissionManager
 from penny.commands.schedule import ScheduleParseResult
@@ -400,8 +403,9 @@ class BrowserChannel(MessageChannel):
             await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_THOUGHTS))
             return
 
+        request = BrowserThoughtsRequest(**data)
         page_size = PennyConstants.BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE
-        notified_pages = self._parse_notified_pages(data)
+        notified_pages = max(request.notified_pages, 1)
         notified_limit = page_size * notified_pages
 
         unnotified = sorted(
@@ -415,32 +419,24 @@ class BrowserChannel(MessageChannel):
         notified = notified_plus_one[:notified_limit]
         seed_topics = self._resolve_seed_topics([*unnotified, *notified])
 
-        def to_card(thought: Thought) -> dict:
-            return {
-                "id": thought.id,
-                "title": thought.title or "",
-                "content": self.prepare_outgoing(thought.content),
-                "image": thought.image or "",
-                "created_at": thought.created_at.isoformat() if thought.created_at else "",
-                "notified": thought.notified_at is not None,
-                "seed_topic": seed_topics.get(thought.preference_id, ""),
-            }
+        def to_card(thought: Thought) -> ThoughtCard:
+            return ThoughtCard(
+                id=cast(int, thought.id),
+                title=thought.title or "",
+                content=self.prepare_outgoing(thought.content),
+                image=thought.image or "",
+                created_at=thought.created_at.isoformat() if thought.created_at else "",
+                notified=thought.notified_at is not None,
+                seed_topic=seed_topics.get(thought.preference_id, ""),
+            )
 
-        response = {
-            "type": BROWSER_RESP_TYPE_THOUGHTS,
-            "unnotified": [to_card(thought) for thought in unnotified],
-            "notified": [to_card(thought) for thought in notified],
-            "notified_has_more": notified_has_more,
-        }
+        response = BrowserThoughtsResponse(
+            unnotified=[to_card(thought) for thought in unnotified],
+            notified=[to_card(thought) for thought in notified],
+            notified_has_more=notified_has_more,
+        )
         with contextlib.suppress(websockets.ConnectionClosed):
-            await ws.send(json.dumps(response))
-
-    @staticmethod
-    def _parse_notified_pages(data: dict) -> int:
-        raw = data.get("notified_pages")
-        if not isinstance(raw, int) or raw <= 0:
-            return 1
-        return raw
+            await ws.send(response.model_dump_json())
 
     def _handle_thought_reaction(self, data: dict) -> None:
         """Handle a thumbs up/down reaction to a thought from the feed page."""
