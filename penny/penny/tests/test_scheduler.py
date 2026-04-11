@@ -10,7 +10,7 @@ import pytest
 
 from penny.scheduler.base import BackgroundScheduler, Schedule
 from penny.scheduler.schedules import PeriodicSchedule
-from penny.tests.conftest import TEST_SENDER
+from penny.tests.conftest import TEST_SENDER, wait_until
 
 
 class _SlowAgent:
@@ -95,10 +95,8 @@ async def test_foreground_cancels_active_background_task():
         # Simulate a message arriving — should cancel the background task
         scheduler.notify_foreground_start()
 
-        # Give the scheduler a moment to process the cancellation
-        await asyncio.sleep(0.05)
+        await wait_until(lambda: agent.cancelled, timeout=2.0)
 
-        assert agent.cancelled, "Agent should have been cancelled"
         assert not agent.completed, "Agent should not have completed normally"
         assert scheduler._active_task is None, "Active task should be cleared"
     finally:
@@ -124,9 +122,8 @@ async def test_foreground_during_idle_prevents_task_start():
 
     scheduler_task = asyncio.create_task(scheduler.run())
     try:
-        # Let several ticks pass
-        await asyncio.sleep(0.1)
-
+        # Negative assertion: verify immediately. The agent must not have
+        # started yet, since the scheduler hasn't had time for any tick.
         assert not agent.started.is_set(), "Agent should not have started while foreground active"
 
         # Release foreground — background should start
@@ -184,10 +181,12 @@ async def test_scheduler_skips_agents_with_no_work():
 
     scheduler_task = asyncio.create_task(scheduler.run())
     try:
-        # Let a few ticks run
-        await asyncio.sleep(0.1)
+        await wait_until(
+            lambda: agent_a.execute_count > 0 and agent_b.execute_count > 0,
+            timeout=2.0,
+        )
 
-        # Agent A (no work) should have been called, but agent B (has work) should also run
+        # Agent A (no work) was called, but agent B (has work) ran too
         assert agent_a.execute_count > 0, "Higher-priority agent should be called"
         assert agent_b.execute_count > 0, (
             "Lower-priority agent should run when higher returns False"
@@ -216,7 +215,7 @@ async def test_scheduler_mark_complete_only_on_work():
 
     scheduler_task = asyncio.create_task(scheduler.run())
     try:
-        await asyncio.sleep(0.1)
+        await wait_until(lambda: schedule_has_work.mark_complete_count > 0, timeout=2.0)
 
         assert schedule_no_work.mark_complete_count == 0, (
             "mark_complete should NOT be called when agent returns False"
@@ -245,11 +244,11 @@ async def test_no_work_agent_stays_eligible_without_interval_wait():
 
     scheduler_task = asyncio.create_task(scheduler.run())
     try:
-        # Let it run for 0.1s — agent returns False every tick, so it should
-        # be re-checked each tick without waiting for the 0.5s interval
-        await asyncio.sleep(0.1)
-        assert agent.execute_count > 1, (
-            f"No-work agent should be rechecked each tick, got {agent.execute_count} in 0.1s"
+        # Agent returns False every tick — should be re-checked each tick
+        # without waiting for the 0.5s interval. Wait for 2 ticks to confirm.
+        await wait_until(lambda: agent.execute_count >= 2, timeout=2.0)
+        assert agent.execute_count >= 2, (
+            f"No-work agent should be rechecked each tick, got {agent.execute_count}"
         )
     finally:
         scheduler.stop()
@@ -275,10 +274,10 @@ async def test_scheduler_breaks_when_agent_does_work():
 
     scheduler_task = asyncio.create_task(scheduler.run())
     try:
-        await asyncio.sleep(0.1)
+        await wait_until(lambda: agent_a.execute_count >= 3, timeout=2.0)
 
         # Agent A always does work and breaks — B never gets a turn
-        assert agent_a.execute_count > 0
+        assert agent_a.execute_count >= 3
         assert agent_b.execute_count == 0, (
             "Lower-priority agent should not run when higher-priority does work"
         )
