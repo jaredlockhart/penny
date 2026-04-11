@@ -390,10 +390,10 @@ class BrowserChannel(MessageChannel):
     async def _handle_thoughts_request(self, ws: ServerConnection, data: dict) -> None:
         """Query recent thoughts and send them to the browser.
 
-        Sends every unnotified thought (so the badge count is exact) and a
-        paginated slice of notified thoughts. The addon controls the notified
-        slice size via `notified_limit`, growing it on "load more" so polled
-        refreshes don't reset pagination.
+        Sends every unnotified thought (so the badge count is exact) and the
+        first N pages of notified thoughts. The addon controls how many pages
+        it wants via `notified_pages`, growing it on "load more" so polled
+        refreshes don't reset pagination. Page size lives only on the server.
         """
         primary = self._db.users.get_primary_sender()
         if not primary:
@@ -401,7 +401,8 @@ class BrowserChannel(MessageChannel):
             return
 
         page_size = PennyConstants.BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE
-        notified_limit = self._parse_notified_limit(data, page_size)
+        notified_pages = self._parse_notified_pages(data)
+        notified_limit = page_size * notified_pages
 
         unnotified = sorted(
             self._db.thoughts.get_all_unnotified(primary),
@@ -435,10 +436,10 @@ class BrowserChannel(MessageChannel):
             await ws.send(json.dumps(response))
 
     @staticmethod
-    def _parse_notified_limit(data: dict, default: int) -> int:
-        raw = data.get("notified_limit")
+    def _parse_notified_pages(data: dict) -> int:
+        raw = data.get("notified_pages")
         if not isinstance(raw, int) or raw <= 0:
-            return default
+            return 1
         return raw
 
     def _handle_thought_reaction(self, data: dict) -> None:

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from penny.channels.base import IncomingMessage
 from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
 from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
-from penny.constants import ChannelType
+from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.database.models import PromptLog, RuntimeConfig
@@ -965,45 +965,49 @@ class TestBrowserThoughtsRequest:
         assert "thought-0" in contents[-1]
 
     @pytest.mark.asyncio
-    async def test_notified_limit_respected_and_has_more_flag(self, tmp_path, monkeypatch):
+    async def test_notified_pages_grows_slice_and_has_more_flag(self, tmp_path, monkeypatch):
         channel, db = self._setup(tmp_path, monkeypatch)
-        for i in range(20):
+        page_size = PennyConstants.BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE
+        # Three pages worth + a few extras so page 2 still has more.
+        total = page_size * 3 + 4
+        for i in range(total):
             self._add_notified(db, f"notified-{i}")
 
         ws = _MockWs()
         await channel._handle_thoughts_request(
             ws,  # ty: ignore[invalid-argument-type]
-            {"type": "thoughts_request", "notified_limit": 5},
+            {"type": "thoughts_request", "notified_pages": 2},
         )
 
         resp = ws.sent[0]
-        assert len(resp["notified"]) == 5
+        assert len(resp["notified"]) == page_size * 2
         assert resp["notified_has_more"] is True
 
-        # Request more than exist → no has_more.
+        # Request enough pages to drain everything → no has_more.
         ws2 = _MockWs()
         await channel._handle_thoughts_request(
             ws2,  # ty: ignore[invalid-argument-type]
-            {"type": "thoughts_request", "notified_limit": 50},
+            {"type": "thoughts_request", "notified_pages": 10},
         )
         resp2 = ws2.sent[0]
-        assert len(resp2["notified"]) == 20
+        assert len(resp2["notified"]) == total
         assert resp2["notified_has_more"] is False
 
     @pytest.mark.asyncio
-    async def test_invalid_notified_limit_falls_back_to_default(self, tmp_path, monkeypatch):
+    async def test_invalid_notified_pages_falls_back_to_one_page(self, tmp_path, monkeypatch):
         channel, db = self._setup(tmp_path, monkeypatch)
-        for i in range(15):
+        page_size = PennyConstants.BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE
+        for i in range(page_size + 5):
             self._add_notified(db, f"notified-{i}")
 
         ws = _MockWs()
         await channel._handle_thoughts_request(
             ws,  # ty: ignore[invalid-argument-type]
-            {"type": "thoughts_request", "notified_limit": -1},
+            {"type": "thoughts_request", "notified_pages": -1},
         )
 
-        # Default page size kicks in (12).
-        assert len(ws.sent[0]["notified"]) == 12
+        # Falls back to one page.
+        assert len(ws.sent[0]["notified"]) == page_size
 
     @pytest.mark.asyncio
     async def test_no_primary_sender_sends_empty_response(self, tmp_path, monkeypatch):

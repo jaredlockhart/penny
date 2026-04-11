@@ -11,7 +11,6 @@ import {
   type DomainPermissionEntry,
   type PageContext,
   RECONNECT_DELAY_MS,
-  THOUGHTS_NOTIFIED_PAGE_SIZE,
   THOUGHTS_POLL_INTERVAL_MS,
   type RuntimeMessage,
   RuntimeMessageType,
@@ -32,7 +31,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let deviceLabel: string | null = null;
 let connectionState: ConnectionState = CS.Disconnected;
 let currentPageContext: PageContext | null = null;
-let notifiedLimit: number = THOUGHTS_NOTIFIED_PAGE_SIZE;
+let notifiedPages: number = 1;
 
 // URLs we should never try to extract from
 const SKIP_URL_PREFIXES = ["about:", "moz-extension:", "chrome:", "data:", "file:"];
@@ -152,8 +151,8 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
   if (message.type === RuntimeMessageType.SendChat) {
     sendChatToServer(message.content, message.include_page);
   } else if (message.type === RuntimeMessageType.ThoughtsRequest) {
-    if (typeof message.notified_limit === "number" && message.notified_limit > 0) {
-      notifiedLimit = message.notified_limit;
+    if (typeof message.notified_pages === "number" && message.notified_pages > 0) {
+      notifiedPages = message.notified_pages;
     }
     requestThoughts();
   } else if (message.type === RuntimeMessageType.ThoughtReaction) {
@@ -336,7 +335,7 @@ function requestThoughts(): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({
     type: WsOutgoingType.ThoughtsRequest,
-    notified_limit: notifiedLimit,
+    notified_pages: notifiedPages,
   }));
 }
 

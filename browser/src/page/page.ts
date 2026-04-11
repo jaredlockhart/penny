@@ -17,7 +17,6 @@ import {
   STORAGE_KEY_DOMAIN_ALLOWLIST,
   STORAGE_KEY_TOOL_USE,
   type ThoughtCard,
-  THOUGHTS_NOTIFIED_PAGE_SIZE,
 } from "../protocol.js";
 
 // --- Top-level state ---
@@ -51,6 +50,7 @@ const modalText = document.getElementById("modal-text")!;
 let unnotifiedThoughts: ThoughtCard[] = [];
 let notifiedThoughts: ThoughtCard[] = [];
 let notifiedHasMore = false;
+let notifiedPages = 1;
 let activeThoughtTab: "new" | "archive" = "new";
 let modalThought: ThoughtCard | null = null;
 
@@ -228,9 +228,10 @@ function renderThoughts(): void {
 }
 
 function loadNextPage(): void {
+  notifiedPages += 1;
   browser.runtime.sendMessage({
     type: RuntimeMessageType.ThoughtsRequest,
-    notified_limit: notifiedThoughts.length + THOUGHTS_NOTIFIED_PAGE_SIZE,
+    notified_pages: notifiedPages,
   });
 }
 

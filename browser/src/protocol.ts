@@ -467,11 +467,12 @@ export interface RuntimePageInfo {
 }
 
 /** Feed page → background: request thoughts.
- *  `notified_limit` lets the page grow the visible notified slice on "load
- *  more" without losing pagination on subsequent background polls. */
+ *  `notified_pages` lets the page grow the visible notified slice on "load
+ *  more" without losing pagination on subsequent background polls. The
+ *  server owns the page size; the client only counts pages. */
 export interface RuntimeThoughtsRequest {
   type: typeof RuntimeMessageType.ThoughtsRequest;
-  notified_limit?: number;
+  notified_pages?: number;
 }
 
 /** Background → page: thoughts data */
@@ -687,10 +688,6 @@ export interface PageContext {
 // --- Tool constants ---
 
 export const THOUGHTS_POLL_INTERVAL_MS = 300_000;
-
-/** Initial / increment size for the notified-thoughts pagination slice.
- *  Mirrors PennyConstants.BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE on the server. */
-export const THOUGHTS_NOTIFIED_PAGE_SIZE = 12;
 export const TOOL_TIMEOUT_MS = 60_000;
 export const TAB_LOAD_TIMEOUT_MS = 60_000;
 export const MAX_EXTRACTED_CHARS = 50_000;
