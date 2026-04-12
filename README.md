@@ -60,7 +60,6 @@ Penny's memory has three layers, all assembled into chat context on every messag
 - **Related past messages** — the embedding of every outgoing/incoming message is cached. When you ask something, prior messages are scored by `cosine_to_current_message − α × centrality` (centrality = mean cosine to the rest of the corpus, suppressing centroid-magnet boilerplate), then expanded to ±5-minute neighbors so conversational follow-ups travel together.
 - **Preferences** — the **HistoryAgent** also extracts likes/dislikes from your text messages and emoji reactions in two passes (identify topics, then classify valence), deduplicated against existing entries via TCR + embedding similarity.
 
-The old daily/weekly summary tables were dropped — knowledge extraction and embedding-based message retrieval replaced them.
 
 ### Commands
 

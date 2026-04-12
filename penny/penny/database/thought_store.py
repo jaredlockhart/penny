@@ -253,3 +253,29 @@ class ThoughtStore:
             return session.exec(
                 select(func.count()).select_from(Thought).where(Thought.user == user)
             ).one()
+
+    def count_by_preference_ids(self, preference_ids: set[int]) -> dict[int, int]:
+        """Count thoughts grouped by preference_id for the given IDs."""
+        if not preference_ids:
+            return {}
+        with self._session() as session:
+            conn = session.connection()
+            placeholders = ",".join("?" for _ in preference_ids)
+            result = conn.exec_driver_sql(
+                f"SELECT preference_id, COUNT(*) FROM thought"
+                f" WHERE preference_id IN ({placeholders})"
+                f" GROUP BY preference_id",
+                tuple(preference_ids),
+            )
+            return {int(row[0]): int(row[1]) for row in result}
+
+    def get_for_preference(self, preference_id: int) -> list[Thought]:
+        """Get thoughts seeded by a preference, newest first."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Thought)
+                    .where(Thought.preference_id == preference_id)
+                    .order_by(Thought.created_at.desc())
+                ).all()
+            )

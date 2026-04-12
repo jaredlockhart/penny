@@ -30,6 +30,7 @@ export type WsOutgoingType =
   | "preferences_request"
   | "preference_add"
   | "preference_delete"
+  | "preference_thoughts_request"
   | "heartbeat"
   | "config_request"
   | "config_update"
@@ -51,6 +52,7 @@ export const WsOutgoingType = {
   PreferencesRequest: "preferences_request",
   PreferenceAdd: "preference_add",
   PreferenceDelete: "preference_delete",
+  PreferenceThoughtsRequest: "preference_thoughts_request",
   Heartbeat: "heartbeat",
   ConfigRequest: "config_request",
   ConfigUpdate: "config_update",
@@ -102,6 +104,11 @@ export interface WsOutgoingPreferenceDelete {
   preference_id: number;
 }
 
+export interface WsOutgoingPreferenceThoughtsRequest {
+  type: typeof WsOutgoingType.PreferenceThoughtsRequest;
+  preference_id: number;
+}
+
 export interface WsOutgoingHeartbeat {
   type: typeof WsOutgoingType.Heartbeat;
 }
@@ -137,6 +144,7 @@ export type WsOutgoing =
   | WsOutgoingPreferencesRequest
   | WsOutgoingPreferenceAdd
   | WsOutgoingPreferenceDelete
+  | WsOutgoingPreferenceThoughtsRequest
   | WsOutgoingHeartbeat
   | WsOutgoingCapabilitiesUpdate
   | WsOutgoingSchedulesRequest
@@ -153,6 +161,7 @@ export type WsIncomingType =
   | "tool_request"
   | "thoughts_response"
   | "preferences_response"
+  | "preference_thoughts_response"
   | "config_response"
   | "domain_permissions_sync"
   | "permission_prompt"
@@ -168,6 +177,7 @@ export const WsIncomingType = {
   ToolRequest: "tool_request",
   ThoughtsResponse: "thoughts_response",
   PreferencesResponse: "preferences_response",
+  PreferenceThoughtsResponse: "preference_thoughts_response",
   ConfigResponse: "config_response",
   DomainPermissionsSync: "domain_permissions_sync",
   PermissionPrompt: "permission_prompt",
@@ -223,12 +233,27 @@ export interface PreferenceItem {
   content: string;
   mention_count: number;
   source: string;
+  thought_count: number;
+}
+
+export interface PreferenceThoughtItem {
+  id: number;
+  title: string | null;
+  content: string;
+  image: string | null;
+  created_at: string | null;
 }
 
 export interface WsIncomingPreferencesPayload {
   type: typeof WsIncomingType.PreferencesResponse;
   valence: string;
   preferences: PreferenceItem[];
+}
+
+export interface WsIncomingPreferenceThoughtsPayload {
+  type: typeof WsIncomingType.PreferenceThoughtsResponse;
+  preference_id: number;
+  thoughts: PreferenceThoughtItem[];
 }
 
 export interface RuntimeConfigParam {
@@ -333,6 +358,7 @@ export type WsIncomingPayload =
   | WsIncomingToolRequestPayload
   | WsIncomingThoughtsPayload
   | WsIncomingPreferencesPayload
+  | WsIncomingPreferenceThoughtsPayload
   | WsIncomingConfigPayload
   | WsIncomingDomainPermissionsPayload
   | WsIncomingPermissionPromptPayload
@@ -361,6 +387,8 @@ export type RuntimeMessageType =
   | "preferences_response"
   | "preference_add"
   | "preference_delete"
+  | "preference_thoughts_request"
+  | "preference_thoughts_response"
   | "config_request"
   | "config_response"
   | "config_update"
@@ -396,6 +424,8 @@ export const RuntimeMessageType = {
   PreferencesResponse: "preferences_response",
   PreferenceAdd: "preference_add",
   PreferenceDelete: "preference_delete",
+  PreferenceThoughtsRequest: "preference_thoughts_request",
+  PreferenceThoughtsResponse: "preference_thoughts_response",
   ConfigRequest: "config_request",
   ConfigResponse: "config_response",
   ConfigUpdate: "config_update",
@@ -527,6 +557,19 @@ export interface RuntimePreferenceDelete {
   preference_id: number;
 }
 
+/** Page → background: request thoughts for a preference */
+export interface RuntimePreferenceThoughtsRequest {
+  type: typeof RuntimeMessageType.PreferenceThoughtsRequest;
+  preference_id: number;
+}
+
+/** Background → page: thoughts for a preference */
+export interface RuntimePreferenceThoughtsResponse {
+  type: typeof RuntimeMessageType.PreferenceThoughtsResponse;
+  preference_id: number;
+  thoughts: PreferenceThoughtItem[];
+}
+
 /** Sidebar → background: request all config params */
 export interface RuntimeConfigRequest {
   type: typeof RuntimeMessageType.ConfigRequest;
@@ -652,6 +695,8 @@ export type RuntimeMessage =
   | RuntimePreferencesResponse
   | RuntimePreferenceAdd
   | RuntimePreferenceDelete
+  | RuntimePreferenceThoughtsRequest
+  | RuntimePreferenceThoughtsResponse
   | RuntimeConfigRequest
   | RuntimeConfigResponse
   | RuntimeConfigUpdate
