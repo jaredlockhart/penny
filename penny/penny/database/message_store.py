@@ -1,5 +1,6 @@
 """Message store — logging, threading, and queries for messages."""
 
+import json
 import logging
 import re
 from collections.abc import Callable
@@ -99,8 +100,6 @@ class MessageStore:
         run_id: str | None = None,
     ) -> None:
         """Log a prompt/response exchange with Ollama."""
-        import json
-
         try:
             with self._session() as session:
                 log = PromptLog(
@@ -226,11 +225,10 @@ class MessageStore:
     ) -> tuple[int | None, list[tuple[str, str]] | None]:
         """Look up a quoted message and return its id and conversation context."""
         parent_msg = self.find_outgoing_by_content(quoted_text)
-        if not parent_msg:
+        if not parent_msg or parent_msg.id is None:
             logger.warning("Could not find quoted message in database")
             return None, None
 
-        assert parent_msg.id is not None
         thread = self._walk_thread(parent_msg.id)
         history: list[tuple[str, str]] = [
             (
@@ -561,8 +559,6 @@ class MessageStore:
 
         Returns a list of run summaries with their individual prompts.
         """
-        import json
-
         with self._session() as session:
             query = (
                 select(PromptLog)
@@ -575,7 +571,8 @@ class MessageStore:
 
             grouped: dict[str, list[PromptLog]] = {}
             for prompt in all_prompts:
-                assert prompt.run_id is not None
+                if prompt.run_id is None:
+                    continue
                 grouped.setdefault(prompt.run_id, []).append(prompt)
 
             run_ids_ordered = list(grouped.keys())[offset : offset + limit]
@@ -584,7 +581,7 @@ class MessageStore:
             for run_id in run_ids_ordered:
                 prompts = sorted(grouped[run_id], key=lambda p: p.timestamp)
                 total_duration_ms = sum(p.duration_ms or 0 for p in prompts)
-                runs.append(self._serialize_run(run_id, prompts, total_duration_ms, json))
+                runs.append(self._serialize_run(run_id, prompts, total_duration_ms))
 
             return runs
 
@@ -601,14 +598,13 @@ class MessageStore:
         run_id: str,
         prompts: list[PromptLog],
         total_duration_ms: int,
-        json_module: Any,
     ) -> dict:
         """Serialize a single run and its prompts to a dict."""
         total_input_tokens = 0
         total_output_tokens = 0
         serialized_prompts = []
         for p in prompts:
-            response = json_module.loads(p.response) if p.response else {}
+            response = json.loads(p.response) if p.response else {}
             input_tokens, output_tokens = MessageStore._extract_token_usage(response)
             total_input_tokens += input_tokens
             total_output_tokens += output_tokens
@@ -622,7 +618,7 @@ class MessageStore:
                     "duration_ms": p.duration_ms or 0,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
-                    "messages": json_module.loads(p.messages) if p.messages else [],
+                    "messages": json.loads(p.messages) if p.messages else [],
                     "response": response,
                     "thinking": p.thinking or "",
                     "has_tools": p.tools is not None,

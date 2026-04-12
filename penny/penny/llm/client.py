@@ -116,7 +116,7 @@ class LlmClient:
                 )
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
-            except Exception as error:
+            except openai.OpenAIError as error:
                 last_error = LlmResponseError(str(error))
                 logger.warning(
                     "LLM chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
@@ -125,7 +125,8 @@ class LlmClient:
                     await asyncio.sleep(self.retry_delay)
 
         logger.error("LLM chat failed after %d attempts: %s", self.max_retries, last_error)
-        assert last_error is not None
+        if last_error is None:
+            raise LlmResponseError("LLM chat exhausted retries without a recorded error")
         raise last_error
 
     # ── Generate (chat wrapper) ──────────────────────────────────────────
@@ -180,7 +181,7 @@ class LlmClient:
                 )
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
-            except Exception as error:
+            except openai.OpenAIError as error:
                 last_error = LlmResponseError(str(error))
                 logger.warning(
                     "LLM embed error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
@@ -189,7 +190,8 @@ class LlmClient:
                     await asyncio.sleep(self.retry_delay)
 
         logger.error("LLM embed failed after %d attempts: %s", self.max_retries, last_error)
-        assert last_error is not None
+        if last_error is None:
+            raise LlmResponseError("LLM embed exhausted retries without a recorded error")
         raise last_error
 
     # ── Cleanup ──────────────────────────────────────────────────────────
@@ -260,9 +262,11 @@ class LlmClient:
         if message.tool_calls:
             tool_calls = [self._parse_tool_call(tc) for tc in message.tool_calls]
 
-        thinking = getattr(message, "reasoning_content", None) or getattr(
-            message, "reasoning", None
-        )
+        # Reasoning fields are non-standard extensions (Ollama uses
+        # ``reasoning_content``, newer OpenAI ``reasoning``). They land in
+        # the pydantic model_extra dict because the SDK allows extras.
+        extras = message.model_extra or {}
+        thinking = extras.get("reasoning_content") or extras.get("reasoning")
 
         return LlmResponse(
             message=LlmMessage(

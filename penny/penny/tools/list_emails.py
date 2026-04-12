@@ -35,10 +35,6 @@ class ListEmailsTool(Tool):
                     "Defaults to Inbox if not specified."
                 ),
             },
-            "limit": {
-                "type": "integer",
-                "description": "Maximum number of emails to return (default: 10, max: 50)",
-            },
         },
         "required": [],
     }
@@ -50,9 +46,8 @@ class ListEmailsTool(Tool):
         """List emails from a folder and return formatted summaries."""
         args = ListEmailsArgs(**kwargs)
         folder = args.folder
-        limit = min(args.limit, 50)
 
-        results = await self._client.list_emails(folder_name=folder, limit=limit)
+        results = await self._client.list_emails(folder_name=folder)
         if not results:
             return NO_EMAILS_FOUND
 

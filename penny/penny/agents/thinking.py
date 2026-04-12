@@ -18,19 +18,12 @@ from similarity.embeddings import cosine_similarity, deserialize_embedding
 
 from penny.agents.base import Agent
 from penny.agents.models import ChatMessage, MessageRole
-from penny.constants import PennyConstants
+from penny.constants import PennyConstants, ThinkingPromptType
 from penny.llm.embeddings import serialize_embedding
 from penny.llm.similarity import embed_text
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
-
-
-class ThinkingPromptType:
-    """Prompt types for ThinkingAgent flows."""
-
-    FREE = "free"
-    SEEDED = "seeded"
 
 
 class ThinkingAgent(Agent):
@@ -58,8 +51,6 @@ class ThinkingAgent(Agent):
 
     Seed topic sources: positive user preferences.
     """
-
-    THOUGHT_CONTEXT_LIMIT = PennyConstants.THOUGHT_CONTEXT_LIMIT
 
     name = "inner_monologue"
 
@@ -162,7 +153,7 @@ class ThinkingAgent(Agent):
         """
         try:
             thoughts = self.db.thoughts.get_recent_by_preference(
-                sender, self._seed_pref_id, limit=self.THOUGHT_CONTEXT_LIMIT
+                sender, self._seed_pref_id, limit=PennyConstants.THOUGHT_CONTEXT_LIMIT
             )
             if not thoughts:
                 return None

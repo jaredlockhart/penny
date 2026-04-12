@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
-from penny.constants import PennyConstants
+from penny.constants import NotifyPromptType, PennyConstants
 from penny.database.models import Thought
 from penny.llm.embeddings import deserialize_embedding
 from penny.llm.similarity import novelty_score
@@ -187,13 +187,6 @@ class ThoughtMode(NotificationMode):
 # ── Agent ──────────────────────────────────────────────────────────────
 
 
-class NotifyPromptType:
-    """Prompt types for NotifyAgent flows."""
-
-    CHECKIN = "checkin"
-    THOUGHT = "thought"
-
-
 class NotifyAgent(Agent):
     """Notification outreach agent — sends thoughts and check-ins.
 
@@ -317,10 +310,7 @@ class NotifyAgent(Agent):
     async def _send_mode(
         self, user: str, mode: NotificationMode, run_id: str, prompt_type: str
     ) -> bool:
-        """Execute a notification mode: generate candidate, validate, send.
-
-        Handles tools-unavailable fallback for single-shot modes (checkin, news).
-        """
+        """Execute a notification mode: generate candidate, validate, send."""
         logger.info("Notify %s for %s", mode.__class__.__name__, user)
         self._last_tools_unavailable = None
         candidate = await self._execute_mode(user, mode, run_id, prompt_type)
@@ -412,7 +402,7 @@ class NotifyAgent(Agent):
                 return response
             source_text = self._get_source_text()
             if extra_source:
-                source_text = extra_source + "\n" + source_text
+                source_text = f"{extra_source}\n{source_text}"
             bad_urls = self._find_hallucinated_urls(answer, source_text)
             if not bad_urls:
                 return response

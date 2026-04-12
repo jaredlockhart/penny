@@ -251,12 +251,16 @@ class _FakeChoice:
 
 
 class _FakeMessage:
-    """Wraps an LlmMessage to look like an OpenAI ChatCompletionMessage."""
+    """Wraps an LlmMessage to look like an OpenAI ChatCompletionMessage.
+
+    Mirrors pydantic v2's ``model_extra`` dict for non-standard fields like
+    ``reasoning_content`` so the parser doesn't need to special-case the mock.
+    """
 
     def __init__(self, response: LlmResponse):
         self.role = response.message.role
         self.content = response.message.content
-        self.reasoning_content = response.message.thinking
+        self.model_extra = {"reasoning_content": response.message.thinking}
         self.tool_calls = None
         if response.message.tool_calls:
             self.tool_calls = [_FakeToolCall(tc) for tc in response.message.tool_calls]

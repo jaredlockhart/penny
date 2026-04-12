@@ -270,6 +270,42 @@ class TestRepeatCallGuard:
         await agent.close()
 
 
+class TestModelErrorHandling:
+    """`_invoke_model` swallows LlmError → returns AGENT_MODEL_ERROR; other exceptions propagate."""
+
+    @pytest.mark.asyncio
+    async def test_llm_error_returns_agent_model_error(self, test_db, mock_llm):
+        """Connection/response errors from the LLM result in AGENT_MODEL_ERROR, not a crash."""
+        from penny.llm.models import LlmConnectionError
+
+        agent, _db, max_steps = _make_agent(test_db, mock_llm)
+
+        def handler(request, count):
+            raise LlmConnectionError("backend down")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test prompt", max_steps=max_steps)
+        assert response.answer == PennyResponse.AGENT_MODEL_ERROR
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_non_llm_exception_propagates(self, test_db, mock_llm):
+        """Programmer bugs in the LLM call path must surface, not be swallowed."""
+        agent, _db, max_steps = _make_agent(test_db, mock_llm)
+
+        def handler(request, count):
+            raise RuntimeError("unexpected programmer bug")
+
+        mock_llm.set_response_handler(handler)
+
+        with pytest.raises(RuntimeError, match="unexpected programmer bug"):
+            await agent.run("test prompt", max_steps=max_steps)
+
+        await agent.close()
+
+
 class TestEmptyContentFallback:
     """Test that an empty model response falls back to AGENT_EMPTY_RESPONSE."""
 

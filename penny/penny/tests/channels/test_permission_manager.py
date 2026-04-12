@@ -8,6 +8,16 @@ import pytest
 from penny.channels.permission_manager import PermissionManager
 from penny.database import Database
 from penny.database.migrate import migrate
+from penny.tests.conftest import wait_until
+
+
+async def _resolve_pending(mgr: PermissionManager, decision: bool) -> None:
+    """Wait until a permission request is pending, then resolve it."""
+    await wait_until(lambda: any(not f.done() for f in mgr._pending.values()), timeout=2.0)
+    for future in mgr._pending.values():
+        if not future.done():
+            future.set_result(decision)
+            return
 
 
 def _make_db(tmp_path) -> Database:
@@ -81,14 +91,7 @@ class TestPromptFlow:
         db = _make_db(tmp_path)
         mgr, cm = _make_manager(db)
 
-        async def approve_after_delay():
-            await asyncio.sleep(0.05)
-            for _req_id, future in mgr._pending.items():
-                if not future.done():
-                    future.set_result(True)
-                    break
-
-        asyncio.create_task(approve_after_delay())
+        asyncio.create_task(_resolve_pending(mgr, True))
         await mgr.check_domain("https://newsite.com/")
 
         cm.broadcast_permission_prompt.assert_called_once()
@@ -102,14 +105,7 @@ class TestPromptFlow:
         db = _make_db(tmp_path)
         mgr, _cm = _make_manager(db)
 
-        async def deny_after_delay():
-            await asyncio.sleep(0.05)
-            for _req_id, future in mgr._pending.items():
-                if not future.done():
-                    future.set_result(False)
-                    break
-
-        asyncio.create_task(deny_after_delay())
+        asyncio.create_task(_resolve_pending(mgr, False))
         with pytest.raises(RuntimeError, match="denied"):
             await mgr.check_domain("https://denied.com/")
 
@@ -121,14 +117,12 @@ class TestPromptFlow:
         db = _make_db(tmp_path)
         mgr, cm = _make_manager(db)
 
-        async def decide_via_handle_decision():
-            await asyncio.sleep(0.05)
-            # Find the request_id from the broadcast call
-            await asyncio.sleep(0.05)
-            call_args = cm.broadcast_permission_prompt.call_args
-            if call_args:
-                req_id = call_args[0][0]
-                mgr.handle_decision(req_id, True)
+        async def decide_via_handle_decision() -> None:
+            await wait_until(
+                lambda: cm.broadcast_permission_prompt.call_args is not None, timeout=2.0
+            )
+            req_id = cm.broadcast_permission_prompt.call_args[0][0]
+            mgr.handle_decision(req_id, True)
 
         asyncio.create_task(decide_via_handle_decision())
         await mgr.check_domain("https://decided.com/")
@@ -202,14 +196,7 @@ class TestSerialization:
         db = _make_db(tmp_path)
         mgr, cm = _make_manager(db)
 
-        async def approve_after_delay():
-            await asyncio.sleep(0.05)
-            for _req_id, future in mgr._pending.items():
-                if not future.done():
-                    future.set_result(True)
-                    break
-
-        asyncio.create_task(approve_after_delay())
+        asyncio.create_task(_resolve_pending(mgr, True))
 
         await asyncio.gather(
             mgr.check_domain("https://dedup.com/page1"),
@@ -226,17 +213,9 @@ class TestSerialization:
         db = _make_db(tmp_path)
         mgr, cm = _make_manager(db)
 
-        prompt_count = 0
-
-        async def approve_each():
-            nonlocal prompt_count
-            while prompt_count < 2:
-                await asyncio.sleep(0.05)
-                for _req_id, future in mgr._pending.items():
-                    if not future.done():
-                        future.set_result(True)
-                        prompt_count += 1
-                        break
+        async def approve_each() -> None:
+            for _ in range(2):
+                await _resolve_pending(mgr, True)
 
         asyncio.create_task(approve_each())
 
@@ -344,14 +323,7 @@ class TestDomainCRUD:
         db = _make_db(tmp_path)
         mgr, cm = _make_manager(db)
 
-        async def approve_after_delay():
-            await asyncio.sleep(0.05)
-            for _req_id, future in mgr._pending.items():
-                if not future.done():
-                    future.set_result(True)
-                    break
-
-        asyncio.create_task(approve_after_delay())
+        asyncio.create_task(_resolve_pending(mgr, True))
         await mgr.check_domain("https://prompted.com/")
 
         assert db.domain_permissions.check_domain("prompted.com") == "allowed"

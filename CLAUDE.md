@@ -2,7 +2,7 @@
 
 ## What Is Penny
 
-Penny is a local-first AI agent that communicates via Signal, Discord, or a Firefox browser extension. Users send messages, Penny searches the web through the browser extension, reasons using Ollama (local LLM), and replies in a casual, relaxed style. It runs in Docker with host networking.
+Penny is a local-first AI agent that communicates via Signal, Discord, or a Firefox browser extension. Users send messages, Penny searches the web through the browser extension, reasons using a local LLM (Ollama by default, accessed via the OpenAI Python SDK against any OpenAI-compatible endpoint), and replies in a casual, relaxed style. It runs in Docker with host networking.
 
 Penny is single-user — a personal assistant deployed locally for one person. Multiple devices (Signal phone, browser instances) connect as different devices of the same user, sharing a single conversation history.
 
@@ -77,10 +77,14 @@ scripts/
   workflows/
     check.yml                   — CI: runs make check on push/PR to main
   CODEOWNERS                    — Trusted maintainers (used by penny-team filtering)
-docs/                           — Design documents
+docs/                           — Design documents and review guides
+  pr-review-guide.md            — Canonical PR review checklist (used by /quality skill)
   browser-extension-architecture.md — Browser extension architecture & design
   channel-manager-plan.md       — Multi-channel implementation plan
   browser-tools-plan.md         — Browser tools implementation plan
+  agent-memory-patterns.md      — Patterns for agent memory recall and dedup
+  benchmarking-embedding-models.md — Embedding model benchmark results
+  benchmarking-qwen35-vs-gpt-oss.md — qwen3.5 vs gpt-oss benchmark comparison
 data/                           — Runtime data (gitignored)
   penny/                        — Penny runtime data
     penny.db                    — Production database
@@ -154,15 +158,17 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `BROWSER_HOST`: WebSocket bind address (default: "localhost", use "0.0.0.0" in Docker)
 - `BROWSER_PORT`: WebSocket port (default: 9090, must be exposed in docker-compose)
 
-**Ollama**:
-- `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
-- `OLLAMA_MODEL`: Single text model for all penny agents — chat, thinking, history, notify, schedules (default: gpt-oss:20b)
-- `OLLAMA_BACKGROUND_MODEL`: Used only by penny-team's Quality agent for response evaluation — if set, the Quality agent is registered. Not used by penny
-- `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
-- `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables the `/draw` command when set
-- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model for preference/history dedup and embeddings (e.g., embeddinggemma). Optional; preferences stored without embeddings if unset
-- `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
-- `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
+**LLM** (OpenAI-compatible endpoint — no Ollama-specific dependencies in the runtime):
+- `LLM_API_URL`: API endpoint (default: http://host.docker.internal:11434)
+- `LLM_MODEL`: Single text model for all penny agents — chat, thinking, history, notify, schedules (default: gpt-oss:20b)
+- `LLM_API_KEY`: API key (default: "not-needed")
+- `LLM_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
+- `LLM_VISION_API_URL` / `LLM_VISION_API_KEY`: Override endpoint for vision model
+- `LLM_EMBEDDING_MODEL`: Dedicated embedding model (e.g., embeddinggemma). Optional; preferences stored without embeddings if unset
+- `LLM_EMBEDDING_API_URL` / `LLM_EMBEDDING_API_KEY`: Override endpoint for embedding model
+- `LLM_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables `/draw`. Uses Ollama's native REST API at `LLM_IMAGE_API_URL`
+- `LLM_IMAGE_API_URL`: Ollama REST endpoint for image generation (default: http://host.docker.internal:11434)
+- `OLLAMA_BACKGROUND_MODEL`: Used only by penny-team's Quality agent — if set, the Quality agent is registered. Not used by penny
 
 **API Keys**:
 - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
@@ -214,3 +220,9 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - **Short methods (10-20 lines)**: Every method should be roughly 10-20 lines (hard max ~25). Break long methods into named steps via extraction — don't add new abstractions, just decompose
 - **Summary method at top**: Every class should have a summary method (after `__init__`) that composes calls to other methods, reading like a table of contents. This gives a bird's-eye view of the class's behavior from the top of its definition
 - **Database stores pattern**: Database access is organized into domain-specific store classes (`db.messages`, `db.preferences`, `db.thoughts`, etc.). The `Database` class is a thin facade that creates and exposes stores. Access data via `self.db.messages.log_message(...)`, not `self.db.log_message(...)`
+
+## PR Review Checklist
+
+The canonical, exhaustive PR review checklist lives in [`docs/pr-review-guide.md`](docs/pr-review-guide.md). It's the source of truth for every rule the project enforces — code style, error handling, forbidden patterns, async patterns, testing discipline, prompt engineering. The `/quality` slash command reviews the current branch against it.
+
+The Code Style and Design Principles sections above are the quick reference; the PR review guide is the full rulebook.

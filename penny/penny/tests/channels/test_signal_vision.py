@@ -163,6 +163,23 @@ async def test_image_without_vision_model_sends_acknowledgment(
 
 
 @pytest.mark.asyncio
+async def test_caption_image_raises_when_vision_client_missing(
+    signal_server, mock_llm, test_config, test_user_info, running_penny
+):
+    """``caption_image`` defends against being called when no vision client exists.
+
+    The channel layer normally rejects image messages before they reach
+    the chat agent, but the contract on ``caption_image`` itself is that
+    it raises explicitly (instead of relying on an ``assert`` that gets
+    stripped under ``python -O``).
+    """
+    async with running_penny(test_config) as penny:
+        penny.chat_agent._vision_model_client = None
+        with pytest.raises(RuntimeError, match="vision model client"):
+            await penny.chat_agent.caption_image("ZmFrZS1pbWFnZS1iYXNlNjQ=")
+
+
+@pytest.mark.asyncio
 async def test_non_image_attachment_ignored(
     signal_server,
     mock_llm,

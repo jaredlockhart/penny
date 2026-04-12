@@ -46,6 +46,7 @@ class EmailCommand(Command):
             self._fastmail_api_token,
             timeout=context.config.runtime.JMAP_REQUEST_TIMEOUT,
             max_body_length=int(context.config.runtime.EMAIL_BODY_MAX_LENGTH),
+            search_limit=int(context.config.runtime.EMAIL_SEARCH_LIMIT),
         )
         agent: Agent | None = None
         try:
