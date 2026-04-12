@@ -342,7 +342,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `RuntimeParams` class provides attribute access: `config.runtime.IDLE_SECONDS`
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Groups: Global (max steps, image/email timeouts, embedding batch limits, email body/search/list limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, mention threshold, weekly context limit), Notify (check interval, cooldowns, candidates, check-in image prompt)
+- Groups: Chat (max steps, search URL, context limits, retrieval thresholds, domain permission mode), Thinking (interval, max steps, dedup thresholds, free-thinking probability), History (interval, preference dedup, mention threshold, knowledge/embedding batch limits), Notify (idle threshold, check interval, cooldowns, candidates), Email (body max length, search/list limits, request timeout)
 
 ## Data Model
 
