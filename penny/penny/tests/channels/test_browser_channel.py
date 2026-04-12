@@ -519,8 +519,8 @@ class TestBrowserConfigHandlers:
         assert param["value"] == "60.0"
         assert param["default"] == "60.0"
         assert param["type"] == "float"
-        assert "idle" in param["description"].lower()
-        assert param["group"] == "Schedule"
+        assert "silence" in param["description"].lower()
+        assert param["group"] == "Notify"
 
     @pytest.mark.asyncio
     async def test_config_update_persists_value(self, tmp_path):

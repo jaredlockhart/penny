@@ -17,9 +17,9 @@ async def test_config_list(signal_server, test_config, mock_llm, running_penny):
 
         # Should list all config parameters grouped by agent/feature
         assert "**Runtime Configuration**" in response["message"]
-        assert "**Global**" in response["message"]
-        assert "**Schedule**" in response["message"]
-        assert "**Inner Monologue**" in response["message"]
+        assert "**Chat**" in response["message"]
+        assert "**Thinking**" in response["message"]
+        assert "**Notify**" in response["message"]
         assert "MESSAGE_MAX_STEPS" in response["message"]
         assert "IDLE_SECONDS" in response["message"]
         assert "Use `/config <key> <value>` to change a setting" in response["message"]
@@ -38,7 +38,7 @@ async def test_config_get_specific(signal_server, test_config, mock_llm, running
         # Should show IDLE_SECONDS value (test config uses 99999.0)
         assert "**IDLE_SECONDS**:" in response["message"]
         assert "99999.0" in response["message"]
-        assert "Global idle threshold in seconds" in response["message"]
+        assert "Seconds of silence before background agents become eligible" in response["message"]
 
 
 @pytest.mark.asyncio
