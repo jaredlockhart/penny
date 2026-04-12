@@ -19,8 +19,6 @@ JMAP_CAPABILITIES = [
     "urn:ietf:params:jmap:mail",
 ]
 
-EMAIL_SEARCH_LIMIT = 10
-
 
 class JmapClient:
     """Fastmail JMAP API client."""
@@ -31,9 +29,11 @@ class JmapClient:
         *,
         timeout: float,
         max_body_length: int,
+        search_limit: int,
     ) -> None:
         self._api_token = api_token
         self._max_body_length = max_body_length
+        self._search_limit = search_limit
         self._session: JmapSession | None = None
         self._http = httpx.AsyncClient(
             timeout=timeout,
@@ -74,7 +74,6 @@ class JmapClient:
         subject: str | None = None,
         after: str | None = None,
         before: str | None = None,
-        limit: int = EMAIL_SEARCH_LIMIT,
     ) -> list[EmailSummary]:
         """Search emails and return summaries."""
         filter_obj: dict[str, Any] = {}
@@ -99,7 +98,7 @@ class JmapClient:
                         "accountId": session.account_id,
                         "filter": filter_obj,
                         "sort": [{"property": "receivedAt", "isAscending": False}],
-                        "limit": limit,
+                        "limit": self._search_limit,
                     },
                     "0",
                 ],

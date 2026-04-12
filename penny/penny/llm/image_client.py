@@ -20,7 +20,7 @@ class _GenerateResponse(BaseModel):
 
     model: str
     created_at: str = Field(alias="created_at")
-    response: str = ""
+    response: str | None = None
     done: bool
     image: str | None = None
 

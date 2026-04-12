@@ -16,11 +16,6 @@ if TYPE_CHECKING:
     from penny.commands import CommandRegistry
     from penny.database import Database
 
-# Channel type constants (aliases for backward compat)
-CHANNEL_TYPE_SIGNAL = ChannelType.SIGNAL
-CHANNEL_TYPE_DISCORD = ChannelType.DISCORD
-CHANNEL_TYPE_BROWSER = ChannelType.BROWSER
-
 
 def create_channel_manager(
     config: Config,
@@ -120,7 +115,4 @@ __all__ = [
     "ChannelManager",
     "create_channel",
     "create_channel_manager",
-    "CHANNEL_TYPE_SIGNAL",
-    "CHANNEL_TYPE_DISCORD",
-    "CHANNEL_TYPE_BROWSER",
 ]

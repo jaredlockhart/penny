@@ -15,6 +15,7 @@ from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.database.models import PromptLog, RuntimeConfig
+from penny.tests.conftest import wait_until
 from penny.tools.browse import BrowseTool
 from penny.tools.models import SearchResult
 from penny.tools.read_emails import ReadEmailsTool
@@ -694,13 +695,15 @@ class TestBrowserRegister:
         db.domain_permissions.set_permission("example.com", "allowed")
 
         # Simulate a tool response arriving after we send the request
-        async def fake_tool_response():
-            await asyncio.sleep(0.05)
-            # Find the pending request and resolve it
-            for _req_id, future in channel._pending_requests.items():
+        async def fake_tool_response() -> None:
+            await wait_until(
+                lambda: any(not f.done() for f in channel._pending_requests.values()),
+                timeout=2.0,
+            )
+            for future in channel._pending_requests.values():
                 if not future.done():
                     future.set_result(("page content here", None))
-                    break
+                    return
 
         asyncio.create_task(fake_tool_response())
         result = await channel.send_tool_request("browse_url", {"url": "https://example.com"})

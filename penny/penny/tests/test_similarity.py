@@ -5,13 +5,11 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from similarity.dedup import DedupStrategy, is_embedding_duplicate
 
 from penny.llm.embeddings import serialize_embedding
-from penny.llm.similarity import (
-    DedupStrategy,
-    embed_text,
-    is_embedding_duplicate,
-)
+from penny.llm.models import LlmResponseError
+from penny.llm.similarity import embed_text
 
 # ── embed_text ────────────────────────────────────────────────────────────────
 
@@ -30,11 +28,19 @@ class TestEmbedText:
         assert result == [1.0, 2.0, 3.0]
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_exception(self) -> None:
+    async def test_returns_none_on_llm_error(self) -> None:
         client = AsyncMock()
-        client.embed.side_effect = RuntimeError("boom")
+        client.embed.side_effect = LlmResponseError("boom")
         result = await embed_text(client, "hello")
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_non_llm_exception_propagates(self) -> None:
+        """Bugs in the embed pipeline must surface, not be swallowed as None."""
+        client = AsyncMock()
+        client.embed.side_effect = RuntimeError("unexpected bug")
+        with pytest.raises(RuntimeError, match="unexpected bug"):
+            await embed_text(client, "hello")
 
 
 # ── is_embedding_duplicate ────────────────────────────────────────────────────

@@ -14,12 +14,12 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
+from similarity.dedup import DedupStrategy, is_embedding_duplicate
 
 from penny.agents.base import Agent
-from penny.constants import PennyConstants
+from penny.constants import HistoryPromptType, PennyConstants
 from penny.database.models import Preference, PromptLog
 from penny.llm.embeddings import deserialize_embedding, serialize_embedding
-from penny.llm.similarity import DedupStrategy, is_embedding_duplicate
 from penny.prompts import Prompt
 
 logger = logging.getLogger(__name__)
@@ -52,14 +52,6 @@ class ClassifiedPreferences(BaseModel):
         default_factory=list,
         description="Preference topics with valence classifications",
     )
-
-
-class HistoryPromptType:
-    """Prompt types for HistoryAgent flows."""
-
-    PREFERENCE_IDENTIFICATION = "preference_identification"
-    PREFERENCE_VALENCE = "preference_valence"
-    KNOWLEDGE_SUMMARIZE = "knowledge_summarize"
 
 
 class HistoryAgent(Agent):
@@ -344,12 +336,9 @@ class HistoryAgent(Agent):
         """Format existing preferences so the model can skip already-known topics."""
         if not existing:
             return ""
-        lines: list[str] = []
-        for pref in existing:
-            lines.append(f"- {pref.valence}: {pref.content}")
+        lines = "\n".join(f"- {pref.valence}: {pref.content}" for pref in existing)
         return (
-            "Already known preferences (do NOT re-extract these or rephrasings of these):\n"
-            + "\n".join(lines)
+            f"Already known preferences (do NOT re-extract these or rephrasings of these):\n{lines}"
         )
 
     # ── Dedup ────────────────────────────────────────────────────────────

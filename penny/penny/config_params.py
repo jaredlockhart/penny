@@ -157,6 +157,24 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="EMAIL_SEARCH_LIMIT",
+    description="Max email results returned by the search_emails tool",
+    type=int,
+    default=10,
+    validator=_validate_positive_int,
+    group=GROUP_GLOBAL,
+)
+
+ConfigParam(
+    key="EMAIL_LIST_LIMIT",
+    description="Max email results returned by the list_emails tool",
+    type=int,
+    default=10,
+    validator=_validate_positive_int,
+    group=GROUP_GLOBAL,
+)
+
+ConfigParam(
     key="JMAP_REQUEST_TIMEOUT",
     description="Timeout in seconds for JMAP API requests",
     type=float,

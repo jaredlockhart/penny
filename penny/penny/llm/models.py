@@ -36,15 +36,15 @@ class LlmResponseError(LlmError):
 class LlmToolCallFunction(BaseModel):
     """Function details within a tool call."""
 
-    name: str = ""
+    name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class LlmToolCall(BaseModel):
     """A tool call from the model response."""
 
-    id: str = ""
-    function: LlmToolCallFunction = Field(default_factory=LlmToolCallFunction)
+    id: str
+    function: LlmToolCallFunction
 
 
 class LlmMessage(BaseModel):

@@ -44,7 +44,6 @@ class ListEmailsArgs(BaseModel):
     """Validated arguments for the list_emails tool."""
 
     folder: str | None = None
-    limit: int = 10
 
 
 class DraftEmailArgs(BaseModel):

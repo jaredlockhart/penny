@@ -14,20 +14,12 @@ from typing import Any
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
 from penny.channels.base import PageContext
-from penny.constants import PennyConstants
+from penny.constants import ChatPromptType, PennyConstants
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.browse import BrowseTool
 
 logger = logging.getLogger(__name__)
-
-
-class ChatPromptType:
-    """Prompt types for ChatAgent flows."""
-
-    USER_MESSAGE = "user_message"
-    VISION_MESSAGE = "vision_message"
-    VISION_CAPTION = "vision_caption"
 
 
 class ChatAgent(Agent):
@@ -208,11 +200,21 @@ class ChatAgent(Agent):
     # ── Vision ────────────────────────────────────────────────────────────
 
     async def caption_image(self, image_b64: str) -> str:
-        """Caption an image using the vision model."""
+        """Caption an image using the vision model.
+
+        The channel layer rejects image messages before they reach this
+        method when ``LLM_VISION_MODEL`` is unset, so the client is
+        guaranteed to exist by the time we get here. Guard explicitly so
+        the type narrows without an assert.
+        """
+        if self._vision_model_client is None:
+            raise RuntimeError(
+                "caption_image called without a vision model client — "
+                "channel-layer validation should have rejected this message"
+            )
         messages = [
             {"role": "user", "content": Prompt.VISION_AUTO_DESCRIBE_PROMPT, "images": [image_b64]},
         ]
-        assert self._vision_model_client is not None
         response = await self._vision_model_client.chat(
             messages=messages,
             agent_name=self.name,

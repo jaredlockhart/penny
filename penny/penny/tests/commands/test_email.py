@@ -68,6 +68,7 @@ def email_context():
     runtime = MagicMock()
     runtime.JMAP_REQUEST_TIMEOUT = 30.0
     runtime.EMAIL_BODY_MAX_LENGTH = 4000
+    runtime.EMAIL_SEARCH_LIMIT = 10
     config.runtime = runtime
     return CommandContext(
         db=MagicMock(),
@@ -180,6 +181,7 @@ async def test_email_jmap_client_created_with_token(email_context):
         FAKE_TOKEN,
         timeout=30.0,
         max_body_length=4000,
+        search_limit=10,
     )
 
 

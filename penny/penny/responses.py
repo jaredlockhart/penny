@@ -197,4 +197,3 @@ class PennyResponse:
     # ── Search ───────────────────────────────────────────────────────────────
 
     NO_RESULTS_TEXT = "No results found"
-    SEARCH_ERROR = "Failed to search: {error}"

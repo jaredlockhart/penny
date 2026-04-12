@@ -87,28 +87,23 @@ def _parse_plugins(raw: str) -> list[str]:
 
 def _collect_env_vars(channel_type: str) -> dict:
     """Read all config environment variables and return as constructor kwargs."""
-    llm_model = os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", "gpt-oss:20b"))
     return {
         "channel_type": channel_type,
         "signal_number": os.getenv("SIGNAL_NUMBER"),
         "signal_api_url": os.getenv("SIGNAL_API_URL", "http://localhost:8080"),
         "discord_bot_token": os.getenv("DISCORD_BOT_TOKEN"),
         "discord_channel_id": os.getenv("DISCORD_CHANNEL_ID"),
-        "llm_api_url": os.getenv(
-            "LLM_API_URL", os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434")
-        ),
-        "llm_model": llm_model,
+        "llm_api_url": os.getenv("LLM_API_URL", "http://host.docker.internal:11434"),
+        "llm_model": os.getenv("LLM_MODEL", "gpt-oss:20b"),
         "llm_api_key": os.getenv("LLM_API_KEY", "not-needed"),
-        "llm_vision_model": os.getenv("LLM_VISION_MODEL", os.getenv("OLLAMA_VISION_MODEL")),
+        "llm_vision_model": os.getenv("LLM_VISION_MODEL"),
         "llm_vision_api_url": os.getenv("LLM_VISION_API_URL"),
         "llm_vision_api_key": os.getenv("LLM_VISION_API_KEY"),
-        "llm_image_model": os.getenv("LLM_IMAGE_MODEL", os.getenv("OLLAMA_IMAGE_MODEL")),
-        "llm_embedding_model": os.getenv(
-            "LLM_EMBEDDING_MODEL", os.getenv("OLLAMA_EMBEDDING_MODEL")
-        ),
+        "llm_image_model": os.getenv("LLM_IMAGE_MODEL"),
+        "llm_embedding_model": os.getenv("LLM_EMBEDDING_MODEL"),
         "llm_embedding_api_url": os.getenv("LLM_EMBEDDING_API_URL"),
         "llm_embedding_api_key": os.getenv("LLM_EMBEDDING_API_KEY"),
-        "ollama_api_url": os.getenv("OLLAMA_API_URL", "http://host.docker.internal:11434"),
+        "image_api_url": os.getenv("LLM_IMAGE_API_URL", "http://host.docker.internal:11434"),
         "github_app_id": os.getenv("GITHUB_APP_ID"),
         "github_app_private_key_path": os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
         "github_app_installation_id": os.getenv("GITHUB_APP_INSTALLATION_ID"),
@@ -173,7 +168,7 @@ class Config:
     llm_embedding_model: str | None = None  # Embedding model (e.g., embeddinggemma)
     llm_embedding_api_url: str | None = None  # Override API URL for embedding model
     llm_embedding_api_key: str | None = None  # Override API key for embedding model
-    ollama_api_url: str = "http://host.docker.internal:11434"  # Ollama-specific (image gen)
+    image_api_url: str = "http://host.docker.internal:11434"  # Ollama REST API for /draw
 
     # GitHub App Configuration (optional, needed for /bug command)
     github_app_id: str | None = None

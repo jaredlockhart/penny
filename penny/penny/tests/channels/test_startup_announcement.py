@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+from penny.llm.models import LlmConnectionError
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
@@ -135,7 +136,7 @@ async def test_startup_announcement_fallback_llm_error(
 
     # Second run: configure LLM to fail for restart message generation
     def error_handler(request, count):
-        raise RuntimeError("Ollama is down")
+        raise LlmConnectionError("Ollama is down")
 
     mock_llm.set_response_handler(error_handler)
 
@@ -234,7 +235,7 @@ async def test_startup_announcement_multiple_devices(
 async def test_startup_warns_when_embedding_model_not_available(
     signal_server, make_config, mock_llm, running_penny, caplog, monkeypatch
 ):
-    """Startup validation logs a warning when OLLAMA_EMBEDDING_MODEL is not pulled."""
+    """Startup validation logs a warning when LLM_EMBEDDING_MODEL is not pulled."""
     # Configure an embedding model that is NOT in the available models list
     config = make_config(
         llm_embedding_model="qwen3-embedding:4b", llm_image_model="test-image-model"
@@ -263,7 +264,7 @@ async def test_startup_warns_when_embedding_model_not_available(
 async def test_startup_no_warning_when_embedding_model_available(
     signal_server, make_config, mock_llm, running_penny, caplog, monkeypatch
 ):
-    """Startup validation does not warn when OLLAMA_EMBEDDING_MODEL is present."""
+    """Startup validation does not warn when LLM_EMBEDDING_MODEL is present."""
     config = make_config(llm_embedding_model="nomic-embed-text")
 
     async def mock_list_models(self):
