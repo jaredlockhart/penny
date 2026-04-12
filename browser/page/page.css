@@ -704,17 +704,38 @@ h1 {
   gap: 8px;
 }
 
+.pref-container {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
 .pref-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  background: var(--bg-secondary);
-  border-radius: 8px;
 }
 
 .pref-row:hover {
   background: var(--bg-tertiary);
+}
+
+.pref-expandable {
+  cursor: pointer;
+}
+
+.pref-toggle {
+  color: var(--text-muted);
+  font-size: 10px;
+  width: 16px;
+  text-align: center;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.pref-container.expanded .pref-toggle {
+  transform: rotate(90deg);
 }
 
 .pref-name {
@@ -735,6 +756,11 @@ h1 {
 .pref-meta span {
   display: inline-flex;
   align-items: center;
+  min-width: 90px;
+}
+
+.pref-meta span:last-child {
+  min-width: 80px;
 }
 
 .pref-meta i {
@@ -765,6 +791,66 @@ h1 {
   text-align: center;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.pref-detail {
+  display: none;
+  border-top: 1px solid var(--border);
+  padding: 8px 16px 12px 40px;
+}
+
+.pref-container.expanded .pref-detail {
+  display: block;
+}
+
+.pref-thoughts-loading,
+.pref-thoughts-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.pref-thought-item {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pref-thought-item:last-child {
+  border-bottom: none;
+}
+
+.pref-thought-image {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.pref-thought-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.pref-thought-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-right: 8px;
+}
+
+.pref-thought-date {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pref-thought-snippet {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 2px;
 }
 
 .prefs-add {

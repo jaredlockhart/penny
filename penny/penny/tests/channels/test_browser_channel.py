@@ -482,6 +482,71 @@ class TestBrowserPreferenceHandlers:
 
         assert ws.sent == []
 
+    @pytest.mark.asyncio
+    async def test_preferences_response_includes_thought_count(self, tmp_path, monkeypatch):
+        """Each preference item includes thought_count from linked thoughts."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        pref = db.preferences.add(self.USER, "dark roast coffee", "positive", source="manual")
+        assert pref is not None
+        db.thoughts.add(self.USER, "Coffee is great", preference_id=pref.id)
+        db.thoughts.add(self.USER, "More coffee thoughts", preference_id=pref.id)
+        db.preferences.add(self.USER, "hiking", "positive", source="manual")
+
+        ws = _MockWs()
+        await channel._handle_preferences_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "preferences_request", "valence": "positive"},
+        )
+
+        resp = ws.sent[0]
+        by_content = {p["content"]: p for p in resp["preferences"]}
+        assert by_content["dark roast coffee"]["thought_count"] == 2
+        assert by_content["hiking"]["thought_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_preference_thoughts_request(self, tmp_path, monkeypatch):
+        """preference_thoughts_request returns thoughts for a preference."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        pref = db.preferences.add(self.USER, "dark roast coffee", "positive", source="manual")
+        assert pref is not None
+        db.thoughts.add(
+            self.USER, "First thought about coffee", preference_id=pref.id, title="Coffee origins"
+        )
+        db.thoughts.add(
+            self.USER, "Second thought about coffee", preference_id=pref.id, title="Brew methods"
+        )
+
+        ws = _MockWs()
+        await channel._handle_preference_thoughts_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "preference_thoughts_request", "preference_id": pref.id},
+        )
+
+        resp = ws.sent[0]
+        assert resp["type"] == "preference_thoughts_response"
+        assert resp["preference_id"] == pref.id
+        assert len(resp["thoughts"]) == 2
+        titles = [t["title"] for t in resp["thoughts"]]
+        assert "Coffee origins" in titles
+        assert "Brew methods" in titles
+
+    @pytest.mark.asyncio
+    async def test_preference_thoughts_request_empty(self, tmp_path, monkeypatch):
+        """preference_thoughts_request with no thoughts returns empty list."""
+        channel, db = self._channel(tmp_path, monkeypatch)
+        pref = db.preferences.add(self.USER, "dark roast coffee", "positive", source="manual")
+        assert pref is not None
+
+        ws = _MockWs()
+        await channel._handle_preference_thoughts_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "preference_thoughts_request", "preference_id": pref.id},
+        )
+
+        resp = ws.sent[0]
+        assert resp["type"] == "preference_thoughts_response"
+        assert resp["thoughts"] == []
+
 
 class TestBrowserConfigHandlers:
     """config_request and config_update handlers send and persist correctly."""
