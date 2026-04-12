@@ -14,20 +14,12 @@ from typing import Any
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
 from penny.channels.base import PageContext
-from penny.constants import PennyConstants
+from penny.constants import ChatPromptType, PennyConstants
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.browse import BrowseTool
 
 logger = logging.getLogger(__name__)
-
-
-class ChatPromptType:
-    """Prompt types for ChatAgent flows."""
-
-    USER_MESSAGE = "user_message"
-    VISION_MESSAGE = "vision_message"
-    VISION_CAPTION = "vision_caption"
 
 
 class ChatAgent(Agent):

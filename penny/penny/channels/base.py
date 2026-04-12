@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 class PageContext(BaseModel):
     """The page the user is currently viewing in the browser."""
 
-    title: str = ""
-    url: str = ""
-    text: str = ""
+    title: str
+    url: str
+    text: str
 
 
 class IncomingMessage(BaseModel):
@@ -289,8 +289,6 @@ class MessageChannel(ABC):
             recipient, prepared, attachments=None, quote_message=None
         )
         return external_id is not None
-
-    MAX_IMAGE_PROMPT_LENGTH = 300
 
     async def send_response(
         self,

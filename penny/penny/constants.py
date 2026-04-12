@@ -43,6 +43,36 @@ class ProgressEmoji(StrEnum):
     WORKING = "\u2699\ufe0f"  # ⚙️ — generic fallback for other tools
 
 
+class ChatPromptType(StrEnum):
+    """Prompt types emitted by ChatAgent flows. Logged to promptlog.prompt_type."""
+
+    USER_MESSAGE = "user_message"
+    VISION_MESSAGE = "vision_message"
+    VISION_CAPTION = "vision_caption"
+
+
+class ThinkingPromptType(StrEnum):
+    """Prompt types emitted by ThinkingAgent flows."""
+
+    FREE = "free"
+    SEEDED = "seeded"
+
+
+class NotifyPromptType(StrEnum):
+    """Prompt types emitted by NotifyAgent flows."""
+
+    CHECKIN = "checkin"
+    THOUGHT = "thought"
+
+
+class HistoryPromptType(StrEnum):
+    """Prompt types emitted by HistoryAgent flows."""
+
+    PREFERENCE_IDENTIFICATION = "preference_identification"
+    PREFERENCE_VALENCE = "preference_valence"
+    KNOWLEDGE_SUMMARIZE = "knowledge_summarize"
+
+
 class PennyConstants:
     """All constants for the Penny agent."""
 
@@ -171,7 +201,6 @@ class PennyConstants:
     # Browser channel constants
     TOOL_REQUEST_TIMEOUT = 60.0
     PERMISSION_PROMPT_TIMEOUT = 60.0
-    MAX_PAGE_CONTENT_CHARS = 100_000
 
     # Related-messages retrieval constants
     #

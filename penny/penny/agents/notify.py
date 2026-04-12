@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
-from penny.constants import PennyConstants
+from penny.constants import NotifyPromptType, PennyConstants
 from penny.database.models import Thought
 from penny.llm.embeddings import deserialize_embedding
 from penny.llm.similarity import novelty_score
@@ -185,13 +185,6 @@ class ThoughtMode(NotificationMode):
 
 
 # ── Agent ──────────────────────────────────────────────────────────────
-
-
-class NotifyPromptType:
-    """Prompt types for NotifyAgent flows."""
-
-    CHECKIN = "checkin"
-    THOUGHT = "thought"
 
 
 class NotifyAgent(Agent):
