@@ -13,19 +13,19 @@ if TYPE_CHECKING:
 RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {}
 
 # Group names (display order)
-GROUP_GLOBAL = "Global"
-GROUP_SCHEDULE = "Schedule"
-GROUP_INNER_MONOLOGUE = "Inner Monologue"
+GROUP_CHAT = "Chat"
+GROUP_THINKING = "Thinking"
 GROUP_HISTORY = "History"
 GROUP_NOTIFY = "Notify"
+GROUP_EMAIL = "Email"
 
 # Ordered list for display
 CONFIG_GROUPS: list[str] = [
-    GROUP_GLOBAL,
-    GROUP_SCHEDULE,
-    GROUP_INNER_MONOLOGUE,
+    GROUP_CHAT,
+    GROUP_THINKING,
     GROUP_HISTORY,
     GROUP_NOTIFY,
+    GROUP_EMAIL,
 ]
 
 
@@ -41,7 +41,7 @@ class ConfigParam:
     type: type  # int, float, or str
     default: int | float | str  # Default value (single source of truth)
     validator: Callable[[str], int | float | str]  # Parses and validates value from string
-    group: str = GROUP_GLOBAL  # Display group for /config listing
+    group: str = GROUP_CHAT  # Display group for /config listing
 
     def __post_init__(self) -> None:
         RUNTIME_CONFIG_PARAMS[self.key] = self
@@ -118,7 +118,7 @@ def _validate_unit_float(value: str) -> float:
     return parsed
 
 
-# ── Global ────────────────────────────────────────────────────────────────────
+# ── Chat — foreground conversation, retrieval context, and browser ───────────
 
 ConfigParam(
     key="MESSAGE_MAX_STEPS",
@@ -126,7 +126,7 @@ ConfigParam(
     type=int,
     default=8,
     validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
+    group=GROUP_CHAT,
 )
 
 ConfigParam(
@@ -135,81 +135,7 @@ ConfigParam(
     type=int,
     default=3,
     validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="SEARCH_URL",
-    description="Base URL for text searches (encoded query is appended)",
-    type=str,
-    default="https://duckduckgo.com/?q=",
-    validator=_validate_non_empty_string,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="EMAIL_BODY_MAX_LENGTH",
-    description="Max character length for email body content",
-    type=int,
-    default=4000,
-    validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="EMAIL_SEARCH_LIMIT",
-    description="Max email results returned by the search_emails tool",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="EMAIL_LIST_LIMIT",
-    description="Max email results returned by the list_emails tool",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="JMAP_REQUEST_TIMEOUT",
-    description="Timeout in seconds for JMAP API requests",
-    type=float,
-    default=30.0,
-    validator=_validate_positive_float,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="EMBEDDING_BACKFILL_BATCH_LIMIT",
-    description="Max items per embedding backfill cycle (preferences, thoughts, messages)",
-    type=int,
-    default=50,
-    validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
-)
-
-ConfigParam(
-    key="DOMAIN_PERMISSION_MODE",
-    description="Domain mode: restrict (prompt) or allow_all (auto-allow unknown)",
-    type=str,
-    default=DOMAIN_MODE_RESTRICT,
-    validator=_validate_domain_mode,
-    group=GROUP_GLOBAL,
-)
-
-# ── Schedule ──────────────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="IDLE_SECONDS",
-    description="Global idle threshold in seconds",
-    type=float,
-    default=60.0,
-    validator=_validate_positive_float,
-    group=GROUP_SCHEDULE,
+    group=GROUP_CHAT,
 )
 
 ConfigParam(
@@ -218,10 +144,129 @@ ConfigParam(
     type=int,
     default=20,
     validator=_validate_positive_int,
-    group=GROUP_GLOBAL,
+    group=GROUP_CHAT,
 )
 
-# ── Preferences ──────────────────────────────────────────────────────────────
+ConfigParam(
+    key="SEARCH_URL",
+    description="Base URL for text searches (encoded query is appended)",
+    type=str,
+    default="https://duckduckgo.com/?q=",
+    validator=_validate_non_empty_string,
+    group=GROUP_CHAT,
+)
+
+ConfigParam(
+    key="RELATED_MESSAGES_LIMIT",
+    description="Max similar past messages to inject into chat context",
+    type=int,
+    default=10,
+    validator=_validate_positive_int,
+    group=GROUP_CHAT,
+)
+
+ConfigParam(
+    key="RELATED_KNOWLEDGE_LIMIT",
+    description="Max knowledge entries to inject into chat context",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_CHAT,
+)
+
+ConfigParam(
+    key="RELATED_KNOWLEDGE_SCORE_FLOOR",
+    description="Minimum hybrid score for a knowledge entry to be injected",
+    type=float,
+    default=0.34,
+    validator=_validate_unit_float,
+    group=GROUP_CHAT,
+)
+
+ConfigParam(
+    key="DOMAIN_PERMISSION_MODE",
+    description="Domain mode: restrict (prompt) or allow_all (auto-allow unknown)",
+    type=str,
+    default=DOMAIN_MODE_RESTRICT,
+    validator=_validate_domain_mode,
+    group=GROUP_CHAT,
+)
+
+# ── Thinking — inner monologue ───────────────────────────────────────────────
+
+ConfigParam(
+    key="INNER_MONOLOGUE_INTERVAL",
+    description="Interval in seconds between inner monologue cycles",
+    type=float,
+    default=1200.0,
+    validator=_validate_positive_float,
+    group=GROUP_THINKING,
+)
+
+ConfigParam(
+    key="INNER_MONOLOGUE_MAX_STEPS",
+    description="Max thinking loop steps per inner monologue cycle",
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_THINKING,
+)
+
+ConfigParam(
+    key="INNER_MONOLOGUE_MAX_QUERIES",
+    description="Max parallel queries per thinking tool call",
+    type=int,
+    default=3,
+    validator=_validate_positive_int,
+    group=GROUP_THINKING,
+)
+
+ConfigParam(
+    key="THOUGHT_DEDUP_EMBEDDING_THRESHOLD",
+    description="Content embedding similarity threshold for thought dedup (0-1)",
+    type=float,
+    default=0.70,
+    validator=_validate_unit_float,
+    group=GROUP_THINKING,
+)
+
+ConfigParam(
+    key="THOUGHT_DEDUP_TCR_THRESHOLD",
+    description="Title token containment ratio threshold for thought dedup (0-1)",
+    type=float,
+    default=0.50,
+    validator=_validate_unit_float,
+    group=GROUP_THINKING,
+)
+
+ConfigParam(
+    key="MAX_UNNOTIFIED_THOUGHTS",
+    description="Max unnotified thoughts before thinking agent pauses",
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
+    group=GROUP_THINKING,
+)
+
+ConfigParam(
+    key="FREE_THINKING_PROBABILITY",
+    description="Target ratio of free-exploration thoughts (0-1, remainder is seeded)",
+    type=float,
+    default=0.2,
+    validator=_validate_unit_float,
+    group=GROUP_THINKING,
+)
+
+# ── History — background preference and knowledge extraction ─────────────────
+
+ConfigParam(
+    key="HISTORY_INTERVAL",
+    description="Interval in seconds between history agent runs (preferences + knowledge)",
+    type=float,
+    default=900.0,
+    validator=_validate_positive_float,
+    group=GROUP_HISTORY,
+)
 
 ConfigParam(
     key="PREFERENCE_DEDUP_EMBEDDING_THRESHOLD",
@@ -253,110 +298,6 @@ ConfigParam(
     group=GROUP_HISTORY,
 )
 
-# ── Inner Monologue ──────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="INNER_MONOLOGUE_INTERVAL",
-    description="Interval in seconds between inner monologue cycles",
-    type=float,
-    default=1200.0,
-    validator=_validate_positive_float,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
-ConfigParam(
-    key="INNER_MONOLOGUE_MAX_STEPS",
-    description="Max thinking loop steps per inner monologue cycle",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
-ConfigParam(
-    key="INNER_MONOLOGUE_MAX_QUERIES",
-    description="Max parallel queries per thinking tool call",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
-ConfigParam(
-    key="THOUGHT_DEDUP_EMBEDDING_THRESHOLD",
-    description="Content embedding similarity threshold for thought dedup (0-1)",
-    type=float,
-    default=0.70,
-    validator=_validate_unit_float,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
-ConfigParam(
-    key="THOUGHT_DEDUP_TCR_THRESHOLD",
-    description="Title token containment ratio threshold for thought dedup (0-1)",
-    type=float,
-    default=0.50,
-    validator=_validate_unit_float,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
-ConfigParam(
-    key="MAX_UNNOTIFIED_THOUGHTS",
-    description="Max unnotified thoughts before thinking agent pauses",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
-ConfigParam(
-    key="FREE_THINKING_PROBABILITY",
-    description="Target ratio of free-exploration thoughts (0-1, remainder after news is seeded)",
-    type=float,
-    default=0.2,
-    validator=_validate_unit_float,
-    group=GROUP_INNER_MONOLOGUE,
-)
-
-
-# ── History ──────────────────────────────────────────────────────────────────
-
-ConfigParam(
-    key="HISTORY_INTERVAL",
-    description="Interval in seconds between history agent runs (preferences + knowledge)",
-    type=float,
-    default=900.0,
-    validator=_validate_positive_float,
-    group=GROUP_HISTORY,
-)
-
-ConfigParam(
-    key="RELATED_MESSAGES_LIMIT",
-    description="Max similar past messages to inject into chat context",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_HISTORY,
-)
-
-ConfigParam(
-    key="RELATED_KNOWLEDGE_LIMIT",
-    description="Max knowledge entries to inject into chat context",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_HISTORY,
-)
-
-ConfigParam(
-    key="RELATED_KNOWLEDGE_SCORE_FLOOR",
-    description="Minimum hybrid score for a knowledge entry to be injected",
-    type=float,
-    default=0.34,
-    validator=_validate_unit_float,
-    group=GROUP_HISTORY,
-)
-
 ConfigParam(
     key="KNOWLEDGE_EXTRACTION_BATCH_LIMIT",
     description="Max browse-containing prompts to process per knowledge extraction cycle",
@@ -366,8 +307,25 @@ ConfigParam(
     group=GROUP_HISTORY,
 )
 
+ConfigParam(
+    key="EMBEDDING_BACKFILL_BATCH_LIMIT",
+    description="Max items per embedding backfill cycle (preferences, thoughts, messages)",
+    type=int,
+    default=50,
+    validator=_validate_positive_int,
+    group=GROUP_HISTORY,
+)
 
-# ── Notify ───────────────────────────────────────────────────────────────────
+# ── Notify — notification outreach and idle timing ───────────────────────────
+
+ConfigParam(
+    key="IDLE_SECONDS",
+    description="Seconds of silence before background agents become eligible",
+    type=float,
+    default=60.0,
+    validator=_validate_positive_float,
+    group=GROUP_NOTIFY,
+)
 
 ConfigParam(
     key="NOTIFY_CHECK_INTERVAL",
@@ -403,6 +361,44 @@ ConfigParam(
     default=5,
     validator=_validate_positive_int,
     group=GROUP_NOTIFY,
+)
+
+# ── Email — email tool settings ──────────────────────────────────────────────
+
+ConfigParam(
+    key="EMAIL_BODY_MAX_LENGTH",
+    description="Max character length for email body content",
+    type=int,
+    default=4000,
+    validator=_validate_positive_int,
+    group=GROUP_EMAIL,
+)
+
+ConfigParam(
+    key="EMAIL_SEARCH_LIMIT",
+    description="Max email results returned by the search_emails tool",
+    type=int,
+    default=10,
+    validator=_validate_positive_int,
+    group=GROUP_EMAIL,
+)
+
+ConfigParam(
+    key="EMAIL_LIST_LIMIT",
+    description="Max email results returned by the list_emails tool",
+    type=int,
+    default=10,
+    validator=_validate_positive_int,
+    group=GROUP_EMAIL,
+)
+
+ConfigParam(
+    key="JMAP_REQUEST_TIMEOUT",
+    description="Timeout in seconds for email API requests",
+    type=float,
+    default=30.0,
+    validator=_validate_positive_float,
+    group=GROUP_EMAIL,
 )
 
 
