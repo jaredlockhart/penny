@@ -2,6 +2,7 @@
 
 import math
 
+import openai
 import pytest
 from similarity.embeddings import (
     find_similar,
@@ -10,6 +11,7 @@ from similarity.embeddings import (
 )
 
 from penny.llm import LlmNotFoundError, LlmResponseError
+from penny.llm.client import LlmClient
 from penny.llm.embeddings import (
     cosine_similarity,
     deserialize_embedding,
@@ -180,8 +182,6 @@ class TestLlmClientEmbed:
 
     @pytest.mark.asyncio
     async def test_embed_single_text(self, mock_llm):
-        from penny.llm.client import LlmClient
-
         expected = [[0.1, 0.2, 0.3, 0.4]]
         mock_llm.set_embed_handler(lambda model, input: expected)
 
@@ -200,8 +200,6 @@ class TestLlmClientEmbed:
 
     @pytest.mark.asyncio
     async def test_embed_batch(self, mock_llm):
-        from penny.llm.client import LlmClient
-
         expected = [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
         mock_llm.set_embed_handler(lambda model, input: expected)
 
@@ -219,8 +217,6 @@ class TestLlmClientEmbed:
     @pytest.mark.asyncio
     async def test_embed_default_mock(self, mock_llm):
         """Default mock returns unit vectors."""
-        from penny.llm.client import LlmClient
-
         client = LlmClient(
             api_url="http://localhost:11434",
             model="nomic-embed-text",
@@ -235,8 +231,6 @@ class TestLlmClientEmbed:
     @pytest.mark.asyncio
     async def test_embed_404_raises_immediately_without_retry(self, mock_llm):
         """A 404 (model not found) must raise immediately — no retries."""
-        from penny.llm.client import LlmClient
-
         call_count = 0
 
         def raising_handler(model: str, input: str | list[str]) -> list[list[float]]:
@@ -261,10 +255,6 @@ class TestLlmClientEmbed:
     @pytest.mark.asyncio
     async def test_embed_transient_error_retries(self, mock_llm):
         """Non-404 errors should still be retried up to max_retries."""
-        import openai
-
-        from penny.llm.client import LlmClient
-
         call_count = 0
 
         def flaky_handler(model: str, input: str | list[str]) -> list[list[float]]:

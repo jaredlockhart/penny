@@ -8,6 +8,7 @@ import pytest
 from similarity.dedup import DedupStrategy, is_embedding_duplicate
 
 from penny.llm.embeddings import serialize_embedding
+from penny.llm.models import LlmResponseError
 from penny.llm.similarity import embed_text
 
 # ── embed_text ────────────────────────────────────────────────────────────────
@@ -28,8 +29,6 @@ class TestEmbedText:
 
     @pytest.mark.asyncio
     async def test_returns_none_on_llm_error(self) -> None:
-        from penny.llm.models import LlmResponseError
-
         client = AsyncMock()
         client.embed.side_effect = LlmResponseError("boom")
         result = await embed_text(client, "hello")

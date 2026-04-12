@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+from penny.llm.models import LlmConnectionError
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
@@ -134,8 +135,6 @@ async def test_startup_announcement_fallback_llm_error(
     monkeypatch.setenv("GIT_COMMIT_MESSAGE", "feat: some feature")
 
     # Second run: configure LLM to fail for restart message generation
-    from penny.llm.models import LlmConnectionError
-
     def error_handler(request, count):
         raise LlmConnectionError("Ollama is down")
 
