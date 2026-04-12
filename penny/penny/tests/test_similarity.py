@@ -27,9 +27,11 @@ class TestEmbedText:
         assert result == [1.0, 2.0, 3.0]
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_exception(self) -> None:
+    async def test_returns_none_on_llm_error(self) -> None:
+        from penny.llm.models import LlmResponseError
+
         client = AsyncMock()
-        client.embed.side_effect = RuntimeError("boom")
+        client.embed.side_effect = LlmResponseError("boom")
         result = await embed_text(client, "hello")
         assert result is None
 

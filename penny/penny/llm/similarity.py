@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 from similarity.embeddings import cosine_similarity, deserialize_embedding
 
+from penny.llm.models import LlmError
+
 if TYPE_CHECKING:
     from penny.llm.client import LlmClient
 
@@ -29,7 +31,7 @@ async def embed_text(
     try:
         vecs = await client.embed(text)
         return vecs[0]
-    except Exception:
+    except LlmError:
         logger.warning("Failed to embed text: %.60s", text)
         return None
 

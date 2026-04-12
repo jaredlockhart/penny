@@ -262,9 +262,11 @@ class LlmClient:
         if message.tool_calls:
             tool_calls = [self._parse_tool_call(tc) for tc in message.tool_calls]
 
-        thinking = getattr(message, "reasoning_content", None) or getattr(
-            message, "reasoning", None
-        )
+        # Reasoning fields are non-standard extensions (Ollama uses
+        # ``reasoning_content``, newer OpenAI ``reasoning``). They land in
+        # the pydantic model_extra dict because the SDK allows extras.
+        extras = message.model_extra or {}
+        thinking = extras.get("reasoning_content") or extras.get("reasoning")
 
         return LlmResponse(
             message=LlmMessage(
