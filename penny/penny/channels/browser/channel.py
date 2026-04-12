@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import websockets
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlmodel import Session, select
 from websockets.asyncio.server import Server, ServerConnection
 
@@ -31,6 +31,7 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_PERMISSION_DECISION,
     BROWSER_MSG_TYPE_PREFERENCE_ADD,
     BROWSER_MSG_TYPE_PREFERENCE_DELETE,
+    BROWSER_MSG_TYPE_PREFERENCE_THOUGHTS_REQUEST,
     BROWSER_MSG_TYPE_PREFERENCES_REQUEST,
     BROWSER_MSG_TYPE_PROMPT_LOGS_REQUEST,
     BROWSER_MSG_TYPE_REGISTER,
@@ -43,6 +44,7 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_TOOL_RESPONSE,
     BROWSER_RESP_TYPE_CONFIG,
     BROWSER_RESP_TYPE_MESSAGE,
+    BROWSER_RESP_TYPE_PREFERENCE_THOUGHTS,
     BROWSER_RESP_TYPE_PREFERENCES,
     BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE,
     BROWSER_RESP_TYPE_PROMPT_LOGS,
@@ -64,6 +66,7 @@ from penny.channels.browser.models import (
     BrowserPreferenceAdd,
     BrowserPreferenceDelete,
     BrowserPreferencesRequest,
+    BrowserPreferenceThoughtsRequest,
     BrowserRegister,
     BrowserScheduleAdd,
     BrowserScheduleDelete,
@@ -246,6 +249,10 @@ class BrowserChannel(MessageChannel):
 
         if msg_type == BROWSER_MSG_TYPE_PREFERENCE_DELETE:
             await self._handle_preference_delete(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_PREFERENCE_THOUGHTS_REQUEST:
+            await self._handle_preference_thoughts_request(ws, data)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_MESSAGE:
@@ -525,18 +532,49 @@ class BrowserChannel(MessageChannel):
         """Send a preferences_response for the given valence."""
         primary = self._db.users.get_primary_sender()
         prefs = self._db.preferences.get_for_user_by_valence(primary, valence) if primary else []
+        pref_ids = {p.id for p in prefs if p.id is not None}
+        thought_counts = self._db.thoughts.count_by_preference_ids(pref_ids)
         items = [
             {
                 "id": p.id,
                 "content": p.content,
                 "mention_count": p.mention_count,
                 "source": p.source,
+                "thought_count": thought_counts.get(cast(int, p.id), 0),
             }
             for p in prefs
         ]
         response = {"type": BROWSER_RESP_TYPE_PREFERENCES, "valence": valence, "preferences": items}
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(json.dumps(response))
+
+    async def _handle_preference_thoughts_request(self, ws: ServerConnection, data: dict) -> None:
+        """Return thoughts seeded by a specific preference."""
+        try:
+            req = BrowserPreferenceThoughtsRequest(**data)
+        except ValidationError:
+            logger.warning("Invalid preference_thoughts_request: %s", str(data)[:200])
+            return
+        thoughts = self._db.thoughts.get_for_preference(req.preference_id)
+        items = [self._format_preference_thought(t) for t in thoughts]
+        response = {
+            "type": BROWSER_RESP_TYPE_PREFERENCE_THOUGHTS,
+            "preference_id": req.preference_id,
+            "thoughts": items,
+        }
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await ws.send(json.dumps(response))
+
+    @staticmethod
+    def _format_preference_thought(thought: Thought) -> dict:
+        """Format a thought for the preference detail panel."""
+        return {
+            "id": thought.id,
+            "title": thought.title,
+            "content": thought.content,
+            "image": thought.image,
+            "created_at": thought.created_at.isoformat() if thought.created_at else None,
+        }
 
     async def _handle_config_request(self, ws: ServerConnection) -> None:
         """Return all runtime config params with current values."""

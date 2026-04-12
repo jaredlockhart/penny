@@ -8,6 +8,7 @@ import {
   DomainPermission as DP,
   type DomainPermissionEntry,
   type PreferenceItem,
+  type PreferenceThoughtItem,
   type PromptLogEntry,
   type PromptLogRun,
   type RuntimeConfigParam,
@@ -163,6 +164,8 @@ function handleMessage(message: RuntimeMessage): void {
     renderSchedules(message.schedules, message.error);
   } else if (message.type === RuntimeMessageType.PreferencesResponse) {
     renderPreferences(message.valence, message.preferences);
+  } else if (message.type === RuntimeMessageType.PreferenceThoughtsResponse) {
+    renderPreferenceThoughts(message.preference_id, message.thoughts);
   } else if (message.type === RuntimeMessageType.ConfigResponse) {
     renderConfig(message.params);
     if (pendingConfigSave) {
@@ -852,6 +855,8 @@ function formatDuration(ms: number): string {
 // Preferences
 // ============================================================
 
+const MS_PER_DAY = 86_400_000;
+
 function renderPreferences(valence: string, prefs: PreferenceItem[]): void {
   const listEl = document.getElementById(valence === "positive" ? "likes-list" : "dislikes-list")!;
   listEl.innerHTML = "";
@@ -865,34 +870,144 @@ function renderPreferences(valence: string, prefs: PreferenceItem[]): void {
   }
 
   for (const pref of prefs) {
-    const row = document.createElement("div");
-    row.className = "pref-row";
-
-    const name = document.createElement("span");
-    name.className = "pref-name";
-    name.textContent = pref.content;
-
-    const meta = document.createElement("span");
-    meta.className = "pref-meta";
-    const sourceLabel = pref.source === "manual" ? "manual" : "extracted";
-    const sourceIcon = pref.source === "manual" ? "fa-hand" : "fa-robot";
-    meta.innerHTML =
-      `<span><i class="fa-solid ${sourceIcon}"></i>${sourceLabel}</span>` +
-      `<span><i class="fa-solid fa-comment"></i>${pref.mention_count} mentions</span>`;
-
-    const del = document.createElement("button");
-    del.className = "pref-delete";
-    del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-    del.setAttribute("aria-label", `Remove ${pref.content}`);
-    del.addEventListener("click", () => {
-      browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceDelete, preference_id: pref.id });
-    });
-
-    row.appendChild(name);
-    row.appendChild(meta);
-    row.appendChild(del);
-    listEl.appendChild(row);
+    listEl.appendChild(createPreferenceContainer(pref));
   }
+}
+
+function createPreferenceRow(pref: PreferenceItem): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "pref-row";
+
+  const toggle = document.createElement("span");
+  toggle.className = "pref-toggle";
+  toggle.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
+
+  const name = document.createElement("span");
+  name.className = "pref-name";
+  name.textContent = pref.content;
+
+  const meta = createPreferenceMeta(pref);
+
+  const del = document.createElement("button");
+  del.className = "pref-delete";
+  del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+  del.setAttribute("aria-label", `Remove ${pref.content}`);
+  del.addEventListener("click", (event: MouseEvent) => {
+    event.stopPropagation();
+    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceDelete, preference_id: pref.id });
+  });
+
+  row.appendChild(toggle);
+  row.appendChild(name);
+  row.appendChild(meta);
+  row.appendChild(del);
+  return row;
+}
+
+function createPreferenceMeta(pref: PreferenceItem): HTMLSpanElement {
+  const meta = document.createElement("span");
+  meta.className = "pref-meta";
+  const sourceLabel = pref.source === "manual" ? "manual" : "extracted";
+  const sourceIcon = pref.source === "manual" ? "fa-hand" : "fa-robot";
+  const thoughtLabel = pref.thought_count === 1 ? "thought" : "thoughts";
+  meta.innerHTML =
+    `<span><i class="fa-solid ${sourceIcon}"></i>${sourceLabel}</span>` +
+    `<span><i class="fa-solid fa-comment"></i>${pref.mention_count} mentions</span>` +
+    `<span><i class="fa-solid fa-lightbulb"></i>${pref.thought_count} ${thoughtLabel}</span>`;
+  return meta;
+}
+
+function createPreferenceContainer(pref: PreferenceItem): HTMLDivElement {
+  const container = document.createElement("div");
+  container.className = "pref-container";
+  container.dataset.prefId = String(pref.id);
+
+  const row = createPreferenceRow(pref);
+  const detail = document.createElement("div");
+  detail.className = "pref-detail";
+
+  container.appendChild(row);
+  container.appendChild(detail);
+
+  if (pref.thought_count > 0) {
+    row.classList.add("pref-expandable");
+    row.addEventListener("click", () => {
+      const expanded = container.classList.toggle("expanded");
+      if (expanded && detail.children.length === 0) {
+        detail.innerHTML = '<div class="pref-thoughts-loading">Loading thoughts...</div>';
+        browser.runtime.sendMessage({
+          type: RuntimeMessageType.PreferenceThoughtsRequest,
+          preference_id: pref.id,
+        });
+      }
+    });
+  }
+
+  return container;
+}
+
+function renderPreferenceThoughts(preferenceId: number, thoughts: PreferenceThoughtItem[]): void {
+  const container = document.querySelector(`.pref-container[data-pref-id="${preferenceId}"]`);
+  if (!container) return;
+  const detail = container.querySelector(".pref-detail");
+  if (!detail) return;
+  detail.innerHTML = "";
+
+  if (thoughts.length === 0) {
+    detail.innerHTML = '<div class="pref-thoughts-empty">No thoughts yet.</div>';
+    return;
+  }
+
+  for (const thought of thoughts) {
+    detail.appendChild(createThoughtItem(thought));
+  }
+}
+
+function createThoughtItem(thought: PreferenceThoughtItem): HTMLDivElement {
+  const item = document.createElement("div");
+  item.className = "pref-thought-item";
+
+  if (thought.image) {
+    const image = document.createElement("img");
+    image.className = "pref-thought-image";
+    image.src = thought.image;
+    item.appendChild(image);
+  }
+
+  const body = document.createElement("div");
+  body.className = "pref-thought-body";
+
+  const title = document.createElement("span");
+  title.className = "pref-thought-title";
+  title.textContent = thought.title ?? "Untitled";
+
+  const date = document.createElement("span");
+  date.className = "pref-thought-date";
+  if (thought.created_at !== null) {
+    date.textContent = formatRelativeDate(thought.created_at);
+  }
+
+  const snippet = document.createElement("div");
+  snippet.className = "pref-thought-snippet";
+  snippet.textContent = thought.content;
+
+  body.appendChild(title);
+  body.appendChild(date);
+  body.appendChild(snippet);
+  item.appendChild(body);
+  return item;
+}
+
+function formatRelativeDate(isoDate: string): string {
+  const date = new Date(isoDate);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / MS_PER_DAY);
+  if (diffDays === 0) return "today";
+  if (diffDays === 1) return "yesterday";
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+  return date.toLocaleDateString();
 }
 
 function setupPreferences(valence: string, prefix: string): void {

@@ -163,6 +163,8 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     sendPreferenceAdd(message.valence, message.content);
   } else if (message.type === RuntimeMessageType.PreferenceDelete) {
     sendPreferenceDelete(message.preference_id);
+  } else if (message.type === RuntimeMessageType.PreferenceThoughtsRequest) {
+    requestPreferenceThoughts(message.preference_id);
   } else if (message.type === RuntimeMessageType.ConfigRequest) {
     requestConfig();
   } else if (message.type === RuntimeMessageType.ConfigUpdate) {
@@ -245,6 +247,12 @@ function connect(): void {
         type: RuntimeMessageType.PreferencesResponse,
         valence: data.valence,
         preferences: data.preferences,
+      });
+    } else if (data.type === WsIn.PreferenceThoughtsResponse) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.PreferenceThoughtsResponse,
+        preference_id: data.preference_id,
+        thoughts: data.thoughts,
       });
     } else if (data.type === WsIn.ConfigResponse) {
       broadcastToSidebar({ type: RuntimeMessageType.ConfigResponse, params: data.params });
@@ -357,6 +365,11 @@ function sendPreferenceAdd(valence: string, content: string): void {
 function sendPreferenceDelete(preferenceId: number): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.PreferenceDelete, preference_id: preferenceId }));
+}
+
+function requestPreferenceThoughts(preferenceId: number): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.PreferenceThoughtsRequest, preference_id: preferenceId }));
 }
 
 function requestConfig(): void {
