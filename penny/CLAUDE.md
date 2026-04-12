@@ -329,7 +329,6 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 All tables defined in `database/models.py` as SQLModel classes:
 
 - **PromptLog**: Every LLM call — `model`, `messages` (JSON), `response` (JSON), `thinking`, `duration_ms`, `agent_name`, `run_id`, `outcome`
-- **SearchLog**: Legacy table (no longer written to) — historical search logs; retained for backwards compatibility
 - **MessageLog**: Every user/agent message — `direction`, `sender`, `content`, `parent_id` (thread chain), `external_id` (platform ID), `is_reaction`, `thought_id` FK (notification source)
 - **UserInfo**: User profile — `name`, `location`, `timezone` (IANA), `date_of_birth`
 - **CommandLog**: Command invocations — `command_name`, `command_args`, `response`, `error`
@@ -391,7 +390,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0023):
+File-based migration system in `database/migrations/` (currently 0001–0024):
 - Each migration is a numbered Python file (e.g., `0001_initial_schema.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -425,6 +424,7 @@ Notable migrations:
 - 0021: `promptlog.agent_name` + `promptlog.run_id` columns
 - 0022: `promptlog.outcome` + `thought.run_id` columns
 - 0023: Add `knowledge` table, drop `conversationhistory` (replaced by knowledge + related messages)
+- 0024: Drop legacy `searchlog` table (never written to since browser-based search)
 
 ## Extending
 
