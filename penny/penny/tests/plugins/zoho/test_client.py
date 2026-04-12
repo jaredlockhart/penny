@@ -13,6 +13,8 @@ from penny.plugins.zoho.client import ZohoClient
 
 _ZOHO_TIMEOUT = float(RUNTIME_CONFIG_PARAMS["JMAP_REQUEST_TIMEOUT"].default)
 _EMAIL_MAX_LENGTH = int(RUNTIME_CONFIG_PARAMS["EMAIL_BODY_MAX_LENGTH"].default)
+_EMAIL_SEARCH_LIMIT = int(RUNTIME_CONFIG_PARAMS["EMAIL_SEARCH_LIMIT"].default)
+_EMAIL_LIST_LIMIT = int(RUNTIME_CONFIG_PARAMS["EMAIL_LIST_LIMIT"].default)
 
 FAKE_CLIENT_ID = "1000.TESTCLIENTID"
 FAKE_CLIENT_SECRET = "testsecret123"
@@ -144,6 +146,8 @@ async def test_access_token_refreshed_and_cached():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -174,6 +178,8 @@ async def test_search_emails_returns_summaries():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -204,6 +210,8 @@ async def test_search_emails_builds_search_key():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -241,6 +249,8 @@ async def test_read_emails_returns_details():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     email_id = "F001:M001"
@@ -272,6 +282,8 @@ async def test_read_emails_strips_html():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     email_id = "F001:M001"
@@ -303,6 +315,8 @@ async def test_read_emails_empty_ids():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     results = await client.read_emails([])
@@ -327,6 +341,8 @@ async def test_get_folders():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -357,6 +373,8 @@ async def test_get_folder_by_name():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -385,6 +403,8 @@ async def test_list_emails_from_folder():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
@@ -402,4 +422,65 @@ async def test_list_emails_from_folder():
     assert len(results) == 1
     assert results[0].subject == "Welcome email"
     assert results[0].id == "F001:M101"
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_emails_uses_constructor_list_limit():
+    """The list_limit kwarg threads from /config → constructor → API params."""
+    client = ZohoClient(
+        FAKE_CLIENT_ID,
+        FAKE_CLIENT_SECRET,
+        FAKE_REFRESH_TOKEN,
+        timeout=_ZOHO_TIMEOUT,
+        max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=_EMAIL_SEARCH_LIMIT,
+        list_limit=42,
+    )
+
+    with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = _make_response(TOKEN_RESPONSE)
+
+        with patch.object(client._http, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.side_effect = [
+                _make_response(ACCOUNTS_RESPONSE),
+                _make_response(FOLDERS_RESPONSE),
+                _make_response(LIST_EMAILS_RESPONSE),
+            ]
+
+            await client.list_emails(folder_name="Inbox")
+
+            list_call = mock_get.call_args_list[-1]
+            assert list_call.kwargs["params"]["limit"] == 42
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_search_emails_uses_constructor_search_limit():
+    """The search_limit kwarg threads from /config → constructor → API params."""
+    client = ZohoClient(
+        FAKE_CLIENT_ID,
+        FAKE_CLIENT_SECRET,
+        FAKE_REFRESH_TOKEN,
+        timeout=_ZOHO_TIMEOUT,
+        max_body_length=_EMAIL_MAX_LENGTH,
+        search_limit=27,
+        list_limit=_EMAIL_LIST_LIMIT,
+    )
+
+    with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = _make_response(TOKEN_RESPONSE)
+
+        with patch.object(client._http, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.side_effect = [
+                _make_response(ACCOUNTS_RESPONSE),
+                _make_response(LIST_EMAILS_RESPONSE),
+            ]
+
+            await client.search_emails(text="welcome")
+
+            search_call = mock_get.call_args_list[-1]
+            assert search_call.kwargs["params"]["limit"] == 27
+
     await client.close()

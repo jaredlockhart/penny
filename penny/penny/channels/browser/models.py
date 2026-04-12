@@ -50,8 +50,8 @@ class BrowserIncoming(BaseModel):
     """A chat message received from the browser extension."""
 
     type: str
-    content: str = ""
-    sender: str = "browser-user"
+    content: str
+    sender: str
     page_context: PageContext | None = None
 
 

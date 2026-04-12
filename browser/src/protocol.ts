@@ -1,6 +1,11 @@
 /**
  * WebSocket protocol types shared between sidebar and background scripts.
- * Mirrors penny/penny/channels/browser/models.py.
+ *
+ * Wire-format identifiers (message ``type`` strings, etc.) MUST match the
+ * Python side's expectations in penny/penny/channels/browser/models.py since
+ * both sides need to encode/decode the same wire format. Anything beyond
+ * those identifiers — page sizes, timeouts, thresholds — should NOT be
+ * mirrored: derive it from server payloads or pick a single owner.
  */
 
 // --- Connection ---
@@ -688,9 +693,7 @@ export interface PageContext {
 // --- Tool constants ---
 
 export const THOUGHTS_POLL_INTERVAL_MS = 300_000;
-export const TOOL_TIMEOUT_MS = 60_000;
 export const TAB_LOAD_TIMEOUT_MS = 60_000;
-export const MAX_EXTRACTED_CHARS = 50_000;
 
 // --- Chat UI ---
 

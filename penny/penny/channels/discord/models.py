@@ -8,7 +8,7 @@ class DiscordUser(BaseModel):
 
     id: str
     username: str
-    discriminator: str = ""
+    discriminator: str
     bot: bool = False
     global_name: str | None = None
 

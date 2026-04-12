@@ -78,8 +78,9 @@ from penny.channels.browser.models import (
 )
 from penny.channels.permission_manager import PermissionManager
 from penny.commands.schedule import ScheduleParseResult
+from penny.config_params import RUNTIME_CONFIG_PARAMS, get_params_by_group
 from penny.constants import ChannelType, PennyConstants
-from penny.database.models import Schedule, Thought, UserInfo
+from penny.database.models import RuntimeConfig, Schedule, Thought, UserInfo
 from penny.prompts import Prompt
 from penny.tools.base import Tool
 
@@ -539,8 +540,6 @@ class BrowserChannel(MessageChannel):
 
     async def _handle_config_request(self, ws: ServerConnection) -> None:
         """Return all runtime config params with current values."""
-        from penny.config_params import get_params_by_group
-
         params = []
         for group, group_params in get_params_by_group():
             for param in group_params:
@@ -563,13 +562,6 @@ class BrowserChannel(MessageChannel):
 
     async def _handle_config_update(self, ws: ServerConnection, data: dict) -> None:
         """Validate and persist a single config param update."""
-        from datetime import datetime
-
-        from sqlmodel import Session
-
-        from penny.config_params import RUNTIME_CONFIG_PARAMS
-        from penny.database.models import RuntimeConfig
-
         try:
             req = BrowserConfigUpdate(**data)
         except Exception:

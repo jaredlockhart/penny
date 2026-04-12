@@ -31,17 +31,6 @@ class PromptLog(SQLModel, table=True):
         return json.loads(self.response)
 
 
-class SearchLog(SQLModel, table=True):
-    """Log of every Perplexity search call and its response."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
-    query: str = Field(index=True)
-    response: str
-    duration_ms: int | None = None
-    trigger: str = Field(default="user_message", index=True)  # SearchTrigger enum value
-
-
 class MessageLog(SQLModel, table=True):
     """Log of every user message and agent response."""
 

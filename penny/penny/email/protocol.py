@@ -21,7 +21,6 @@ class EmailClient(Protocol):
         subject: str | None = None,
         after: str | None = None,
         before: str | None = None,
-        limit: int = 10,
     ) -> list[EmailSummary]:
         """Search emails and return summaries."""
         ...

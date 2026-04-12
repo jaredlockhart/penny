@@ -1,8 +1,7 @@
-"""Penny-specific similarity operations.
+"""Penny-specific similarity operations that depend on LlmClient or penny's data model.
 
-Re-exports DedupStrategy and is_embedding_duplicate from the shared
-similarity package for backward compatibility.  Keeps penny-specific
-functions that depend on LlmClient or penny's data model.
+Pure math primitives (cosine, TCR, dedup, serialization) live in the shared
+`similarity/` package — import those directly, not via this module.
 """
 
 from __future__ import annotations
@@ -10,24 +9,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from similarity.dedup import DedupStrategy, is_embedding_duplicate
 from similarity.embeddings import cosine_similarity, deserialize_embedding
+
+from penny.llm.models import LlmError
 
 if TYPE_CHECKING:
     from penny.llm.client import LlmClient
 
 logger = logging.getLogger(__name__)
-
-# Re-export so existing imports work
-__all__ = [
-    "DedupStrategy",
-    "centrality_score",
-    "centrality_scores",
-    "compute_mention_weighted_sentiment",
-    "embed_text",
-    "is_embedding_duplicate",
-    "novelty_score",
-]
 
 # ── Safe embedding helper ─────────────────────────────────────────────────────
 
@@ -42,7 +31,7 @@ async def embed_text(
     try:
         vecs = await client.embed(text)
         return vecs[0]
-    except Exception:
+    except LlmError:
         logger.warning("Failed to embed text: %.60s", text)
         return None
 

@@ -184,9 +184,9 @@ class DiscordChannel(MessageChannel):
         author = DiscordUser(
             id=str(message.author.id),
             username=message.author.name,
-            discriminator=getattr(message.author, "discriminator", ""),
+            discriminator=message.author.discriminator,
             bot=message.author.bot,
-            global_name=getattr(message.author, "global_name", None),
+            global_name=message.author.global_name,
         )
         discord_message = DiscordMessage(
             id=str(message.id),

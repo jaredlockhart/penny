@@ -107,7 +107,7 @@ class Penny:
         )
         self.image_client = (
             OllamaImageClient(
-                api_url=config.ollama_api_url,
+                api_url=config.image_api_url,
                 model=config.llm_image_model,
                 max_retries=config.llm_max_retries,
                 retry_delay=config.llm_retry_delay,
@@ -462,9 +462,7 @@ class Penny:
             logger.info("Ollama model: %s (image generation)", self.config.llm_image_model)
 
         # Validate channel connectivity before starting
-        validate_fn = getattr(self.channel, "validate_connectivity", None)
-        if validate_fn and callable(validate_fn):
-            await validate_fn()
+        await self.channel.validate_connectivity()
 
         await self._validate_optional_models()
         await self._backfill_all_embeddings()

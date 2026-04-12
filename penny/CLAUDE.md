@@ -8,7 +8,7 @@ flowchart TD
 
     subgraph Foreground["Foreground (ChatAgent)"]
         Channel -->|extract| CA[ChatAgent]
-        CA -->|"prompt + tools"| FG_Ollama["Ollama<br>Ollama"]
+        CA -->|"prompt + tools"| FG_Ollama["LLM<br>(OpenAI SDK)"]
         FG_Ollama -->|tool call| Browse[BrowseTool]
         Browse -->|"read page"| Browser[Browser Extension]
         Browse -->|"web search"| Browser
@@ -22,15 +22,15 @@ flowchart TD
     subgraph Scheduler["Background Scheduler (when idle)"]
         direction TB
 
-        SE[ScheduleExecutor] -->|"cron tasks"| FG_Ollama2["Ollama<br>Ollama"]
+        SE[ScheduleExecutor] -->|"cron tasks"| FG_Ollama2["LLM<br>(OpenAI SDK)"]
 
-        Think[ThinkingAgent] -->|"inner monologue<br>+ tools"| FG_Ollama3["Ollama<br>Ollama"]
+        Think[ThinkingAgent] -->|"inner monologue<br>+ tools"| FG_Ollama3["LLM<br>(OpenAI SDK)"]
         Think -.->|"stored thoughts"| DB
 
-        History[HistoryAgent] -->|"summarize + extract<br>preferences"| FG_Ollama4["Ollama<br>Ollama"]
+        History[HistoryAgent] -->|"summarize + extract<br>preferences"| FG_Ollama4["LLM<br>(OpenAI SDK)"]
         History -.->|"topic summaries<br>+ preferences"| DB
 
-        Notify[NotifyAgent] -->|"thoughts,<br>check-ins"| FG_Ollama5["Ollama<br>Ollama"]
+        Notify[NotifyAgent] -->|"thoughts,<br>check-ins"| FG_Ollama5["LLM<br>(OpenAI SDK)"]
     end
 
     Notify -->|proactive message| Channel
@@ -140,17 +140,27 @@ penny/
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
     migrations/       — Numbered migration files (0001–0023)
-  ollama/
-    client.py         — OllamaClient: wraps official ollama SDK async client (chat, generate, embed)
-    models.py         — ChatResponse, ChatResponseMessage
-    embeddings.py     — Re-exports from shared similarity/ package (serialize, deserialize, TCR)
+  llm/
+    client.py         — LlmClient: OpenAI SDK wrapper (chat + embed) for any OpenAI-compatible backend (Ollama, omlx, etc.)
+    image_client.py   — OllamaImageClient: Ollama-specific HTTP client for image generation and model listing
+    models.py         — LlmMessage, LlmResponse, LlmToolCall, LlmError hierarchy (SDK-decoupled Pydantic types)
+    embeddings.py     — Re-exports serialize/deserialize/cosine from shared similarity/ package
     similarity.py     — Penny-specific: embed_text, sentiment scores, novelty, preference vectors
+  email/
+    protocol.py       — EmailClient Protocol — shared interface for JMAP + Zoho email backends
+  jmap/
+    client.py         — JmapClient: Fastmail JMAP API client (httpx)
+    models.py         — JmapSession, EmailAddress, EmailSummary, EmailDetail
+  zoho/
+    client.py         — ZohoClient: Zoho Mail API client (httpx + OAuth refresh)
+    models.py         — Zoho Mail API Pydantic models
+  html_utils.py       — Shared HTML text extraction helpers
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
     test_embeddings.py, test_similarity.py, test_periodic_schedule.py, test_scheduler.py
     mocks/
       signal_server.py  — Mock Signal WebSocket + REST server (aiohttp)
-      ollama_patches.py — Ollama SDK monkeypatch (MockOllamaAsyncClient)
+      llm_patches.py    — MockLlmClient: patches openai.AsyncOpenAI for chat + embed
     agents/           — Per-agent integration tests
       test_message.py, test_thinking.py, test_agentic_loop.py,
       test_context.py, test_history.py, test_notify.py
@@ -168,7 +178,7 @@ penny/
       zoho/test_client.py
     tools/            — Tool tests
       test_tool_timeout.py, test_tool_not_found.py, test_tool_reasoning.py
-Dockerfile            — Python 3.12-slim
+Dockerfile            — Python 3.14-slim
 pyproject.toml        — Dependencies and project metadata
 ```
 
@@ -176,7 +186,7 @@ pyproject.toml        — Dependencies and project metadata
 
 ### Agent Base Class (`agents/base.py`)
 The base `Agent` class implements the core agentic loop:
-- Calls Ollama with available tools
+- Calls the LLM (via `LlmClient`) with available tools
 - Executes tool calls via `ToolExecutor` with parameter validation
 - Handles duplicate tool call prevention
 - Appends source URLs to responses when model omits them
@@ -191,21 +201,21 @@ Each agent overrides `_build_system_prompt(user)` to compose its prompt from reu
 
 Conversation embeddings are computed once per request and shared between knowledge and message retrieval (the message path uses just the last element).
 
-### Shared Ollama Client Instances
+### Shared LLM Client Instances
 
-All OllamaClient instances are created centrally in `Penny.__init__()` and shared across agents and commands:
+All `LlmClient` instances are created centrally in `Penny.__init__()` and shared across agents and commands. `LlmClient` uses the OpenAI Python SDK and targets any OpenAI-compatible endpoint (Ollama's OpenAI-compat layer by default, or omlx/OpenAI cloud with a different `base_url`):
 
 - `model_client`: Text model for all agents and commands
 - `vision_model_client`: Optional vision model for image understanding
 - `embedding_model_client`: Optional embedding model for preference deduplication
-- `image_model_client`: Optional image generation model for `/draw` command
+- `image_model_client`: `OllamaImageClient` for `/draw` (image generation uses Ollama's native REST API, not OpenAI-compatible)
 
 ### Specialized Agents
 
 **ChatAgent** (`agents/chat.py`)
 - Handles incoming user messages with tools (BrowseTool for search and page reading)
 - Prompt: identity + profile + knowledge + related messages + page hint + conversation instructions
-- Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the Ollama
+- Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the text LLM
 
 **NotifyAgent** (`agents/notify.py`)
 - Notification outreach — sends thoughts and check-ins when users are idle
@@ -321,7 +331,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 ### Conditional Commands (registered based on config)
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop` (requires message agent factory)
-- **/draw** (`draw.py`): Generate images via Ollama image model (requires `OLLAMA_IMAGE_MODEL`)
+- **/draw** (`draw.py`): Generate images via Ollama image model (requires `LLM_IMAGE_MODEL`)
 - **/bug** (`bug.py`): File a bug report on GitHub (requires GitHub App config)
 - **/feature** (`feature.py`): File a feature request on GitHub (requires GitHub App config)
 - **/email** (`email/command.py`): Search email via enabled email provider (requires API credentials in .env)
@@ -332,22 +342,23 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `RuntimeParams` class provides attribute access: `config.runtime.IDLE_SECONDS`
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Groups: Global (max steps, image/email timeouts, embedding batch limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, mention threshold, weekly context limit), Notify (check interval, cooldowns, candidates, check-in image prompt)
+- Groups: Global (max steps, image/email timeouts, embedding batch limits, email body/search/list limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, mention threshold, weekly context limit), Notify (check interval, cooldowns, candidates, check-in image prompt)
 
 ## Data Model
 
 All tables defined in `database/models.py` as SQLModel classes:
 
-- **PromptLog**: Every Ollama call — `model`, `messages` (JSON), `response` (JSON), `thinking`, `duration_ms`
-- **SearchLog**: Legacy table (no longer written to) — historical search logs
+- **PromptLog**: Every LLM call — `model`, `messages` (JSON), `response` (JSON), `thinking`, `duration_ms`, `agent_name`, `run_id`, `outcome`
 - **MessageLog**: Every user/agent message — `direction`, `sender`, `content`, `parent_id` (thread chain), `external_id` (platform ID), `is_reaction`, `thought_id` FK (notification source)
 - **UserInfo**: User profile — `name`, `location`, `timezone` (IANA), `date_of_birth`
 - **CommandLog**: Command invocations — `command_name`, `command_args`, `response`, `error`
 - **RuntimeConfig**: User-configurable settings — `key`, `value` (string, parsed on read)
 - **Schedule**: User-created cron tasks — `cron_expression`, `prompt_text`, `user_timezone`
 - **MuteState**: Per-user mute state — row exists = muted, delete = unmuted
-- **Thought**: Inner monologue entries — `content` (full monologue), `preference_id` FK (seed preference), `notified_at`
-- **Preference**: User sentiment signals — `content`, `valence` (positive/negative), `source` (manual/extracted), `mention_count`, `embedding` (serialized float32 vector), `source_period_start`/`end`, `last_thought_at`. Extracted preferences must reach `PREFERENCE_MENTION_THRESHOLD` mentions before becoming thinking candidates; manual (`/like`) preferences bypass this gate
+- **Device**: Registered devices (Signal, Discord, browser addons) — used for multi-device routing and domain permission prompts
+- **DomainPermission**: Per-domain allow/deny state for browser extension web access, synced across addons
+- **Thought**: Inner monologue entries — `content` (full monologue), `title`, `image`, `valence`, `preference_id` FK (seed preference), `run_id`, `notified_at`
+- **Preference**: User sentiment signals — `content`, `valence` (positive/negative), `source` (manual/extracted), `mention_count`, `embedding` (serialized float32 vector), `last_thought_at`. Extracted preferences must reach `PREFERENCE_MENTION_THRESHOLD` mentions before becoming thinking candidates; manual (`/like`) preferences bypass this gate
 - **Knowledge**: Summarized web page content — `url` (unique), `title`, `summary` (prose paragraph), `embedding`, `source_prompt_id` FK (extraction watermark). One entry per URL, upserted on revisit
 
 ## Message Flow
@@ -381,11 +392,11 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **Priority scheduling**: Schedule executor → history → notify → thinking (agents with no work are skipped each tick)
 - **Always-run schedules**: User-created schedules run regardless of idle state; thinking/history wait for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
-- **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free Ollama immediately; cancelled work is idempotent and retried next cycle
+- **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free the LLM immediately; cancelled work is idempotent and retried next cycle
 - **Commands don't interrupt background**: Slash commands run cooperatively without cancelling the active background task
-- **Vision captioning**: When images are present and `OLLAMA_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the Ollama. Search tools are disabled for image messages
+- **Vision captioning**: When images are present and `LLM_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the text LLM. Search tools are disabled for image messages
 - **Channel abstraction**: Signal and Discord share the same interface; easy to add more platforms
-- **Async throughout**: asyncio, httpx.AsyncClient, ollama.AsyncClient, discord.py
+- **Async throughout**: asyncio, httpx.AsyncClient, openai.AsyncOpenAI, discord.py
 - **Host networking**: Docker container uses --network host for simplicity (all services on localhost)
 - **Pydantic everywhere**: All external data validated with Pydantic models
 - **Table-to-bullets**: Markdown tables converted to bullet points in Python (saves model tokens vs. prompting "no tables")
@@ -393,13 +404,13 @@ All tables defined in `database/models.py` as SQLModel classes:
 
 ## Dependencies
 
-- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `ollama`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`
+- `websockets`, `httpx`, `python-dotenv`, `pydantic`, `sqlmodel`, `openai`, `discord.py`, `psutil`, `dateparser`, `timezonefinder`, `geopy`, `pytz`, `croniter`, `PyJWT`
 - Dev: `ruff` (lint/format), `ty` (type check), `pytest`, `pytest-asyncio`, `aiohttp` (mock Signal server)
-- Python 3.12+
+- Python 3.14+
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0008):
+File-based migration system in `database/migrations/` (currently 0001–0024):
 - Each migration is a numbered Python file (e.g., `0001_initial_schema.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -413,12 +424,27 @@ Notable migrations:
 - 0001: Initial schema (all core tables)
 - 0002: `thought.notified_at` column
 - 0003: Preference deduplication
-- 0004: Drop `entity` and `fact` tables (knowledge system removed)
+- 0004: Drop `entity` and `fact` tables (old knowledge system removed)
 - 0005: `preference.last_thought_at` column
 - 0006: `messagelog.thought_id` FK (links messages to notification thoughts)
 - 0007: `thought.preference_id` FK (links thoughts to seed preferences)
 - 0008: `preference.source` + `preference.mention_count` (mention threshold gating)
+- 0009: Drop `searchlog.extracted` column
+- 0010: Reset reaction `processed` state
+- 0011: Drop `preference.source_period_start/end` columns
+- 0012: Fix `is_reaction` flag on historical reaction rows
+- 0013: Reset conversation history watermarks
+- 0014: Add embedding columns (preference, knowledge, etc.)
+- 0015: `thought.title` column
+- 0016: `device` table (multi-device routing)
+- 0017: `thought.image_url` column
+- 0018: `thought.valence` column
+- 0019: `domain_permission` table (browser extension allowlist)
+- 0020: Rename `thought.image_url` → `thought.image`
+- 0021: `promptlog.agent_name` + `promptlog.run_id` columns
+- 0022: `promptlog.outcome` + `thought.run_id` columns
 - 0023: Add `knowledge` table, drop `conversationhistory` (replaced by knowledge + related messages)
+- 0024: Drop legacy `searchlog` table (never written to since browser-based search)
 
 ## Extending
 
@@ -427,7 +453,7 @@ Notable migrations:
 - **New agent type**: Subclass `Agent`, implement `execute()` for background tasks or custom `handle()` for message processing
 - **New command**: Subclass `Command` in commands/, implement `name`, `description`, `execute()`, register in `create_command_registry()`
 - **New schedule type**: Subclass `Schedule`, implement `should_run()`, `reset()`, `mark_complete()`
-- **New LLM**: Match `OllamaClient` interface (`async chat()`, `async generate()`)
+- **New LLM backend**: Any OpenAI-compatible endpoint works via `LlmClient` — just set `base_url` / `api_key`. Non-OpenAI-compatible backends can implement the `LlmClient` interface directly (`async chat()`, `async embed()`)
 
 ## Test Infrastructure
 
@@ -435,14 +461,15 @@ Strongly prefer end-to-end integration tests over unit tests. Test through publi
 
 **Mocks** (in `tests/mocks/`):
 - `MockSignalServer`: WebSocket + REST server using aiohttp, captures outgoing messages and typing events
-- `MockOllamaAsyncClient`: Monkeypatches `ollama.AsyncClient`, configurable responses via `set_default_flow()` or `set_response_handler()`
+- `MockLlmClient` (`llm_patches.py`): Monkeypatches `openai.AsyncOpenAI` so `LlmClient` returns canned `LlmResponse` objects; configurable via `set_default_flow()` or `set_response_handler()`; tracks `requests` and `embed_requests` for assertions
+
 **Fixtures** (in `tests/conftest.py`):
 - `TEST_SENDER`: Standard test phone number constant
 - `signal_server`: Starts mock Signal server on random port
-- `mock_ollama`: Patches Ollama SDK with configurable responses
+- `mock_llm`: Patches the OpenAI SDK with configurable responses
 - `make_config`: Factory for creating test configs with custom overrides
 - `running_penny`: Async context manager for running Penny with cleanup (uses WebSocket detection, not sleep)
-- `setup_ollama_flow`: Factory to configure mock Ollama for message + background task flow
+- `setup_llm_flow`: Factory to configure mock LLM for message + background task flow
 - `wait_until(condition, timeout, interval)`: Polls a condition every 50ms until true or timeout (10s default)
 
 **Test Timing** — never use `asyncio.sleep(N)` in tests:
@@ -453,10 +480,10 @@ Strongly prefer end-to-end integration tests over unit tests. Test through publi
 
 **Test Flow**:
 1. Start mock Signal server (random port)
-2. Monkeypatch Ollama and search SDKs
+2. Monkeypatch the OpenAI SDK (via `mock_llm`)
 3. Create Penny with test config pointing to Signal mock
 4. Push message through mock Signal WebSocket
 5. `wait_until` the expected side effect (outgoing message, DB change, etc.)
-6. Assert on captured messages, Ollama requests, DB state
+6. Assert on captured messages, LLM requests, DB state
 
 **Performance**: Test suite runs in ~30s (`scheduler_tick_interval` set to 0.05s in tests)
