@@ -311,7 +311,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 
 ### Conditional Commands (registered based on config)
 - **/test** (`test.py`): Enters isolated test mode — creates a separate DB and fresh agents for testing without affecting production data. Exit with `/test stop` (requires message agent factory)
-- **/draw** (`draw.py`): Generate images via Ollama image model (requires `OLLAMA_IMAGE_MODEL`)
+- **/draw** (`draw.py`): Generate images via Ollama image model (requires `LLM_IMAGE_MODEL`)
 - **/bug** (`bug.py`): File a bug report on GitHub (requires GitHub App config)
 - **/feature** (`feature.py`): File a feature request on GitHub (requires GitHub App config)
 - **/email** (`email.py`): Search Fastmail email via JMAP (requires `FASTMAIL_API_TOKEN`)
@@ -375,7 +375,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free the LLM immediately; cancelled work is idempotent and retried next cycle
 - **Commands don't interrupt background**: Slash commands run cooperatively without cancelling the active background task
-- **Vision captioning**: When images are present and `OLLAMA_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the text LLM. Search tools are disabled for image messages
+- **Vision captioning**: When images are present and `LLM_VISION_MODEL` is configured, the vision model captions the image first with a vision-specific system prompt, then a combined prompt is forwarded to the text LLM. Search tools are disabled for image messages
 - **Channel abstraction**: Signal and Discord share the same interface; easy to add more platforms
 - **Async throughout**: asyncio, httpx.AsyncClient, openai.AsyncOpenAI, discord.py
 - **Host networking**: Docker container uses --network host for simplicity (all services on localhost)

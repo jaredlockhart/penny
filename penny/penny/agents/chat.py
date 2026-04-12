@@ -203,7 +203,7 @@ class ChatAgent(Agent):
         """Caption an image using the vision model.
 
         The channel layer rejects image messages before they reach this
-        method when ``OLLAMA_VISION_MODEL`` is unset, so the client is
+        method when ``LLM_VISION_MODEL`` is unset, so the client is
         guaranteed to exist by the time we get here. Guard explicitly so
         the type narrows without an assert.
         """

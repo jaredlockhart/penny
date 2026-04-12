@@ -143,7 +143,7 @@ Penny uses up to four LLM model roles, all running locally by default:
 | **Vision** | `LLM_VISION_MODEL` | Image captioning when users send photos | Optional |
 | **Image** | `LLM_IMAGE_MODEL` | Image generation via `/draw` | Optional |
 
-Text, vision, and embedding all go through the OpenAI SDK and can each point at a different OpenAI-compatible endpoint via the corresponding `LLM_*_API_URL` / `LLM_*_API_KEY` overrides — useful when running text on one machine and embeddings on another. Image generation is the one exception: it talks to Ollama's `/api/generate` endpoint directly because there's no OpenAI-compatible image generation protocol that works with local models, so `/draw` requires an Ollama-compatible image backend at `OLLAMA_API_URL`.
+Text, vision, and embedding all go through the OpenAI SDK and can each point at a different OpenAI-compatible endpoint via the corresponding `LLM_*_API_URL` / `LLM_*_API_KEY` overrides — useful when running text on one machine and embeddings on another. Image generation is the one exception: it talks to Ollama's `/api/generate` endpoint directly (set `LLM_IMAGE_API_URL`), because there's no OpenAI-compatible image generation protocol that works with local models.
 
 ### Scheduling
 
@@ -250,7 +250,8 @@ LLM_MODEL="gpt-oss:20b"                   # Single model for all agents
 # LLM_API_KEY="not-needed"                # Default fine for unauthenticated local backends
 # LLM_VISION_MODEL="qwen3-vl"             # Optional, enables vision/image messages
 # LLM_EMBEDDING_MODEL="embeddinggemma"    # Optional, enables preference/knowledge embeddings
-# LLM_IMAGE_MODEL="x/z-image-turbo"       # Optional, enables /draw (talks to OLLAMA_API_URL — see Configuration Reference)
+# LLM_IMAGE_MODEL="x/z-image-turbo"       # Optional, enables /draw (uses LLM_IMAGE_API_URL)
+# LLM_IMAGE_API_URL="http://host.docker.internal:11434"  # Ollama REST for /draw
 
 # Database & Logging
 DB_PATH="/penny/data/penny/penny.db"
@@ -292,9 +293,8 @@ Penny auto-detects which channel to use based on configured credentials:
 - `LLM_VISION_API_URL` / `LLM_VISION_API_KEY`: Override API URL/key for the vision model (e.g., to run vision on a different host)
 - `LLM_EMBEDDING_MODEL`: Dedicated embedding model (e.g., `embeddinggemma`). Optional; enables preference/knowledge/message embeddings
 - `LLM_EMBEDDING_API_URL` / `LLM_EMBEDDING_API_KEY`: Override API URL/key for the embedding model
-- `LLM_IMAGE_MODEL`: Image generation model (e.g., `x/z-image-turbo`). Optional; enables `/draw`. **Image generation is the one exception to the OpenAI-compatible story** — it talks to Ollama's `/api/generate` directly because there's no equivalent in the OpenAI protocol for local image models. `OLLAMA_API_URL` controls the endpoint it hits
-
-The legacy `OLLAMA_*` env names (`OLLAMA_API_URL`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL`, `OLLAMA_IMAGE_MODEL`, `OLLAMA_EMBEDDING_MODEL`) are still accepted as fallbacks for backwards compatibility with older `.env` files, but the `LLM_*` names above are canonical.
+- `LLM_IMAGE_MODEL`: Image generation model (e.g., `x/z-image-turbo`). Optional; enables `/draw`. Image generation is the one non-OpenAI endpoint — it talks to Ollama's `/api/generate` directly
+- `LLM_IMAGE_API_URL`: Ollama REST endpoint for image generation (default: `http://host.docker.internal:11434`)
 
 **API Keys:**
 - `FASTMAIL_API_TOKEN`: enables `/email`

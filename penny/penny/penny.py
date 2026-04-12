@@ -107,7 +107,7 @@ class Penny:
         )
         self.image_client = (
             OllamaImageClient(
-                api_url=config.ollama_api_url,
+                api_url=config.image_api_url,
                 model=config.llm_image_model,
                 max_retries=config.llm_max_retries,
                 retry_delay=config.llm_retry_delay,

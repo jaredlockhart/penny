@@ -158,15 +158,17 @@ GitHub Actions runs `make check` (format, lint, typecheck, tests) on every push 
 - `BROWSER_HOST`: WebSocket bind address (default: "localhost", use "0.0.0.0" in Docker)
 - `BROWSER_PORT`: WebSocket port (default: 9090, must be exposed in docker-compose)
 
-**Ollama**:
-- `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
-- `OLLAMA_MODEL`: Single text model for all penny agents — chat, thinking, history, notify, schedules (default: gpt-oss:20b)
-- `OLLAMA_BACKGROUND_MODEL`: Used only by penny-team's Quality agent for response evaluation — if set, the Quality agent is registered. Not used by penny
-- `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
-- `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables the `/draw` command when set
-- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model for preference/history dedup and embeddings (e.g., embeddinggemma). Optional; preferences stored without embeddings if unset
-- `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
-- `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
+**LLM** (OpenAI-compatible endpoint — no Ollama-specific dependencies in the runtime):
+- `LLM_API_URL`: API endpoint (default: http://host.docker.internal:11434)
+- `LLM_MODEL`: Single text model for all penny agents — chat, thinking, history, notify, schedules (default: gpt-oss:20b)
+- `LLM_API_KEY`: API key (default: "not-needed")
+- `LLM_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional; if unset, image messages get an acknowledgment response
+- `LLM_VISION_API_URL` / `LLM_VISION_API_KEY`: Override endpoint for vision model
+- `LLM_EMBEDDING_MODEL`: Dedicated embedding model (e.g., embeddinggemma). Optional; preferences stored without embeddings if unset
+- `LLM_EMBEDDING_API_URL` / `LLM_EMBEDDING_API_KEY`: Override endpoint for embedding model
+- `LLM_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables `/draw`. Uses Ollama's native REST API at `LLM_IMAGE_API_URL`
+- `LLM_IMAGE_API_URL`: Ollama REST endpoint for image generation (default: http://host.docker.internal:11434)
+- `OLLAMA_BACKGROUND_MODEL`: Used only by penny-team's Quality agent — if set, the Quality agent is registered. Not used by penny
 
 **API Keys**:
 - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude CLI Max plan (agent containers, via `claude setup-token`)
