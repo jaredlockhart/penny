@@ -6,7 +6,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
@@ -484,18 +484,10 @@ class MessageChannel(ABC):
     async def _dispatch_to_agent(self, message: IncomingMessage) -> None:
         """Run the message through the agent loop with typing indicators."""
         device_id = self._resolve_device_id(message)
-        # Resolve to canonical user identity for DB lookups (history, prefs, etc.)
         user_sender = self._resolve_user_sender(message.sender)
 
         if self._needs_profile():
-            self._db.messages.log_message(
-                PennyConstants.MessageDirection.INCOMING,
-                user_sender,
-                message.content,
-                signal_timestamp=message.signal_timestamp,
-                device_id=device_id,
-            )
-            await self.send_status_message(message.sender, PennyResponse.PROFILE_REQUIRED)
+            await self._handle_profile_required(message, user_sender, device_id)
             return
 
         typing_task = asyncio.create_task(self._typing_loop(message.sender))
@@ -503,52 +495,8 @@ class MessageChannel(ABC):
         try:
             if self._scheduler:
                 self._scheduler.notify_foreground_start()
-
             progress = await self._begin_progress(message)
-
-            logger.info("Dispatching to message agent for %s", message.sender)
-            response = await self._message_agent.handle(
-                content=message.content,
-                sender=user_sender,
-                images=message.images or None,
-                page_context=message.page_context,
-                **self._make_handle_kwargs(message, progress),
-            )
-
-            incoming_id = self._db.messages.log_message(
-                PennyConstants.MessageDirection.INCOMING,
-                user_sender,
-                message.content,
-                signal_timestamp=message.signal_timestamp,
-                device_id=device_id,
-            )
-            if incoming_id:
-                await self._embed_message(incoming_id, message.content)
-
-            answer = response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
-            incoming_log = MessageLog(
-                id=incoming_id,
-                direction=PennyConstants.MessageDirection.INCOMING,
-                sender=user_sender,
-                content=message.content,
-                signal_timestamp=message.signal_timestamp,
-            )
-            # Clear the progress indicator before sending the real response so
-            # the user sees "done working" immediately, even if the send takes
-            # a moment. ``clear`` is idempotent so the finally block can call
-            # it again on exception paths without doing anything.
-            if progress is not None:
-                await progress.clear()
-            sent = await self.send_response(
-                message.sender,
-                answer,
-                parent_id=incoming_id,
-                attachments=response.attachments or None,
-                quote_message=incoming_log,
-            )
-            if sent is None:
-                logger.error("Failed to deliver response to %s — notifying user", message.sender)
-                await self.send_status_message(message.sender, PennyResponse.DELIVERY_FAILURE)
+            await self._run_message_through_agent(message, user_sender, device_id, progress)
         finally:
             if progress is not None:
                 await progress.clear()
@@ -556,6 +504,79 @@ class MessageChannel(ABC):
             await self.send_typing(message.sender, False)
             if self._scheduler:
                 self._scheduler.notify_foreground_end()
+
+    async def _handle_profile_required(
+        self, message: IncomingMessage, user_sender: str, device_id: int | None
+    ) -> None:
+        """Log the message but redirect the user to profile setup."""
+        self._db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            user_sender,
+            message.content,
+            signal_timestamp=message.signal_timestamp,
+            device_id=device_id,
+        )
+        await self.send_status_message(message.sender, PennyResponse.PROFILE_REQUIRED)
+
+    async def _run_message_through_agent(
+        self,
+        message: IncomingMessage,
+        user_sender: str,
+        device_id: int | None,
+        progress: ProgressTracker | None,
+    ) -> None:
+        """Invoke the agent, log the incoming message, and deliver the response."""
+        logger.info("Dispatching to message agent for %s", message.sender)
+        response = await self._message_agent.handle(
+            content=message.content,
+            sender=user_sender,
+            images=message.images or None,
+            page_context=message.page_context,
+            **self._make_handle_kwargs(message, progress),
+        )
+        incoming_id = self._db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            user_sender,
+            message.content,
+            signal_timestamp=message.signal_timestamp,
+            device_id=device_id,
+        )
+        if incoming_id:
+            await self._embed_message(incoming_id, message.content)
+        await self._deliver_agent_response(message, user_sender, response, incoming_id, progress)
+
+    async def _deliver_agent_response(
+        self,
+        message: IncomingMessage,
+        user_sender: str,
+        response: Any,
+        incoming_id: int | None,
+        progress: ProgressTracker | None,
+    ) -> None:
+        """Send the agent's response and surface delivery failures."""
+        answer = response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
+        incoming_log = MessageLog(
+            id=incoming_id,
+            direction=PennyConstants.MessageDirection.INCOMING,
+            sender=user_sender,
+            content=message.content,
+            signal_timestamp=message.signal_timestamp,
+        )
+        # Clear progress before sending so the user sees "done working"
+        # immediately even if the send takes a moment. ``clear`` is idempotent
+        # so the finally block can call it again on exception paths.
+        if progress is not None:
+            await progress.clear()
+        sent = await self.send_response(
+            message.sender,
+            answer,
+            parent_id=incoming_id,
+            attachments=response.attachments or None,
+            quote_message=incoming_log,
+        )
+        if sent is None:
+            logger.error("Failed to deliver response to %s — notifying user", message.sender)
+            await self.send_status_message(message.sender, PennyResponse.DELIVERY_FAILURE)
 
     async def _handle_reaction(self, message: IncomingMessage) -> None:
         """Log a reaction as a regular incoming message in the thread."""

@@ -375,12 +375,8 @@ class Agent:
 
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
-
             is_final_step = step == steps - 1
-            strip_tools = is_final_step and not self._keep_tools_on_final_step
-            step_tools = [] if strip_tools else tools
-            if strip_tools:
-                logger.debug("Final step — tools removed, model must produce text")
+            step_tools = self._tools_for_step(tools, is_final_step)
 
             response = await self._call_model_validated(messages, step_tools, run_id, prompt_type)
             if response is None:
@@ -388,30 +384,16 @@ class Agent:
 
             if response.has_tool_calls:
                 result = await self._process_tool_calls(response, called_tools, on_tool_start)
-                messages.extend(result.messages)
-                tool_call_records.extend(result.records)
-                source_urls.extend(result.source_urls)
-                attachments.extend(result.attachments)
-                self._tool_result_images.extend(result.attachments)
+                self._absorb_tool_step_result(
+                    result, messages, tool_call_records, source_urls, attachments
+                )
                 await self.after_step(result.records, result.messages, messages)
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
                     break
-                if len(tool_call_records) >= PennyConstants.TOOL_FAILURE_ABORT_THRESHOLD and all(
-                    r.failed for r in tool_call_records
-                ):
-                    failed_tools = sorted({r.tool for r in tool_call_records})
-                    logger.warning(
-                        "All %d tool call(s) failed — aborting: %s",
-                        len(tool_call_records),
-                        ", ".join(failed_tools),
-                    )
-                    return ControllerResponse(
-                        answer=PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(
-                            tools=", ".join(failed_tools)
-                        ),
-                        tool_calls=tool_call_records,
-                    )
+                abort = self._abort_if_all_tools_failed(tool_call_records)
+                if abort is not None:
+                    return abort
                 continue
 
             if await self.handle_text_step(response, messages, step, is_final_step):
@@ -422,6 +404,47 @@ class Agent:
         logger.warning("Max steps reached without final answer")
         return ControllerResponse(
             answer=PennyResponse.AGENT_MAX_STEPS, tool_calls=tool_call_records
+        )
+
+    def _tools_for_step(self, tools: list[dict], is_final_step: bool) -> list[dict]:
+        """Strip tools on the final step unless the agent keeps them available."""
+        if is_final_step and not self._keep_tools_on_final_step:
+            logger.debug("Final step — tools removed, model must produce text")
+            return []
+        return tools
+
+    def _absorb_tool_step_result(
+        self,
+        result: Any,
+        messages: list[dict],
+        tool_call_records: list[ToolCallRecord],
+        source_urls: list[str],
+        attachments: list[str],
+    ) -> None:
+        """Append a step's tool-call output into the running loop state."""
+        messages.extend(result.messages)
+        tool_call_records.extend(result.records)
+        source_urls.extend(result.source_urls)
+        attachments.extend(result.attachments)
+        self._tool_result_images.extend(result.attachments)
+
+    def _abort_if_all_tools_failed(
+        self, tool_call_records: list[ToolCallRecord]
+    ) -> ControllerResponse | None:
+        """Return an early-exit response if every tool call so far has failed."""
+        if len(tool_call_records) < PennyConstants.TOOL_FAILURE_ABORT_THRESHOLD:
+            return None
+        if not all(r.failed for r in tool_call_records):
+            return None
+        failed_tools = sorted({r.tool for r in tool_call_records})
+        logger.warning(
+            "All %d tool call(s) failed — aborting: %s",
+            len(tool_call_records),
+            ", ".join(failed_tools),
+        )
+        return ControllerResponse(
+            answer=PennyResponse.AGENT_TOOLS_UNAVAILABLE.format(tools=", ".join(failed_tools)),
+            tool_calls=tool_call_records,
         )
 
     def on_response(self, response) -> None:
@@ -475,57 +498,68 @@ class Agent:
         max_retries = PennyConstants.RESPONSE_VALIDATION_RETRIES
         effective_tools = tools if tools else None
         retried: set[ValidationReason] = set()
+        response = None
 
         for attempt in range(max_retries):
-            try:
-                response = await self._model_client.chat(
-                    messages=messages,
-                    tools=effective_tools,
-                    agent_name=self.name,
-                    prompt_type=prompt_type,
-                    run_id=run_id,
-                )
-            except Exception as exception:
-                logger.error("Error calling Ollama: %s", exception)
+            response = await self._invoke_model(messages, effective_tools, run_id, prompt_type)
+            if response is None:
                 return None
 
-            # Tool calls with tools available — return immediately, no validation
             if response.has_tool_calls and effective_tools is not None:
                 return response
-
-            # Hallucinated tool calls (tools stripped) — clear and validate content
             if response.has_tool_calls and effective_tools is None:
                 logger.warning("Model hallucinated tool calls without tools — stripping")
                 response.message.tool_calls = None
 
             self.on_response(response)
-            content = response.content.strip()
-            reason = self._check_response(content, retried, messages)
+            reason = self._check_response(response.content.strip(), retried, messages)
             if reason is None:
                 return response
 
             retried.add(reason)
             logger.warning(
-                "Invalid response (%s) on attempt %d/%d",
-                reason,
-                attempt + 1,
-                max_retries,
+                "Invalid response (%s) on attempt %d/%d", reason, attempt + 1, max_retries
             )
-
-            # Append the bad response so the model sees what it produced
-            messages.append(response.message.to_input_message())
-
-            # Empty content: nudge depends on whether the model still has tools
-            if reason == ValidationReason.EMPTY:
-                if effective_tools is None:
-                    # Final step, tools stripped — force synthesis
-                    nudge = _build_strong_nudge(messages)
-                else:
-                    # Mid-loop, tools still available — gentle nudge to continue
-                    nudge = Prompt.CONTINUE_NUDGE
-                messages.append({"role": MessageRole.USER, "content": nudge})
+            self._append_retry_nudge(messages, response, reason, effective_tools)
 
         return response
+
+    async def _invoke_model(
+        self,
+        messages: list[dict],
+        effective_tools: list[dict] | None,
+        run_id: str | None,
+        prompt_type: str | None,
+    ):
+        """Call the LLM, returning ``None`` on connection/response errors."""
+        try:
+            return await self._model_client.chat(
+                messages=messages,
+                tools=effective_tools,
+                agent_name=self.name,
+                prompt_type=prompt_type,
+                run_id=run_id,
+            )
+        except LlmError as exception:
+            logger.error("LLM chat failed: %s", exception)
+            return None
+
+    def _append_retry_nudge(
+        self,
+        messages: list[dict],
+        response: Any,
+        reason: ValidationReason,
+        effective_tools: list[dict] | None,
+    ) -> None:
+        """Append the bad response and, for empty content, a nudge prompting synthesis."""
+        messages.append(response.message.to_input_message())
+        if reason != ValidationReason.EMPTY:
+            return
+        # Empty content: nudge depends on whether the model still has tools.
+        # Final step (tools stripped) gets a strong synthesis demand; mid-loop
+        # gets a gentle continue.
+        nudge = _build_strong_nudge(messages) if effective_tools is None else Prompt.CONTINUE_NUDGE
+        messages.append({"role": MessageRole.USER, "content": nudge})
 
     def _check_response(
         self,
@@ -667,14 +701,41 @@ class Agent:
         source_urls: list[str] = []
         attachments: list[str] = []
 
-        # Dedup check and on_tool_start are sequential: dedup requires ordered mutation of
-        # called_tools, and on_tool_start fires UI status updates before execution begins.
+        pending = self._dedup_tool_calls(response, called_tools, messages)
+        await self._notify_tool_start(on_tool_start, pending)
+
+        results = await asyncio.gather(
+            *[
+                self._execute_single_tool(name, args, reasoning)
+                for _, name, args, reasoning in pending
+            ]
+        )
+
+        self._collect_tool_results(pending, results, messages, records, source_urls, attachments)
+
+        return _StepResult(
+            messages=messages,
+            records=records,
+            source_urls=source_urls,
+            attachments=attachments,
+        )
+
+    def _dedup_tool_calls(
+        self,
+        response: Any,
+        called_tools: set[tuple[str, ...]],
+        messages: list[dict],
+    ) -> list[tuple[str, str, dict, str | None]]:
+        """Filter out repeat tool calls, returning the pending ones to execute.
+
+        Repeats append a "you already called this" message in place so the
+        model sees the rejection. Mutates ``called_tools`` and ``messages``.
+        """
         pending: list[tuple[str, str, dict, str | None]] = []
         for tool_call in response.message.tool_calls or []:
             tool_call_id = tool_call.id
             tool_name = tool_call.function.name
             arguments = tool_call.function.arguments
-
             # Pop reasoning before dedup (same args + different reasoning = repeat)
             reasoning = arguments.pop("reasoning", None)
             call_key = self._make_call_key(tool_name, arguments)
@@ -689,23 +750,31 @@ class Agent:
 
             called_tools.add(call_key)
             pending.append((tool_call_id, tool_name, arguments, reasoning))
+        return pending
 
-        # Fire on_tool_start once with all pending tools so the UI can show
-        # a combined status (e.g. "Searching A + Searching B") for parallel calls.
-        if on_tool_start and pending:
-            try:
-                await on_tool_start([(name, dict(args)) for _, name, args, _ in pending])
-            except Exception:
-                logger.debug("on_tool_start callback failed")
+    async def _notify_tool_start(
+        self,
+        on_tool_start: Callable[[list[tuple[str, dict]]], Awaitable[None]] | None,
+        pending: list[tuple[str, str, dict, str | None]],
+    ) -> None:
+        """Fire on_tool_start once with the full pending batch so UI can show combined status."""
+        if not on_tool_start or not pending:
+            return
+        try:
+            await on_tool_start([(name, dict(args)) for _, name, args, _ in pending])
+        except RuntimeError, ValueError:
+            logger.debug("on_tool_start callback failed")
 
-        # Execute all valid tool calls in parallel.
-        results = await asyncio.gather(
-            *[
-                self._execute_single_tool(name, args, reasoning)
-                for _, name, args, reasoning in pending
-            ]
-        )
-
+    def _collect_tool_results(
+        self,
+        pending: list[tuple[str, str, dict, str | None]],
+        results: list[tuple[str, ToolCallRecord, list[str], str | None]],
+        messages: list[dict],
+        records: list[ToolCallRecord],
+        source_urls: list[str],
+        attachments: list[str],
+    ) -> None:
+        """Append each tool result to messages and accumulate records/urls/images."""
         for (tool_call_id, _, _, _), (result_str, record, urls, image) in zip(
             pending, results, strict=True
         ):
@@ -716,13 +785,6 @@ class Agent:
             messages.append(
                 {"role": MessageRole.TOOL, "content": result_str, "tool_call_id": tool_call_id}
             )
-
-        return _StepResult(
-            messages=messages,
-            records=records,
-            source_urls=source_urls,
-            attachments=attachments,
-        )
 
     async def _execute_single_tool(
         self,
