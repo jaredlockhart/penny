@@ -11,7 +11,7 @@
 [![CI](https://github.com/jaredlockhart/penny/actions/workflows/check.yml/badge.svg)](https://github.com/jaredlockhart/penny/actions/workflows/check.yml)
 ![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
-![Ollama](https://img.shields.io/badge/Ollama-local%20LLM-blueviolet)
+![OpenAI-compatible LLM](https://img.shields.io/badge/LLM-OpenAI--compatible-blueviolet)
 ![Signal](https://img.shields.io/badge/Signal-messaging-3a76f0)
 ![Discord](https://img.shields.io/badge/Discord-bot-5865f2)
 ![Firefox](https://img.shields.io/badge/Firefox-extension-ff7139)
@@ -36,7 +36,7 @@ Penny is a feed only for you. Private, personal, and local.
 
 ### Conversations
 
-When you send Penny a message, she always searches the web before responding — she never makes things up from model knowledge. A local LLM reads the search results and writes a response in her own voice: casual, calm, with sources. Penny uses the OpenAI Python SDK against any OpenAI-compatible endpoint — [Ollama](https://ollama.com) by default, but [omlx](https://github.com/madroidmaq/omlx), OpenAI cloud, or anything else that speaks the protocol works too.
+When you send Penny a message, she always searches the web before responding — she never makes things up from model knowledge. A local LLM reads the search results and writes a response in her own voice: casual, calm, with sources. Penny uses the OpenAI Python SDK against any OpenAI-compatible endpoint, so you can run her against [Ollama](https://ollama.com), [omlx](https://github.com/madroidmaq/omlx), the OpenAI cloud, vLLM, or anything else that speaks the protocol.
 
 Penny talks to you over [Signal](https://signal.org), [Discord](https://discord.com), or a [Firefox sidebar extension](docs/browser-extension-architecture.md) — the same apps you already use. All channels share conversation history: ask on Signal, follow up in the browser. Quote-reply to continue a thread; she'll walk the conversation history for context.
 
@@ -141,9 +141,9 @@ Penny uses up to four LLM model roles, all running locally by default:
 | **Text** | `LLM_MODEL` | Single model for all agents — chat, thinking, history, notify, schedules | Yes |
 | **Embedding** | `LLM_EMBEDDING_MODEL` | Embeddings for knowledge retrieval, message similarity, and preference dedup | Optional |
 | **Vision** | `LLM_VISION_MODEL` | Image captioning when users send photos | Optional |
-| **Image** | `LLM_IMAGE_MODEL` | Image generation via `/draw` (uses Ollama's native REST API) | Optional |
+| **Image** | `LLM_IMAGE_MODEL` | Image generation via `/draw` | Optional |
 
-Each model can point at a different OpenAI-compatible endpoint via the corresponding `LLM_*_API_URL` / `LLM_*_API_KEY` overrides — useful when running text on one machine and embeddings on another.
+Text, vision, and embedding all go through the OpenAI SDK and can each point at a different OpenAI-compatible endpoint via the corresponding `LLM_*_API_URL` / `LLM_*_API_KEY` overrides — useful when running text on one machine and embeddings on another. Image generation is the one exception: it talks to Ollama's `/api/generate` endpoint directly because there's no OpenAI-compatible image generation protocol that works with local models, so `/draw` requires an Ollama-compatible image backend at `OLLAMA_API_URL`.
 
 ### Scheduling
 
@@ -183,7 +183,7 @@ See [docs/browser-extension-architecture.md](docs/browser-extension-architecture
 
 1. **For Signal**: [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) running on host (port 8080)
 2. **For Discord**: Discord bot token and channel ID
-3. **An OpenAI-compatible LLM** running on host — [Ollama](https://ollama.com) on port 11434 by default; [omlx](https://github.com/madroidmaq/omlx) or any other compatible endpoint also works (set `LLM_API_URL`)
+3. **An OpenAI-compatible LLM endpoint** running on host or reachable from the container. Set `LLM_API_URL` to point at it. Common choices: [Ollama](https://ollama.com), [omlx](https://github.com/madroidmaq/omlx), [vLLM](https://github.com/vllm-project/vllm), the OpenAI cloud
 4. **Browser extension** loaded in Firefox (for web search, page reading, and the visual UI)
 5. Docker & Docker Compose installed
 
@@ -243,15 +243,14 @@ BROWSER_ENABLED=true
 BROWSER_HOST="0.0.0.0"                    # Use 0.0.0.0 in Docker
 BROWSER_PORT=9090
 
-# LLM Configuration — works with Ollama (default), omlx, OpenAI cloud, or any
-# OpenAI-compatible endpoint. LLM_* are the canonical names; OLLAMA_* fall
-# back for backwards compatibility with older configs.
+# LLM Configuration — any OpenAI-compatible endpoint (Ollama, omlx, vLLM,
+# OpenAI cloud, ...). The example URL points at a local Ollama instance.
 LLM_API_URL="http://host.docker.internal:11434/v1"
 LLM_MODEL="gpt-oss:20b"                   # Single model for all agents
-# LLM_API_KEY="not-needed"                # Default fine for local Ollama
+# LLM_API_KEY="not-needed"                # Default fine for unauthenticated local backends
 # LLM_VISION_MODEL="qwen3-vl"             # Optional, enables vision/image messages
-# LLM_IMAGE_MODEL="x/z-image-turbo"       # Optional, enables /draw
-# LLM_EMBEDDING_MODEL="embeddinggemma"    # Optional, enables preference dedup
+# LLM_EMBEDDING_MODEL="embeddinggemma"    # Optional, enables preference/knowledge embeddings
+# LLM_IMAGE_MODEL="x/z-image-turbo"       # Optional, enables /draw (talks to OLLAMA_API_URL — see Configuration Reference)
 
 # Database & Logging
 DB_PATH="/penny/data/penny/penny.db"
@@ -285,15 +284,17 @@ Penny auto-detects which channel to use based on configured credentials:
 
 ### Configuration Reference
 
-**LLM** — Penny talks to any OpenAI-compatible endpoint via the OpenAI Python SDK. `LLM_*` are the canonical env names; `OLLAMA_*` are accepted as fallbacks for backwards compatibility with older configs.
-- `LLM_API_URL` / `OLLAMA_API_URL`: API endpoint (default: `http://host.docker.internal:11434`)
-- `LLM_MODEL` / `OLLAMA_MODEL`: Single text model for all agents (default: `gpt-oss:20b`)
-- `LLM_API_KEY`: API key (default: `"not-needed"`, fine for local Ollama)
-- `LLM_VISION_MODEL` / `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., `qwen3-vl`). Optional
-- `LLM_VISION_API_URL` / `LLM_VISION_API_KEY`: Override API URL/key for vision model (if running on a different host)
-- `LLM_IMAGE_MODEL` / `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., `x/z-image-turbo`). Optional; enables `/draw`. Image generation uses Ollama's native REST API
-- `LLM_EMBEDDING_MODEL` / `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model (e.g., `embeddinggemma`). Optional; enables preference/knowledge/message embeddings
-- `LLM_EMBEDDING_API_URL` / `LLM_EMBEDDING_API_KEY`: Override API URL/key for embedding model
+**LLM** — Penny talks to any OpenAI-compatible endpoint via the OpenAI Python SDK. There are no Ollama-specific dependencies in the runtime.
+- `LLM_API_URL`: API endpoint (default: `http://host.docker.internal:11434`)
+- `LLM_MODEL`: Single text model for all agents (default: `gpt-oss:20b`)
+- `LLM_API_KEY`: API key (default: `"not-needed"`, fine for unauthenticated local backends)
+- `LLM_VISION_MODEL`: Vision model for image understanding (e.g., `qwen3-vl`). Optional; enables image messages
+- `LLM_VISION_API_URL` / `LLM_VISION_API_KEY`: Override API URL/key for the vision model (e.g., to run vision on a different host)
+- `LLM_EMBEDDING_MODEL`: Dedicated embedding model (e.g., `embeddinggemma`). Optional; enables preference/knowledge/message embeddings
+- `LLM_EMBEDDING_API_URL` / `LLM_EMBEDDING_API_KEY`: Override API URL/key for the embedding model
+- `LLM_IMAGE_MODEL`: Image generation model (e.g., `x/z-image-turbo`). Optional; enables `/draw`. **Image generation is the one exception to the OpenAI-compatible story** — it talks to Ollama's `/api/generate` directly because there's no equivalent in the OpenAI protocol for local image models. `OLLAMA_API_URL` controls the endpoint it hits
+
+The legacy `OLLAMA_*` env names (`OLLAMA_API_URL`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL`, `OLLAMA_IMAGE_MODEL`, `OLLAMA_EMBEDDING_MODEL`) are still accepted as fallbacks for backwards compatibility with older `.env` files, but the `LLM_*` names above are canonical.
 
 **API Keys:**
 - `FASTMAIL_API_TOKEN`: enables `/email`
@@ -372,7 +373,7 @@ bug → in-review → closed                                                    
 - **Architect**: Writes detailed specs for `specification` issues, handles spec feedback
 - **Worker**: Implements `in-progress` issues — creates branches, writes code/tests, runs `make check`, opens PRs; addresses PR feedback on `in-review` issues; fixes `bug` issues directly
 - **Monitor**: Watches production logs for errors, deduplicates against existing issues, and files `bug` issues automatically
-- **Quality**: Evaluates Penny's response quality via Ollama, files `bug` issues for low-quality output (optional, requires `OLLAMA_BACKGROUND_MODEL`)
+- **Quality**: Evaluates Penny's response quality via a local LLM, files `bug` issues for low-quality output (optional, requires `OLLAMA_BACKGROUND_MODEL`)
 
 Each agent checks for matching GitHub issue labels before waking Claude CLI, so idle cycles cost ~1 second instead of a full Claude invocation.
 
