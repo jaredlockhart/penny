@@ -9,7 +9,7 @@
 **Author:** Jared Lockhart
 
 [![CI](https://github.com/jaredlockhart/penny/actions/workflows/check.yml/badge.svg)](https://github.com/jaredlockhart/penny/actions/workflows/check.yml)
-![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
+![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 ![Ollama](https://img.shields.io/badge/Ollama-local%20LLM-blueviolet)
 ![Signal](https://img.shields.io/badge/Signal-messaging-3a76f0)
@@ -67,7 +67,8 @@ Beyond regular conversation, Penny supports slash commands:
 - **/profile** — set your name, location, and timezone
 - **/draw** — generate images via a local model
 - **/bug**, **/feature** — file GitHub issues
-- **/email** — search your Fastmail inbox
+- **/email** — search your Fastmail inbox via JMAP
+- **/zoho** — search your Zoho Mail inbox
 - **/mute**, **/unmute** — silence or resume notifications
 
 ## Penny's Mind
@@ -140,7 +141,7 @@ User-created scheduled tasks (via `/schedule`) run on their own timer regardless
 
 ### Runtime Configuration
 
-23 parameters are tunable at runtime via `/config` — scheduling intervals, notification backoff, preference dedup thresholds, inner monologue settings, and more. Values follow a three-tier lookup: database override → environment variable → default. Changes take effect immediately without restart.
+30+ parameters are tunable at runtime via `/config` — scheduling intervals, notification backoff, preference dedup thresholds, inner monologue settings, email pagination limits, and more. Values follow a three-tier lookup: database override → environment variable → default. Changes take effect immediately without restart.
 
 ## Browser Extension
 
@@ -196,6 +197,7 @@ make typecheck        # Type check with ty
 make token            # Generate GitHub App installation token for gh CLI
 make signal-avatar    # Set Penny's Signal profile picture
 make migrate-test     # Test database migrations against a copy of prod DB
+make migrate-validate # Check for duplicate migration number prefixes
 ```
 
 All dev tool commands run in temporary Docker containers via `docker compose run --rm`, with source volume-mounted so changes write back to the host filesystem.
@@ -274,7 +276,7 @@ Penny auto-detects which channel to use based on configured credentials:
 - `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 8)
 - `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 60)
 - `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
-- 23 parameters are runtime-configurable via `/config`
+- 30+ parameters are runtime-configurable via `/config`
 
 **Logging:**
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)
@@ -317,7 +319,7 @@ make check       # Run format, lint, typecheck, and tests
 
 CI runs `make check` in Docker on every push to `main` and on pull requests via GitHub Actions.
 
-Tests cover the full message flow (search, response, threading, typing indicators), all background agents (history, thinking, notify, scheduler coordination), every slash command, vision processing, and tool edge cases. External services are replaced with mock servers and SDK patches — a mock Signal WebSocket server, a mock Ollama client with configurable responses, and mock search APIs.
+Tests cover the full message flow (search, response, threading, typing indicators), all background agents (history, thinking, notify, scheduler coordination), every slash command, vision processing, and tool edge cases. External services are replaced with mock servers and SDK patches — a mock Signal WebSocket server and a mock LLM client (`MockLlmClient`, patches `openai.AsyncOpenAI`) with configurable responses.
 
 </details>
 

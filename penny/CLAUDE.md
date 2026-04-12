@@ -315,6 +315,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/bug** (`bug.py`): File a bug report on GitHub (requires GitHub App config)
 - **/feature** (`feature.py`): File a feature request on GitHub (requires GitHub App config)
 - **/email** (`email.py`): Search Fastmail email via JMAP (requires `FASTMAIL_API_TOKEN`)
+- **/zoho** (`zoho.py`): Search Zoho Mail via the Zoho Mail API (requires `ZOHO_API_ID`, `ZOHO_API_SECRET`, `ZOHO_REFRESH_TOKEN`)
 
 ### Runtime Configuration
 - `/config` reads and writes to a `RuntimeConfig` table in SQLite
@@ -322,7 +323,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `RuntimeParams` class provides attribute access: `config.runtime.IDLE_SECONDS`
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Groups: Global (max steps, image/email timeouts, embedding batch limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, mention threshold, weekly context limit), Notify (check interval, cooldowns, candidates, check-in image prompt)
+- Groups: Global (max steps, image/email timeouts, embedding batch limits, email body/search/list limits), Schedule (idle threshold), Inner Monologue (interval, max steps, dedup threshold), History (interval, max days, context limits, preference dedup thresholds, mention threshold, weekly context limit), Notify (check interval, cooldowns, candidates, check-in image prompt)
 
 ## Data Model
 
