@@ -36,13 +36,13 @@ Penny is a feed only for you. Private, personal, and local.
 
 ### Conversations
 
-When you send Penny a message, she always searches the web before responding — she never makes things up from model knowledge. A local LLM (via [Ollama](https://ollama.com)) reads the search results and writes a response in her own voice: casual, calm, with sources.
+When you send Penny a message, she always searches the web before responding — she never makes things up from model knowledge. A local LLM reads the search results and writes a response in her own voice: casual, calm, with sources. Penny uses the OpenAI Python SDK against any OpenAI-compatible endpoint — [Ollama](https://ollama.com) by default, but [omlx](https://github.com/madroidmaq/omlx), OpenAI cloud, or anything else that speaks the protocol works too.
 
 Penny talks to you over [Signal](https://signal.org), [Discord](https://discord.com), or a [Firefox sidebar extension](docs/browser-extension-architecture.md) — the same apps you already use. All channels share conversation history: ask on Signal, follow up in the browser. Quote-reply to continue a thread; she'll walk the conversation history for context.
 
 ### Preferences
 
-Penny builds a model of what you care about. After each day's conversations, the **HistoryAgent** extracts preference topics from what you said and how you reacted — things you expressed interest in, opinions you shared, emoji reactions you left. Each preference is classified as positive or negative and deduplicated against what she already knows using token overlap and embedding similarity.
+Penny builds a model of what you care about. The **HistoryAgent** runs continuously in the background, scanning unprocessed messages and reactions and extracting preference topics in a two-pass LLM pipeline — first identify candidate topics, then classify each as positive or negative. New topics are deduplicated against existing entries via token containment ratio + embedding similarity, and only become "thinking candidates" once they cross a mention-count threshold (so a one-off comment doesn't drive autonomous research).
 
 You can also manage preferences directly: `/like dark roast coffee`, `/dislike cold weather`, `/unlike`, `/undislike`. These drive what Penny thinks about and what she shares with you.
 
@@ -54,22 +54,32 @@ Thoughts bleed into chat context, so Penny has continuity of her own reasoning. 
 
 ### Memory
 
-The **HistoryAgent** also summarizes each day's conversations into topic bullets. Once a week completes, daily summaries are rolled up into weekly entries. This gives Penny a sliding window of context — recent daily detail plus older weekly summaries — so she remembers what you've talked about over weeks, not just the last few messages.
+Penny's memory has three layers, all assembled into chat context on every message:
+
+- **Knowledge** — when Penny browses a page (search results, article reads), the **HistoryAgent** summarizes the page into a prose paragraph and stores it with an embedding, keyed by URL. On the next chat turn, the most semantically relevant entries are pulled into context, scored as `max(weighted_decay_against_conversation, current_message_cosine)` with an absolute floor that suppresses noise on greetings and uncovered topics.
+- **Related past messages** — the embedding of every outgoing/incoming message is cached. When you ask something, prior messages are scored by `cosine_to_current_message − α × centrality` (centrality = mean cosine to the rest of the corpus, suppressing centroid-magnet boilerplate), then expanded to ±5-minute neighbors so conversational follow-ups travel together.
+- **Preferences** — the **HistoryAgent** also extracts likes/dislikes from your text messages and emoji reactions in two passes (identify topics, then classify valence), deduplicated against existing entries via TCR + embedding similarity.
+
+The old daily/weekly summary tables were dropped — knowledge extraction and embedding-based message retrieval replaced them.
 
 ### Commands
 
 Beyond regular conversation, Penny supports slash commands:
 
+- **/commands** — list every command available in this deployment
+- **/profile** — set your name, location, and timezone (required before chat)
 - **/like**, **/dislike** — view or add preferences
 - **/unlike**, **/undislike** — remove preferences
-- **/schedule** — set up recurring tasks (e.g., `/schedule daily 9am weather forecast`)
-- **/config** — tune runtime parameters (scheduling intervals, notification settings, etc.)
-- **/profile** — set your name, location, and timezone
-- **/draw** — generate images via a local model
-- **/bug**, **/feature** — file GitHub issues
-- **/email** — search your Fastmail inbox via JMAP
-- **/zoho** — search your Zoho Mail inbox
-- **/mute**, **/unmute** — silence or resume notifications
+- **/schedule** — set up recurring tasks (e.g., `/schedule daily 9am weather forecast`); uses LLM to parse natural-language timing
+- **/unschedule** — list and delete scheduled tasks
+- **/config** — view or tune runtime parameters (30+ values: scheduling intervals, notification backoff, dedup thresholds, email pagination limits, etc.)
+- **/debug** — show agent status, git commit, system info, background task state
+- **/mute**, **/unmute** — silence or resume autonomous notifications
+- **/draw** — generate images via a local model (requires `LLM_IMAGE_MODEL`)
+- **/email** — search your Fastmail inbox via JMAP (requires `FASTMAIL_API_TOKEN`)
+- **/zoho** — search your Zoho Mail inbox (requires `ZOHO_API_ID`/`ZOHO_API_SECRET`/`ZOHO_REFRESH_TOKEN`)
+- **/bug**, **/feature** — file GitHub issues (requires GitHub App credentials)
+- **/test** — enter isolated test mode (separate DB, fresh agents) for development
 
 ## Penny's Mind
 
@@ -84,25 +94,25 @@ flowchart TB
         Chat[ChatAgent<br>search web + respond]
     end
 
-    Memory -.->|"profile · history · thoughts · dislikes"| Chat
+    Memory -.->|"profile · knowledge · related msgs<br>thoughts · dislikes"| Chat
     Chat -->|reply| User
     Chat -->|log| Memory
 
     subgraph Memory["🧠 Memory"]
-        Messages[Messages]
-        Summaries["Daily & Weekly<br>Summaries"]
+        Messages["Messages<br>(embedded)"]
+        Knowledge["Knowledge<br>(page summaries)"]
         Preferences["Preferences<br>likes · dislikes"]
         Thoughts[Thoughts]
     end
 
     subgraph Background["💭 Background — when idle"]
-        History["HistoryAgent<br>summarize conversations,<br>extract preferences"]
+        History["HistoryAgent<br>extract knowledge from<br>browses, preferences<br>from messages"]
         Thinking["ThinkingAgent<br>pick a preference,<br>research it, store thought"]
         Notify["NotifyAgent<br>score thoughts,<br>share the best one"]
     end
 
     Messages --> History
-    History --> Summaries
+    History --> Knowledge
     History --> Preferences
     Preferences --> Thinking
     Thinking --> Thoughts
@@ -116,22 +126,24 @@ flowchart TB
 
 ### The Cognitive Cycle
 
-1. **Conversation** — user sends a message, ChatAgent searches the web and responds. Context is assembled from memory: profile, daily + weekly summaries, recent thoughts, and topics to avoid
-2. **Digestion** — when idle, HistoryAgent summarizes conversations into daily and weekly entries, and extracts preferences (likes/dislikes) from what the user said and reacted to
+1. **Conversation** — user sends a message, ChatAgent searches the web and responds. Context is assembled from memory: profile, related knowledge (semantically-relevant page summaries), related past messages (embedding similarity with centrality penalty + ±5-minute neighbor expansion), recent thoughts, and topics to avoid
+2. **Digestion** — when idle, HistoryAgent summarizes browsed pages into knowledge entries (one per URL, deduplicated and embedded), and extracts preferences (likes/dislikes) from text messages and emoji reactions in a two-pass LLM pipeline
 3. **Reflection** — ThinkingAgent picks a random positive preference, searches the web, and reasons through what it finds. The result is stored as a thought
-4. **Initiative** — NotifyAgent scores un-notified thoughts by novelty and preference alignment, composes a message, and sends it with exponential backoff
+4. **Initiative** — NotifyAgent scores un-notified thoughts by novelty (avoiding repeats) and preference alignment, composes a message, and sends it with exponential backoff
 5. **Repeat** — the user's reaction feeds back into conversation, digestion, and reflection
 
 ### Models
 
-Penny uses up to four Ollama model roles, all running locally:
+Penny uses up to four LLM model roles, all running locally by default:
 
-| Role | Purpose | Required? |
-|---|---|---|
-| **Model** | Single model for all agents — chat, thinking, history, notify, schedules | Yes |
-| **Embedding** | Semantic similarity for preference dedup and history embeddings | Optional |
-| **Vision** | Image captioning when users send photos | Optional |
-| **Image** | Image generation via `/draw` | Optional |
+| Role | Env | Purpose | Required? |
+|---|---|---|---|
+| **Text** | `LLM_MODEL` | Single model for all agents — chat, thinking, history, notify, schedules | Yes |
+| **Embedding** | `LLM_EMBEDDING_MODEL` | Embeddings for knowledge retrieval, message similarity, and preference dedup | Optional |
+| **Vision** | `LLM_VISION_MODEL` | Image captioning when users send photos | Optional |
+| **Image** | `LLM_IMAGE_MODEL` | Image generation via `/draw` (uses Ollama's native REST API) | Optional |
+
+Each model can point at a different OpenAI-compatible endpoint via the corresponding `LLM_*_API_URL` / `LLM_*_API_KEY` overrides — useful when running text on one machine and embeddings on another.
 
 ### Scheduling
 
@@ -147,11 +159,15 @@ User-created scheduled tasks (via `/schedule`) run on their own timer regardless
 
 The Firefox extension adds a visual, interactive layer on top of Penny's existing architecture:
 
-- **Sidebar chat** — same conversation as Signal/Discord, with HTML-formatted responses, images, and clickable links
+- **Sidebar chat** — same conversation as Signal/Discord, with HTML-formatted responses, images, clickable links, and live in-flight tool status (e.g., "Searching…", "Reading example.com…")
 - **Active tab context** — Penny can see the page you're currently viewing (via [Defuddle](https://github.com/kepano/defuddle) content extraction). Toggle "Include page content" to ask questions about any page
-- **Browser tools** — `browse_url` opens pages in hidden tabs with the full web engine and your session. Domain access requires explicit permission via a sidebar dialog
-- **Thoughts feed** — a browsable card grid of Penny's discoveries, with images, seed topic bylines, and a modal viewer. Thumbs up/down reactions feed directly into the preference extraction pipeline
-- **Multi-device** — each browser registers as a device (e.g., "firefox macbook 16"). All devices share the same user identity and conversation history
+- **Browser tools** — `browse_url` opens pages in hidden tabs with the full web engine and your session. Per-addon "tool use" toggle controls whether each browser participates in tool dispatch
+- **Domain permissions** — first-time access to a new domain triggers an approve/deny prompt. Approvals persist server-side and sync across all connected addons; prompts can also be answered from Signal so you don't need a browser open. `/config DOMAIN_PERMISSION_MODE allow_all` skips prompting entirely
+- **Thoughts feed** — a browsable card grid of Penny's discoveries, with images, seed-topic bylines, and a modal viewer. Thumbs up/down reactions feed directly into the preference extraction pipeline. Browser tabs receive unread thought counts as a badge
+- **Schedule manager** — UI for creating, editing, and deleting `/schedule` cron tasks without touching the chat
+- **Settings panel** — domain allowlist, runtime config params (the same 30+ values `/config` exposes), and addon-level toggles
+- **Prompt log viewer** — every LLM call Penny makes is browseable from the extension, grouped by run ID with input messages, response, thinking field, and outcome badge. Useful for debugging "why did Penny say that"
+- **Multi-device** — each browser registers as a device (e.g., "firefox macbook 16"). All devices share the same user identity and conversation history. In-flight progress reactions on Signal also surface on the user's message via emoji morphing (💭 → 🔍 → 📖 → cleared on completion)
 
 ```bash
 cd browser
@@ -167,8 +183,8 @@ See [docs/browser-extension-architecture.md](docs/browser-extension-architecture
 
 1. **For Signal**: [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) running on host (port 8080)
 2. **For Discord**: Discord bot token and channel ID
-3. **[Ollama](https://ollama.com)** running on host (port 11434)
-4. **Browser extension** (for web search and page reading)
+3. **An OpenAI-compatible LLM** running on host — [Ollama](https://ollama.com) on port 11434 by default; [omlx](https://github.com/madroidmaq/omlx) or any other compatible endpoint also works (set `LLM_API_URL`)
+4. **Browser extension** loaded in Firefox (for web search, page reading, and the visual UI)
 5. Docker & Docker Compose installed
 
 ### Quick Start
@@ -189,11 +205,12 @@ make up               # Build and start all services (foreground)
 make prod             # Deploy penny only (no team, no override)
 make kill             # Tear down containers and remove local images
 make build            # Build the penny Docker image
-make check            # Build, format check, lint, typecheck, and run tests
-make pytest           # Run integration tests
-make fmt              # Format with ruff
-make fix              # Format + autofix lint issues
-make typecheck        # Type check with ty
+make team-build       # Build the penny-team Docker image
+make browser-build    # Bundle the browser extension content script
+make check            # Format check, lint, typecheck, migrate-validate, pytest (penny + team), tsc (browser)
+make pytest           # Run integration tests (penny + team)
+make fix              # Format + autofix lint issues (penny + team)
+make typecheck        # Type check with ty (penny + team)
 make token            # Generate GitHub App installation token for gh CLI
 make signal-avatar    # Set Penny's Signal profile picture
 make migrate-test     # Test database migrations against a copy of prod DB
@@ -210,7 +227,7 @@ Configuration is managed via a `.env` file in the project root:
 ```bash
 # .env
 
-# Channel type (optional - auto-detected from credentials)
+# Channel type (optional — auto-detected from credentials)
 # CHANNEL_TYPE="signal"  # or "discord"
 
 # Signal Configuration (required for Signal)
@@ -226,26 +243,37 @@ BROWSER_ENABLED=true
 BROWSER_HOST="0.0.0.0"                    # Use 0.0.0.0 in Docker
 BROWSER_PORT=9090
 
-# Ollama Configuration
-OLLAMA_API_URL="http://host.docker.internal:11434"
-OLLAMA_MODEL="gpt-oss:20b"               # Single model for all agents
+# LLM Configuration — works with Ollama (default), omlx, OpenAI cloud, or any
+# OpenAI-compatible endpoint. LLM_* are the canonical names; OLLAMA_* fall
+# back for backwards compatibility with older configs.
+LLM_API_URL="http://host.docker.internal:11434/v1"
+LLM_MODEL="gpt-oss:20b"                   # Single model for all agents
+# LLM_API_KEY="not-needed"                # Default fine for local Ollama
+# LLM_VISION_MODEL="qwen3-vl"             # Optional, enables vision/image messages
+# LLM_IMAGE_MODEL="x/z-image-turbo"       # Optional, enables /draw
+# LLM_EMBEDDING_MODEL="embeddinggemma"    # Optional, enables preference dedup
 
 # Database & Logging
 DB_PATH="/penny/data/penny/penny.db"
 LOG_LEVEL="INFO"
-# LOG_FILE="/penny/data/penny/logs/penny.log"  # Optional
+# LOG_FILE="/penny/data/penny/logs/penny.log"
 
-# Agent behavior (optional, defaults shown)
-MESSAGE_MAX_STEPS=8
-IDLE_SECONDS=60                     # Global idle threshold for background tasks
-
-# Fastmail JMAP (optional, enables /email command)
+# Fastmail JMAP (optional, enables /email)
 # FASTMAIL_API_TOKEN="your-api-token"
 
-# GitHub App (optional, enables /bug command and agent containers)
+# Zoho Mail (optional, enables /zoho)
+# ZOHO_API_ID="..."
+# ZOHO_API_SECRET="..."
+# ZOHO_REFRESH_TOKEN="..."
+
+# GitHub App (optional, enables /bug, /feature, and agent containers)
 # GITHUB_APP_ID="12345"
-# GITHUB_APP_PRIVATE_KEY_PATH="path/to/key.pem"
+# GITHUB_APP_PRIVATE_KEY_PATH="data/private/github-app.pem"
 # GITHUB_APP_INSTALLATION_ID="67890"
+
+# Penny-team agent containers (optional, leave blank to disable)
+# CLAUDE_CODE_OAUTH_TOKEN="..."           # From `claude setup-token` (Max plan)
+# OLLAMA_BACKGROUND_MODEL="..."           # Optional, enables team Quality agent
 ```
 
 ### Channel Selection
@@ -257,33 +285,39 @@ Penny auto-detects which channel to use based on configured credentials:
 
 ### Configuration Reference
 
-**Ollama:**
-- `OLLAMA_API_URL`: Ollama API endpoint (default: http://host.docker.internal:11434)
-- `OLLAMA_MODEL`: Single model for all agents (default: gpt-oss:20b)
-- `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., qwen3-vl). Optional
-- `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., x/z-image-turbo). Optional; enables `/draw`
-- `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model (e.g., embeddinggemma). Optional
-- `OLLAMA_MAX_RETRIES`: Retry attempts on transient Ollama errors (default: 3)
-- `OLLAMA_RETRY_DELAY`: Delay in seconds between retries (default: 0.5)
+**LLM** — Penny talks to any OpenAI-compatible endpoint via the OpenAI Python SDK. `LLM_*` are the canonical env names; `OLLAMA_*` are accepted as fallbacks for backwards compatibility with older configs.
+- `LLM_API_URL` / `OLLAMA_API_URL`: API endpoint (default: `http://host.docker.internal:11434`)
+- `LLM_MODEL` / `OLLAMA_MODEL`: Single text model for all agents (default: `gpt-oss:20b`)
+- `LLM_API_KEY`: API key (default: `"not-needed"`, fine for local Ollama)
+- `LLM_VISION_MODEL` / `OLLAMA_VISION_MODEL`: Vision model for image understanding (e.g., `qwen3-vl`). Optional
+- `LLM_VISION_API_URL` / `LLM_VISION_API_KEY`: Override API URL/key for vision model (if running on a different host)
+- `LLM_IMAGE_MODEL` / `OLLAMA_IMAGE_MODEL`: Image generation model (e.g., `x/z-image-turbo`). Optional; enables `/draw`. Image generation uses Ollama's native REST API
+- `LLM_EMBEDDING_MODEL` / `OLLAMA_EMBEDDING_MODEL`: Dedicated embedding model (e.g., `embeddinggemma`). Optional; enables preference/knowledge/message embeddings
+- `LLM_EMBEDDING_API_URL` / `LLM_EMBEDDING_API_KEY`: Override API URL/key for embedding model
 
 **API Keys:**
-- `FASTMAIL_API_TOKEN`: API token for Fastmail JMAP email search (optional, enables `/email`)
+- `FASTMAIL_API_TOKEN`: enables `/email`
+- `ZOHO_API_ID`, `ZOHO_API_SECRET`, `ZOHO_REFRESH_TOKEN`: enables `/zoho` (obtain via Zoho's OAuth flow)
 
 **GitHub App** (optional, enables `/bug` and `/feature`; required for agent containers):
 - `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATION_ID`
 
+**Browser Extension** (optional):
+- `BROWSER_ENABLED`: `true` to start the WebSocket server (default: false)
+- `BROWSER_HOST`: bind address (default: `localhost`; use `0.0.0.0` in Docker)
+- `BROWSER_PORT`: WebSocket port (default: `9090`)
+
 **Behavior:**
-- `MESSAGE_MAX_STEPS`: Max agent loop steps per message (default: 8)
-- `IDLE_SECONDS`: Global idle threshold for all background tasks (default: 60)
-- `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 60)
-- 30+ parameters are runtime-configurable via `/config`
+- `TOOL_TIMEOUT`: Tool execution timeout in seconds (default: 120)
+- `MESSAGE_MAX_STEPS` / `IDLE_SECONDS`: also accepted as env vars, but these are runtime-configurable via `/config` so DB overrides win
+- 30+ parameters are runtime-configurable via `/config` — scheduling intervals, notification cooldowns/candidates, preference dedup thresholds, history context limits, email body/search/list pagination limits, related-message retrieval thresholds, and more
 
 **Logging:**
 - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default: INFO)
 - `LOG_FILE`: Optional path to log file
 - `LOG_MAX_BYTES`: Maximum log file size before rotation (default: 10 MB)
 - `LOG_BACKUP_COUNT`: Number of rotated backup files to keep (default: 5)
-- `DB_PATH`: SQLite database location (default: /penny/data/penny/penny.db)
+- `DB_PATH`: SQLite database location (default: `/penny/data/penny/penny.db`)
 
 </details>
 
