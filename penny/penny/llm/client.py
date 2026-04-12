@@ -116,7 +116,7 @@ class LlmClient:
                 )
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
-            except Exception as error:
+            except openai.OpenAIError as error:
                 last_error = LlmResponseError(str(error))
                 logger.warning(
                     "LLM chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
@@ -181,7 +181,7 @@ class LlmClient:
                 )
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
-            except Exception as error:
+            except openai.OpenAIError as error:
                 last_error = LlmResponseError(str(error))
                 logger.warning(
                     "LLM embed error (attempt %d/%d): %s", attempt + 1, self.max_retries, error

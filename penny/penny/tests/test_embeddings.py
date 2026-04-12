@@ -261,6 +261,8 @@ class TestLlmClientEmbed:
     @pytest.mark.asyncio
     async def test_embed_transient_error_retries(self, mock_llm):
         """Non-404 errors should still be retried up to max_retries."""
+        import openai
+
         from penny.llm.client import LlmClient
 
         call_count = 0
@@ -268,7 +270,7 @@ class TestLlmClientEmbed:
         def flaky_handler(model: str, input: str | list[str]) -> list[list[float]]:
             nonlocal call_count
             call_count += 1
-            raise ConnectionError("server error")
+            raise openai.OpenAIError("server error")
 
         mock_llm.set_embed_handler(flaky_handler)
 

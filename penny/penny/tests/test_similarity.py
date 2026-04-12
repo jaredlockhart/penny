@@ -35,6 +35,14 @@ class TestEmbedText:
         result = await embed_text(client, "hello")
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_non_llm_exception_propagates(self) -> None:
+        """Bugs in the embed pipeline must surface, not be swallowed as None."""
+        client = AsyncMock()
+        client.embed.side_effect = RuntimeError("unexpected bug")
+        with pytest.raises(RuntimeError, match="unexpected bug"):
+            await embed_text(client, "hello")
+
 
 # ── is_embedding_duplicate ────────────────────────────────────────────────────
 
