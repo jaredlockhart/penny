@@ -232,6 +232,10 @@ class HistoryAgent(Agent):
 
         if messages:
             did_work = await self._extract_text_preferences(user, messages, run_id)
+            # Mark processed on any completed extraction attempt — only skip when
+            # identification itself failed (returned False) so we retry next tick.
+            # Otherwise zero-preference results (e.g. image-only messages) would
+            # re-extract forever.
             if did_work:
                 processed_ids.extend(m.id for m in messages if m.id is not None)
 
@@ -244,10 +248,14 @@ class HistoryAgent(Agent):
         return did_work
 
     async def _extract_text_preferences(self, user: str, messages: list, run_id: str) -> bool:
-        """Extract preferences from text messages via two-pass LLM pipeline."""
+        """Extract preferences from text messages via two-pass LLM pipeline.
+
+        Returns True when the extraction attempt completed (messages can be marked
+        processed), False only when identification failed and retry is warranted.
+        """
         conversation = self._format_messages(messages)
         if not conversation:
-            return False
+            return True
         return await self._extract_preferences_from_content(user, conversation, run_id)
 
     async def _extract_preferences_from_content(
@@ -257,23 +265,23 @@ class HistoryAgent(Agent):
         existing = self.db.preferences.get_for_user(user)
 
         identified = await self._identify_preference_topics(conversation, existing, run_id)
-        if not identified:
+        if identified is None:
             return False
 
         bumped_ids = self._bump_existing_mentions(identified.existing, existing)
 
         new_topics = self._filter_new_topics(identified, existing)
         if not new_topics:
-            return bool(identified.existing)
+            return True
 
         survivors = await self._dedup_preference_topics(new_topics, existing, bumped_ids)
         if not survivors:
-            return bool(identified.existing)
+            return True
 
         survivor_topics = [topic for topic, _emb in survivors]
         classified = await self._classify_preference_valence(survivor_topics, conversation, run_id)
         if not classified:
-            return bool(identified.existing)
+            return True
 
         embedding_lookup = {topic.lower(): emb for topic, emb in survivors}
         self._store_classified_preferences(user, classified, embedding_lookup)
@@ -504,9 +512,15 @@ class HistoryAgent(Agent):
 
     @staticmethod
     def _format_messages(messages: list) -> str:
-        """Format user messages for the summarization prompt."""
+        """Format user messages for the summarization prompt.
+
+        Skips messages with empty/whitespace content (e.g. image-only attachments)
+        so we don't burn an LLM call on a conversation that's just timestamps.
+        """
         lines: list[str] = []
         for msg in messages:
+            if not msg.content or not msg.content.strip():
+                continue
             ts = msg.timestamp.strftime("%H:%M")
             lines.append(f"[{ts}] {msg.content}")
         return "\n".join(lines)
