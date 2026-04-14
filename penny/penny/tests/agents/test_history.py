@@ -253,6 +253,93 @@ async def test_failed_extraction_does_not_mark_processed(
         assert len(espresso_prefs) == 1
 
 
+@pytest.mark.asyncio
+async def test_image_only_messages_marked_processed_without_llm(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Image-only messages (empty content) are marked processed without calling the LLM.
+
+    Previously `_format_messages` emitted just a timestamp prefix for empty content,
+    so the LLM was called, returned no preferences, and `did_work=False` prevented
+    marking the message processed — causing the same empty message to be re-extracted
+    on every scheduler tick.
+    """
+    config = make_config(history_interval=99999.0)
+
+    identification_calls = 0
+
+    def handler(request, count):
+        nonlocal identification_calls
+        messages = request.get("messages", [])
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
+        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
+            identification_calls += 1
+        return mock_llm._make_text_response(request, json.dumps({"new": [], "existing": []}))
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        _insert_message(
+            penny,
+            TEST_SENDER,
+            "",
+            PennyConstants.MessageDirection.INCOMING,
+            datetime.now(UTC).replace(tzinfo=None),
+        )
+
+        await penny.history_agent.execute()
+        await penny.history_agent.execute()
+
+        assert identification_calls == 0, (
+            f"Expected no identification calls for image-only message, got {identification_calls}"
+        )
+        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
+        assert len(unprocessed) == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_identification_result_marks_processed(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """When identification succeeds but returns no preferences, messages are marked processed.
+
+    Distinguishes legitimate "nothing to extract" from failed identification — only
+    the latter should leave messages unprocessed for retry.
+    """
+    config = make_config(history_interval=99999.0)
+
+    identification_calls = 0
+
+    def handler(request, count):
+        nonlocal identification_calls
+        messages = request.get("messages", [])
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
+        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
+            identification_calls += 1
+        return mock_llm._make_text_response(request, json.dumps({"new": [], "existing": []}))
+
+    mock_llm.set_response_handler(handler)
+
+    async with running_penny(config) as penny:
+        penny.db.messages.log_message(
+            PennyConstants.MessageDirection.INCOMING,
+            TEST_SENDER,
+            "the weather today is fine",
+        )
+
+        await penny.history_agent.execute()
+        await penny.history_agent.execute()
+
+        assert identification_calls == 1, (
+            f"Expected 1 identification call, got {identification_calls} — "
+            f"message should have been marked processed after the first attempt"
+        )
+        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
+        assert len(unprocessed) == 0
+
+
 # ── Reaction handling ────────────────────────────────────────────────────
 
 
