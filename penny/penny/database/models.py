@@ -183,6 +183,7 @@ class Knowledge(SQLModel, table=True):
     embedding: bytes | None = None  # Serialized float32 embedding vector
     source_prompt_id: int = Field(foreign_key="promptlog.id", index=True)  # High-water mark
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class EmailRule(SQLModel, table=True):
