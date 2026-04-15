@@ -20,6 +20,7 @@ class ZohoSession(BaseModel):
 
     access_token: str
     expires_at: float  # Unix timestamp when token expires
+    api_domain: str = "https://mail.zoho.com"  # API domain from token response
 
 
 class ZohoAccount(BaseModel):

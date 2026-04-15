@@ -68,11 +68,20 @@ class ZohoClient:
             raise RuntimeError(f"Zoho OAuth error: {data.get('error')}")
 
         expires_in = data.get("expires_in", 3600)
+        scope = data.get("scope", "")
+        # api_domain tells us which regional endpoint to use (e.g., https://mail.zoho.eu)
+        api_domain = data.get("api_domain", "https://mail.zoho.com")
         self._session = ZohoSession(
             access_token=data["access_token"],
             expires_at=now + expires_in,
+            api_domain=api_domain,
         )
-        logger.info("Zoho access token refreshed, expires in %ds", expires_in)
+        logger.info(
+            "Zoho access token refreshed, expires in %ds, scope=%s, api_domain=%s",
+            expires_in,
+            scope,
+            api_domain,
+        )
         return self._session.access_token
 
     async def _get_headers(self) -> dict[str, str]:
@@ -84,13 +93,32 @@ class ZohoClient:
             "Content-Type": "application/json",
         }
 
+    def _get_api_base(self) -> str:
+        """Get the Mail API base URL.
+
+        Note: Zoho Mail always uses mail.zoho.com regardless of the generic
+        api_domain returned in the token response. The api_domain field is
+        for other Zoho services like CRM.
+        """
+        return PennyConstants.ZOHO_API_BASE
+
     async def _ensure_account(self) -> ZohoAccount:
         """Fetch and cache the primary Zoho Mail account."""
         if self._account:
             return self._account
 
         headers = await self._get_headers()
-        resp = await self._http.get(PennyConstants.ZOHO_ACCOUNTS_URL, headers=headers)
+        accounts_url = f"{self._get_api_base()}/accounts"
+        resp = await self._http.get(accounts_url, headers=headers)
+        if resp.status_code == 401:
+            # Clear cached session to force re-auth on next attempt
+            self._session = None
+            error_body = resp.text
+            logger.error(
+                "Zoho Mail API 401 Unauthorized. Response: %s. "
+                "Check that the refresh token has ZohoMail.accounts.READ scope.",
+                error_body[:500],
+            )
         resp.raise_for_status()
         data = resp.json()
 
@@ -127,7 +155,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/folders"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/folders"
         resp = await self._http.get(url, headers=headers)
         resp.raise_for_status()
         data = resp.json()
@@ -166,6 +194,7 @@ class ZohoClient:
     async def list_emails(
         self,
         folder_name: str | None = None,
+        limit: int = EMAIL_SEARCH_LIMIT,
     ) -> list[EmailSummary]:
         """List emails from a specific folder."""
         account = await self._ensure_account()
@@ -184,7 +213,7 @@ class ZohoClient:
                 return []
             folder_id = folder.folder_id
 
-        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages/view"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/messages/view"
         params = {"folderId": folder_id, "limit": limit, "includeto": "true"}
 
         resp = await self._http.get(url, headers=headers, params=params)
@@ -202,6 +231,7 @@ class ZohoClient:
         subject: str | None = None,
         after: str | None = None,
         before: str | None = None,
+        limit: int = EMAIL_SEARCH_LIMIT,
     ) -> list[EmailSummary]:
         """Search emails and return summaries."""
         search_parts = []
@@ -224,7 +254,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages/search"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/messages/search"
         params = {"searchKey": search_key, "limit": limit, "includeto": "true"}
 
         resp = await self._http.get(url, headers=headers, params=params)
@@ -339,7 +369,7 @@ class ZohoClient:
 
         account = await self._ensure_account()
         content_url = (
-            f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}"
+            f"{self._get_api_base()}/accounts/{account.account_id}"
             f"/folders/{folder_id}/messages/{message_id}/content"
         )
 
@@ -387,7 +417,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/messages"
         payload: dict[str, Any] = {
             "fromAddress": account.email_address,
             "toAddress": ",".join(to_addresses),
@@ -434,7 +464,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/folders"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/folders"
         payload: dict[str, Any] = {"folderName": name}
         if parent_folder_id:
             payload["parentFolderId"] = parent_folder_id
@@ -511,7 +541,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/messages"
 
         # Extract just the messageId part from "folderId:messageId" format
         pure_message_ids = []
@@ -550,7 +580,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/labels"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/labels"
         params = {"fields": "labelId,displayName,color"}
 
         resp = await self._http.get(url, headers=headers, params=params)
@@ -587,7 +617,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/labels"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/labels"
         payload = {"displayName": name, "color": color}
 
         logger.info("Creating label: %s", name)
@@ -621,7 +651,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{PennyConstants.ZOHO_API_BASE}/accounts/{account.account_id}/messages"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/messages"
 
         # Extract just the messageId part
         pure_message_ids = []
