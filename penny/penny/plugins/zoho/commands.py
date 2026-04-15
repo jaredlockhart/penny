@@ -1,4 +1,4 @@
-"""Zoho Mail command — email provider implementation for the /email command."""
+"""Zoho commands — email, calendar, and project management."""
 
 from __future__ import annotations
 
@@ -7,6 +7,15 @@ import logging
 from penny.agents.base import Agent
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
+from penny.plugins.zoho.calendar_client import ZohoCalendarClient
+from penny.plugins.zoho.calendar_tools import (
+    CheckAvailabilityTool,
+    CreateEventTool,
+    FindFreeSlotsTool,
+    GetEventsTool,
+    ListCalendarsTool,
+    UpdateEventTool,
+)
 from penny.plugins.zoho.client import ZohoClient
 from penny.plugins.zoho.project_tools import (
     CreateProjectTool,
@@ -169,6 +178,7 @@ class ZohoCalendarCommand(Command):
                 GetEventsTool(calendar_client),
                 CheckAvailabilityTool(calendar_client),
                 CreateEventTool(calendar_client),
+                UpdateEventTool(calendar_client),
                 FindFreeSlotsTool(calendar_client),
             ]
             agent = Agent(

@@ -62,6 +62,10 @@ class ZohoEvent(BaseModel):
     location: str | None = None
     is_allday: bool = False
     attendees: list[str] = []
+    etag: int | None = None  # Required for updates
+    is_recurring: bool = False  # Whether this is a recurring event
+    recurrenceid: str | None = None  # For identifying specific occurrence
+    rrule: str | None = None  # Recurrence rule for recurring events
 
 
 class ZohoPortal(BaseModel):
