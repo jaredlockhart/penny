@@ -54,9 +54,7 @@ class CreateTaskArgs(BaseModel):
     start_date: str | None = Field(default=None, description="Start date (YYYY-MM-DD)")
     end_date: str | None = Field(default=None, description="End date (YYYY-MM-DD)")
     priority: str = Field(default="none", description="Priority: none, low, medium, high")
-    assignees: list[str] | None = Field(
-        default=None, description="List of assignee ZPUIDs"
-    )
+    assignees: list[str] | None = Field(default=None, description="List of assignee ZPUIDs")
 
 
 class UpdateTaskArgs(BaseModel):

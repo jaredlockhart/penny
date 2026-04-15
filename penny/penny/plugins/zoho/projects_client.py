@@ -101,7 +101,9 @@ class ZohoProjectsClient:
         if resp.status_code != 200:
             logger.error(
                 "Zoho Projects API error: status=%s, url=%s, response=%s",
-                resp.status_code, url, resp.text[:500]
+                resp.status_code,
+                url,
+                resp.text[:500],
             )
         resp.raise_for_status()
         data = resp.json()
@@ -368,9 +370,7 @@ class ZohoProjectsClient:
         logger.warning("Task list creation returned no id: %s", data)
         return None
 
-    async def get_tasks(
-        self, project_id: str, portal_id: str | None = None
-    ) -> list[ZohoTask]:
+    async def get_tasks(self, project_id: str, portal_id: str | None = None) -> list[ZohoTask]:
         """Fetch all tasks for a project.
 
         Args:
@@ -482,9 +482,7 @@ class ZohoProjectsClient:
         if end_date:
             payload["end_date"] = end_date
         if owner_zpuids:
-            payload["owners_and_work"] = {
-                "owners": [{"zpuid": zpuid} for zpuid in owner_zpuids]
-            }
+            payload["owners_and_work"] = {"owners": [{"zpuid": zpuid} for zpuid in owner_zpuids]}
 
         logger.info("Creating task '%s' in project %s", name, project_id)
         resp = await self._http.post(url, headers=headers, json=payload)
@@ -568,9 +566,7 @@ class ZohoProjectsClient:
         if completion_percentage is not None:
             payload["completion_percentage"] = completion_percentage
         if owner_zpuids is not None:
-            payload["owners_and_work"] = {
-                "owners": [{"add": [{"zpuid": z} for z in owner_zpuids]}]
-            }
+            payload["owners_and_work"] = {"owners": [{"add": [{"zpuid": z} for z in owner_zpuids]}]}
 
         if not payload:
             logger.warning("No fields to update for task %s", task_id)

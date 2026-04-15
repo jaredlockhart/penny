@@ -262,10 +262,7 @@ class MoveEmailsTool(Tool):
         # Move the messages
         success = await self._client.move_messages(args.message_ids, folder.folder_id)
         if success:
-            return (
-                f"Successfully moved {len(args.message_ids)} email(s) to "
-                f"'{args.folder_path}'"
-            )
+            return f"Successfully moved {len(args.message_ids)} email(s) to '{args.folder_path}'"
         return f"Failed to move emails to '{args.folder_path}'"
 
 
@@ -283,9 +280,7 @@ class CreateFolderTool(Tool):
         "properties": {
             "folder_path": {
                 "type": "string",
-                "description": (
-                    "Folder path to create. Can be nested like 'Clients/John Smith'"
-                ),
+                "description": ("Folder path to create. Can be nested like 'Clients/John Smith'"),
             },
         },
         "required": ["folder_path"],

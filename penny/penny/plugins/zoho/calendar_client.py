@@ -200,9 +200,7 @@ class ZohoCalendarClient:
                     description=evt.get("description"),
                     location=evt.get("location"),
                     is_allday=evt.get("isallday", False),
-                    attendees=[
-                        a.get("email", "") for a in evt.get("attendees", [])
-                    ],
+                    attendees=[a.get("email", "") for a in evt.get("attendees", [])],
                 )
             )
 
@@ -366,9 +364,7 @@ class ZohoCalendarClient:
         eventdata_json = json.dumps(eventdata)
         logger.info("Creating event '%s' on calendar %s", title, caluid)
         logger.debug("Create eventdata: %s", eventdata_json)
-        resp = await self._http.post(
-            url, headers=headers, params={"eventdata": eventdata_json}
-        )
+        resp = await self._http.post(url, headers=headers, params={"eventdata": eventdata_json})
         resp.raise_for_status()
         data = resp.json()
 
@@ -479,25 +475,23 @@ class ZohoCalendarClient:
         if recurrenceid and recurrence_edittype in ("following", "only"):
             eventdata["recurrenceid"] = recurrenceid
             logger.info(
-                "Including recurrenceid: %s for edittype: %s",
-                recurrenceid, recurrence_edittype
+                "Including recurrenceid: %s for edittype: %s", recurrenceid, recurrence_edittype
             )
 
         # eventdata must be passed as a query parameter, not JSON body
         eventdata_json = json.dumps(eventdata)
 
         logger.info(
-            "Updating event %s on calendar %s (edittype=%s)",
-            event_uid, caluid, recurrence_edittype
+            "Updating event %s on calendar %s (edittype=%s)", event_uid, caluid, recurrence_edittype
         )
         logger.debug("Update eventdata: %s", eventdata_json)
-        resp = await self._http.put(
-            url, headers=headers, params={"eventdata": eventdata_json}
-        )
+        resp = await self._http.put(url, headers=headers, params={"eventdata": eventdata_json})
         if resp.status_code != 200:
             logger.error(
                 "Event update failed: %s - %s (eventdata: %s)",
-                resp.status_code, resp.text[:500], eventdata_json
+                resp.status_code,
+                resp.text[:500],
+                eventdata_json,
             )
         resp.raise_for_status()
         data = resp.json()
@@ -560,7 +554,10 @@ class ZohoCalendarClient:
         # Log the raw event data for debugging recurring events
         logger.info(
             "Event details: isrep=%s, rrule=%s, recurrenceid=%s, is_recurring=%s",
-            event_data.get("isrep"), rrule, recurrenceid, is_recurring
+            event_data.get("isrep"),
+            rrule,
+            recurrenceid,
+            is_recurring,
         )
 
         return ZohoEvent(

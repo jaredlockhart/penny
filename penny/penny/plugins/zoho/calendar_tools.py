@@ -270,7 +270,8 @@ class CheckAvailabilityTool(Tool):
             for evt in conflicts:
                 evt_time = (
                     f"{evt.start.strftime('%H:%M')}-{evt.end.strftime('%H:%M')}"
-                    if evt.start and evt.end else "unknown time"
+                    if evt.start and evt.end
+                    else "unknown time"
                 )
                 lines.append(f"- **{evt.title}** ({evt_time})")
             return "\n".join(lines)
@@ -383,9 +384,7 @@ class CreateEventTool(Tool):
         )
 
         if event:
-            time_str = (
-                f"{start.strftime('%Y-%m-%d %H:%M')} to {end.strftime('%H:%M')}"
-            )
+            time_str = f"{start.strftime('%Y-%m-%d %H:%M')} to {end.strftime('%H:%M')}"
             result = [
                 f"Event created successfully on '{calendar.name}':\n",
                 f"**{event.title}**",
@@ -456,15 +455,12 @@ class FindFreeSlotsTool(Tool):
                 f"in the next {args.days_ahead} days."
             )
 
-        lines = [
-            f"Found {len(free_slots)} available slot(s) of {args.duration_minutes} minutes:\n"
-        ]
+        lines = [f"Found {len(free_slots)} available slot(s) of {args.duration_minutes} minutes:\n"]
         for slot in free_slots[:10]:  # Limit to first 10 slots
             slot_start = slot["start"]
             slot_end = slot["end"]
             lines.append(
-                f"- {slot_start.strftime('%Y-%m-%d %H:%M')} to "
-                f"{slot_end.strftime('%H:%M')}"
+                f"- {slot_start.strftime('%Y-%m-%d %H:%M')} to {slot_end.strftime('%H:%M')}"
             )
 
         if len(free_slots) > 10:
@@ -553,10 +549,7 @@ class UpdateEventTool(Tool):
         end = start + timedelta(days=30)
 
         events = await self._client.get_events(calendar.caluid, start, end)
-        matching_events = [
-            e for e in events
-            if args.event_title.lower() in e.title.lower()
-        ]
+        matching_events = [e for e in events if args.event_title.lower() in e.title.lower()]
 
         if not matching_events:
             return (
@@ -568,7 +561,9 @@ class UpdateEventTool(Tool):
         event = matching_events[0]
         logger.info(
             "Found event from search: uid=%s, title=%s, start=%s",
-            event.uid, event.title, event.start
+            event.uid,
+            event.title,
+            event.start,
         )
 
         # Get full event details including etag
@@ -578,7 +573,10 @@ class UpdateEventTool(Tool):
 
         logger.info(
             "Full event details: uid=%s, start=%s, recurrenceid=%s, is_recurring=%s",
-            full_event.uid, full_event.start, full_event.recurrenceid, full_event.is_recurring
+            full_event.uid,
+            full_event.start,
+            full_event.recurrenceid,
+            full_event.is_recurring,
         )
 
         # Parse new dates if provided, otherwise use existing event times
@@ -616,9 +614,7 @@ class UpdateEventTool(Tool):
             and effective_edittype == "all"
             and (args.new_start or args.new_end)
         ):
-            logger.info(
-                "Switching from 'all' to 'following' for recurring event time change"
-            )
+            logger.info("Switching from 'all' to 'following' for recurring event time change")
             effective_edittype = "following"
 
         # For "following" or "only" on recurring events, generate recurrenceid from
@@ -633,13 +629,15 @@ class UpdateEventTool(Tool):
                 recurrenceid = start_utc.strftime("%Y%m%dT%H%M%SZ")
                 logger.info(
                     "Generated recurrenceid from search occurrence: %s (from %s)",
-                    recurrenceid, occurrence_start
+                    recurrenceid,
+                    occurrence_start,
                 )
 
         if full_event.is_recurring:
             logger.info(
                 "Recurring event detected: recurrenceid=%s, edittype=%s",
-                recurrenceid, effective_edittype
+                recurrenceid,
+                effective_edittype,
             )
 
         # Update the event

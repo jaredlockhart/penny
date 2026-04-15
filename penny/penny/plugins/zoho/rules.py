@@ -80,9 +80,7 @@ class RuleExecutor:
     def __init__(self, zoho_client: ZohoClient) -> None:
         self._client = zoho_client
 
-    async def execute(
-        self, email_ids: list[str], action: dict
-    ) -> dict[str, bool]:
+    async def execute(self, email_ids: list[str], action: dict) -> dict[str, bool]:
         """Execute a rule action on a list of emails.
 
         Supported action fields:
@@ -106,9 +104,7 @@ class RuleExecutor:
                 success = await self._client.move_messages(email_ids, folder.folder_id)
                 results["move_to"] = success
                 if success:
-                    logger.info(
-                        "Moved %d email(s) to '%s'", len(email_ids), folder_path
-                    )
+                    logger.info("Moved %d email(s) to '%s'", len(email_ids), folder_path)
             else:
                 results["move_to"] = False
                 logger.warning("Failed to create folder: %s", folder_path)
@@ -125,9 +121,7 @@ class RuleExecutor:
                 success = await self._client.apply_label(email_ids, label_id)
                 results["label"] = success
                 if success:
-                    logger.info(
-                        "Applied label '%s' to %d email(s)", label_name, len(email_ids)
-                    )
+                    logger.info("Applied label '%s' to %d email(s)", label_name, len(email_ids))
             else:
                 results["label"] = False
                 logger.warning("Failed to create label: %s", label_name)
@@ -188,9 +182,7 @@ async def apply_email_rules(
                     matched_ids.append(email.id)
 
             if matched_ids:
-                logger.info(
-                    "Rule '%s' matched %d email(s)", rule.name, len(matched_ids)
-                )
+                logger.info("Rule '%s' matched %d email(s)", rule.name, len(matched_ids))
 
                 # Execute the action
                 await executor.execute(matched_ids, action)
