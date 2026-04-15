@@ -190,3 +190,30 @@ class ConversationHistory(SQLModel, table=True):
     topics: str  # Bullet-point list of topics discussed
     embedding: bytes | None = None  # Serialized float32 embedding vector
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class EmailRule(SQLModel, table=True):
+    """A persistent email rule for automatic organization.
+
+    Rules are applied during scheduled email checks to automatically
+    move, label, or process emails matching specified conditions.
+    Works with any email provider plugin (Zoho, Google, etc.).
+    """
+
+    __tablename__ = "email_rule"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    provider: str = Field(index=True)  # Plugin name: "zoho", "google", etc.
+    name: str  # Human-readable rule name
+    condition: str  # JSON condition: {"from": "aws", "subject_contains": "invoice"}
+    action: str  # JSON action: {"move_to": "Accounting/Expenses/AWS", "label": "completed"}
+    enabled: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_applied_at: datetime | None = None  # When this rule was last triggered
+
+    def get_condition(self) -> dict:
+        return json.loads(self.condition)
+
+    def get_action(self) -> dict:
+        return json.loads(self.action)

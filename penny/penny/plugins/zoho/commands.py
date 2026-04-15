@@ -87,6 +87,10 @@ class ZohoEmailCommand(Command):
                 ListFoldersTool(zoho_client),
                 ReadEmailsTool(zoho_client),
                 DraftEmailTool(zoho_client),
+                MoveEmailsTool(zoho_client),
+                CreateFolderTool(zoho_client),
+                ApplyLabelTool(zoho_client),
+                ListLabelsTool(zoho_client),
             ]
             agent = Agent(
                 system_prompt=Prompt.ZOHO_SYSTEM_PROMPT,
