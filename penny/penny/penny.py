@@ -26,8 +26,9 @@ from penny.config import Config, setup_logging
 from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
 from penny.database.migrate import migrate
-from penny.ollama.client import OllamaClient
-from penny.ollama.embeddings import serialize_embedding
+from penny.llm.client import LlmClient
+from penny.llm.embeddings import serialize_embedding
+from penny.llm.image_client import OllamaImageClient
 from penny.plugins import Plugin, load_plugins
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -228,7 +229,7 @@ class Penny:
         self.command_registry = create_command_registry(
             message_agent_factory=self._create_chat_agent,
             github_api=github_api,
-            image_model_client=self.image_model_client,
+            image_model_client=self.image_client,
             plugin_commands=plugin_commands,
             email_plugins=[p for p in self._plugins if "email" in p.capabilities],
         )
