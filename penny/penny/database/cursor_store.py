@@ -1,4 +1,4 @@
-"""Cursor store — per-agent read progress through log stores.
+"""Cursor store — per-agent read progress through log-shaped memories.
 
 The DB layer handles committed advances only. Pending/rollback lives in the
 orchestration layer: a run records the batch's max timestamp in-memory, then
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class CursorStore:
-    """Read-cursor persistence for agent consumption of log stores."""
+    """Read-cursor persistence for agent consumption of log-shaped memories."""
 
     def __init__(self, engine):
         self.engine = engine
@@ -29,24 +29,24 @@ class CursorStore:
     def _session(self) -> Session:
         return Session(self.engine)
 
-    def get(self, agent_name: str, store_name: str) -> datetime | None:
+    def get(self, agent_name: str, memory_name: str) -> datetime | None:
         with self._session() as session:
             row = session.exec(
                 select(AgentCursor).where(
                     AgentCursor.agent_name == agent_name,
-                    AgentCursor.store_name == store_name,
+                    AgentCursor.memory_name == memory_name,
                 )
             ).first()
             return _to_utc(row.last_read_at) if row else None
 
-    def advance_committed(self, agent_name: str, store_name: str, last_read_at: datetime) -> None:
+    def advance_committed(self, agent_name: str, memory_name: str, last_read_at: datetime) -> None:
         """Upsert the cursor to `last_read_at`. Monotonic: never moves backward."""
         incoming = _to_utc(last_read_at)
         with self._session() as session:
             row = session.exec(
                 select(AgentCursor).where(
                     AgentCursor.agent_name == agent_name,
-                    AgentCursor.store_name == store_name,
+                    AgentCursor.memory_name == memory_name,
                 )
             ).first()
             now = datetime.now(UTC)
@@ -54,7 +54,7 @@ class CursorStore:
                 session.add(
                     AgentCursor(
                         agent_name=agent_name,
-                        store_name=store_name,
+                        memory_name=memory_name,
                         last_read_at=incoming,
                         updated_at=now,
                     )

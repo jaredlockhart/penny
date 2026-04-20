@@ -1,4 +1,4 @@
-# Collection Store Implementation Plan
+# Memory Implementation Plan
 
 Companion to `task-framework-plan.md` (design doc). This is the tactical migration plan: schema, access layer, tool registry, per-agent port, data migration.
 
@@ -10,12 +10,12 @@ Ordered in independently-deployable stages. Each stage ships behind the prior on
 
 ### Schema design — unified table, for now
 
-One `store` table for metadata (both collections and logs), one `store_entry` table for entries (key nullable for logs).
+One `memory` table for metadata (both collections and logs), one `memory_entry` table for entries (key nullable for logs).
 
 We evaluated splitting into per-type tables (`collection_entry`, `log_entry`) for schema-encoded invariants. The trade-off: separate tables encode "collections always have keys, logs never do" at the DB level, but lose the uniform FK target that cursor/recall/archive infrastructure all want. Starting unified for operational simplicity; we can split later if the invariant violations become a real problem or we add a type that really diverges in shape.
 
 ```sql
-CREATE TABLE store (
+CREATE TABLE memory (
   name          TEXT PRIMARY KEY,
   type          TEXT NOT NULL CHECK (type IN ('collection', 'log')),
   description   TEXT NOT NULL,
@@ -24,9 +24,9 @@ CREATE TABLE store (
   created_at    DATETIME NOT NULL
 );
 
-CREATE TABLE store_entry (
+CREATE TABLE memory_entry (
   id                INTEGER PRIMARY KEY,
-  store_name        TEXT NOT NULL REFERENCES store(name),
+  memory_name       TEXT NOT NULL REFERENCES memory(name),
   key               TEXT,              -- null for log entries
   content           TEXT NOT NULL,
   author            TEXT NOT NULL,
@@ -35,15 +35,15 @@ CREATE TABLE store_entry (
   created_at        DATETIME NOT NULL
 );
 
-CREATE INDEX ix_store_entry_by_created ON store_entry(store_name, created_at);
-CREATE INDEX ix_store_entry_by_key     ON store_entry(store_name, key);
+CREATE INDEX ix_memory_entry_by_created ON memory_entry(memory_name, created_at);
+CREATE INDEX ix_memory_entry_by_key     ON memory_entry(memory_name, key);
 
 CREATE TABLE agent_cursor (
   agent_name   TEXT NOT NULL,
-  store_name   TEXT NOT NULL,
+  memory_name  TEXT NOT NULL,
   last_read_at DATETIME NOT NULL,
   updated_at   DATETIME NOT NULL,
-  PRIMARY KEY (agent_name, store_name)
+  PRIMARY KEY (agent_name, memory_name)
 );
 
 CREATE TABLE media (
@@ -57,15 +57,15 @@ CREATE TABLE media (
 
 ### Access layer
 
-`penny/database/store.py` — single module exposing `StoreStore` on the database facade (`db.stores`).
+`penny/database/memory_store.py` — single module exposing `MemoryStore` on the database facade (`db.memories`).
 
 ```python
-class StoreStore:
+class MemoryStore:
     # Metadata
-    def create_collection(self, name, description, recall, archived=False) -> Store
-    def create_log(self, name, description, recall, archived=False) -> Store
-    def get(self, name) -> Store | None
-    def list(self) -> list[Store]
+    def create_collection(self, name, description, recall, archived=False) -> Memory
+    def create_log(self, name, description, recall, archived=False) -> Memory
+    def get(self, name) -> Memory | None
+    def list(self) -> list[Memory]
     def archive(self, name) -> None
     def unarchive(self, name) -> None
 
@@ -94,8 +94,8 @@ class StoreStore:
 
 Internal helpers:
 - `_embed(text)` — wraps the embedding client
-- `_check_dedup(store_name, key, content)` — similarity check on both axes
-- Type-enforcement: `write/update/move/delete` assert store type is 'collection'; `append` asserts 'log'. Raises `StoreTypeError` on mismatch.
+- `_check_dedup(memory_name, key, content)` — similarity check on both axes
+- Type-enforcement: `write/update/move/delete` assert memory type is 'collection'; `append` asserts 'log'. Raises `MemoryTypeError` on mismatch.
 
 ### Dedup rule
 
@@ -110,26 +110,26 @@ A candidate is a duplicate if **any one signal meets its strict threshold**, OR 
 Signals that can't be computed (missing keys on log entries, missing embeddings when no model is configured) are skipped — the rule degrades to "whatever's comparable fires."
 
 Starting thresholds (all live in `PennyConstants`):
-- `STORE_KEY_TCR_STRICT_THRESHOLD = 1.0` / `STORE_KEY_TCR_RELAXED_THRESHOLD = 0.65` (abbreviation band — 2/3 is a common score and 0.67 literal misses it by a bit)
-- `STORE_KEY_SIM_STRICT_THRESHOLD = 0.90` / `STORE_KEY_SIM_RELAXED_THRESHOLD = 0.75`
-- `STORE_CONTENT_SIM_STRICT_THRESHOLD = 0.90` / `STORE_CONTENT_SIM_RELAXED_THRESHOLD = 0.75`
+- `MEMORY_KEY_TCR_STRICT_THRESHOLD = 1.0` / `MEMORY_KEY_TCR_RELAXED_THRESHOLD = 0.65` (abbreviation band — 2/3 is a common score and 0.67 literal misses it by a bit)
+- `MEMORY_KEY_SIM_STRICT_THRESHOLD = 0.90` / `MEMORY_KEY_SIM_RELAXED_THRESHOLD = 0.75`
+- `MEMORY_CONTENT_SIM_STRICT_THRESHOLD = 0.90` / `MEMORY_CONTENT_SIM_RELAXED_THRESHOLD = 0.75`
 
-Any hit rejects the write with `"duplicate found, write failed"` — the model doesn't need to reason about which axis triggered. Tune in production by watching false-positive / false-negative rates on real writes. This is a consolidation of the several bespoke dedup strategies in the old architecture; per-store tuning happens via override `DedupThresholds` passed into `write()`.
+Any hit rejects the write with `"duplicate found, write failed"` — the model doesn't need to reason about which axis triggered. Tune in production by watching false-positive / false-negative rates on real writes. This is a consolidation of the several bespoke dedup strategies in the old architecture; per-memory tuning happens via override `DedupThresholds` passed into `write()`.
 
 ### Cursor helpers
 
-`penny/database/cursor.py`:
+`penny/database/cursor_store.py`:
 
 ```python
 class CursorStore:
-    def get(self, agent_name, store_name) -> datetime | None
-    def advance_committed(self, agent_name, store_name, timestamp) -> None
+    def get(self, agent_name, memory_name) -> datetime | None
+    def advance_committed(self, agent_name, memory_name, timestamp) -> None
     # No pending/rollback at the DB layer — that's orchestration-layer concern
 ```
 
 ### Media store
 
-`penny/database/media.py`:
+`penny/database/media_store.py`:
 
 ```python
 class MediaStore:
@@ -139,45 +139,45 @@ class MediaStore:
 
 ### Migration
 
-New migration file `0025_store_schema.py` creates the tables above. No data migration yet — just schema.
+New migration file `0025_memory_schema.py` creates the tables above. No data migration yet — just schema.
 
 ---
 
 ## Stage 2: Tool registry
 
-`penny/tools/store_tools.py` — tool implementations as `Tool` subclasses matching the existing tool framework.
+`penny/tools/memory_tools.py` — tool implementations as `Tool` subclasses matching the existing tool framework.
 
 ### Tool set
 
 Each tool is a thin wrapper that:
 1. Validates args via a Pydantic model (per CLAUDE.md rules)
-2. Calls `db.stores.*`
+2. Calls `db.memories.*`
 3. Returns a result suitable for serialization back to the model
 
 Collection tools:
-- `CollectionCreate` → `db.stores.create_collection`
-- `CollectionGet` → `db.stores.get_entry`
-- `CollectionReadLatest` → `db.stores.read_latest` (cap from config)
-- `CollectionReadRandom` → `db.stores.read_random(k)`
-- `CollectionReadSimilar` → `db.stores.read_similar(anchor, k)`
-- `CollectionReadAll` → `db.stores.read_all`
-- `CollectionKeys` → `db.stores.keys`
-- `CollectionWrite` → `db.stores.write`
-- `CollectionUpdate` → `db.stores.update`
-- `CollectionDelete` → `db.stores.delete`
-- `CollectionMove` → `db.stores.move`
-- `CollectionArchive` → `db.stores.archive`
-- `CollectionUnarchive` → `db.stores.unarchive`
+- `CollectionCreate` → `db.memories.create_collection`
+- `CollectionGet` → `db.memories.get_entry`
+- `CollectionReadLatest` → `db.memories.read_latest` (cap from config)
+- `CollectionReadRandom` → `db.memories.read_random(k)`
+- `CollectionReadSimilar` → `db.memories.read_similar(anchor, k)`
+- `CollectionReadAll` → `db.memories.read_all`
+- `CollectionKeys` → `db.memories.keys`
+- `CollectionWrite` → `db.memories.write`
+- `CollectionUpdate` → `db.memories.update`
+- `CollectionDelete` → `db.memories.delete`
+- `CollectionMove` → `db.memories.move`
+- `CollectionArchive` → `db.memories.archive`
+- `CollectionUnarchive` → `db.memories.unarchive`
 
 Log tools:
-- `LogCreate` → `db.stores.create_log`
+- `LogCreate` → `db.memories.create_log`
 - `LogReadLatest`, `LogReadRecent`, `LogReadSimilar`, `LogReadAll` — wrappers
 - `LogReadNext` — reads since the agent's cursor, Python-managed cap, records pending advance
 - `LogAppend` — most agents won't need this; used by side-effect wrappers and user-collection writes
 
 Discovery / introspection:
-- `ListStores` → `db.stores.list`
-- `Exists` → `db.stores.exists(names, key, content)`
+- `ListMemories` → `db.memories.list`
+- `Exists` → `db.memories.exists(names, key, content)`
 
 Lifecycle:
 - `Done` — empty body, signals the orchestration loop to exit (no model-facing content change)
@@ -189,7 +189,7 @@ The tool dispatcher reads `current_agent()` from a contextvar set by the orchest
 ### Cursor pending/commit
 
 `LogReadNext` has a two-phase commit handled by the run orchestrator:
-1. Each call records the batch's max `created_at` in an in-memory pending dict keyed by `(agent_name, store_name)`.
+1. Each call records the batch's max `created_at` in an in-memory pending dict keyed by `(agent_name, memory_name)`.
 2. On successful run completion, the orchestrator calls `CursorStore.advance_committed` for each pending entry.
 3. On run failure, pending is discarded.
 
@@ -201,7 +201,7 @@ The orchestration layer (`penny/agents/base.py` or equivalent) handles three rec
 
 2. **Empty response with no tool calls** — when the model returns a response with neither `tool_calls` nor meaningful `content`, it's dropped the thread. Append a nudge (`"You returned an empty response with no tool calls. Continue and complete the user's request — if multiple changes are needed, make all of them before responding."`) and retry.
 
-3. **Bad tool call arguments** — wrap `dispatch_tool` in try/except; catch `TypeError`, `pydantic.ValidationError`, and `StoreTypeError`; return the error message as a string tool result (`"error: bad arguments for collection_update: missing 'content'"`). The model sees the error in the next turn and can retry with corrected args.
+3. **Bad tool call arguments** — wrap `dispatch_tool` in try/except; catch `TypeError`, `pydantic.ValidationError`, and `MemoryTypeError`; return the error message as a string tool result (`"error: bad arguments for collection_update: missing 'content'"`). The model sees the error in the next turn and can retry with corrected args.
 
 Each retry counts against `max_steps`; if the agent exhausts its budget on retries, that's a legitimate failure and the run is logged as failed.
 
@@ -215,10 +215,10 @@ Each retry counts against `max_steps`; if the agent exhausts its budget on retri
 async def build_recall_block(
     db, current_message: str, k_default: int = 5, similarity_floor: float = 0.35
 ) -> str:
-    """For each non-archived store with recall != 'off', render the appropriate slice."""
+    """For each non-archived memory with recall != 'off', render the appropriate slice."""
 ```
 
-Logic per store:
+Logic per memory:
 - `recall: off` — skip
 - `recall: recent` — `read_latest(k_default)`
 - `recall: relevant` — compute embedding of `current_message`, `read_similar(current_message, k_default)` filtered by similarity >= floor
@@ -228,7 +228,7 @@ Logic per store:
 
 The assembler has one special case: when both `user-messages` and `penny-messages` appear in the recall set for a given turn, it merges their entries chronologically into a single "Conversation" section rather than rendering them as two separate sections. The model reads one interleaved transcript instead of stitching two disjoint lists together in its head.
 
-This is a display-layer concern only — the data layer still has two independent physical logs. No virtual store, no merged storage. `build_recall_block` detects the pair in its rendering pass and interleaves by `created_at`. Each log still contributes its own K-cap independently (so you get up to K user messages + K Penny messages merged).
+This is a display-layer concern only — the data layer still has two independent physical logs. No virtual memory, no merged storage. `build_recall_block` detects the pair in its rendering pass and interleaves by `created_at`. Each log still contributes its own K-cap independently (so you get up to K user messages + K Penny messages merged).
 
 Example output when both logs are recall-enabled:
 
@@ -253,9 +253,9 @@ The "historically relevant user statements" section comes from the `relevant` mo
 
 Actually, to avoid the complexity of the same log appearing in two recall passes, the simpler rule: `user-messages` is `recall: relevant` (historical matches) and `penny-messages` is `recall: recent` (latest sends). The conversation-pair rule kicks in only when `user-messages` is ALSO rendered in recent mode as part of the pair — which happens when the assembler detects the pair and pulls recent from both. Implementation detail: the assembler can treat the pair as a special unit that pulls recent from both AND also lets `user-messages` do its normal relevant pass. The result is the user sees both a "conversation" section (recent merged) and a "historically relevant user statements" section (relevant).
 
-### Store registration
+### Memory registration
 
-The pair is configured in code, not in the store table. A simple constant in `recall.py`:
+The pair is configured in code, not in the memory table. A simple constant in `recall.py`:
 
 ```python
 CONVERSATION_PAIRS = [("user-messages", "penny-messages")]
@@ -444,7 +444,7 @@ You are Penny's knowledge extractor. You process ONE page per run.
 
 ## Stage 8: Chat agent port
 
-`penny/agents/chat.py` — the heaviest port because chat touches many stores and relies on ambient recall.
+`penny/agents/chat.py` — the heaviest port because chat touches many memories and relies on ambient recall.
 
 ### New pattern
 
@@ -455,7 +455,7 @@ async def handle(self, message):
         system_prompt=self._build_system_prompt(message),
         tools=[
             # full tool surface — chat is the generalist
-            ListStores,
+            ListMemories,
             CollectionCreate, CollectionGet, CollectionReadLatest, CollectionReadRandom,
             CollectionReadSimilar, CollectionReadAll, CollectionKeys,
             CollectionWrite, CollectionUpdate, CollectionDelete, CollectionMove,
@@ -474,7 +474,7 @@ async def handle(self, message):
 
 Existing building blocks (`_identity_section`, `_profile_section`, etc.) stay. New additions:
 - `_recall_section` — calls `build_recall_block`
-- `_stores_section` — injects the store registry (name + description + type + recall for each non-archived store). This is what helps Penny know what collections exist when users reference them.
+- `_memories_section` — injects the memory registry (name + description + type + recall for each non-archived memory). This is what helps Penny know what collections exist when users reference them.
 
 Drop:
 - `_related_knowledge_section` (replaced by ambient recall on the knowledge collection)
@@ -492,19 +492,19 @@ Drop:
 
 ## Stage 9: Side-effect wiring
 
-Three places the system writes stores automatically, not via model tool calls:
+Three places the system writes memories automatically, not via model tool calls:
 
 ### Channel ingress → `user-messages` log
 
-`penny/channels/base.py:handle_message` — after existing `log_message` call, also `db.stores.append("user-messages", [{content: msg.content}], author="user")`.
+`penny/channels/base.py:handle_message` — after existing `log_message` call, also `db.memories.append("user-messages", [{content: msg.content}], author="user")`.
 
 ### `send_message` → `penny-messages` log
 
-The tool's implementation, after delivering to the channel, also `db.stores.append("penny-messages", [{content}], author=current_agent())`.
+The tool's implementation, after delivering to the channel, also `db.memories.append("penny-messages", [{content}], author=current_agent())`.
 
 ### `browse` → `browse-results` log
 
-The browse tool's implementation, after fetching the page, also `db.stores.append("browse-results", [{content: f"URL: {url}\n\n{page_text}"}], author=current_agent())`.
+The browse tool's implementation, after fetching the page, also `db.memories.append("browse-results", [{content: f"URL: {url}\n\n{page_text}"}], author=current_agent())`.
 
 ### Logging new tools is the default going forward
 
@@ -514,11 +514,11 @@ When someone adds a new tool to Penny in the future, the default should be: the 
 
 ## Stage 10: Data migration
 
-One-shot scripts, run during the migration cutover deploy. Each migrates one table into the new store schema.
+One-shot scripts, run during the migration cutover deploy. Each migrates one table into the new memory schema.
 
-`penny/database/migrations/0026_store_data_migration.py`:
+`penny/database/migrations/0026_memory_data_migration.py`:
 
-1. Create stores (INSERT into `store` table):
+1. Create memories (INSERT into `memory` table):
    - `user-messages` (log, recall=relevant)
    - `penny-messages` (log, recall=recent)
    - `browse-results` (log, recall=off)
@@ -528,7 +528,7 @@ One-shot scripts, run during the migration cutover deploy. Each migrates one tab
    - `notified-thoughts` (collection, recall=relevant)
    - `knowledge` (collection, recall=relevant)
 
-2. Populate `store_entry` from old tables:
+2. Populate `memory_entry` from old tables:
    - `message_log` WHERE direction='inbound' → `user-messages`
    - `message_log` WHERE direction='outbound' → `penny-messages`
    - `preference` WHERE valence='positive' → `likes` (key = content if short enough; else a truncated slug)
@@ -546,10 +546,10 @@ One-shot scripts, run during the migration cutover deploy. Each migrates one tab
 
 Important distinction in what happens to old tables after their corresponding agent is ported:
 
-- **`message_log`** — keeps receiving writes indefinitely. The channel adapter writes incoming messages here (for device/routing state that lives on these rows) AND side-effect-writes to `user-messages` / `penny-messages` (for the store layer). Dual-write, long-lived.
+- **`message_log`** — keeps receiving writes indefinitely. The channel adapter writes incoming messages here (for device/routing state that lives on these rows) AND side-effect-writes to `user-messages` / `penny-messages` (for the memory layer). Dual-write, long-lived.
 - **`preference`, `thought`, `knowledge`** — frozen at migration time. Once the agent that wrote to each is ported (Stages 4-8), that agent stops writing to the old table. The old tables keep the snapshot from migration-time and receive no further writes.
 
-This asymmetry matters for rollback: reverting a message-related change is safe indefinitely since `message_log` is always current; reverting a preference/thought/knowledge-related change loses any writes that happened to the new store after the agent was ported. Verify at each port-stage PR that the old-to-new migration captured everything relevant before the agent rewires.
+This asymmetry matters for rollback: reverting a message-related change is safe indefinitely since `message_log` is always current; reverting a preference/thought/knowledge-related change loses any writes that happened to the new memory after the agent was ported. Verify at each port-stage PR that the old-to-new migration captured everything relevant before the agent rewires.
 
 ---
 
@@ -568,7 +568,7 @@ After each agent is ported, its existing integration tests must pass unmodified.
 
 ## Stage 12: Old tables — keep in place for now
 
-We are not dropping `preference`, `thought`, `knowledge`, or `message_log` as part of this migration. Once all agents are ported and the new stores are the sole read/write path from agents, the old tables are dead weight — but dead weight is cheap, and keeping them gives us:
+We are not dropping `preference`, `thought`, `knowledge`, or `message_log` as part of this migration. Once all agents are ported and the new memories are the sole read/write path from agents, the old tables are dead weight — but dead weight is cheap, and keeping them gives us:
 
 - A fallback reference during the port if anything's wrong with migrated data
 - Ability to run an old-vs-new comparison at any point post-migration
@@ -576,7 +576,7 @@ We are not dropping `preference`, `thought`, `knowledge`, or `message_log` as pa
 
 Drop is a later, independent decision. It can happen weeks/months after the port when we're confident. At that point it's a one-line migration.
 
-`message_log` specifically will likely stay long-term regardless, since the channel layer uses it for device/routing and there's no urgency to move that into the stores.
+`message_log` specifically will likely stay long-term regardless, since the channel layer uses it for device/routing and there's no urgency to move that into the memories.
 
 ---
 
@@ -594,12 +594,12 @@ No new tools — just documented behavior validated with real user interactions.
 ## Stage 14: Browser addon UI update
 
 Addon currently has hardcoded per-type tabs (Likes, Dislikes, Thoughts). Replace with:
-- Dynamic list of all non-archived stores (from `list_stores()` via the WebSocket protocol)
-- Click a store → browse its entries (paginated for logs, full for collections typically)
+- Dynamic list of all non-archived memories (from `list_memories()` via the WebSocket protocol)
+- Click a memory → browse its entries (paginated for logs, full for collections typically)
 - Filter/search by key or content
 - No hardcoded per-type handling
 
-Addon protocol gains a `list_stores` and `read_store_entries(store, shape)` request.
+Addon protocol gains a `list_memories` and `read_memory_entries(memory, shape)` request.
 
 ---
 
@@ -611,7 +611,7 @@ Addon protocol gains a `list_stores` and `read_store_entries(store, shape)` requ
 
 **Stage 10 (data migration)**: test harness runs the migration against a copy of the production DB (via `make migrate-test`), verifies row counts match and spot-checks content integrity.
 
-**Stage 11 (agent rewire)**: full integration test pass after the last agent is ported — confirms the system runs end-to-end with the new stores as the sole agent-facing data layer.
+**Stage 11 (agent rewire)**: full integration test pass after the last agent is ported — confirms the system runs end-to-end with the new memories as the sole agent-facing data layer.
 
 ---
 
@@ -628,9 +628,9 @@ Once we eventually decide to drop the old tables (separate, post-migration PR), 
 1. Stage 1 (schema) — PR, deploy
 2. Stage 2 (tools) — PR, deploy
 3. Stage 3 (recall assembly) — PR, deploy (unused until chat port)
-4. Stage 9 (side-effect wiring) — PR, deploy (writes to new stores; old tables still being written to as well)
-5. Stage 10 (data migration) — PR, deploy; new stores populated from existing tables
+4. Stage 9 (side-effect wiring) — PR, deploy (writes to new memories; old tables still being written to as well)
+5. Stage 10 (data migration) — PR, deploy; new memories populated from existing tables
 6. Stages 4-8 (agent ports, one PR each, in the order listed)
 7. Stages 13-14 (user collections, addon UI) — PRs, deploy as ready
 
-Each stage is independently revertable. Old tables stay in place (see Stage 12) — drop is a later, separate decision when we're confident the new stores are the sole source of truth and we don't want the fallback anymore.
+Each stage is independently revertable. Old tables stay in place (see Stage 12) — drop is a later, separate decision when we're confident the new memories are the sole source of truth and we don't want the fallback anymore.

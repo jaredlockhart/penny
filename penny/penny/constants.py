@@ -233,7 +233,7 @@ class PennyConstants:
     # to try it") but live in the same conversation as a real hit.
     RELATED_MESSAGES_NEIGHBOR_WINDOW_MINUTES = 5
 
-    # Store dedup thresholds. Three signals are evaluated per candidate/
+    # Memory dedup thresholds. Three signals are evaluated per candidate/
     # existing pair:
     #   1. key TCR (token-containment ratio; lexical, cheap, catches
     #      "dark roast" vs "dark roast coffee" and year-stripped variants)
@@ -243,12 +243,12 @@ class PennyConstants:
     # >= their relaxed thresholds. Strict catches obvious matches on one axis;
     # relaxed catches weak-on-every-axis matches a single-signal gate misses.
     # Starting values; tune empirically against false-positive/false-negative
-    # rates on real store writes.
-    STORE_KEY_TCR_STRICT_THRESHOLD = 1.0
+    # rates on real memory writes.
+    MEMORY_KEY_TCR_STRICT_THRESHOLD = 1.0
     # Abbreviation band: "applied ai conference" vs "applied ai conf" scores
     # exactly 2/3. Float-literal 0.67 would miss it by one bit.
-    STORE_KEY_TCR_RELAXED_THRESHOLD = 0.65
-    STORE_KEY_SIM_STRICT_THRESHOLD = 0.90
-    STORE_KEY_SIM_RELAXED_THRESHOLD = 0.75
-    STORE_CONTENT_SIM_STRICT_THRESHOLD = 0.90
-    STORE_CONTENT_SIM_RELAXED_THRESHOLD = 0.75
+    MEMORY_KEY_TCR_RELAXED_THRESHOLD = 0.65
+    MEMORY_KEY_SIM_STRICT_THRESHOLD = 0.90
+    MEMORY_KEY_SIM_RELAXED_THRESHOLD = 0.75
+    MEMORY_CONTENT_SIM_STRICT_THRESHOLD = 0.90
+    MEMORY_CONTENT_SIM_RELAXED_THRESHOLD = 0.75

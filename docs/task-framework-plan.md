@@ -1,16 +1,16 @@
-# Collection Store + Task Framework Plan
+# Memory + Task Framework Plan
 
 ## Overview
 
 Transform Penny's data and behavior layers in two phases:
 
-1. **Phase 1 — Collection Store.** Unify all persistent user-meaningful data into a single primitive: collections. Every existing specialized store (messages, preferences, thoughts, knowledge) becomes a collection. Existing agents migrate to broker all their reads and writes through a narrow, uniform tool surface. All data-layer interactions move into model-space tool calls.
+1. **Phase 1 — Memory.** Unify all persistent user-meaningful data into a single primitive: memories. Every existing specialized store (messages, preferences, thoughts, knowledge) becomes a memory. Existing agents migrate to broker all their reads and writes through a narrow, uniform tool surface. All data-layer interactions move into model-space tool calls.
 
 2. **Phase 2 — Task Framework.** Once the data layer is stable and agents already operate via collection tool calls, lift each hardcoded agent into a user-authored *task* — a named, scheduled, editable system prompt + tools + success criteria. Behavior joins data in being reshapable through conversation rather than through code.
 
-Phase 1 is a shippable refactor on its own. It unlocks user-created collections ("track my weight," "keep a recipe log") as a real capability immediately, independent of Phase 2. Phase 2 is designed after Phase 1 lands — its shape will be informed by what we actually learn from running migrated agents on the uniform data layer.
+Phase 1 is a shippable refactor on its own. It unlocks user-created memories ("track my weight," "keep a recipe log") as a real capability immediately, independent of Phase 2. Phase 2 is designed after Phase 1 lands — its shape will be informed by what we actually learn from running migrated agents on the uniform data layer.
 
-The design aims for the flexibility of fully autonomous agents while staying within safe primitives: typed collections instead of filesystem, domain-gated tools instead of raw shell, inner prompt edits instead of root prompt edits.
+The design aims for the flexibility of fully autonomous agents while staying within safe primitives: typed memories instead of filesystem, domain-gated tools instead of raw shell, inner prompt edits instead of root prompt edits.
 
 ---
 
@@ -18,18 +18,18 @@ The design aims for the flexibility of fully autonomous agents while staying wit
 
 ### What's wrong with the current architecture
 
-Penny today encodes one specific theory of what a personal assistant should do — extract preferences, generate thoughts, summarize knowledge, send notifications — and bakes that theory into Python. Every store (`preference`, `thought`, `knowledge`, `entity`) has its own schema, its own dedup logic, its own retrieval patterns, its own mutation rules. Each agent knows where to write by calling table-specific methods; each retrieval site hand-codes its own similarity-sort-and-inject pipeline. Adding a new behavior means writing a new table, a new store, a new retrieval, and a new orchestrator.
+Penny today encodes one specific theory of what a personal assistant should do — extract preferences, generate thoughts, summarize knowledge, send notifications — and bakes that theory into Python. Every store (`preference`, `thought`, `knowledge`, `entity`) has its own schema, its own dedup logic, its own retrieval patterns, its own mutation rules. Each agent knows where to write by calling table-specific methods; each retrieval site hand-codes its own similarity-sort-and-inject pipeline. Adding a new behavior means writing a new table, a new memory, a new retrieval, and a new orchestrator.
 
 A different user (e.g., small-business flows — email triage, schedule comparison) gets our theory whether it fits or not. Every new behavior costs a PR, CI, review, deploy cycle.
 
 ### What a unified data layer unlocks
 
-If all user-meaningful data lives in collections with uniform shape, uniform retrieval, and uniform tool access:
+If all user-meaningful data lives in memories with uniform shape, uniform retrieval, and uniform tool access:
 
 - Users construct arbitrary data stores by describing them to Penny ("make me a weight log")
 - All agents use one access pattern — no more store-per-table boilerplate
-- Ambient retrieval extends to new collections automatically (just embed the content)
-- Failed experiments are cheap (drop the collection, not a migration)
+- Ambient retrieval extends to new memories automatically (just embed the content)
+- Failed experiments are cheap (drop the memory, not a migration)
 - The door is open to Phase 2, where *behaviors* also become user-authored
 
 ### Why now
@@ -52,7 +52,7 @@ The model does as little reasoning about mechanics as possible. Cursors, dedup, 
 
 ### State is collection membership
 
-There are no mutable fields on entries. Content is immutable. State transitions are expressed by moving an entry between collections: `likes` ↔ `dislikes`, `unnotified-thoughts` → `notified-thoughts`. This makes the state machine visible in the collection graph, eliminates per-entry state management, and preserves embeddings across transitions (moves don't re-embed).
+There are no mutable fields on entries. Content is immutable. State transitions are expressed by moving an entry between collections: `likes` ↔ `dislikes`, `unnotified-thoughts` → `notified-thoughts`. This makes the state machine visible in the memory graph, eliminates per-entry state management, and preserves embeddings across transitions (moves don't re-embed).
 
 ### Everything is a tool call
 
@@ -81,19 +81,19 @@ The two shapes correspond to genuinely different data: *things* vs *events*. Col
 
 Both types share:
 - **name** — stable identifier
-- **description** — human-readable purpose; load-bearing (chat agent uses it to pick which store to write to; gets injected into agent system prompts)
+- **description** — human-readable purpose; load-bearing (chat agent uses it to pick which memory to write to; gets injected into agent system prompts)
 - **recall** — how entries appear in chat context: `off` | `recent` | `relevant` | `all`
   - `off` — never surfaced in chat
   - `recent` — latest entries by created_at
   - `relevant` — top-K by embedding similarity to current message (with a similarity floor — see *Ambient injection*)
-  - `all` — every entry, unconditionally, every turn. For small always-on collections like user-defined rules, guidelines, or standing instructions ("never do X", "always respond in this style"). Total injected volume scales with entry count, so `all` is only appropriate for collections that stay small.
+  - `all` — every entry, unconditionally, every turn. For small always-on memories like user-defined rules, guidelines, or standing instructions ("never do X", "always respond in this style"). Total injected volume scales with entry count, so `all` is only appropriate for memories that stay small.
 - **archived** — boolean, default `false`. When `true`, excluded from ambient recall entirely. Data preserved and still directly readable.
 
 **`recall` and type are orthogonal.** Defaults are type-driven (collection → `relevant`, log → `recent`) but any combination is valid. A log with `recall: relevant` surfaces historically matching events by topic (e.g., `user-messages` matching current conversation). A collection with `recall: recent` surfaces whichever entries were added most recently regardless of topic (e.g., "currently-reading" books).
 
 ### How Penny picks the shape
 
-The two questions Penny answers when creating a persistent store for the user:
+The two questions Penny answers when creating a persistent memory for the user:
 
 1. **Type** — "Is this a set of distinct things, or a stream of events?"
 2. **Recall** — "Should this surface in chat, and by topic or by recency?"
@@ -148,11 +148,11 @@ Cross-collection dedup (e.g., "don't re-say a thought that was already notified"
 
 ### Tool surface
 
-All implemented as narrow Python wrappers over the underlying stores.
+All implemented as narrow Python wrappers over the underlying memories.
 
 **Discovery (both types):**
-- `list_stores()` — names, descriptions, and types (collection | log) of everything that exists
-- `describe_store(name)` — full metadata for one store
+- `list_memories()` — names, descriptions, and types (collection | log) of everything that exists
+- `describe_memory(name)` — full metadata for one memory
 
 **Collection reads:**
 - `collection_get(collection, key)` — direct key lookup
@@ -196,7 +196,7 @@ Logs have no move, no update, no delete — they're append-only.
 
 ### Side-effect writes
 
-Some tools write to stores as part of their behavior, without the model orchestrating the write:
+Some tools write to memories as part of their behavior, without the model orchestrating the write:
 
 - `send_message(content)` → appends to the `penny-messages` log (author=calling-agent identity)
 - `browse(url)` → appends to the `browse-results` log with content=page text. Same URL re-fetched later is a new log entry; page content can change over time, both fetches are preserved.
@@ -235,15 +235,15 @@ Within a run, subsequent reads use `max(db_cursor, in_memory_pending)` so pagina
 
 ### Ambient injection (outer chat context only)
 
-When the chat agent assembles context for a user turn, the hypervisor queries each store (collection OR log) that is not archived and whose `recall` is not `off`, then unions the results (tagged by source) into the system prompt:
+When the chat agent assembles context for a user turn, the hypervisor queries each memory (collection OR log) that is not archived and whose `recall` is not `off`, then unions the results (tagged by source) into the system prompt:
 
 - **`recall: recent`** — latest N entries by `created_at` (K a system-wide default, e.g. 5)
-- **`recall: relevant`** — top-K by embedding similarity to the current user message, with a similarity floor. Entries below the floor don't surface. A store that has no entries above the floor for this turn contributes nothing — its slot is effectively skipped. This keeps ambient context bounded even as the user accumulates many relevant-mode stores over time; stale or off-topic stores naturally fall out without anyone having to archive them.
-- **`recall: all`** — every entry from the store, injected unconditionally. For small always-on collections (rules, guidelines, standing instructions). No similarity check, no cap — everything is considered perpetually relevant to every interaction.
+- **`recall: relevant`** — top-K by embedding similarity to the current user message, with a similarity floor. Entries below the floor don't surface. A memory that has no entries above the floor for this turn contributes nothing — its slot is effectively skipped. This keeps ambient context bounded even as the user accumulates many relevant-mode memories over time; stale or off-topic memories naturally fall out without anyone having to archive them.
+- **`recall: all`** — every entry from the memory, injected unconditionally. For small always-on memories (rules, guidelines, standing instructions). No similarity check, no cap — everything is considered perpetually relevant to every interaction.
 
-A single store uses one mode, not both. Different stores can use different modes in the same chat turn — the chat context is the union of "recent conversation" (messages log, recall=recent) plus "relevant historical user statements" (user-messages log, recall=relevant) plus "relevant preferences" (likes/dislikes collections, recall=relevant) plus whatever else.
+A single memory uses one mode, not both. Different memories can use different modes in the same chat turn — the chat context is the union of "recent conversation" (messages log, recall=recent) plus "relevant historical user statements" (user-messages log, recall=relevant) plus "relevant preferences" (likes/dislikes collections, recall=relevant) plus whatever else.
 
-Between the similarity floor (automatic) and the `archived` flag (explicit), ambient context volume stays controlled as the store set grows.
+Between the similarity floor (automatic) and the `archived` flag (explicit), ambient context volume stays controlled as the memory set grows.
 
 Recall results are rendered as a structured block appended to the system prompt, something like:
 
@@ -260,7 +260,7 @@ Collection: likes (things the user likes)
 
 This is how the chat agent stays continuous across sessions without passing conversation history. When the user says something like "Tuesday's WeWork" in a fresh session, the trip collection's Tuesday entry is already in the agent's context by the time it reads the user's message — no separate read call needed, no guessing, no clarifying question. **Ambient recall isn't a context-enrichment nice-to-have; it's the mechanism that makes cross-session chat work at all.**
 
-Background agent contexts do **not** get ambient injection. They see only their declared system prompt, their explicit tool-call returns, and the collection list. This preserves the fixation-prevention property — a thinking loop isn't flooded with its own prior output.
+Background agent contexts do **not** get ambient injection. They see only their declared system prompt, their explicit tool-call returns, and the memory list. This preserves the fixation-prevention property — a thinking loop isn't flooded with its own prior output.
 
 ### Agent system prompt structure
 
@@ -269,7 +269,7 @@ Every migrated agent gets its system prompt assembled by the hypervisor as:
 ```
 {agent-specific job prompt}
 
-## Available collections
+## Available memories
 
 - user-messages: messages from the user
 - penny-messages: your past responses
@@ -286,13 +286,13 @@ Every migrated agent gets its system prompt assembled by the hypervisor as:
 {rendered tool descriptions for the tools granted to this agent}
 ```
 
-The collection list is just every collection that exists — assembled at prompt-build time from the collections table. New collections show up automatically in every agent's next invocation.
+The memory list is just every memory that exists — assembled at prompt-build time from the memory table. New memories show up automatically in every agent's next invocation.
 
 Every agent gets the full tool surface. The agent's system prompt describes its job; the model decides which tools apply to that job. We don't pre-subset the menu because that's a judgment call the model is capable of making from the prompt, and hardcoding per-agent subsets reintroduces the "different agents have different capabilities" complexity the platform is meant to eliminate.
 
 ### Access model
 
-Any agent can read or write any collection. Penny is single-user; there's no adversarial principal to guard against. Safety bounds live at the **tool** layer:
+Any agent can read or write any memory. Penny is single-user; there's no adversarial principal to guard against. Safety bounds live at the **tool** layer:
 - `send_message` is rate-limited
 - Tools only expose user-meaningful operations — filesystem, shell, and system tables are not reachable from any tool
 - A misrouted write is a prompt bug visible in the run log, fixable in conversation
@@ -315,7 +315,7 @@ media
   created_at    DATETIME
 ```
 
-The media store is infrastructure, not a user-facing store. Agents don't call `media_create` or `media_read`; they receive images via tool results that already contain tokens and emit content that still contains tokens. The swap happens at the channel layer.
+The media store is infrastructure, not a user-facing memory. Agents don't call `media_create` or `media_read`; they receive images via tool results that already contain tokens and emit content that still contains tokens. The swap happens at the channel layer.
 
 Token format needs to be chosen deliberately to survive JSON serialization cleanly and not collide with normal text. Leading candidates: `<media:42>`, `[[media:42]]`, `{{media:42}}` — settle during implementation.
 
@@ -329,9 +329,9 @@ Small local models reliably produce malformed or incomplete tool-calling sequenc
 
 All three patterns validated in the dry-run harness against gpt-oss:20b. They turn otherwise-fatal model errors into recoverable loop iterations. This is platform-level behavior — the chat agent, background agents, and future task runners all need the same retry discipline.
 
-### Store inventory (Phase 1 migration target)
+### Memory inventory (Phase 1 migration target)
 
-| Store | Type | Source | recall | Notes |
+| Memory | Type | Source | recall | Notes |
 |---|---|---|---|---|
 | `user-messages` | log | Channel-adapter ingress side effect | relevant | Historical user statements matching the current topic |
 | `penny-messages` | log | `send_message` side effect | recent | Latest few things Penny sent |
@@ -342,11 +342,11 @@ All three patterns validated in the dry-run harness against gpt-oss:20b. They tu
 | `unnotified-thoughts` | collection | Split from `thought` (notified_at IS NULL) | off | Working queue, not surfaced |
 | `knowledge` | collection | Migration from `knowledge` table | relevant | Facts relevant to current topic; keyed by URL |
 
-`user-messages` and `penny-messages` are separate physical logs. There's no virtual merged-view store — agents that need chronological conversation context rely on the existing `message_log` thread chain (for reply threading) or pull from each log separately and merge client-side if needed. Ambient recall renders them as separate sections in the system prompt; the chat model stitches the conversation together in its head.
+`user-messages` and `penny-messages` are separate physical logs. There's no virtual merged-view memory — agents that need chronological conversation context rely on the existing `message_log` thread chain (for reply threading) or pull from each log separately and merge client-side if needed. Ambient recall renders them as separate sections in the system prompt; the chat model stitches the conversation together in its head.
 
-System tables (`runtime_config`, `promptlog`, `schedule`, `agent_cursor`, `media`, migrations, etc.) stay as first-class system tables — stores are *user-meaningful data*, not infrastructure.
+System tables (`runtime_config`, `promptlog`, `schedule`, `agent_cursor`, `media`, migrations, etc.) stay as first-class system tables — memories are *user-meaningful data*, not infrastructure.
 
-### Existing → store mapping, per agent
+### Existing → memory mapping, per agent
 
 | Agent | Reads | Writes | Moves |
 |---|---|---|---|
@@ -354,7 +354,7 @@ System tables (`runtime_config`, `promptlog`, `schedule`, `agent_cursor`, `media
 | Thinking | `likes` (collection_read_random), `dislikes` (collection_read_all), `search` / `browse`, `exists` across thought collections | `unnotified-thoughts` (collection_write) | — |
 | Notifier | `unnotified-thoughts` (collection_read_random), `penny-messages` (log_read_recent, optional) | `send_message` (→ penny-messages log side effect) | `unnotified-thoughts` → `notified-thoughts` |
 | Knowledge extractor | `browse-results` (log_read_since) | `knowledge` (collection_write) | — |
-| Chat | Ad-hoc reads of any store (plus ambient context assembled by hypervisor from `user-messages`, `penny-messages`, and other recall-enabled stores; thread context via existing `message_log` chain) | `penny-messages` via `send_message`, user-authored writes to collections/logs | user-driven moves/deletes |
+| Chat | Ad-hoc reads of any memory (plus ambient context assembled by hypervisor from `user-messages`, `penny-messages`, and other recall-enabled memories; thread context via existing `message_log` chain) | `penny-messages` via `send_message`, user-authored writes to collections/logs | user-driven moves/deletes |
 
 ### Data-layer consequences
 
@@ -370,15 +370,15 @@ Phase 1 only changes the data layer and how agents read/write it. Agent behavior
 
 ### Migration approach
 
-1. Add the `collection`, `collection_entry`, `log`, and `log_entry` tables (plus `agent_cursor` and `media`).
-2. Implement the access layer (`db.collections.*`, `db.logs.*`, `db.media.*`) and the full tool surface.
-3. Migrate existing data scripted, one-way — no dual-write. Each old table becomes its corresponding new store per the inventory.
+1. Add the `memory` and `memory_entry` tables (plus `agent_cursor` and `media`).
+2. Implement the access layer (`db.memories.*`, `db.media.*`) and the full tool surface.
+3. Migrate existing data scripted, one-way — no dual-write. Each old table becomes its corresponding new memory per the inventory.
 4. Rewire each agent to read/write via tools, one agent at a time (order: history → thinking → notifier → knowledge → chat). Old Python write paths get deleted as each agent migrates.
-5. Rewire all ambient-injection call sites (chat context, dislikes injection, related messages retrieval, related knowledge retrieval) to use the unified per-store recall mechanism.
+5. Rewire all ambient-injection call sites (chat context, dislikes injection, related messages retrieval, related knowledge retrieval) to use the unified per-memory recall mechanism.
 6. Drop old specialized tables in a final migration.
 7. Add user-facing chat-agent tools (`collection_create`, `log_create`, writes, updates, archive) to unlock the "life OS" capability.
 8. Add the media store and swap the channel adapters to the token pattern (ingress: bytes → id → token in text; egress: token → bytes → channel attachment).
-9. Update the browser addon UI: the current per-type views (Likes, Dislikes, Thoughts, etc.) become a single dynamic store browser that lists every collection and log that exists and lets the user browse entries of any of them. Nothing is hardcoded per type.
+9. Update the browser addon UI: the current per-type views (Likes, Dislikes, Thoughts, etc.) become a single dynamic memory browser that lists every collection and log that exists and lets the user browse entries of any of them. Nothing is hardcoded per type.
 
 Each step is independently deployable. Integration tests serve as the parity harness — existing tests should pass unmodified after each agent's migration (behavior preservation), with new tests added for anything that changed shape.
 
@@ -438,13 +438,13 @@ Things that become easy or trivial once the new data layer (and eventually the t
 
 ## Guardrails
 
-- **Every data op is a tool call.** No Python read/write logic outside `db.collections.*` and the tool implementations. Every agent's data footprint is visible in its tool-call log.
+- **Every data op is a tool call.** No Python read/write logic outside `db.memories.*` and the tool implementations. Every agent's data footprint is visible in its tool-call log.
 - **Content is immutable.** System-maintained fields (author, `created_at`, embeddings) are never changed after write. All semantic mutability is via `move` or delete+rewrite.
 - **Cursor commits only on successful run completion.** At-least-once processing; dedup catches redundant reprocessing.
 - **Subagent contexts stay narrow.** Ambient injection is for the outer chat agent only; background agents see only their declared system prompt and explicit tool-call returns.
-- **Ambient injection volume is bounded.** Global K per collection with `recall` on; total context scales with the number of recall-enabled collections, not row counts.
+- **Ambient injection volume is bounded.** Global K per memory with `recall` on; total context scales with the number of recall-enabled memories, not row counts.
 - **`send_message` is always rate-limited.** Hypervisor enforces; not agent-visible.
-- **System tables stay separate from collections.** `runtime_config`, `promptlog`, `schedule`, `agent_cursor` are infrastructure, not user data.
+- **System tables stay separate from memories.** `runtime_config`, `promptlog`, `schedule`, `agent_cursor` are infrastructure, not user data.
 
 ---
 
@@ -478,8 +478,8 @@ Most of the big design questions got settled during harness iteration. These are
 
 The most exciting thing about the current wave of autonomous agents is that they reshape themselves — new behaviors, new data structures, new workflows, authored by talking to them. The most dangerous thing is that they typically do this through unrestricted shell, filesystem, and package-installation access. The capability and the vulnerability are the same mechanism.
 
-Phase 1 separates the two at the data layer. The capability (user-authored storage, agent-broker'd data interactions, cooperative maintenance of the user's digital life) is preserved. The vulnerability (unrestricted system access, mutable-state sprawl, hidden persistence) is replaced with typed primitives: collections instead of filesystem, narrow tools instead of shell, immutable content instead of arbitrary mutation. Same flexibility, much smaller attack surface.
+Phase 1 separates the two at the data layer. The capability (user-authored storage, agent-broker'd data interactions, cooperative maintenance of the user's digital life) is preserved. The vulnerability (unrestricted system access, mutable-state sprawl, hidden persistence) is replaced with typed primitives: memories instead of filesystem, narrow tools instead of shell, immutable content instead of arbitrary mutation. Same flexibility, much smaller attack surface.
 
 Phase 2 extends the separation to the behavior layer.
 
-The current hardcoded pipelines become the Phase 1 benchmark: the MVP is done when every agent reproduces its behavior through nothing but collection tool calls. The harness already validates that it works with a small local model. After Phase 1 lands, every future data store is a `create_collection` call. After Phase 2, every future behavior is a `create_task` call. No PRs required.
+The current hardcoded pipelines become the Phase 1 benchmark: the MVP is done when every agent reproduces its behavior through nothing but collection tool calls. The harness already validates that it works with a small local model. After Phase 1 lands, every future memory is a `create_collection` or `create_log` call. After Phase 2, every future behavior is a `create_task` call. No PRs required.

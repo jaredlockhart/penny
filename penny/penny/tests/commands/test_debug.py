@@ -26,7 +26,7 @@ async def test_debug_command(signal_server, test_config, mock_llm, running_penny
         assert "messages" in response["message"]
         assert "**Model**:" in response["message"]
         assert "**Background Tasks**:" in response["message"]
-        assert "**Memory**:" in response["message"]
+        assert "**RAM**:" in response["message"]
 
         # Should show actual scheduler status, not "Unknown (no scheduler)"
         assert "Unknown (no scheduler)" not in response["message"]

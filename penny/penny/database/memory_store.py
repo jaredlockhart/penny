@@ -1,8 +1,14 @@
-"""Store access layer — collections and logs, unified.
+"""Memory access layer — collections and logs, unified.
 
-Collections are keyed sets with dedup on write; logs are append-only streams.
-Both share a single `store_entry` table with `key` nullable for logs. Entries
-are immutable once written — `update` replaces whole content for a given key.
+A *memory* is Penny's data primitive: a named, typed container of entries.
+Two shapes share one schema:
+
+  * collection — keyed set with similarity-based dedup on write
+  * log        — append-only, keyless time-stream
+
+Both live in a single `memory_entry` table with `key` nullable for logs.
+Entries are immutable once written — `update` replaces whole content for a
+given key.
 
 Dedup on collection writes evaluates three signals against each existing entry
 (thresholds live in ``PennyConstants``):
@@ -35,12 +41,12 @@ from similarity.embeddings import (
 from sqlmodel import Session, select
 
 from penny.constants import PennyConstants
-from penny.database.models import Store, StoreEntry
+from penny.database.models import Memory, MemoryEntry
 
 logger = logging.getLogger(__name__)
 
 
-class StoreType(StrEnum):
+class MemoryType(StrEnum):
     COLLECTION = "collection"
     LOG = "log"
 
@@ -52,23 +58,23 @@ class RecallMode(StrEnum):
     ALL = "all"
 
 
-class StoreTypeError(Exception):
-    """Raised when an operation is called against the wrong store type."""
+class MemoryTypeError(Exception):
+    """Raised when an operation is called against the wrong memory type."""
 
 
-class StoreNotFoundError(Exception):
-    """Raised when an operation targets a store that doesn't exist."""
+class MemoryNotFoundError(Exception):
+    """Raised when an operation targets a memory that doesn't exist."""
 
 
 class DedupThresholds(BaseModel):
-    """Per-signal strict + relaxed thresholds for the store dedup rule."""
+    """Per-signal strict + relaxed thresholds for the memory dedup rule."""
 
-    key_tcr_strict: float = PennyConstants.STORE_KEY_TCR_STRICT_THRESHOLD
-    key_tcr_relaxed: float = PennyConstants.STORE_KEY_TCR_RELAXED_THRESHOLD
-    key_sim_strict: float = PennyConstants.STORE_KEY_SIM_STRICT_THRESHOLD
-    key_sim_relaxed: float = PennyConstants.STORE_KEY_SIM_RELAXED_THRESHOLD
-    content_sim_strict: float = PennyConstants.STORE_CONTENT_SIM_STRICT_THRESHOLD
-    content_sim_relaxed: float = PennyConstants.STORE_CONTENT_SIM_RELAXED_THRESHOLD
+    key_tcr_strict: float = PennyConstants.MEMORY_KEY_TCR_STRICT_THRESHOLD
+    key_tcr_relaxed: float = PennyConstants.MEMORY_KEY_TCR_RELAXED_THRESHOLD
+    key_sim_strict: float = PennyConstants.MEMORY_KEY_SIM_STRICT_THRESHOLD
+    key_sim_relaxed: float = PennyConstants.MEMORY_KEY_SIM_RELAXED_THRESHOLD
+    content_sim_strict: float = PennyConstants.MEMORY_CONTENT_SIM_STRICT_THRESHOLD
+    content_sim_relaxed: float = PennyConstants.MEMORY_CONTENT_SIM_RELAXED_THRESHOLD
 
 
 class EntryInput(BaseModel):
@@ -100,8 +106,8 @@ MoveOutcome = Literal["ok", "not_found", "collision"]
 UpdateOutcome = Literal["ok", "not_found"]
 
 
-class StoreStore:
-    """CRUD for collections, logs, and their entries.
+class MemoryStore:
+    """CRUD for memories (collections, logs) and their entries.
 
     Summary of the public surface:
         * metadata: create_collection, create_log, get, list_all, archive, unarchive
@@ -125,24 +131,24 @@ class StoreStore:
 
     def create_collection(
         self, name: str, description: str, recall: RecallMode, archived: bool = False
-    ) -> Store:
-        return self._create_store(name, StoreType.COLLECTION, description, recall, archived)
+    ) -> Memory:
+        return self._create_memory(name, MemoryType.COLLECTION, description, recall, archived)
 
     def create_log(
         self, name: str, description: str, recall: RecallMode, archived: bool = False
-    ) -> Store:
-        return self._create_store(name, StoreType.LOG, description, recall, archived)
+    ) -> Memory:
+        return self._create_memory(name, MemoryType.LOG, description, recall, archived)
 
-    def _create_store(
+    def _create_memory(
         self,
         name: str,
-        type_: StoreType,
+        type_: MemoryType,
         description: str,
         recall: RecallMode,
         archived: bool,
-    ) -> Store:
+    ) -> Memory:
         with self._session() as session:
-            store = Store(
+            memory = Memory(
                 name=name,
                 type=type_.value,
                 description=description,
@@ -150,19 +156,19 @@ class StoreStore:
                 archived=archived,
                 created_at=datetime.now(UTC),
             )
-            session.add(store)
+            session.add(memory)
             session.commit()
-            session.refresh(store)
-            logger.debug("Created %s store %s", type_.value, name)
-            return store
+            session.refresh(memory)
+            logger.debug("Created %s memory %s", type_.value, name)
+            return memory
 
-    def get(self, name: str) -> Store | None:
+    def get(self, name: str) -> Memory | None:
         with self._session() as session:
-            return session.get(Store, name)
+            return session.get(Memory, name)
 
-    def list_all(self) -> list[Store]:
+    def list_all(self) -> list[Memory]:
         with self._session() as session:
-            return list(session.exec(select(Store).order_by(Store.name)).all())
+            return list(session.exec(select(Memory).order_by(Memory.name)).all())
 
     def archive(self, name: str) -> None:
         self._set_archived(name, True)
@@ -172,11 +178,11 @@ class StoreStore:
 
     def _set_archived(self, name: str, archived: bool) -> None:
         with self._session() as session:
-            store = session.get(Store, name)
-            if store is None:
-                raise StoreNotFoundError(name)
-            store.archived = archived
-            session.add(store)
+            memory = session.get(Memory, name)
+            if memory is None:
+                raise MemoryNotFoundError(name)
+            memory.archived = archived
+            session.add(memory)
             session.commit()
 
     # ── Collection writes ───────────────────────────────────────────────────
@@ -191,10 +197,10 @@ class StoreStore:
         """Write entries to a collection with per-entry dedup.
 
         Returns one WriteResult per input entry with its outcome. Dedup is
-        evaluated against existing entries in the same store using the
+        evaluated against existing entries in the same memory using the
         configured thresholds (or the module defaults).
         """
-        self._require_type(name, StoreType.COLLECTION)
+        self._require_type(name, MemoryType.COLLECTION)
         thresholds = thresholds or DedupThresholds()
         existing = self._load_entries_with_vectors(name)
         results: list[WriteResult] = []
@@ -217,8 +223,8 @@ class StoreStore:
             entry.key, entry.key_embedding, entry.content_embedding, existing, thresholds
         ):
             return WriteResult(key=entry.key, outcome="duplicate")
-        row = StoreEntry(
-            store_name=name,
+        row = MemoryEntry(
+            memory_name=name,
             key=entry.key,
             content=entry.content,
             author=author,
@@ -237,7 +243,7 @@ class StoreStore:
         Most collections have a single entry per key (dedup keeps it that way),
         but the method operates on all matching rows for safety.
         """
-        self._require_type(name, StoreType.COLLECTION)
+        self._require_type(name, MemoryType.COLLECTION)
         with self._session() as session:
             rows = self._entries_by_key(session, name, key)
             if not rows:
@@ -255,8 +261,8 @@ class StoreStore:
         Returns "collision" if a target-collection entry with the same key
         already exists (the caller resolves the collision).
         """
-        self._require_type(from_name, StoreType.COLLECTION)
-        self._require_type(to_name, StoreType.COLLECTION)
+        self._require_type(from_name, MemoryType.COLLECTION)
+        self._require_type(to_name, MemoryType.COLLECTION)
         with self._session() as session:
             src_rows = self._entries_by_key(session, from_name, key)
             if not src_rows:
@@ -264,7 +270,7 @@ class StoreStore:
             if self._entries_by_key(session, to_name, key):
                 return "collision"
             for row in src_rows:
-                row.store_name = to_name
+                row.memory_name = to_name
                 row.author = author
                 session.add(row)
             session.commit()
@@ -272,7 +278,7 @@ class StoreStore:
 
     def delete(self, name: str, key: str) -> int:
         """Delete every entry with `key` in a collection. Returns rows removed."""
-        self._require_type(name, StoreType.COLLECTION)
+        self._require_type(name, MemoryType.COLLECTION)
         with self._session() as session:
             rows = self._entries_by_key(session, name, key)
             for row in rows:
@@ -282,14 +288,14 @@ class StoreStore:
 
     # ── Log writes ──────────────────────────────────────────────────────────
 
-    def append(self, name: str, entries: list[LogEntryInput], author: str) -> list[StoreEntry]:
-        """Append one or more entries to a log store. No dedup; keyless."""
-        self._require_type(name, StoreType.LOG)
-        created: list[StoreEntry] = []
+    def append(self, name: str, entries: list[LogEntryInput], author: str) -> list[MemoryEntry]:
+        """Append one or more entries to a log memory. No dedup; keyless."""
+        self._require_type(name, MemoryType.LOG)
+        created: list[MemoryEntry] = []
         with self._session() as session:
             for entry in entries:
-                row = StoreEntry(
-                    store_name=name,
+                row = MemoryEntry(
+                    memory_name=name,
                     key=None,
                     content=entry.content,
                     author=author,
@@ -306,17 +312,17 @@ class StoreStore:
 
     # ── Reads ───────────────────────────────────────────────────────────────
 
-    def get_entry(self, name: str, key: str) -> list[StoreEntry]:
+    def get_entry(self, name: str, key: str) -> list[MemoryEntry]:
         with self._session() as session:
             return self._entries_by_key(session, name, key)
 
-    def read_latest(self, name: str, k: int | None = None) -> list[StoreEntry]:
+    def read_latest(self, name: str, k: int | None = None) -> list[MemoryEntry]:
         """Return entries newest-first. With `k=None`, returns every entry."""
         with self._session() as session:
             query = (
-                select(StoreEntry)
-                .where(StoreEntry.store_name == name)
-                .order_by(StoreEntry.created_at.desc())  # type: ignore[union-attr]
+                select(MemoryEntry)
+                .where(MemoryEntry.memory_name == name)
+                .order_by(MemoryEntry.created_at.desc())  # type: ignore[union-attr]
             )
             if k is not None:
                 query = query.limit(k)
@@ -324,26 +330,28 @@ class StoreStore:
 
     def read_recent(
         self, name: str, window_seconds: int, cap: int | None = None
-    ) -> list[StoreEntry]:
+    ) -> list[MemoryEntry]:
         cutoff = datetime.now(UTC).timestamp() - window_seconds
         cutoff_dt = datetime.fromtimestamp(cutoff, tz=UTC)
         return self.read_since(name, cutoff_dt, cap)
 
-    def read_since(self, name: str, cursor: datetime, cap: int | None = None) -> list[StoreEntry]:
+    def read_since(self, name: str, cursor: datetime, cap: int | None = None) -> list[MemoryEntry]:
         with self._session() as session:
             query = (
-                select(StoreEntry)
-                .where(StoreEntry.store_name == name, StoreEntry.created_at > cursor)
-                .order_by(StoreEntry.created_at.asc())  # type: ignore[union-attr]
+                select(MemoryEntry)
+                .where(MemoryEntry.memory_name == name, MemoryEntry.created_at > cursor)
+                .order_by(MemoryEntry.created_at.asc())  # type: ignore[union-attr]
             )
             if cap is not None:
                 query = query.limit(cap)
             return list(session.exec(query).all())
 
-    def read_random(self, name: str, k: int | None = None) -> list[StoreEntry]:
+    def read_random(self, name: str, k: int | None = None) -> list[MemoryEntry]:
         """Return `k` entries sampled uniformly at random. `k=None` returns all."""
         with self._session() as session:
-            rows = list(session.exec(select(StoreEntry).where(StoreEntry.store_name == name)).all())
+            rows = list(
+                session.exec(select(MemoryEntry).where(MemoryEntry.memory_name == name)).all()
+            )
         if k is None or len(rows) <= k:
             return rows
         return random.sample(rows, k)
@@ -354,7 +362,7 @@ class StoreStore:
         anchor: list[float],
         k: int | None = None,
         floor: float = 0.0,
-    ) -> list[StoreEntry]:
+    ) -> list[MemoryEntry]:
         """Return entries sorted by content cosine similarity to ``anchor``.
 
         Entries without a content_embedding are skipped. Scores below ``floor``
@@ -364,13 +372,13 @@ class StoreStore:
         with self._session() as session:
             rows = list(
                 session.exec(
-                    select(StoreEntry).where(
-                        StoreEntry.store_name == name,
-                        StoreEntry.content_embedding.is_not(None),  # type: ignore[union-attr]
+                    select(MemoryEntry).where(
+                        MemoryEntry.memory_name == name,
+                        MemoryEntry.content_embedding.is_not(None),  # type: ignore[union-attr]
                     )
                 ).all()
             )
-        scored: list[tuple[float, StoreEntry]] = []
+        scored: list[tuple[float, MemoryEntry]] = []
         for row in rows:
             if row.content_embedding is None:
                 continue
@@ -381,13 +389,13 @@ class StoreStore:
         ordered = [row for _, row in scored]
         return ordered if k is None else ordered[:k]
 
-    def read_all(self, name: str) -> list[StoreEntry]:
+    def read_all(self, name: str) -> list[MemoryEntry]:
         with self._session() as session:
             return list(
                 session.exec(
-                    select(StoreEntry)
-                    .where(StoreEntry.store_name == name)
-                    .order_by(StoreEntry.created_at.asc())  # type: ignore[union-attr]
+                    select(MemoryEntry)
+                    .where(MemoryEntry.memory_name == name)
+                    .order_by(MemoryEntry.created_at.asc())  # type: ignore[union-attr]
                 ).all()
             )
 
@@ -395,12 +403,12 @@ class StoreStore:
         with self._session() as session:
             rows = list(
                 session.exec(
-                    select(StoreEntry.key)
+                    select(MemoryEntry.key)
                     .where(
-                        StoreEntry.store_name == name,
-                        StoreEntry.key.is_not(None),  # type: ignore[union-attr]
+                        MemoryEntry.memory_name == name,
+                        MemoryEntry.key.is_not(None),  # type: ignore[union-attr]
                     )
-                    .order_by(StoreEntry.created_at.asc())  # type: ignore[union-attr]
+                    .order_by(MemoryEntry.created_at.asc())  # type: ignore[union-attr]
                 ).all()
             )
         seen: set[str] = set()
@@ -422,7 +430,7 @@ class StoreStore:
         content_embedding: list[float] | None,
         thresholds: DedupThresholds | None = None,
     ) -> bool:
-        """Check whether an equivalent entry already exists in any of the named stores.
+        """Check whether an equivalent entry already exists in any of the named memories.
 
         Runs the same similarity-based dedup used by `write`, plus an exact
         key-match shortcut when a key is supplied. Returns True on the first hit.
@@ -438,17 +446,17 @@ class StoreStore:
 
     # ── Internals ───────────────────────────────────────────────────────────
 
-    def _require_type(self, name: str, expected: StoreType) -> None:
-        store = self.get(name)
-        if store is None:
-            raise StoreNotFoundError(name)
-        if store.type != expected.value:
-            raise StoreTypeError(f"store '{name}' is a {store.type}, not a {expected.value}")
+    def _require_type(self, name: str, expected: MemoryType) -> None:
+        memory = self.get(name)
+        if memory is None:
+            raise MemoryNotFoundError(name)
+        if memory.type != expected.value:
+            raise MemoryTypeError(f"memory '{name}' is a {memory.type}, not a {expected.value}")
 
-    def _entries_by_key(self, session: Session, name: str, key: str) -> list[StoreEntry]:
+    def _entries_by_key(self, session: Session, name: str, key: str) -> list[MemoryEntry]:
         return list(
             session.exec(
-                select(StoreEntry).where(StoreEntry.store_name == name, StoreEntry.key == key)
+                select(MemoryEntry).where(MemoryEntry.memory_name == name, MemoryEntry.key == key)
             ).all()
         )
 
@@ -458,7 +466,9 @@ class StoreStore:
         Entries without a given embedding or key contribute None on that axis.
         """
         with self._session() as session:
-            rows = list(session.exec(select(StoreEntry).where(StoreEntry.store_name == name)).all())
+            rows = list(
+                session.exec(select(MemoryEntry).where(MemoryEntry.memory_name == name)).all()
+            )
         return [
             (
                 r.key,

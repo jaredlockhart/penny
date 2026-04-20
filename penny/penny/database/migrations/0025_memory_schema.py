@@ -1,8 +1,8 @@
-"""Add store, store_entry, agent_cursor, and media tables.
+"""Add memory, memory_entry, agent_cursor, and media tables.
 
-Foundation for the task/collection framework: collections and logs are
-unified in a single `store` table (type-discriminated) with entries in
-`store_entry`. `agent_cursor` tracks per-agent read progress through logs.
+Foundation for the task/memory framework: collections and logs are unified
+in a single `memory` table (type-discriminated) with entries in
+`memory_entry`. `agent_cursor` tracks per-agent read progress through logs.
 `media` stores binary blobs referenced by `<media:ID>` tokens in entry content.
 """
 
@@ -17,9 +17,9 @@ def up(conn: sqlite3.Connection) -> None:
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
 
-    if "store" not in tables:
+    if "memory" not in tables:
         conn.execute("""
-            CREATE TABLE store (
+            CREATE TABLE memory (
                 name TEXT PRIMARY KEY,
                 type TEXT NOT NULL CHECK (type IN ('collection', 'log')),
                 description TEXT NOT NULL,
@@ -28,13 +28,13 @@ def up(conn: sqlite3.Connection) -> None:
                 created_at TIMESTAMP NOT NULL
             )
         """)
-        conn.execute("CREATE INDEX ix_store_archived ON store (archived)")
+        conn.execute("CREATE INDEX ix_memory_archived ON memory (archived)")
 
-    if "store_entry" not in tables:
+    if "memory_entry" not in tables:
         conn.execute("""
-            CREATE TABLE store_entry (
+            CREATE TABLE memory_entry (
                 id INTEGER PRIMARY KEY,
-                store_name TEXT NOT NULL REFERENCES store(name),
+                memory_name TEXT NOT NULL REFERENCES memory(name),
                 key TEXT,
                 content TEXT NOT NULL,
                 author TEXT NOT NULL,
@@ -44,19 +44,19 @@ def up(conn: sqlite3.Connection) -> None:
             )
         """)
         conn.execute(
-            "CREATE INDEX ix_store_entry_by_created ON store_entry (store_name, created_at)"
+            "CREATE INDEX ix_memory_entry_by_created ON memory_entry (memory_name, created_at)"
         )
-        conn.execute("CREATE INDEX ix_store_entry_by_key ON store_entry (store_name, key)")
-        conn.execute("CREATE INDEX ix_store_entry_author ON store_entry (author)")
+        conn.execute("CREATE INDEX ix_memory_entry_by_key ON memory_entry (memory_name, key)")
+        conn.execute("CREATE INDEX ix_memory_entry_author ON memory_entry (author)")
 
     if "agent_cursor" not in tables:
         conn.execute("""
             CREATE TABLE agent_cursor (
                 agent_name TEXT NOT NULL,
-                store_name TEXT NOT NULL REFERENCES store(name),
+                memory_name TEXT NOT NULL REFERENCES memory(name),
                 last_read_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP NOT NULL,
-                PRIMARY KEY (agent_name, store_name)
+                PRIMARY KEY (agent_name, memory_name)
             )
         """)
 

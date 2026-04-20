@@ -5,14 +5,14 @@ from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine
 
-from penny.database.cursor import CursorStore
+from penny.database.cursor_store import CursorStore
 from penny.database.device_store import DeviceStore
 from penny.database.domain_permission_store import DomainPermissionStore
 from penny.database.knowledge_store import KnowledgeStore
-from penny.database.media import MediaStore
+from penny.database.media_store import MediaStore
+from penny.database.memory_store import MemoryStore
 from penny.database.message_store import MessageStore
 from penny.database.preference_store import PreferenceStore
-from penny.database.store import StoreStore
 from penny.database.thought_store import ThoughtStore
 from penny.database.user_store import UserStore
 
@@ -23,14 +23,14 @@ class Database:
     """Database facade — provides access to domain-specific stores.
 
     Stores:
-        cursors: Per-agent read cursors into log stores
+        cursors: Per-agent read cursors into log-shaped memories
         devices: Device registration and lookup
         domain_permissions: Domain access permissions for browser tools
         knowledge: Summarized web page content for factual recall
-        media: Binary media referenced by store entries via <media:ID> tokens
+        media: Binary media referenced by memory entries via <media:ID> tokens
+        memories: Unified collection + log access (task/memory framework)
         messages: Message/prompt/command logging, threading, queries
         preferences: User preference CRUD and dedup
-        stores: Unified collection + log access (task/collection framework)
         thoughts: Inner monologue persistence (append-only thought log)
         users: UserInfo, sender queries, mute state
     """
@@ -45,9 +45,9 @@ class Database:
         self.domain_permissions = DomainPermissionStore(self.engine)
         self.knowledge = KnowledgeStore(self.engine)
         self.media = MediaStore(self.engine)
+        self.memories = MemoryStore(self.engine)
         self.messages = MessageStore(self.engine)
         self.preferences = PreferenceStore(self.engine)
-        self.stores = StoreStore(self.engine)
         self.thoughts = ThoughtStore(self.engine)
         self.users = UserStore(self.engine)
 
