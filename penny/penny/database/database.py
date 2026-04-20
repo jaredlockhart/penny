@@ -5,9 +5,12 @@ from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine
 
+from penny.database.cursor_store import CursorStore
 from penny.database.device_store import DeviceStore
 from penny.database.domain_permission_store import DomainPermissionStore
 from penny.database.knowledge_store import KnowledgeStore
+from penny.database.media_store import MediaStore
+from penny.database.memory_store import MemoryStore
 from penny.database.message_store import MessageStore
 from penny.database.preference_store import PreferenceStore
 from penny.database.thought_store import ThoughtStore
@@ -20,9 +23,12 @@ class Database:
     """Database facade — provides access to domain-specific stores.
 
     Stores:
+        cursors: Per-agent read cursors into log-shaped memories
         devices: Device registration and lookup
         domain_permissions: Domain access permissions for browser tools
         knowledge: Summarized web page content for factual recall
+        media: Binary media referenced by memory entries via <media:ID> tokens
+        memories: Unified collection + log access (task/memory framework)
         messages: Message/prompt/command logging, threading, queries
         preferences: User preference CRUD and dedup
         thoughts: Inner monologue persistence (append-only thought log)
@@ -34,9 +40,12 @@ class Database:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(f"sqlite:///{db_path}")
 
+        self.cursors = CursorStore(self.engine)
         self.devices = DeviceStore(self.engine)
         self.domain_permissions = DomainPermissionStore(self.engine)
         self.knowledge = KnowledgeStore(self.engine)
+        self.media = MediaStore(self.engine)
+        self.memories = MemoryStore(self.engine)
         self.messages = MessageStore(self.engine)
         self.preferences = PreferenceStore(self.engine)
         self.thoughts = ThoughtStore(self.engine)

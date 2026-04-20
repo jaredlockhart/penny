@@ -161,7 +161,7 @@ class PennyResponse:
 **Channel**: {channel}
 **Database**: {messages:,} messages, {threads} active threads
 **Model**: {model}
-**Memory**: {memory}
+**RAM**: {ram}
 
 **Background Tasks**:
 {task_status}

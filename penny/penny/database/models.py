@@ -1,4 +1,4 @@
-"""SQLModel models for Penny's memory."""
+"""SQLModel tables for the Penny database."""
 
 import json
 from datetime import UTC, datetime
@@ -184,3 +184,74 @@ class Knowledge(SQLModel, table=True):
     source_prompt_id: int = Field(foreign_key="promptlog.id", index=True)  # High-water mark
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class Memory(SQLModel, table=True):
+    """A named memory — either a keyed collection or an append-only log.
+
+    Memories are Penny's unified data primitive: user- or system-authored
+    containers that agents read from and write to via tools. Each memory
+    has a name, a shape (collection vs log), and a recall mode that controls
+    whether it appears in the chat agent's ambient context.
+    """
+
+    __tablename__ = "memory"
+
+    name: str = Field(primary_key=True)
+    type: str  # MemoryType enum value: "collection" or "log"
+    description: str  # Human-authored summary shown to the model in the memory registry
+    recall: str  # RecallMode enum value: "off" | "recent" | "relevant" | "all"
+    archived: bool = Field(default=False, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class MemoryEntry(SQLModel, table=True):
+    """One immutable entry belonging to a memory.
+
+    Collections have keys; log entries carry `key=None`. Content is embedded
+    on write so similarity reads are cheap; keys are embedded too when present.
+    """
+
+    __tablename__ = "memory_entry"
+
+    id: int | None = Field(default=None, primary_key=True)
+    memory_name: str = Field(foreign_key="memory.name", index=True)
+    key: str | None = Field(default=None, index=True)
+    content: str
+    author: str = Field(index=True)
+    key_embedding: bytes | None = None
+    content_embedding: bytes | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+
+
+class AgentCursor(SQLModel, table=True):
+    """Per-agent read cursor into a log-shaped memory.
+
+    `last_read_at` is the high-water mark: the agent has consumed every entry
+    with `created_at <= last_read_at`. Advanced two-phase by the orchestrator
+    (pending during the run, committed on successful completion).
+    """
+
+    __tablename__ = "agent_cursor"
+
+    agent_name: str = Field(primary_key=True)
+    memory_name: str = Field(primary_key=True, foreign_key="memory.name")
+    last_read_at: datetime
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class Media(SQLModel, table=True):
+    """Binary media (images, etc.) stored out-of-line from memory entries.
+
+    Entries reference media via `<media:ID>` tokens in their content body; the
+    ambient recall assembler resolves tokens to inline image data at prompt
+    build time.
+    """
+
+    __tablename__ = "media"
+
+    id: int | None = Field(default=None, primary_key=True)
+    mime_type: str
+    data: bytes
+    source_url: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

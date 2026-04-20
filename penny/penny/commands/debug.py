@@ -30,7 +30,7 @@ class DebugCommand(Command):
     description = "Show diagnostic information about Penny's current state"
     help_text = (
         "Shows diagnostic information including git commit, uptime, active channel, "
-        "database stats, model versions, agent status, and memory usage.\n\n"
+        "database stats, model versions, agent status, and RAM usage.\n\n"
         "**Usage**: `/debug`"
     )
 
@@ -65,18 +65,18 @@ class DebugCommand(Command):
         # Background task status
         task_status = self._get_task_status(context)
 
-        # Memory
+        # RAM
         if not HAS_PSUTIL or psutil is None:
-            mem_str = "unknown (psutil not installed)"
+            ram_str = "unknown (psutil not installed)"
         else:
             try:
                 process = psutil.Process()
-                mem_mb = process.memory_info().rss / 1024 / 1024
-                mem_percent = process.memory_percent()
-                mem_str = f"{mem_mb:.0f} MB ({mem_percent:.1f}%)"
+                ram_mb = process.memory_info().rss / 1024 / 1024
+                ram_percent = process.memory_percent()
+                ram_str = f"{ram_mb:.0f} MB ({ram_percent:.1f}%)"
             except Exception as e:
-                logger.warning("Failed to get memory info: %s", e)
-                mem_str = "unknown"
+                logger.warning("Failed to get RAM info: %s", e)
+                ram_str = "unknown"
 
         response = PennyResponse.DEBUG_TEMPLATE.format(
             commit=commit,
@@ -86,7 +86,7 @@ class DebugCommand(Command):
             threads=active_threads,
             model=context.config.llm_model,
             task_status=task_status,
-            memory=mem_str,
+            ram=ram_str,
         )
         return CommandResult(text=response)
 
