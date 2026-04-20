@@ -33,7 +33,6 @@ from penny.tools.base import Tool
 from penny.tools.memory_args import (
     CollectionEntrySpec,
     CollectionGetArgs,
-    CollectionKeyArgs,
     CollectionMoveArgs,
     CollectionUpdateArgs,
     CollectionWriteArgs,
@@ -476,32 +475,6 @@ class CollectionUpdateTool(Tool):
         return f"Updated '{args.key}' in '{args.memory}'."
 
 
-class CollectionDeleteTool(Tool):
-    """Delete an entry by key from a collection."""
-
-    name = "collection_delete"
-    description = "Delete the entry with the given key from a collection."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "memory": {"type": "string"},
-            "key": {"type": "string"},
-        },
-        "required": ["memory", "key"],
-    }
-
-    def __init__(self, db: Database) -> None:
-        self._db = db
-
-    async def execute(self, **kwargs: Any) -> str:
-        args = CollectionKeyArgs(**kwargs)
-        removed = self._db.memories.delete(args.memory, args.key)
-        if removed == 0:
-            return f"Key '{args.key}' not found in '{args.memory}'."
-        noun = "entry" if removed == 1 else "entries"
-        return f"Deleted {removed} {noun} with key '{args.key}' from '{args.memory}'."
-
-
 class CollectionMoveTool(Tool):
     """Move an entry between collections by key."""
 
@@ -769,7 +742,6 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None) -> list[Tool]
         # Collection writes
         CollectionWriteTool(db, llm_client),
         CollectionUpdateTool(db),
-        CollectionDeleteTool(db),
         CollectionMoveTool(db),
         # Log reads
         LogReadLatestTool(db),

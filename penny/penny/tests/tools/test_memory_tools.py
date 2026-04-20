@@ -7,6 +7,8 @@ similarity reads and dedup have something to work with.
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from penny.database import Database
@@ -16,7 +18,6 @@ from penny.tools.memory_context import current_agent, set_current_agent
 from penny.tools.memory_tools import (
     CollectionArchiveTool,
     CollectionCreateTool,
-    CollectionDeleteTool,
     CollectionGetTool,
     CollectionKeysTool,
     CollectionMoveTool,
@@ -71,9 +72,14 @@ def _hash_embed(model: str, text: str | list[str]) -> list[list[float]]:
     return [_single_hash_vec(t) for t in inputs]
 
 
-def _single_hash_vec(text: str, dim: int = 32) -> list[float]:
+def _single_hash_vec(text: str, dim: int = 4096) -> list[float]:
+    """Deterministic one-hot vector. SHA-256 (process-stable, not salted like
+    Python's built-in hash) → modulo dim picks an axis. Dim 4096 keeps accidental
+    collisions between distinct short strings vanishingly rare in tests."""
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    axis = int.from_bytes(digest[:8], "big") % dim
     vec = [0.0] * dim
-    vec[hash(text) % dim] = 1.0
+    vec[axis] = 1.0
     return vec
 
 
@@ -217,24 +223,6 @@ class TestCollectionMutations:
         assert "not found" in result
 
     @pytest.mark.asyncio
-    async def test_delete_removes_entry(self, tmp_path, mock_llm):
-        db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        await CollectionWriteTool(db, _make_llm_client(mock_llm)).execute(
-            memory="likes", entries=[{"key": "k", "content": "v"}]
-        )
-        result = await CollectionDeleteTool(db).execute(memory="likes", key="k")
-        assert "Deleted 1" in result
-        assert "not found" in await CollectionGetTool(db).execute(memory="likes", key="k")
-
-    @pytest.mark.asyncio
-    async def test_delete_missing_reports_not_found(self, tmp_path):
-        db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        result = await CollectionDeleteTool(db).execute(memory="likes", key="missing")
-        assert "not found" in result
-
-    @pytest.mark.asyncio
     async def test_move_between_collections(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="unnotified", description="x", recall="off")
@@ -373,7 +361,6 @@ class TestFactory:
             "collection_keys",
             "collection_write",
             "collection_update",
-            "collection_delete",
             "collection_move",
             "collection_archive",
             "collection_unarchive",

@@ -96,13 +96,6 @@ class CollectionUpdateArgs(BaseModel):
     content: str
 
 
-class CollectionKeyArgs(BaseModel):
-    """``collection_delete`` — one key in one collection."""
-
-    memory: str
-    key: str
-
-
 class CollectionMoveArgs(BaseModel):
     """Move an entry between collections by key."""
 
