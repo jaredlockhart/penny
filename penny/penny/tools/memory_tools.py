@@ -25,6 +25,7 @@ from penny.database.memory_store import (
     EntryInput,
     LogEntryInput,
     RecallMode,
+    WriteResult,
 )
 from penny.database.models import Memory, MemoryEntry
 from penny.llm.similarity import embed_text
@@ -328,6 +329,9 @@ class CollectionReadSimilarTool(Tool):
         args = ReadSimilarArgs(**kwargs)
         vec = await embed_text(self._llm, args.anchor)
         if vec is None:
+            logger.warning(
+                "%s: similarity search unavailable — no embedding model configured", self.name
+            )
             return "(similarity search unavailable — no embedding model configured)"
         entries = self._db.memories.read_similar(args.memory, vec, args.k, args.floor)
         return _format_entries(entries)
@@ -424,9 +428,16 @@ class CollectionWriteTool(Tool):
             content_embedding=await embed_text(self._llm, spec.content),
         )
 
-    def _format_results(self, memory: str, results: list[Any]) -> str:
+    def _format_results(self, memory: str, results: list[WriteResult]) -> str:
         written = [r.key for r in results if r.outcome == "written"]
         duplicates = [r.key for r in results if r.outcome == "duplicate"]
+        if duplicates:
+            logger.info(
+                "collection_write: %d duplicate(s) rejected in %s: %s",
+                len(duplicates),
+                memory,
+                ", ".join(duplicates),
+            )
         parts: list[str] = []
         if written:
             noun = "entry" if len(written) == 1 else "entries"
@@ -604,6 +615,9 @@ class LogReadSimilarTool(Tool):
         args = ReadSimilarArgs(**kwargs)
         vec = await embed_text(self._llm, args.anchor)
         if vec is None:
+            logger.warning(
+                "%s: similarity search unavailable — no embedding model configured", self.name
+            )
             return "(similarity search unavailable — no embedding model configured)"
         entries = self._db.memories.read_similar(args.memory, vec, args.k, args.floor)
         return _format_entries(entries)

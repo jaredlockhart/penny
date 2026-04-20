@@ -352,7 +352,9 @@ class TestAuthorAttribution:
         assert rows[0].author == "preference-extractor"
 
     def test_default_agent_is_unknown(self):
-        # A fresh test runs in a fresh context; default value applies.
+        # The preceding test restores the default in its finally block, so
+        # whether this runs first or after, current_agent() must equal the
+        # module-level default.
         assert current_agent() == "unknown"
 
 
