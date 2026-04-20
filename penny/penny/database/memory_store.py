@@ -29,7 +29,7 @@ import logging
 import random
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel
 from similarity.embeddings import (
@@ -104,6 +104,14 @@ class WriteResult(BaseModel):
 
 MoveOutcome = Literal["ok", "not_found", "collision"]
 UpdateOutcome = Literal["ok", "not_found"]
+
+
+class EntrySide(NamedTuple):
+    """One side of a dedup pair: the key plus its key/content embeddings."""
+
+    key: str | None
+    key_vec: list[float] | None
+    content_vec: list[float] | None
 
 
 class MemoryStore:
@@ -216,12 +224,11 @@ class MemoryStore:
         name: str,
         entry: EntryInput,
         author: str,
-        existing: list[_ExistingEntry],
+        existing: list[EntrySide],
         thresholds: DedupThresholds,
     ) -> WriteResult:
-        if self._is_duplicate(
-            entry.key, entry.key_embedding, entry.content_embedding, existing, thresholds
-        ):
+        candidate = EntrySide(entry.key, entry.key_embedding, entry.content_embedding)
+        if self._is_duplicate(candidate, existing, thresholds):
             return WriteResult(key=entry.key, outcome="duplicate")
         row = MemoryEntry(
             memory_name=name,
@@ -234,7 +241,7 @@ class MemoryStore:
         )
         session.add(row)
         session.flush()
-        existing.append((entry.key, entry.key_embedding, entry.content_embedding))
+        existing.append(candidate)
         return WriteResult(key=entry.key, outcome="written", entry_id=row.id)
 
     def update(self, name: str, key: str, content: str, author: str) -> UpdateOutcome:
@@ -369,8 +376,13 @@ class MemoryStore:
         are excluded. With ``k=None`` every qualifying entry is returned.
         Caller embeds the anchor text ahead of time.
         """
+        rows = self._embedded_rows(name)
+        ordered = self._rank_against_anchor(rows, anchor, floor)
+        return ordered if k is None else ordered[:k]
+
+    def _embedded_rows(self, name: str) -> list[MemoryEntry]:
         with self._session() as session:
-            rows = list(
+            return list(
                 session.exec(
                     select(MemoryEntry).where(
                         MemoryEntry.memory_name == name,
@@ -378,6 +390,10 @@ class MemoryStore:
                     )
                 ).all()
             )
+
+    def _rank_against_anchor(
+        self, rows: list[MemoryEntry], anchor: list[float], floor: float
+    ) -> list[MemoryEntry]:
         scored: list[tuple[float, MemoryEntry]] = []
         for row in rows:
             if row.content_embedding is None:
@@ -386,8 +402,7 @@ class MemoryStore:
             if sim >= floor:
                 scored.append((sim, row))
         scored.sort(key=lambda pair: pair[0], reverse=True)
-        ordered = [row for _, row in scored]
-        return ordered if k is None else ordered[:k]
+        return [row for _, row in scored]
 
     def read_all(self, name: str) -> list[MemoryEntry]:
         with self._session() as session:
@@ -436,11 +451,12 @@ class MemoryStore:
         key-match shortcut when a key is supplied. Returns True on the first hit.
         """
         thresholds = thresholds or DedupThresholds()
+        candidate = EntrySide(key, key_embedding, content_embedding)
         for name in names:
             if key is not None and self.get_entry(name, key):
                 return True
             existing = self._load_entries_with_vectors(name)
-            if self._is_duplicate(key, key_embedding, content_embedding, existing, thresholds):
+            if self._is_duplicate(candidate, existing, thresholds):
                 return True
         return False
 
@@ -460,8 +476,8 @@ class MemoryStore:
             ).all()
         )
 
-    def _load_entries_with_vectors(self, name: str) -> list[_ExistingEntry]:
-        """Load every entry for `name` as (key, key_vec, content_vec) tuples.
+    def _load_entries_with_vectors(self, name: str) -> list[EntrySide]:
+        """Load every entry for `name` as EntrySide triples (key, key_vec, content_vec).
 
         Entries without a given embedding or key contribute None on that axis.
         """
@@ -470,7 +486,7 @@ class MemoryStore:
                 session.exec(select(MemoryEntry).where(MemoryEntry.memory_name == name)).all()
             )
         return [
-            (
+            EntrySide(
                 r.key,
                 _maybe_deserialize(r.key_embedding),
                 _maybe_deserialize(r.content_embedding),
@@ -480,33 +496,16 @@ class MemoryStore:
 
     def _is_duplicate(
         self,
-        candidate_key: str | None,
-        candidate_key_vec: list[float] | None,
-        candidate_content_vec: list[float] | None,
-        existing: list[_ExistingEntry],
+        candidate: EntrySide,
+        existing: list[EntrySide],
         thresholds: DedupThresholds,
     ) -> bool:
-        for existing_key, existing_key_vec, existing_content_vec in existing:
-            if self._pair_is_duplicate(
-                candidate_key,
-                candidate_key_vec,
-                candidate_content_vec,
-                existing_key,
-                existing_key_vec,
-                existing_content_vec,
-                thresholds,
-            ):
-                return True
-        return False
+        return any(self._pair_is_duplicate(candidate, side, thresholds) for side in existing)
 
     def _pair_is_duplicate(
         self,
-        candidate_key: str | None,
-        candidate_key_vec: list[float] | None,
-        candidate_content_vec: list[float] | None,
-        existing_key: str | None,
-        existing_key_vec: list[float] | None,
-        existing_content_vec: list[float] | None,
+        candidate: EntrySide,
+        existing: EntrySide,
         thresholds: DedupThresholds,
     ) -> bool:
         """Apply the three-signal dedup rule to a single candidate/existing pair.
@@ -515,48 +514,32 @@ class MemoryStore:
         skipped. Fire if any one signal hits its strict threshold or any two
         signals hit their relaxed thresholds.
         """
-        signals = _score_signals(
-            candidate_key,
-            candidate_key_vec,
-            candidate_content_vec,
-            existing_key,
-            existing_key_vec,
-            existing_content_vec,
-            thresholds,
-        )
-        strict_hits = sum(1 for score, strict, _relaxed in signals if score >= strict)
-        if strict_hits >= 1:
+        signals = _score_signals(candidate, existing, thresholds)
+        if any(score >= strict for score, strict, _ in signals):
             return True
-        relaxed_hits = sum(1 for score, _strict, relaxed in signals if score >= relaxed)
+        relaxed_hits = sum(1 for score, _, relaxed in signals if score >= relaxed)
         return relaxed_hits >= 2
 
 
-_ExistingEntry = tuple[str | None, list[float] | None, list[float] | None]
-
-
 def _score_signals(
-    candidate_key: str | None,
-    candidate_key_vec: list[float] | None,
-    candidate_content_vec: list[float] | None,
-    existing_key: str | None,
-    existing_key_vec: list[float] | None,
-    existing_content_vec: list[float] | None,
+    candidate: EntrySide,
+    existing: EntrySide,
     thresholds: DedupThresholds,
 ) -> list[tuple[float, float, float]]:
     """Return (score, strict_threshold, relaxed_threshold) for every applicable signal."""
     out: list[tuple[float, float, float]] = []
-    if candidate_key is not None and existing_key is not None:
+    if candidate.key is not None and existing.key is not None:
         out.append(
             (
-                token_containment_ratio(candidate_key, existing_key),
+                token_containment_ratio(candidate.key, existing.key),
                 thresholds.key_tcr_strict,
                 thresholds.key_tcr_relaxed,
             )
         )
-    key_cos = _safe_cosine(candidate_key_vec, existing_key_vec)
+    key_cos = _safe_cosine(candidate.key_vec, existing.key_vec)
     if key_cos is not None:
         out.append((key_cos, thresholds.key_sim_strict, thresholds.key_sim_relaxed))
-    content_cos = _safe_cosine(candidate_content_vec, existing_content_vec)
+    content_cos = _safe_cosine(candidate.content_vec, existing.content_vec)
     if content_cos is not None:
         out.append((content_cos, thresholds.content_sim_strict, thresholds.content_sim_relaxed))
     return out

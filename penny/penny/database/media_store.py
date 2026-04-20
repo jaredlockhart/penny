@@ -1,4 +1,4 @@
-"""Media store — binary blobs referenced by store entries via <media:ID> tokens."""
+"""Media store — binary blobs referenced by memory entries via <media:ID> tokens."""
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ class MediaStore:
             session.refresh(row)
             if row.id is None:
                 raise RuntimeError("media row was inserted but has no id")
+            logger.debug("Stored %d bytes as media %d (%s)", len(data), row.id, mime_type)
             return row.id
 
     def get(self, media_id: int) -> Media | None:

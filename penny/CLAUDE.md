@@ -118,9 +118,12 @@ penny/
     thought_store.py  — ThoughtStore: inner monologue persistence
     preference_store.py — PreferenceStore: add, query, dedup, embedding management
     user_store.py     — UserStore: get_info, save_info, mute/unmute
+    memory_store.py   — MemoryStore: unified collections + logs with three-signal dedup
+    cursor_store.py   — CursorStore: per-agent read cursors into log-shaped memories
+    media_store.py    — MediaStore: binary blobs referenced by <media:ID> tokens
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
-    migrations/       — Numbered migration files (0001–0023)
+    migrations/       — Numbered migration files (0001–0025)
   llm/
     client.py         — LlmClient: OpenAI SDK wrapper (chat + embed) for any OpenAI-compatible backend (Ollama, omlx, etc.)
     image_client.py   — OllamaImageClient: Ollama-specific HTTP client for image generation and model listing
@@ -341,6 +344,10 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **Thought**: Inner monologue entries — `content` (full monologue), `title`, `image`, `valence`, `preference_id` FK (seed preference), `run_id`, `notified_at`
 - **Preference**: User sentiment signals — `content`, `valence` (positive/negative), `source` (manual/extracted), `mention_count`, `embedding` (serialized float32 vector), `last_thought_at`. Extracted preferences must reach `PREFERENCE_MENTION_THRESHOLD` mentions before becoming thinking candidates; manual (`/like`) preferences bypass this gate
 - **Knowledge**: Summarized web page content — `url` (unique), `title`, `summary` (prose paragraph), `embedding`, `source_prompt_id` FK (extraction watermark). One entry per URL, upserted on revisit
+- **Memory**: Unified container for the task/memory framework — `name` (PK), `type` (`collection` or `log`), `description`, `recall` (`off` / `recent` / `relevant` / `all`), `archived`. Collections are keyed sets with dedup on write; logs are append-only keyless streams
+- **MemoryEntry**: One entry in a memory — `memory_name` FK, `key` (nullable for logs), `content`, `author`, `key_embedding`, `content_embedding`. Entries are immutable once written — `update` replaces content for a given key
+- **AgentCursor**: Per-agent read progress through a log-shaped memory — `(agent_name, memory_name)` PK, `last_read_at` high-water mark. Advanced two-phase by the orchestrator (pending during a run, committed on success)
+- **Media**: Binary blobs (images, etc.) referenced by `<media:ID>` tokens in memory entry content — `mime_type`, `data`, `source_url`
 
 ## Message Flow
 
@@ -382,6 +389,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **Pydantic everywhere**: All external data validated with Pydantic models
 - **Table-to-bullets**: Markdown tables converted to bullet points in Python (saves model tokens vs. prompting "no tables")
 - **Normal casing**: All user-facing strings (status messages, error messages, acknowledgments) use standard sentence casing — not all lowercase
+- **Memory framework (Stage 1)**: A unified data primitive — *memory* — with two shapes (collection and log) and one access class `MemoryStore`. Collections dedup on write via a three-signal disjunction (key TCR, key cosine, content cosine — each with strict and relaxed thresholds in `PennyConstants`). Any strict hit, or any two relaxed hits, rejects the write. Logs append without dedup. `db.memories` replaces the per-domain stores that agents will be ported onto in subsequent stages. See `docs/task-framework-plan.md` (design) and `docs/memory-implementation-plan.md` (staged rollout)
 
 ## Dependencies
 
@@ -391,7 +399,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 
 ## Database Migrations
 
-File-based migration system in `database/migrations/` (currently 0001–0024):
+File-based migration system in `database/migrations/` (currently 0001–0025):
 - Each migration is a numbered Python file (e.g., `0001_initial_schema.py`) with a `def up(conn)` function
 - Two types: **schema** (DDL — ALTER TABLE, CREATE INDEX) and **data** (DML — UPDATE, backfills), both use `up()`
 - Runner in `database/migrate.py` discovers files, tracks applied migrations in `_migrations` table
@@ -426,6 +434,7 @@ Notable migrations:
 - 0022: `promptlog.outcome` + `thought.run_id` columns
 - 0023: Add `knowledge` table, drop `conversationhistory` (replaced by knowledge + related messages)
 - 0024: Drop legacy `searchlog` table (never written to since browser-based search)
+- 0025: Add `memory`, `memory_entry`, `agent_cursor`, `media` tables (task/memory framework Stage 1)
 
 ## Extending
 
