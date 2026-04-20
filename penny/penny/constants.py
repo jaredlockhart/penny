@@ -232,3 +232,14 @@ class PennyConstants:
     # no entity overlap with the current message ("yeah exactly i can't wait
     # to try it") but live in the same conversation as a real hit.
     RELATED_MESSAGES_NEIGHBOR_WINDOW_MINUTES = 5
+
+    # Store dedup thresholds. A candidate is rejected if any one of these
+    # similarity tests hits:
+    #   - key-embedding cosine >= STORE_KEY_SIM_THRESHOLD
+    #   - content-embedding cosine >= STORE_CONTENT_SIM_THRESHOLD
+    #   - average of the two >= STORE_COMBINED_SIM_THRESHOLD
+    # Starting values; tune empirically against false-positive/false-negative
+    # rates on real store writes.
+    STORE_KEY_SIM_THRESHOLD = 0.90
+    STORE_CONTENT_SIM_THRESHOLD = 0.90
+    STORE_COMBINED_SIM_THRESHOLD = 0.85
