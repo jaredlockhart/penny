@@ -99,18 +99,22 @@ Internal helpers:
 
 ### Dedup rule
 
-Collections dedup on write. The rule is a disjunction:
+Collections dedup on write. Three signals are evaluated against each existing entry:
 
-- `key_embedding` cosine similarity to any existing entry's key >= `KEY_SIM_THRESHOLD` → duplicate
-- `content_embedding` cosine similarity to any existing entry's content >= `CONTENT_SIM_THRESHOLD` → duplicate
-- Combined score (weighted average of key-sim and content-sim) >= `COMBINED_SIM_THRESHOLD` → duplicate
+1. `token_containment_ratio(candidate.key, existing.key)` — lexical; cheap; catches "dark roast" vs "dark roast coffee" and year-stripped variants the embedding drifts on
+2. `cosine(candidate.key_embedding, existing.key_embedding)` — paraphrase
+3. `cosine(candidate.content_embedding, existing.content_embedding)`
 
-All three are module-level constants tuned empirically. Starting values (to refine in practice):
-- `KEY_SIM_THRESHOLD = 0.90`
-- `CONTENT_SIM_THRESHOLD = 0.90`
-- `COMBINED_SIM_THRESHOLD = 0.85`
+A candidate is a duplicate if **any one signal meets its strict threshold**, OR if **any two signals meet their relaxed thresholds**. Strict catches obvious on-one-axis matches (same key, identical content); relaxed catches weak-everywhere matches a single-signal gate misses.
 
-Any hit rejects the write with `"duplicate found, write failed"` — the model doesn't need to reason about which axis triggered. Tune in production by watching false-positive / false-negative rates on real writes.
+Signals that can't be computed (missing keys on log entries, missing embeddings when no model is configured) are skipped — the rule degrades to "whatever's comparable fires."
+
+Starting thresholds (all live in `PennyConstants`):
+- `STORE_KEY_TCR_STRICT_THRESHOLD = 1.0` / `STORE_KEY_TCR_RELAXED_THRESHOLD = 0.65` (abbreviation band — 2/3 is a common score and 0.67 literal misses it by a bit)
+- `STORE_KEY_SIM_STRICT_THRESHOLD = 0.90` / `STORE_KEY_SIM_RELAXED_THRESHOLD = 0.75`
+- `STORE_CONTENT_SIM_STRICT_THRESHOLD = 0.90` / `STORE_CONTENT_SIM_RELAXED_THRESHOLD = 0.75`
+
+Any hit rejects the write with `"duplicate found, write failed"` — the model doesn't need to reason about which axis triggered. Tune in production by watching false-positive / false-negative rates on real writes. This is a consolidation of the several bespoke dedup strategies in the old architecture; per-store tuning happens via override `DedupThresholds` passed into `write()`.
 
 ### Cursor helpers
 

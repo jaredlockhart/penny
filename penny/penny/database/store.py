@@ -4,15 +4,17 @@ Collections are keyed sets with dedup on write; logs are append-only streams.
 Both share a single `store_entry` table with `key` nullable for logs. Entries
 are immutable once written — `update` replaces whole content for a given key.
 
-Dedup on collection writes uses a disjunction of three similarity checks
-against existing entries in the same store (thresholds live in
-``PennyConstants`` — STORE_KEY_SIM_THRESHOLD, STORE_CONTENT_SIM_THRESHOLD,
-STORE_COMBINED_SIM_THRESHOLD). Any hit rejects the write; the caller gets a
-per-entry outcome in the result.
+Dedup on collection writes evaluates three signals against each existing entry
+(thresholds live in ``PennyConstants``):
 
-Embeddings are optional: if the caller passes None, the similarity checks for
-that axis simply don't fire and no dedup can happen on that axis. Stores
-without any embedding still accept writes — they just can't dedup by similarity.
+  1. ``tcr(candidate.key, existing.key)`` — token-containment ratio, lexical
+  2. ``cos(candidate.key_embedding, existing.key_embedding)`` — paraphrase
+  3. ``cos(candidate.content_embedding, existing.content_embedding)``
+
+A candidate is a duplicate if ANY signal meets its strict threshold, OR if any
+TWO signals meet their relaxed thresholds. Signals are skipped when either
+side is missing (no key on a log entry, no embedding when no model configured),
+so the rule degrades gracefully to "only what's comparable fires."
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from similarity.embeddings import (
     cosine_similarity,
     deserialize_embedding,
     serialize_embedding,
+    token_containment_ratio,
 )
 from sqlmodel import Session, select
 
@@ -58,9 +61,14 @@ class StoreNotFoundError(Exception):
 
 
 class DedupThresholds(BaseModel):
-    key_sim: float = PennyConstants.STORE_KEY_SIM_THRESHOLD
-    content_sim: float = PennyConstants.STORE_CONTENT_SIM_THRESHOLD
-    combined: float = PennyConstants.STORE_COMBINED_SIM_THRESHOLD
+    """Per-signal strict + relaxed thresholds for the store dedup rule."""
+
+    key_tcr_strict: float = PennyConstants.STORE_KEY_TCR_STRICT_THRESHOLD
+    key_tcr_relaxed: float = PennyConstants.STORE_KEY_TCR_RELAXED_THRESHOLD
+    key_sim_strict: float = PennyConstants.STORE_KEY_SIM_STRICT_THRESHOLD
+    key_sim_relaxed: float = PennyConstants.STORE_KEY_SIM_RELAXED_THRESHOLD
+    content_sim_strict: float = PennyConstants.STORE_CONTENT_SIM_STRICT_THRESHOLD
+    content_sim_relaxed: float = PennyConstants.STORE_CONTENT_SIM_RELAXED_THRESHOLD
 
 
 class EntryInput(BaseModel):
@@ -202,10 +210,12 @@ class StoreStore:
         name: str,
         entry: EntryInput,
         author: str,
-        existing: list[tuple[list[float] | None, list[float] | None]],
+        existing: list[_ExistingEntry],
         thresholds: DedupThresholds,
     ) -> WriteResult:
-        if self._is_duplicate(entry.key_embedding, entry.content_embedding, existing, thresholds):
+        if self._is_duplicate(
+            entry.key, entry.key_embedding, entry.content_embedding, existing, thresholds
+        ):
             return WriteResult(key=entry.key, outcome="duplicate")
         row = StoreEntry(
             store_name=name,
@@ -218,7 +228,7 @@ class StoreStore:
         )
         session.add(row)
         session.flush()
-        existing.append((entry.key_embedding, entry.content_embedding))
+        existing.append((entry.key, entry.key_embedding, entry.content_embedding))
         return WriteResult(key=entry.key, outcome="written", entry_id=row.id)
 
     def update(self, name: str, key: str, content: str, author: str) -> UpdateOutcome:
@@ -422,7 +432,7 @@ class StoreStore:
             if key is not None and self.get_entry(name, key):
                 return True
             existing = self._load_entries_with_vectors(name)
-            if self._is_duplicate(key_embedding, content_embedding, existing, thresholds):
+            if self._is_duplicate(key, key_embedding, content_embedding, existing, thresholds):
                 return True
         return False
 
@@ -442,53 +452,104 @@ class StoreStore:
             ).all()
         )
 
-    def _load_entries_with_vectors(
-        self, name: str
-    ) -> list[tuple[list[float] | None, list[float] | None]]:
-        """Load every entry for `name` as (key_vec, content_vec) pairs.
+    def _load_entries_with_vectors(self, name: str) -> list[_ExistingEntry]:
+        """Load every entry for `name` as (key, key_vec, content_vec) tuples.
 
-        Entries without a given embedding contribute None on that axis.
+        Entries without a given embedding or key contribute None on that axis.
         """
         with self._session() as session:
             rows = list(session.exec(select(StoreEntry).where(StoreEntry.store_name == name)).all())
         return [
-            (_maybe_deserialize(r.key_embedding), _maybe_deserialize(r.content_embedding))
+            (
+                r.key,
+                _maybe_deserialize(r.key_embedding),
+                _maybe_deserialize(r.content_embedding),
+            )
             for r in rows
         ]
 
     def _is_duplicate(
         self,
-        key_vec: list[float] | None,
-        content_vec: list[float] | None,
-        existing: list[tuple[list[float] | None, list[float] | None]],
+        candidate_key: str | None,
+        candidate_key_vec: list[float] | None,
+        candidate_content_vec: list[float] | None,
+        existing: list[_ExistingEntry],
         thresholds: DedupThresholds,
     ) -> bool:
-        for existing_key_vec, existing_content_vec in existing:
+        for existing_key, existing_key_vec, existing_content_vec in existing:
             if self._pair_is_duplicate(
-                key_vec, content_vec, existing_key_vec, existing_content_vec, thresholds
+                candidate_key,
+                candidate_key_vec,
+                candidate_content_vec,
+                existing_key,
+                existing_key_vec,
+                existing_content_vec,
+                thresholds,
             ):
                 return True
         return False
 
     def _pair_is_duplicate(
         self,
-        key_vec: list[float] | None,
-        content_vec: list[float] | None,
+        candidate_key: str | None,
+        candidate_key_vec: list[float] | None,
+        candidate_content_vec: list[float] | None,
+        existing_key: str | None,
         existing_key_vec: list[float] | None,
         existing_content_vec: list[float] | None,
         thresholds: DedupThresholds,
     ) -> bool:
-        key_sim = _safe_cosine(key_vec, existing_key_vec)
-        content_sim = _safe_cosine(content_vec, existing_content_vec)
-        if key_sim is not None and key_sim >= thresholds.key_sim:
+        """Apply the three-signal dedup rule to a single candidate/existing pair.
+
+        Signals that can't be computed (missing keys, missing embeddings) are
+        skipped. Fire if any one signal hits its strict threshold or any two
+        signals hit their relaxed thresholds.
+        """
+        signals = _score_signals(
+            candidate_key,
+            candidate_key_vec,
+            candidate_content_vec,
+            existing_key,
+            existing_key_vec,
+            existing_content_vec,
+            thresholds,
+        )
+        strict_hits = sum(1 for score, strict, _relaxed in signals if score >= strict)
+        if strict_hits >= 1:
             return True
-        if content_sim is not None and content_sim >= thresholds.content_sim:
-            return True
-        if key_sim is not None and content_sim is not None:
-            combined = (key_sim + content_sim) / 2
-            if combined >= thresholds.combined:
-                return True
-        return False
+        relaxed_hits = sum(1 for score, _strict, relaxed in signals if score >= relaxed)
+        return relaxed_hits >= 2
+
+
+_ExistingEntry = tuple[str | None, list[float] | None, list[float] | None]
+
+
+def _score_signals(
+    candidate_key: str | None,
+    candidate_key_vec: list[float] | None,
+    candidate_content_vec: list[float] | None,
+    existing_key: str | None,
+    existing_key_vec: list[float] | None,
+    existing_content_vec: list[float] | None,
+    thresholds: DedupThresholds,
+) -> list[tuple[float, float, float]]:
+    """Return (score, strict_threshold, relaxed_threshold) for every applicable signal."""
+    out: list[tuple[float, float, float]] = []
+    if candidate_key is not None and existing_key is not None:
+        out.append(
+            (
+                token_containment_ratio(candidate_key, existing_key),
+                thresholds.key_tcr_strict,
+                thresholds.key_tcr_relaxed,
+            )
+        )
+    key_cos = _safe_cosine(candidate_key_vec, existing_key_vec)
+    if key_cos is not None:
+        out.append((key_cos, thresholds.key_sim_strict, thresholds.key_sim_relaxed))
+    content_cos = _safe_cosine(candidate_content_vec, existing_content_vec)
+    if content_cos is not None:
+        out.append((content_cos, thresholds.content_sim_strict, thresholds.content_sim_relaxed))
+    return out
 
 
 def _maybe_serialize(vec: list[float] | None) -> bytes | None:

@@ -233,13 +233,22 @@ class PennyConstants:
     # to try it") but live in the same conversation as a real hit.
     RELATED_MESSAGES_NEIGHBOR_WINDOW_MINUTES = 5
 
-    # Store dedup thresholds. A candidate is rejected if any one of these
-    # similarity tests hits:
-    #   - key-embedding cosine >= STORE_KEY_SIM_THRESHOLD
-    #   - content-embedding cosine >= STORE_CONTENT_SIM_THRESHOLD
-    #   - average of the two >= STORE_COMBINED_SIM_THRESHOLD
+    # Store dedup thresholds. Three signals are evaluated per candidate/
+    # existing pair:
+    #   1. key TCR (token-containment ratio; lexical, cheap, catches
+    #      "dark roast" vs "dark roast coffee" and year-stripped variants)
+    #   2. key embedding cosine (catches paraphrases the lexical signal misses)
+    #   3. content embedding cosine
+    # Duplicate if ANY signal >= its strict threshold, OR if ANY TWO signals
+    # >= their relaxed thresholds. Strict catches obvious matches on one axis;
+    # relaxed catches weak-on-every-axis matches a single-signal gate misses.
     # Starting values; tune empirically against false-positive/false-negative
     # rates on real store writes.
-    STORE_KEY_SIM_THRESHOLD = 0.90
-    STORE_CONTENT_SIM_THRESHOLD = 0.90
-    STORE_COMBINED_SIM_THRESHOLD = 0.85
+    STORE_KEY_TCR_STRICT_THRESHOLD = 1.0
+    # Abbreviation band: "applied ai conference" vs "applied ai conf" scores
+    # exactly 2/3. Float-literal 0.67 would miss it by one bit.
+    STORE_KEY_TCR_RELAXED_THRESHOLD = 0.65
+    STORE_KEY_SIM_STRICT_THRESHOLD = 0.90
+    STORE_KEY_SIM_RELAXED_THRESHOLD = 0.75
+    STORE_CONTENT_SIM_STRICT_THRESHOLD = 0.90
+    STORE_CONTENT_SIM_RELAXED_THRESHOLD = 0.75

@@ -490,8 +490,14 @@ class TestWriteTypeEnforcement:
             author="chat",
         )
 
-        # Very lenient thresholds keep a near-duplicate; very strict rejects it.
-        strict = DedupThresholds(key_sim=0.99, content_sim=0.99, combined=0.99)
+        strict = DedupThresholds(
+            key_tcr_strict=0.99,
+            key_tcr_relaxed=0.99,
+            key_sim_strict=0.99,
+            key_sim_relaxed=0.99,
+            content_sim_strict=0.99,
+            content_sim_relaxed=0.99,
+        )
         result = db.stores.write(
             "likes",
             [
@@ -504,5 +510,100 @@ class TestWriteTypeEnforcement:
             ],
             author="chat",
             thresholds=strict,
+        )
+        assert result[0].outcome == "written"
+
+
+class TestDedupSignals:
+    """The three-signal rule: any strict hit OR any two relaxed hits → duplicate."""
+
+    def test_tcr_strict_alone_rejects(self, tmp_path):
+        """Full token-subset on keys fires without any embeddings."""
+        db = _make_db(tmp_path)
+        db.stores.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.stores.write(
+            "likes",
+            [EntryInput(key="dark roast", content="first body")],
+            author="chat",
+        )
+        result = db.stores.write(
+            "likes",
+            [EntryInput(key="dark roast coffee", content="second body")],
+            author="chat",
+        )
+        assert result[0].outcome == "duplicate"
+
+    def test_tcr_relaxed_alone_does_not_fire(self, tmp_path):
+        """TCR 2/3 with no other signal is not enough on its own."""
+        db = _make_db(tmp_path)
+        db.stores.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.stores.write(
+            "likes",
+            [EntryInput(key="applied ai conference", content="first")],
+            author="chat",
+        )
+        result = db.stores.write(
+            "likes",
+            [EntryInput(key="applied ai conf", content="second")],
+            author="chat",
+        )
+        assert result[0].outcome == "written"
+
+    def test_two_relaxed_signals_reject(self, tmp_path):
+        """TCR 2/3 plus a relaxed content-cosine hit (~0.80) → duplicate."""
+        db = _make_db(tmp_path)
+        db.stores.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.stores.write(
+            "likes",
+            [
+                EntryInput(
+                    key="applied ai conference",
+                    content="first body",
+                    content_embedding=[1.0, 0.0],
+                )
+            ],
+            author="chat",
+        )
+        # cos([1, 0], [0.80, 0.60]) = 0.80 → relaxed content hit, not strict.
+        # TCR("applied ai conf", "applied ai conference") = 2/3 → relaxed key hit.
+        # Two relaxed hits → duplicate.
+        result = db.stores.write(
+            "likes",
+            [
+                EntryInput(
+                    key="applied ai conf",
+                    content="second body",
+                    content_embedding=[0.80, 0.60],
+                )
+            ],
+            author="chat",
+        )
+        assert result[0].outcome == "duplicate"
+
+    def test_single_relaxed_signal_passes(self, tmp_path):
+        """One signal at relaxed level only (no second signal) is not enough."""
+        db = _make_db(tmp_path)
+        db.stores.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.stores.write(
+            "likes",
+            [
+                EntryInput(
+                    key="coffee roast",
+                    content="first",
+                    content_embedding=[1.0, 0.0],
+                )
+            ],
+            author="chat",
+        )
+        result = db.stores.write(
+            "likes",
+            [
+                EntryInput(
+                    key="tea brewing",
+                    content="second",
+                    content_embedding=[0.80, 0.60],
+                )
+            ],
+            author="chat",
         )
         assert result[0].outcome == "written"
