@@ -723,7 +723,7 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None) -> list[Tool]
     Callers can slice this list by tool name to give each agent a narrower
     surface (e.g. the preference extractor only wants ``collection_write`` and
     ``done``). The factory centralizes dependency wiring so individual agents
-    don't have to juggle ``db`` / ``llm_client`` across 22 constructors.
+    don't have to juggle ``db`` / ``llm_client`` across 21 constructors.
     """
     return [
         # Metadata

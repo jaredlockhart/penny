@@ -104,7 +104,7 @@ penny/
     draft_email.py    — DraftEmailTool (compose + stage draft)
     memory_args.py    — Pydantic arg models for the memory tool surface
     memory_context.py — ContextVar + current_agent() for write attribution
-    memory_tools.py   — 22 Tool subclasses over db.memories.* (collection + log + introspection) and build_memory_tools factory
+    memory_tools.py   — 21 Tool subclasses over db.memories.* (collection + log + introspection) and build_memory_tools factory
   channels/
     __init__.py       — create_channel() factory, channel type constants
     base.py           — MessageChannel ABC, IncomingMessage, shared message handling
