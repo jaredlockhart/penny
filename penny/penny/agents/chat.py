@@ -13,6 +13,7 @@ from typing import Any
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
+from penny.agents.recall import build_recall_block
 from penny.channels.base import PageContext
 from penny.constants import ChatPromptType, PennyConstants
 from penny.prompts import Prompt
@@ -163,7 +164,7 @@ class ChatAgent(Agent):
         content: str | None = None,
         instructions: str | None = None,
     ) -> str:
-        """Identity + profile + knowledge + related messages + page hint + instructions."""
+        """Identity + profile + knowledge + related messages + recall + page hint + instructions."""
         conversation_embeddings = await self._embed_conversation(user, content) if content else None
         knowledge = (
             await self._related_knowledge_section(conversation_embeddings) if content else None
@@ -171,6 +172,7 @@ class ChatAgent(Agent):
         related = (
             await self._related_messages_section(user, conversation_embeddings) if content else None
         )
+        recall = await self._recall_section(content)
         return "\n\n".join(
             s
             for s in [
@@ -179,12 +181,17 @@ class ChatAgent(Agent):
                     self._profile_section(user),
                     knowledge,
                     related,
+                    recall,
                     self._page_hint_section(),
                 ),
                 self._instructions_section(instructions),
             ]
             if s
         )
+
+    async def _recall_section(self, current_message: str | None) -> str | None:
+        """Ambient recall block from active memories."""
+        return await build_recall_block(self.db, self._embedding_model_client, current_message)
 
     def _page_hint_section(self) -> str | None:
         """Minimal hint about what page the user is currently viewing."""

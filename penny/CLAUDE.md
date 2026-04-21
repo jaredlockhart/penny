@@ -61,6 +61,7 @@ penny/
     base.py           — Agent base class: agentic loop, tool execution, Ollama integration
     models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord, GeneratedQuery
     chat.py           — ChatAgent: conversation-mode agent (handles user messages with tools)
+    recall.py         — build_recall_block: assembles ambient recall context from active memories
     notify.py         — NotifyAgent: notification outreach (thoughts, check-ins)
     thinking.py       — ThinkingAgent: continuous inner monologue loop
     history.py        — HistoryAgent: daily/weekly summarization + preference extraction
@@ -392,7 +393,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **Pydantic everywhere**: All external data validated with Pydantic models
 - **Table-to-bullets**: Markdown tables converted to bullet points in Python (saves model tokens vs. prompting "no tables")
 - **Normal casing**: All user-facing strings (status messages, error messages, acknowledgments) use standard sentence casing — not all lowercase
-- **Memory framework (Stage 1)**: A unified data primitive — *memory* — with two shapes (collection and log) and one access class `MemoryStore`. Collections dedup on write via a three-signal disjunction (key TCR, key cosine, content cosine — each with strict and relaxed thresholds in `PennyConstants`). Any strict hit, or any two relaxed hits, rejects the write. Logs append without dedup. `db.memories` replaces the per-domain stores that agents will be ported onto in subsequent stages. See `docs/task-framework-plan.md` (design) and `docs/memory-implementation-plan.md` (staged rollout)
+- **Memory framework (Stages 1–3)**: A unified data primitive — *memory* — with two shapes (collection and log) and one access class `MemoryStore`. Collections dedup on write via a three-signal disjunction (key TCR, key cosine, content cosine — each with strict and relaxed thresholds in `PennyConstants`). Any strict hit, or any two relaxed hits, rejects the write. Logs append without dedup. Stage 2a added 21 model-facing memory tools (`memory_tools.py`). Stage 3 added `build_recall_block` (`recall.py`) — assembles ambient recall context for the chat agent's system prompt by dispatching each active memory by recall mode (`recent`/`relevant`/`all`); paired logs (`user-messages` + `penny-messages`) merge chronologically into a single Conversation section. `db.memories` replaces the per-domain stores that agents will be ported onto in subsequent stages. See `docs/task-framework-plan.md` (design) and `docs/memory-implementation-plan.md` (staged rollout)
 
 ## Dependencies
 
