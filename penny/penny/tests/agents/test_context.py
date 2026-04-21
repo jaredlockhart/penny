@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from penny.constants import PennyConstants
-from penny.database.memory_store import LogEntryInput, RecallMode
 from penny.database.models import MessageLog
 from penny.llm.embeddings import serialize_embedding
 from penny.tests.conftest import TEST_SENDER
@@ -1249,31 +1248,3 @@ async def test_knowledge_in_chat_system_prompt(
         knowledge_pos = prompt.find("### Knowledge")
         instructions_pos = prompt.find("## Instructions")
         assert knowledge_pos < instructions_pos
-
-
-# ── Recall (ambient memory context) ──────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_recall_in_chat_system_prompt(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Recall section from an active memory appears in ChatAgent system prompt."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        penny.db.memories.create_log("tips", "useful tips", RecallMode.RECENT)
-        penny.db.memories.append(
-            "tips",
-            [LogEntryInput(content="always tune before playing")],
-            author="user",
-        )
-        penny.chat_agent._pending_page_context = None
-
-        prompt = await penny.chat_agent._build_system_prompt(TEST_SENDER, content="any message")
-
-    assert "### tips" in prompt
-    assert "always tune before playing" in prompt
-    recall_pos = prompt.find("### tips")
-    instructions_pos = prompt.find("## Instructions")
-    assert recall_pos < instructions_pos

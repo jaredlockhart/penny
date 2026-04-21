@@ -9,6 +9,7 @@ Test organization:
 import pytest
 from sqlmodel import select
 
+from penny.database.memory_store import LogEntryInput, RecallMode
 from penny.database.models import MessageLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -43,7 +44,7 @@ async def test_basic_message_flow(
         # Verify we have a WebSocket connection
         assert len(signal_server._websockets) == 1, "Penny should have connected to WebSocket"
 
-        # Seed full context: notified thought, dislike
+        # Seed full context: notified thought, dislike, active memory
         thought = penny.db.thoughts.add(TEST_SENDER, "Recent thought about amps")
         if thought:
             penny.db.thoughts.mark_notified(thought.id)
@@ -51,6 +52,10 @@ async def test_basic_message_flow(
             user=TEST_SENDER,
             content="Country music",
             valence="negative",
+        )
+        penny.db.memories.create_log("tips", "useful tips", RecallMode.RECENT)
+        penny.db.memories.append(
+            "tips", [LogEntryInput(content="tune before playing")], author="user"
         )
 
         # Send incoming message
@@ -107,6 +112,11 @@ Just wrap them in conversational text, not a clinical dump.
 ## Context
 ### User Profile
 The user's name is Test User.
+
+### tips
+useful tips
+
+- tune before playing
 
 ## Instructions
 The user is talking to you — no greetings, no sign-offs, just pick up \
