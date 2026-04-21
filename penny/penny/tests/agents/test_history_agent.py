@@ -8,7 +8,6 @@ import pytest
 from penny.agents.history import HistoryAgent
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog, PromptLog
-from penny.prompts import Prompt
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -86,11 +85,46 @@ async def test_preference_extraction_stores_preferences(
         identification_req = next(
             r for r in requests_seen if "identify preference topics" in _user_prompt(r).lower()
         )
-        expected = (
-            f"{Prompt.PREFERENCE_IDENTIFICATION_PROMPT}"
-            f"\n\n[14:30] I really love single-origin coffee beans"
-        )
         actual = _user_prompt(identification_req)
+        expected = """\
+Identify preference topics in the following conversation — \
+things the user likes, dislikes, wants, or is frustrated by.
+
+RULES:
+- Return only topic names (3-10 words each)
+- Do NOT include sentiment or valence — just the topic
+- Make topics fully qualified so they can be understood without context
+- Bad: 'Talk', 'Talk (album)'
+- Good: 'Talk (album) by Yes (band)'
+- Bad: 'the new movie', 'that episode'
+- Good: 'Dune Part Two (2024 film)', 'Breaking Bad S5E14 Ozymandias'
+- Only extract topics the USER expressed interest in, not Penny's opinions
+- Skip factual statements that don't express preference
+- Skip questions, tasks, and troubleshooting requests — \
+'how do I connect X' or 'can you find Y' are actions, not preferences
+- If no clear preferences are expressed, return an empty list
+
+SORTING (CRITICAL):
+- Separate topics into 'new' and 'existing' lists
+- 'existing': known preferences that were discussed or referenced — \
+use the EXACT content string from the 'Already known preferences' list
+- 'new': genuinely new topics not already covered by any known preference
+- Do NOT put rephrasings, synonyms, or more specific versions of \
+known preferences in the 'new' list
+- Asking about reviews, specs, comparisons, or details of a known item \
+is NOT a new preference — it's engagement with the existing one
+- Example: if 'bass recording techniques' is known and the user discusses \
+bass tone, put 'bass recording techniques' in 'existing', not \
+'Yes Roundabout bass tone' in 'new'
+- Example: if 'Tubesteader pedals' is known and the user asks about \
+Eggnog reviews, put 'Tubesteader pedals' in 'existing', not \
+'Tubesteader Eggnog user reviews' in 'new'
+
+REACTION CONTEXT (if present):
+Lines marked with 'User reacted [emoji] to:' show emoji reactions. \
+These indicate preference toward the topic of the reacted-to message.
+
+[14:30] I really love single-origin coffee beans"""
         assert actual == expected, (
             f"Identification prompt mismatch:\n{actual!r}\n\nvs expected:\n{expected!r}"
         )
