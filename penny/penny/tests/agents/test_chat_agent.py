@@ -6,10 +6,12 @@ Test organization:
 3. Error / edge cases — XML leak regression, short response warning, delivery failure
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
 from sqlmodel import select
 
-from penny.database.memory_store import LogEntryInput, RecallMode
+from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
 from penny.database.models import MessageLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -53,10 +55,33 @@ async def test_basic_message_flow(
             content="Country music",
             valence="negative",
         )
+        # Memory seed: exercise every rendering path in one verbatim assertion.
+        # Alphabetical by name — "likes" < "old-facts" < "secrets" < "tips".
+        penny.db.memories.create_collection("likes", "positive prefs", RecallMode.ALL)
+        penny.db.memories.write(
+            "likes",
+            [EntryInput(key="dark roast", content="loves dark roast")],
+            author="user",
+        )
         penny.db.memories.create_log("tips", "useful tips", RecallMode.RECENT)
         penny.db.memories.append(
             "tips", [LogEntryInput(content="tune before playing")], author="user"
         )
+        # Off and archived memories are seeded with entries so the verbatim
+        # prompt assertion below proves they are filtered out of ambient recall.
+        penny.db.memories.create_collection("secrets", "hidden", RecallMode.OFF)
+        penny.db.memories.write(
+            "secrets",
+            [EntryInput(key="do-not-share", content="classified")],
+            author="user",
+        )
+        penny.db.memories.create_collection("old-facts", "archived", RecallMode.ALL)
+        penny.db.memories.write(
+            "old-facts",
+            [EntryInput(key="stale", content="no longer relevant")],
+            author="user",
+        )
+        penny.db.memories.archive("old-facts")
 
         # Send incoming message
         await signal_server.push_message(
@@ -112,6 +137,11 @@ Just wrap them in conversational text, not a clinical dump.
 ## Context
 ### User Profile
 The user's name is Test User.
+
+### likes
+positive prefs
+
+- [dark roast] loves dark roast
 
 ### tips
 useful tips
@@ -198,6 +228,87 @@ source URL so the user can follow up."""
             t for t in thoughts if t.content.startswith("Conversation: user said")
         ]
         assert len(conversation_echoes) == 0, "Conversation echo thoughts should not be logged"
+
+
+# ── 1b. Ambient-recall integration cases ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chat_prompt_renders_relevant_mode_via_embedding(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """A collection with recall=relevant surfaces its matching entry in the chat prompt.
+
+    The entry's content_embedding and the current-message embedding are both
+    the same unit vector (cosine=1), so the entry ranks first against the
+    0.0 floor.  A second orthogonal entry stays below nothing — with floor=0.0
+    it's included too, but only the matching one is asserted.
+    """
+    config = make_config()
+    match_vec = [1.0, 0.0, 0.0]
+
+    async with running_penny(config) as penny:
+        penny.db.memories.create_collection("knowledge", "facts", RecallMode.RELEVANT)
+        penny.db.memories.write(
+            "knowledge",
+            [
+                EntryInput(
+                    key="espresso",
+                    content="espresso uses 9 bars of pressure",
+                    content_embedding=match_vec,
+                )
+            ],
+            author="user",
+        )
+
+        mock_client = AsyncMock()
+        mock_client.embed = AsyncMock(side_effect=lambda texts: [match_vec] * len(texts))
+        penny.chat_agent._embedding_model_client = mock_client
+        penny.chat_agent._pending_page_context = None
+
+        prompt = await penny.chat_agent._build_system_prompt(
+            TEST_SENDER, content="tell me about espresso"
+        )
+
+    assert "### knowledge" in prompt
+    assert "facts" in prompt
+    assert "- [espresso] espresso uses 9 bars of pressure" in prompt
+
+
+@pytest.mark.asyncio
+async def test_chat_prompt_renders_conversation_pair(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """user-messages + penny-messages logs render as one merged Conversation section.
+
+    Entries are sorted by created_at; author prefixes come from each entry's
+    author field.  The secondary member (penny-messages) does not appear under
+    its own header — only inside the merged block.
+    """
+    config = make_config()
+
+    async with running_penny(config) as penny:
+        penny.db.memories.create_log("user-messages", "user utterances", RecallMode.RECENT)
+        penny.db.memories.create_log("penny-messages", "penny replies", RecallMode.RECENT)
+        penny.db.memories.append(
+            "user-messages",
+            [LogEntryInput(content="how's the weather?")],
+            author="user",
+        )
+        penny.db.memories.append(
+            "penny-messages",
+            [LogEntryInput(content="clear skies today")],
+            author="penny",
+        )
+        penny.chat_agent._pending_page_context = None
+
+        prompt = await penny.chat_agent._build_system_prompt(TEST_SENDER, content="thanks!")
+
+    assert "### Conversation" in prompt
+    assert "[user] how's the weather?" in prompt
+    assert "[penny] clear skies today" in prompt
+    # Secondary member never gets its own section
+    assert "### penny-messages" not in prompt
 
 
 # ── 2. Special success cases ──────────────────────────────────────────────
