@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.memory_store import RecallMode
 from penny.database.models import Memory, MemoryEntry
@@ -31,16 +32,13 @@ logger = logging.getLogger(__name__)
 
 CONVERSATION_PAIRS: list[tuple[str, str]] = [("user-messages", "penny-messages")]
 
-_DEFAULT_K = 5
-_DEFAULT_FLOOR = 0.35
-
 
 async def build_recall_block(
     db: Database,
     llm_client: LlmClient | None,
     current_message: str | None,
-    k_default: int = _DEFAULT_K,
-    similarity_floor: float = _DEFAULT_FLOOR,
+    k_default: int = PennyConstants.MEMORY_RECALL_K,
+    similarity_floor: float = PennyConstants.MEMORY_RECALL_FLOOR,
 ) -> str | None:
     """Assemble recall context for all active memories — summary method."""
     memories = _active_memories(db)
