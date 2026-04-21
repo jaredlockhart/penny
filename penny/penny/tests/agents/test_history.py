@@ -8,6 +8,7 @@ import pytest
 from penny.agents.history import HistoryAgent
 from penny.constants import PennyConstants
 from penny.database.models import MessageLog, PromptLog
+from penny.prompts import Prompt
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -34,10 +35,17 @@ def _insert_message(penny, sender, content, direction, timestamp, **kwargs):
 async def test_preference_extraction_stores_preferences(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """HistoryAgent extracts and stores user preferences from conversation."""
+    """Core success flow: extract & store preferences, with full exact identification prompt.
+
+    HistoryAgent issues plain ``generate()`` calls (no system prompt, no agentic
+    loop), so the "entire prompt" for this agent is the user-role content sent
+    to the identification pass.  A fixed-timestamp seed lets us match byte-for-byte.
+    """
     config = make_config(history_interval=99999.0)
+    requests_seen: list[dict] = []
 
     def handler(request, count):
+        requests_seen.append(request)
         messages = request.get("messages", [])
         user_msgs = [m for m in messages if m.get("role") == "user"]
         prompt_text = " ".join(m.get("content", "") for m in user_msgs)
@@ -63,21 +71,44 @@ async def test_preference_extraction_stores_preferences(
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
+        fixed_ts = datetime(2026, 4, 21, 14, 30, tzinfo=UTC).replace(tzinfo=None)
+        _insert_message(
+            penny,
             TEST_SENDER,
             "I really love single-origin coffee beans",
+            PennyConstants.MessageDirection.INCOMING,
+            fixed_ts,
         )
 
         await penny.history_agent.execute()
 
+        # Full exact identification-pass user prompt
+        identification_req = next(
+            r for r in requests_seen if "identify preference topics" in _user_prompt(r).lower()
+        )
+        expected = (
+            f"{Prompt.PREFERENCE_IDENTIFICATION_PROMPT}"
+            f"\n\n[14:30] I really love single-origin coffee beans"
+        )
+        actual = _user_prompt(identification_req)
+        assert actual == expected, (
+            f"Identification prompt mismatch:\n{actual!r}\n\nvs expected:\n{expected!r}"
+        )
+
         prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        if prefs:
-            assert any("coffee" in p.content.lower() for p in prefs)
-            coffee_prefs = [p for p in prefs if "coffee" in p.content.lower()]
-            for p in coffee_prefs:
-                assert p.source == "extracted"
-                assert p.mention_count == 1
+        assert prefs, "Expected at least one extracted preference"
+        assert any("coffee" in p.content.lower() for p in prefs)
+        coffee_prefs = [p for p in prefs if "coffee" in p.content.lower()]
+        for p in coffee_prefs:
+            assert p.source == "extracted"
+            assert p.mention_count == 1
+
+
+def _user_prompt(request: dict) -> str:
+    """Return the concatenated user-role content from an LLM request."""
+    return " ".join(
+        m.get("content", "") for m in request.get("messages", []) if m.get("role") == "user"
+    )
 
 
 @pytest.mark.asyncio

@@ -111,12 +111,64 @@ async def test_send_notify_thought_candidate(
     running_penny,
     monkeypatch,
 ):
-    """Thought notification sends the thought content directly — no LLM rewrite."""
+    """Thought notification: core success flow + full exact ThoughtMode prompt.
+
+    Thought content is sent directly to the user without an LLM rewrite, so
+    the system prompt is never seen by the model — we assert on what
+    ``ThoughtMode.build_system_prompt`` would produce directly.
+    """
     config = make_config(notify_candidates=1)
 
     async with running_penny(config) as penny:
         _seed_notify(penny)
         monkeypatch.setattr(penny.notify_agent, "_should_checkin", lambda user: False)
+
+        # Assert full exact ThoughtMode system prompt for the seeded thought
+        seeded_thought = penny.db.thoughts.get_next_unnotified(TEST_SENDER)
+        assert seeded_thought is not None
+        mode = ThoughtMode(seeded_thought, penny.config)
+        mode.prepare(penny.notify_agent)
+        prompt = mode.build_system_prompt(penny.notify_agent, TEST_SENDER)
+        expected = """\
+## Identity
+You are Penny. You and the user are friends who text regularly. \
+This is mid-conversation — not a fresh chat.
+
+Voice:
+- Reply like you're continuing a text thread.
+- React to what the user actually said before giving information. \
+If they corrected you, own it. If they expressed excitement, match it. \
+If they asked a follow-up, connect it to what came before.
+- Present information naturally but you can still use short formatted blocks \
+(bold names, links) when listing products or facts. \
+Just wrap them in conversational text, not a clinical dump.
+- Finish every message with an emoji.
+
+## Context
+### User Profile
+The user's name is Test User.
+
+### Your Latest Thought
+I've been thinking about quantum computing
+
+## Instructions
+You are reaching out to a friend proactively — sharing something \
+interesting you've been thinking about or found in the news.
+
+You have tools available:
+
+
+If your context includes 'Your Latest Thought', share it with the \
+user. Start with a casual greeting, then tell them the whole thing \
+— don't compress or summarize it, just relay the details in your \
+own voice. You can search to add a fresh angle or find a link, but \
+avoid re-searching the same topic.
+
+Every fact and detail in your message must come from your context."""
+        assert prompt == expected, (
+            f"ThoughtMode system prompt mismatch:\n{prompt!r}\n\nvs expected:\n{expected!r}"
+        )
+        penny.notify_agent._pending_thought = None
 
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
         assert result is True
@@ -442,15 +494,11 @@ async def test_get_top_thoughts_sorts_mix_of_notified_and_never_notified(
         assert pref_b.id in pref_ids
 
 
-# ── Thought context variants ────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
-@pytest.mark.asyncio
-async def test_notify_thought_context_shows_specific_thought(
+async def test_pending_thought_section_renders_specific_thought(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """NotifyAgent shows the specific thought being shared."""
+    """_pending_thought_section renders the pending thought under its header."""
     config = make_config()
 
     async with running_penny(config) as penny:
@@ -459,52 +507,7 @@ async def test_notify_thought_context_shows_specific_thought(
 
         penny.notify_agent._pending_thought = thoughts[0]
         context = penny.notify_agent._pending_thought_section()
-        assert "black holes" in context
-        assert "Your Latest Thought" in context
-
-        mode = ThoughtMode(thoughts[0], penny.config)
-        mode.prepare(penny.notify_agent)
-        candidate_prompt = mode.build_system_prompt(penny.notify_agent, TEST_SENDER)
-        expected = """\
-## Identity
-You are Penny. You and the user are friends who text regularly. \
-This is mid-conversation — not a fresh chat.
-
-Voice:
-- Reply like you're continuing a text thread.
-- React to what the user actually said before giving information. \
-If they corrected you, own it. If they expressed excitement, match it. \
-If they asked a follow-up, connect it to what came before.
-- Present information naturally but you can still use short formatted blocks \
-(bold names, links) when listing products or facts. \
-Just wrap them in conversational text, not a clinical dump.
-- Finish every message with an emoji.
-
-## Context
-### User Profile
-The user's name is Test User.
-
-### Your Latest Thought
-thinking about black holes
-
-## Instructions
-You are reaching out to a friend proactively — sharing something \
-interesting you've been thinking about or found in the news.
-
-You have tools available:
-
-
-If your context includes 'Your Latest Thought', share it with the \
-user. Start with a casual greeting, then tell them the whole thing \
-— don't compress or summarize it, just relay the details in your \
-own voice. You can search to add a fresh angle or find a link, but \
-avoid re-searching the same topic.
-
-Every fact and detail in your message must come from your context."""
-        assert candidate_prompt == expected, (
-            f"ThoughtMode system prompt mismatch:\n{candidate_prompt!r}"
-            f"\n\nvs expected:\n{expected!r}"
-        )
+        assert context == "### Your Latest Thought\nthinking about black holes"
 
         penny.notify_agent._pending_thought = None
 
