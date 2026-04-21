@@ -12,7 +12,8 @@ import hashlib
 
 import pytest
 
-from penny.agents.recall import CONVERSATION_PAIRS, build_recall_block
+from penny.agents.recall import build_recall_block
+from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
 from penny.database.migrate import migrate
@@ -148,7 +149,7 @@ async def test_relevant_mode_without_message_returns_none(tmp_path, mock_llm):
 @pytest.mark.asyncio
 async def test_conversation_pair_merges_chronologically(tmp_path):
     db = _make_db(tmp_path)
-    primary, secondary = CONVERSATION_PAIRS[0]
+    primary, secondary = PennyConstants.MEMORY_CONVERSATION_PAIRS[0]
     db.memories.create_log(primary, "user messages", RecallMode.RECENT)
     db.memories.create_log(secondary, "penny messages", RecallMode.RECENT)
     _write_entry(db, primary, None, "hello", author="user")
@@ -165,7 +166,7 @@ async def test_conversation_pair_merges_chronologically(tmp_path):
 @pytest.mark.asyncio
 async def test_pair_secondary_not_rendered_individually(tmp_path):
     db = _make_db(tmp_path)
-    primary, secondary = CONVERSATION_PAIRS[0]
+    primary, secondary = PennyConstants.MEMORY_CONVERSATION_PAIRS[0]
     db.memories.create_log(primary, "user messages", RecallMode.RECENT)
     db.memories.create_log(secondary, "penny messages", RecallMode.RECENT)
     _write_entry(db, primary, None, "hello", author="user")
@@ -182,7 +183,7 @@ async def test_pair_secondary_not_rendered_individually(tmp_path):
 @pytest.mark.asyncio
 async def test_pair_primary_also_rendered_individually(tmp_path, mock_llm):
     db = _make_db(tmp_path)
-    primary, secondary = CONVERSATION_PAIRS[0]
+    primary, secondary = PennyConstants.MEMORY_CONVERSATION_PAIRS[0]
     db.memories.create_log(primary, "user messages", RecallMode.RELEVANT)
     db.memories.create_log(secondary, "penny messages", RecallMode.RECENT)
     client = _make_llm_client(mock_llm)
@@ -199,7 +200,7 @@ async def test_pair_primary_also_rendered_individually(tmp_path, mock_llm):
 @pytest.mark.asyncio
 async def test_pair_missing_secondary_renders_primary_normally(tmp_path, mock_llm):
     db = _make_db(tmp_path)
-    primary, _ = CONVERSATION_PAIRS[0]
+    primary, _ = PennyConstants.MEMORY_CONVERSATION_PAIRS[0]
     db.memories.create_log(primary, "user messages", RecallMode.RECENT)
     _write_entry(db, primary, None, "hello", author="user")
 
