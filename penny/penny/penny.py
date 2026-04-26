@@ -61,10 +61,16 @@ class Penny:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
     def _init_database(self, config: Config) -> None:
-        """Set up database, run migrations, and connect to runtime config."""
+        """Set up database, create tables, then run migrations.
+
+        Order matters: ``migrate()`` is a no-op when the DB file doesn't
+        exist (fresh deploy), so ``create_tables()`` must run first to
+        materialise the schema. Migrations then apply on top — including
+        data-insert migrations like 0026 that seed system log memories.
+        """
         self.db = Database(config.db_path)
-        migrate(config.db_path)
         self.db.create_tables()
+        migrate(config.db_path)
         config.runtime._db = self.db
 
     def _create_llm_client(

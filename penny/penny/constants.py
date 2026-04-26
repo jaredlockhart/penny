@@ -253,8 +253,16 @@ class PennyConstants:
     MEMORY_CONTENT_SIM_STRICT_THRESHOLD = 0.90
     MEMORY_CONTENT_SIM_RELAXED_THRESHOLD = 0.75
 
+    # System log memories (created by migration 0026) that the channel
+    # adapter and browse tool side-effect-write to on every turn.
+    MEMORY_USER_MESSAGES_LOG = "user-messages"
+    MEMORY_PENNY_MESSAGES_LOG = "penny-messages"
+    MEMORY_BROWSE_RESULTS_LOG = "browse-results"
+
     # Log-name pairs whose entries are merged chronologically into a single
     # "Conversation" recall section when both are present.  The secondary log
     # (index 1) appears only in the merged section; the primary (index 0) is
     # also rendered individually under its own recall mode.
-    MEMORY_CONVERSATION_PAIRS: list[tuple[str, str]] = [("user-messages", "penny-messages")]
+    MEMORY_CONVERSATION_PAIRS: list[tuple[str, str]] = [
+        (MEMORY_USER_MESSAGES_LOG, MEMORY_PENNY_MESSAGES_LOG),
+    ]

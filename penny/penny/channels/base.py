@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from penny.config import Config
 from penny.constants import PennyConstants
+from penny.database.memory_store import LogEntryInput
 from penny.database.models import MessageLog
 from penny.llm import LlmClient
 from penny.llm.embeddings import serialize_embedding
@@ -295,6 +296,7 @@ class MessageChannel(ABC):
         recipient: str,
         content: str,
         parent_id: int | None,
+        author: str,
         attachments: list[str] | None = None,
         quote_message: MessageLog | None = None,
         thought_id: int | None = None,
@@ -306,6 +308,10 @@ class MessageChannel(ABC):
             recipient: Identifier for the recipient
             content: Message content
             parent_id: Parent message ID for thread linking
+            author: Name of the agent producing this message — stamped onto
+                the side-effect write to ``penny-messages``.  Always passed
+                explicitly by the caller (chat reply path, notify, scheduler)
+                so attribution is correct without ambient state.
             attachments: Optional list of base64-encoded image attachments
             quote_message: Optional message to quote-reply to
             thought_id: Optional FK to the thought that triggered this message
@@ -328,6 +334,7 @@ class MessageChannel(ABC):
             thought_id=thought_id,
             device_id=device_id,
         )
+        await self._append_to_memory_log(PennyConstants.MEMORY_PENNY_MESSAGES_LOG, prepared, author)
         external_id = await self.send_message(recipient, prepared, attachments, quote_message)
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
@@ -345,6 +352,19 @@ class MessageChannel(ABC):
         vec = await embed_text(self._embedding_model_client, content)
         if vec is not None:
             self._db.messages.update_embedding(message_id, serialize_embedding(vec))
+
+    async def _append_to_memory_log(self, name: str, content: str, author: str) -> None:
+        """Append ``content`` to a memory log, embedding at write time.
+
+        The embedding is best-effort — if no embedding client is configured
+        or embed_text fails, the entry is still appended without a vector.
+        """
+        vec = await embed_text(self._embedding_model_client, content)
+        self._db.memories.append(
+            name,
+            [LogEntryInput(content=content, content_embedding=vec)],
+            author=author,
+        )
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -523,8 +543,17 @@ class MessageChannel(ABC):
         device_id: int | None,
         progress: ProgressTracker | None,
     ) -> None:
-        """Invoke the agent, log the incoming message, and deliver the response."""
+        """Invoke the agent, log the incoming message, and deliver the response.
+
+        The egress write inside ``send_response`` is attributed to the
+        message agent's ``name`` (template-method override on the agent
+        subclass) — passed explicitly down the call chain rather than
+        threaded through ambient state.
+        """
         logger.info("Dispatching to message agent for %s", message.sender)
+        await self._append_to_memory_log(
+            PennyConstants.MEMORY_USER_MESSAGES_LOG, message.content, "user"
+        )
         response = await self._message_agent.handle(
             content=message.content,
             sender=user_sender,
@@ -541,7 +570,9 @@ class MessageChannel(ABC):
         )
         if incoming_id:
             await self._embed_message(incoming_id, message.content)
-        await self._deliver_agent_response(message, user_sender, response, incoming_id, progress)
+        await self._deliver_agent_response(
+            message, user_sender, response, incoming_id, progress, self._message_agent.name
+        )
 
     async def _deliver_agent_response(
         self,
@@ -550,6 +581,7 @@ class MessageChannel(ABC):
         response: Any,
         incoming_id: int | None,
         progress: ProgressTracker | None,
+        author: str,
     ) -> None:
         """Send the agent's response and surface delivery failures."""
         answer = response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
@@ -569,6 +601,7 @@ class MessageChannel(ABC):
             message.sender,
             answer,
             parent_id=incoming_id,
+            author=author,
             attachments=response.attachments or None,
             quote_message=incoming_log,
         )

@@ -4,9 +4,10 @@ Every tool validates its kwargs through a Pydantic args model as its first
 line (per CLAUDE.md), calls ``db.memories.*``, and returns a serializable
 string the model can reason over.
 
-Author attribution flows through a contextvar (see ``memory_context``); the
-orchestration layer sets it at the start of each agent run and every write
-stamps the current value onto the entry.
+Author attribution is passed explicitly: write-capable tools take an
+``author: str`` at construction time (the agent that owns the tool).
+``build_memory_tools(db, embedding_client, author)`` is the factory each
+agent calls with its own ``self.name`` so writes are attributed correctly.
 
 Tools that need embeddings (writes, similarity reads, ``exists``) take an
 ``LlmClient`` in ``__init__``. If no embedding client is configured they
@@ -46,7 +47,6 @@ from penny.tools.memory_args import (
     ReadRecentArgs,
     ReadSimilarArgs,
 )
-from penny.tools.memory_context import current_agent
 
 if TYPE_CHECKING:
     from penny.llm.client import LlmClient
@@ -409,14 +409,15 @@ class CollectionWriteTool(Tool):
         "required": ["memory", "entries"],
     }
 
-    def __init__(self, db: Database, llm_client: LlmClient | None) -> None:
+    def __init__(self, db: Database, llm_client: LlmClient | None, author: str) -> None:
         self._db = db
         self._llm = llm_client
+        self._author = author
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionWriteArgs(**kwargs)
         entries = [await self._build_entry(spec) for spec in args.entries]
-        results = self._db.memories.write(args.memory, entries, author=current_agent())
+        results = self._db.memories.write(args.memory, entries, author=self._author)
         return self._format_results(args.memory, results)
 
     async def _build_entry(self, spec: CollectionEntrySpec) -> EntryInput:
@@ -464,12 +465,13 @@ class CollectionUpdateTool(Tool):
         "required": ["memory", "key", "content"],
     }
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, author: str) -> None:
         self._db = db
+        self._author = author
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionUpdateArgs(**kwargs)
-        outcome = self._db.memories.update(args.memory, args.key, args.content, current_agent())
+        outcome = self._db.memories.update(args.memory, args.key, args.content, self._author)
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.memory}'."
         return f"Updated '{args.key}' in '{args.memory}'."
@@ -493,13 +495,14 @@ class CollectionMoveTool(Tool):
         "required": ["key", "from_memory", "to_memory"],
     }
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, author: str) -> None:
         self._db = db
+        self._author = author
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionMoveArgs(**kwargs)
         outcome = self._db.memories.move(
-            args.key, args.from_memory, args.to_memory, author=current_agent()
+            args.key, args.from_memory, args.to_memory, author=self._author
         )
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.from_memory}'."
@@ -633,9 +636,10 @@ class LogAppendTool(Tool):
         "required": ["memory", "content"],
     }
 
-    def __init__(self, db: Database, llm_client: LlmClient | None) -> None:
+    def __init__(self, db: Database, llm_client: LlmClient | None, author: str) -> None:
         self._db = db
         self._llm = llm_client
+        self._author = author
 
     async def execute(self, **kwargs: Any) -> str:
         args = LogAppendArgs(**kwargs)
@@ -643,7 +647,7 @@ class LogAppendTool(Tool):
         self._db.memories.append(
             args.memory,
             [LogEntryInput(content=args.content, content_embedding=vec)],
-            author=current_agent(),
+            author=self._author,
         )
         return f"Appended to '{args.memory}'."
 
@@ -717,13 +721,18 @@ class DoneTool(Tool):
 # ── Factory ─────────────────────────────────────────────────────────────────
 
 
-def build_memory_tools(db: Database, llm_client: LlmClient | None) -> list[Tool]:
+def build_memory_tools(db: Database, llm_client: LlmClient | None, author: str) -> list[Tool]:
     """Construct the full memory tool surface for an agent.
 
+    Each agent calls this with its own ``self.name`` as ``author``; that
+    value is baked into every write-capable tool so entries get attributed
+    correctly without any ambient/contextvar state.
+
     Callers can slice this list by tool name to give each agent a narrower
-    surface (e.g. the preference extractor only wants ``collection_write`` and
-    ``done``). The factory centralizes dependency wiring so individual agents
-    don't have to juggle ``db`` / ``llm_client`` across 21 constructors.
+    surface (e.g. the preference extractor only wants ``collection_write``
+    and ``done``).  The factory centralizes dependency wiring so individual
+    agents don't have to juggle ``db`` / ``llm_client`` / ``author`` across
+    21 constructors.
     """
     return [
         # Metadata
@@ -740,16 +749,16 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None) -> list[Tool]
         CollectionReadAllTool(db),
         CollectionKeysTool(db),
         # Collection writes
-        CollectionWriteTool(db, llm_client),
-        CollectionUpdateTool(db),
-        CollectionMoveTool(db),
+        CollectionWriteTool(db, llm_client, author),
+        CollectionUpdateTool(db, author),
+        CollectionMoveTool(db, author),
         # Log reads
         LogReadLatestTool(db),
         LogReadRecentTool(db),
         LogReadSimilarTool(db, llm_client),
         LogReadAllTool(db),
         # Log writes
-        LogAppendTool(db, llm_client),
+        LogAppendTool(db, llm_client, author),
         # Introspection / lifecycle
         ExistsTool(db, llm_client),
         DoneTool(),

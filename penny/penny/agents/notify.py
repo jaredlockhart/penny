@@ -428,7 +428,9 @@ class NotifyAgent(Agent):
         """Send a tools-unavailable message so the user knows to investigate."""
         assert self._channel is not None
         logger.warning("Sending tools-unavailable notification to %s: %s", user, answer)
-        await self._channel.send_response(user, answer, parent_id=None, quote_message=None)
+        await self._channel.send_response(
+            user, answer, parent_id=None, author=self.name, quote_message=None
+        )
         return True
 
     @classmethod
@@ -617,6 +619,7 @@ class NotifyAgent(Agent):
             user,
             candidate.answer,
             parent_id=None,
+            author=self.name,
             attachments=candidate.attachments or None,
             quote_message=None,
             thought_id=thought_id,

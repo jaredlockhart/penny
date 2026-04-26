@@ -16,15 +16,18 @@ from penny.agents.recall import build_recall_block
 from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
-from penny.database.migrate import migrate
 from penny.llm.client import LlmClient
 
 
 def _make_db(tmp_path) -> Database:
+    """Empty test DB with schema only — no migrations.
+
+    Migration 0026 seeds three system log memories; these recall tests
+    declare exactly the memories they need.
+    """
     db_path = str(tmp_path / "test.db")
     db = Database(db_path)
     db.create_tables()
-    migrate(db_path)
     return db
 
 

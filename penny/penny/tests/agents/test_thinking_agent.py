@@ -722,7 +722,7 @@ async def test_seeded_duplicate_thought_skips_storage(
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
-        penny.thinking_agent._embedding_model_client = object()
+        penny.thinking_agent._embedding_model_client = None
 
         # Pre-seed with different title words but same content embedding — caught by content sim
         penny.db.thoughts.add(
@@ -791,7 +791,7 @@ async def test_free_duplicate_thought_skips_storage(
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
-        penny.thinking_agent._embedding_model_client = object()
+        penny.thinking_agent._embedding_model_client = None
 
         penny.db.thoughts.add(
             TEST_SENDER,
@@ -851,7 +851,7 @@ async def test_cross_preference_duplicate_skips_storage(
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
-        penny.thinking_agent._embedding_model_client = object()
+        penny.thinking_agent._embedding_model_client = None
 
         # Add a second preference and a thought from it with matching content embedding
         penny.db.preferences.add(
@@ -922,7 +922,7 @@ async def test_novel_thought_is_stored(
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
-        penny.thinking_agent._embedding_model_client = object()
+        penny.thinking_agent._embedding_model_client = None
 
         penny.db.thoughts.add(TEST_SENDER, "Old thought about a different topic.", preference_id=1)
 
@@ -982,7 +982,7 @@ async def test_dislike_veto_allows_thought_with_no_dislikes(
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
-        penny.thinking_agent._embedding_model_client = object()
+        penny.thinking_agent._embedding_model_client = None
         # No dislikes exist — thought should be stored
         await penny.thinking_agent.execute()
 
@@ -1030,7 +1030,7 @@ async def test_dislike_veto_rejects_thought_matching_dislike(
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
-        penny.thinking_agent._embedding_model_client = object()
+        penny.thinking_agent._embedding_model_client = None
 
         neg_pref = penny.db.preferences.add(
             TEST_SENDER, "AI-generated music", "negative", source="extracted"
@@ -1084,7 +1084,7 @@ async def test_dislike_veto_allows_thought_below_threshold(
 
     async with running_penny(config) as penny:
         _seed_thinking(penny)
-        penny.thinking_agent._embedding_model_client = object()
+        penny.thinking_agent._embedding_model_client = None
 
         neg_pref = penny.db.preferences.add(
             TEST_SENDER, "AI-generated music", "negative", source="extracted"

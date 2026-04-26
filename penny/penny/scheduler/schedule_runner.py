@@ -110,6 +110,7 @@ class ScheduleExecutor(Agent):
             schedule.user_id,
             answer,
             parent_id=None,
+            author=self.name,
             attachments=response.attachments or None,
             quote_message=None,
         )

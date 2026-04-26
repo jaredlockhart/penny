@@ -974,11 +974,15 @@ async def test_incoming_message_embedded_on_arrival(
     mock_llm.set_default_flow(final_response="got it! 🎸")
 
     async with running_penny(config) as penny:
+        # 4-dim to match the channel-side and chat-side embedding callers
+        # (chat agent uses its own client during recall).
         mock_embed_client = AsyncMock()
-        mock_embed_client.embed = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+        mock_embed_client.embed = AsyncMock(return_value=[[0.1, 0.2, 0.3, 0.4]])
         # Set on the concrete signal channel inside the manager
         for channel in penny.channel._channels.values():
             channel._embedding_model_client = mock_embed_client
+        # Also set on the chat agent so recall queries the same mock
+        penny.chat_agent._embedding_model_client = mock_embed_client
 
         await signal_server.push_message(sender=TEST_SENDER, content="test embedding")
         await signal_server.wait_for_message(timeout=10.0)

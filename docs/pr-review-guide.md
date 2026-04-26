@@ -77,6 +77,14 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 - [ ] No temporary swapping of instance state (e.g., `self.db`) to change behavior
 - [ ] Dependencies are passed as parameters through the call chain
 
+### No Ambient State for Cross-Cutting Concerns
+- [ ] No `contextvars.ContextVar` for application logic (current user, current agent, current request, current author, etc.)
+- [ ] No module-level globals that get mutated to "share" state between call sites
+- [ ] No `get_current_X()` / `set_current_X()` function pairs that thread implicit state through the call chain
+- [ ] If multiple call sites need the same value (author, user, request_id, tenant), pass it explicitly as a parameter — at construction time when stable for the instance's lifetime, or as a method argument when it varies per call
+- [ ] Template method override + explicit dependency injection is the project pattern. Each subclass exposes its identity as a class attribute (e.g., `Agent.name`); callers read it directly and pass it through to whatever needs it
+- [ ] Why: ambient state makes call graphs invisible, requires global setup/teardown in tests, leaks between concurrent async tasks, and breaks under refactor — anyone wiring a new caller silently inherits whatever the surrounding context happens to hold
+
 ### Template Method Over Conditionals
 - [ ] Multiple modes/variants use building blocks composed by each variant — no flags or if/else chains
 - [ ] Examples: agent system prompts (building blocks like `_identity_section()`, `_profile_section()`), notification modes (`NotificationMode` subclasses)

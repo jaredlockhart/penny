@@ -20,14 +20,18 @@ from penny.database.memory_store import (
     MemoryTypeError,
     RecallMode,
 )
-from penny.database.migrate import migrate
 
 
 def _make_db(tmp_path) -> Database:
+    """Empty test DB with schema only — no migrations.
+
+    Migration 0026 seeds three system log memories; these tests exercise
+    the memory primitive in isolation and declare exactly the memories
+    they need.
+    """
     db_path = str(tmp_path / "test.db")
     db = Database(db_path)
     db.create_tables()
-    migrate(db_path)
     return db
 
 

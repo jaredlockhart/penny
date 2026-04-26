@@ -15,6 +15,8 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from penny.constants import PennyConstants, ProgressEmoji
+from penny.database.memory_store import LogEntryInput
+from penny.llm.similarity import embed_text
 from penny.prompts import Prompt
 from penny.tools.base import Tool
 from penny.tools.content_cleaning import clean_browser_content
@@ -22,6 +24,8 @@ from penny.tools.models import BrowseArgs, SearchResult
 
 if TYPE_CHECKING:
     from penny.channels.permission_manager import PermissionManager
+    from penny.database import Database
+    from penny.llm import LlmClient
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +75,19 @@ class BrowseTool(Tool):
 
     name = "browse"
 
-    def __init__(self, max_calls: int, search_url: str = "https://duckduckgo.com/?q="):
+    def __init__(
+        self,
+        max_calls: int,
+        search_url: str = "https://duckduckgo.com/?q=",
+        db: Database | None = None,
+        embedding_client: LlmClient | None = None,
+        author: str = "unknown",
+    ):
         self._max_calls = max_calls
         self._search_url = search_url
+        self._db = db
+        self._embedding_client = embedding_client
+        self._author = author
         self._browse_provider: Callable[[], tuple[RequestFn, PermissionManager] | None] | None = (
             None
         )
@@ -166,10 +180,28 @@ class BrowseTool(Tool):
             if not first_image and result.image_base64:
                 first_image = result.image_base64
 
-        return SearchResult(
+        result = SearchResult(
             text=PennyConstants.SECTION_SEPARATOR.join(sections),
             urls=all_urls,
             image_base64=first_image,
+        )
+        await self._append_to_browse_results(result.text)
+        return result
+
+    async def _append_to_browse_results(self, text: str) -> None:
+        """Side-effect-write the rendered browse output to the browse-results log.
+
+        No-op if no database was wired in (legacy callsites).  Embeds at
+        write time so the entry can be retrieved by similarity later if the
+        memory's recall mode is changed away from 'off'.
+        """
+        if self._db is None:
+            return
+        vec = await embed_text(self._embedding_client, text)
+        self._db.memories.append(
+            PennyConstants.MEMORY_BROWSE_RESULTS_LOG,
+            [LogEntryInput(content=text, content_embedding=vec)],
+            author=self._author,
         )
 
     async def _read_page(self, url: str) -> SearchResult:
