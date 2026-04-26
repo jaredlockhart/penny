@@ -56,11 +56,15 @@ async def test_basic_message_flow(
             valence="negative",
         )
         # Memory seed: exercise every rendering path in one verbatim assertion.
-        # Alphabetical by name — "likes" < "old-facts" < "secrets" < "tips".
-        penny.db.memories.create_collection("likes", "positive prefs", RecallMode.ALL)
+        # Test-only names avoid colliding with system memories created by
+        # migrations 0026 and 0027 (user-messages, penny-messages,
+        # browse-results, likes, dislikes, knowledge, notified-thoughts,
+        # unnotified-thoughts).
+        # Active memories rendered in alphabetical order: "playlists" < "tips".
+        penny.db.memories.create_collection("playlists", "favorite playlists", RecallMode.ALL)
         penny.db.memories.write(
-            "likes",
-            [EntryInput(key="dark roast", content="loves dark roast")],
+            "playlists",
+            [EntryInput(key="morning", content="prog rock")],
             author="user",
         )
         penny.db.memories.create_log("tips", "useful tips", RecallMode.RECENT)
@@ -141,10 +145,10 @@ The user's name is Test User.
 ### Conversation
 [user] what's the weather like today?
 
-### likes
-positive prefs
+### playlists
+favorite playlists
 
-- [dark roast] loves dark roast
+- [morning] prog rock
 
 ### tips
 useful tips
@@ -266,9 +270,9 @@ async def test_chat_prompt_renders_relevant_mode_via_embedding(
     match_vec = [1.0, 0.0, 0.0]
 
     async with running_penny(config) as penny:
-        penny.db.memories.create_collection("knowledge", "facts", RecallMode.RELEVANT)
+        penny.db.memories.create_collection("trivia", "facts", RecallMode.RELEVANT)
         penny.db.memories.write(
-            "knowledge",
+            "trivia",
             [
                 EntryInput(
                     key="espresso",
@@ -288,7 +292,7 @@ async def test_chat_prompt_renders_relevant_mode_via_embedding(
             TEST_SENDER, content="tell me about espresso"
         )
 
-    assert "### knowledge" in prompt
+    assert "### trivia" in prompt
     assert "facts" in prompt
     assert "- [espresso] espresso uses 9 bars of pressure" in prompt
 
