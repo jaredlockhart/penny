@@ -102,10 +102,14 @@ class NotificationMode:
 
 
 class CheckinMode(NotificationMode):
-    """Check-in: slim context, no tools, single step, no validation."""
+    """Check-in: slim context, single step, no URL validation.
+
+    Tools are still installed (every agent gets every tool); the prompt
+    drives whether the model uses them.
+    """
 
     def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
-        return []
+        return agent.get_tools(user)
 
     def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
         return "\n\n".join(

@@ -25,7 +25,7 @@ from penny.constants import HistoryPromptType, PennyConstants
 from penny.database.models import PromptLog
 from penny.llm.embeddings import serialize_embedding
 from penny.prompts import Prompt
-from penny.tools.memory_tools import LogReadNextTool, build_memory_tools
+from penny.tools.memory_tools import LogReadNextTool
 
 logger = logging.getLogger(__name__)
 
@@ -222,11 +222,7 @@ class HistoryAgent(Agent):
         only encodes the prompt's intent twice.  The model decides what
         to call from the prompt's instructions.
         """
-        tools = build_memory_tools(
-            self.db,
-            self._embedding_model_client,
-            agent_name=self.PREFERENCE_EXTRACTOR_NAME,
-        )
+        tools = self._build_full_tools(agent_name=self.PREFERENCE_EXTRACTOR_NAME)
         log_read_next = next(t for t in tools if isinstance(t, LogReadNextTool))
         self._install_tools(tools)
 

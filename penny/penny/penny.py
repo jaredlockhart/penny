@@ -186,9 +186,11 @@ class Penny:
             **kwargs,
         )
         self.history_agent = HistoryAgent(
-            embedding_model_client=self.embedding_model_client, **kwargs
+            max_queries_key="CHAT_MAX_QUERIES",
+            embedding_model_client=self.embedding_model_client,
+            **kwargs,
         )
-        self.schedule_executor = ScheduleExecutor(**kwargs)
+        self.schedule_executor = ScheduleExecutor(max_queries_key="CHAT_MAX_QUERIES", **kwargs)
 
     def _init_github_client(self, config: Config) -> Any:
         """Initialize GitHub API client if configured. Returns GitHubAPI or None."""
