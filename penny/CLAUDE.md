@@ -439,6 +439,7 @@ Notable migrations:
 - 0024: Drop legacy `searchlog` table (never written to since browser-based search)
 - 0025: Add `memory`, `memory_entry`, `agent_cursor`, `media` tables (task/memory framework Stage 1)
 - 0026: Seed system log memories — `user-messages`, `penny-messages`, `browse-results` (Stage 9)
+- 0027: Backfill memory framework from existing tables — `messagelog` → user/penny logs, `preference` → likes/dislikes, `thought` → notified/unnotified-thoughts, `knowledge` → knowledge collection (Stage 10)
 
 ## Extending
 
