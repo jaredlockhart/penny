@@ -25,27 +25,9 @@ from penny.constants import HistoryPromptType, PennyConstants
 from penny.database.models import PromptLog
 from penny.llm.embeddings import serialize_embedding
 from penny.prompts import Prompt
-from penny.tools.memory_tools import (
-    CollectionWriteTool,
-    DoneTool,
-    LogReadNextTool,
-)
+from penny.tools.memory_tools import LogReadNextTool, build_memory_tools
 
 logger = logging.getLogger(__name__)
-
-
-# Identity used both as the cursor key for ``user-messages`` and as the
-# author stamped on writes to ``likes``/``dislikes``.  Distinct from
-# ``HistoryAgent.name`` because the same HistoryAgent class may host
-# multiple agent flows (knowledge extraction, preferences, reactions etc.)
-# with their own per-flow cursors and write attribution.
-PREFERENCE_EXTRACTOR_AGENT_NAME = "preference-extractor"
-
-# Cap on agentic loop iterations for the preference extractor.  The
-# expected flow is read_next → write(likes) → write(dislikes) → done,
-# so 8 leaves headroom for re-reads or batched writes without letting
-# a runaway loop tail through forever.
-PREFERENCE_EXTRACTOR_MAX_STEPS = 8
 
 
 class HistoryAgent(Agent):
@@ -53,9 +35,22 @@ class HistoryAgent(Agent):
 
     name = "history"
 
+    # Identity for the preference-extraction flow — used both as the
+    # cursor key for ``user-messages`` and as the author stamped on
+    # writes to ``likes``/``dislikes``.  Distinct from ``name`` because
+    # the same HistoryAgent class may host multiple flows (knowledge,
+    # reactions) with their own per-flow cursors and attribution.
+    PREFERENCE_EXTRACTOR_NAME = "preference-extractor"
+
+    # Cap on agentic loop iterations for the preference extractor.  The
+    # expected flow is read_next → write(likes) → write(dislikes) → done,
+    # so 8 leaves headroom for re-reads or batched writes without
+    # letting a runaway loop tail through forever.
+    PREFERENCE_EXTRACTOR_MAX_STEPS = 8
+
     def get_max_steps(self) -> int:
         """Cap on agentic loop iterations for HistoryAgent flows."""
-        return PREFERENCE_EXTRACTOR_MAX_STEPS
+        return self.PREFERENCE_EXTRACTOR_MAX_STEPS
 
     async def execute(self) -> bool:
         """Extract knowledge (user-independent), then run per-user work."""
@@ -216,20 +211,24 @@ class HistoryAgent(Agent):
     async def _run_preference_extractor(self) -> bool:
         """Read new user-messages, identify likes/dislikes, write them.
 
-        The flow is fully model-driven: the agent loop wraps three tools
-        (``log_read_next``, ``collection_write``, ``done``) with the
-        extractor identity, lets the model do the work, and commits the
-        cursor advance only on a clean run.  Failed runs (max steps,
-        model error) leave the cursor untouched so the next pass sees
-        the same messages.
+        The flow is fully model-driven: the agent loop is given the full
+        memory tool surface stamped with the extractor identity, the
+        prompt steers it to call ``log_read_next``/``collection_write``/
+        ``done``, and the cursor advances only on a clean run.  Failed
+        runs (max steps, model error) leave the cursor untouched so the
+        next pass sees the same messages.
+
+        Every agent gets every tool — narrowing the surface per flow
+        only encodes the prompt's intent twice.  The model decides what
+        to call from the prompt's instructions.
         """
-        log_read_next = LogReadNextTool(self.db, agent_name=PREFERENCE_EXTRACTOR_AGENT_NAME)
-        write_tool = CollectionWriteTool(
+        tools = build_memory_tools(
             self.db,
             self._embedding_model_client,
-            author=PREFERENCE_EXTRACTOR_AGENT_NAME,
+            agent_name=self.PREFERENCE_EXTRACTOR_NAME,
         )
-        self._install_tools([log_read_next, write_tool, DoneTool()])
+        log_read_next = next(t for t in tools if isinstance(t, LogReadNextTool))
+        self._install_tools(tools)
 
         run_id = uuid.uuid4().hex
         response = await self.run(

@@ -12,11 +12,7 @@ import json
 
 import pytest
 
-from penny.agents.history import (
-    PREFERENCE_EXTRACTOR_AGENT_NAME,
-    PREFERENCE_EXTRACTOR_MAX_STEPS,
-    HistoryAgent,
-)
+from penny.agents.history import HistoryAgent
 from penny.constants import PennyConstants
 from penny.database.memory_store import LogEntryInput
 from penny.database.models import PromptLog
@@ -34,7 +30,7 @@ def _seed_user_message(penny, content: str) -> None:
 
 def _cursor_for_preference_extractor(penny):
     return penny.db.cursors.get(
-        PREFERENCE_EXTRACTOR_AGENT_NAME, PennyConstants.MEMORY_USER_MESSAGES_LOG
+        HistoryAgent.PREFERENCE_EXTRACTOR_NAME, PennyConstants.MEMORY_USER_MESSAGES_LOG
     )
 
 
@@ -124,7 +120,7 @@ without writing anything."""
         likes = penny.db.memories.read_all("likes")
         assert any(e.key == "single-origin coffee beans" for e in likes)
         coffee = next(e for e in likes if e.key == "single-origin coffee beans")
-        assert coffee.author == PREFERENCE_EXTRACTOR_AGENT_NAME
+        assert coffee.author == HistoryAgent.PREFERENCE_EXTRACTOR_NAME
 
         # Cursor advanced past the seeded message
         cursor = _cursor_for_preference_extractor(penny)
@@ -186,11 +182,7 @@ async def test_no_user_messages_completes_cleanly(
 
 def test_preference_extractor_max_steps_constant_is_set():
     """Defensive check: the cap is non-zero so the loop can actually run."""
-    assert PREFERENCE_EXTRACTOR_MAX_STEPS > 0
-    # Sanity: HistoryAgent.get_max_steps should reflect the constant.
-    # We can't instantiate Agent without lots of config, so just check the
-    # class-attribute path matches.
-    assert HistoryAgent.get_max_steps.__qualname__ == "HistoryAgent.get_max_steps"
+    assert HistoryAgent.PREFERENCE_EXTRACTOR_MAX_STEPS > 0
 
 
 # ── Knowledge extraction ────────────────────────────────────────────────
