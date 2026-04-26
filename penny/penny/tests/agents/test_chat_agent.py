@@ -138,6 +138,9 @@ Just wrap them in conversational text, not a clinical dump.
 ### User Profile
 The user's name is Test User.
 
+### Conversation
+[user] what's the weather like today?
+
 ### likes
 positive prefs
 
@@ -221,6 +224,21 @@ source URL so the user can follow up."""
         assert incoming_messages[0].device_id == test_device.id
         assert outgoing[0].device_id == test_device.id
 
+        # Stage 9 side-effect writes: every message flow populates the three
+        # system log memories so the recall assembler can read them next turn.
+        user_msg_entries = penny.db.memories.read_all("user-messages")
+        assert any(e.content == "what's the weather like today?" for e in user_msg_entries)
+        assert all(e.author == "user" for e in user_msg_entries)
+
+        penny_msg_entries = penny.db.memories.read_all("penny-messages")
+        assert any("here's what i found" in e.content.lower() for e in penny_msg_entries)
+        assert all(e.author == "chat" for e in penny_msg_entries)
+
+        browse_entries = penny.db.memories.read_all("browse-results")
+        # Mock browse provider is wired in conftest; the tool was invoked once.
+        assert len(browse_entries) >= 1
+        assert all(e.author == "chat" for e in browse_entries)
+
         # No conversation echo thoughts should be logged
         # (old _log_conversation_thought is removed; thoughts come from tool reasoning only)
         thoughts = penny.db.thoughts.get_recent(TEST_SENDER, limit=10)
@@ -288,8 +306,7 @@ async def test_chat_prompt_renders_conversation_pair(
     config = make_config()
 
     async with running_penny(config) as penny:
-        penny.db.memories.create_log("user-messages", "user utterances", RecallMode.RECENT)
-        penny.db.memories.create_log("penny-messages", "penny replies", RecallMode.RECENT)
+        # user-messages and penny-messages are pre-created by migration 0026
         penny.db.memories.append(
             "user-messages",
             [LogEntryInput(content="how's the weather?")],

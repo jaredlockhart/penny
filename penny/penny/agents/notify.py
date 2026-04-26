@@ -26,6 +26,7 @@ from penny.llm.embeddings import deserialize_embedding
 from penny.llm.similarity import novelty_score
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
+from penny.tools.memory_context import set_current_agent
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -224,6 +225,7 @@ class NotifyAgent(Agent):
 
     async def execute_for_user(self, user: str) -> bool:
         """Scheduled cycle: send a notification if the user has been idle."""
+        set_current_agent(self.name)
         if not self._should_notify(user):
             return False
         run_id = uuid.uuid4().hex

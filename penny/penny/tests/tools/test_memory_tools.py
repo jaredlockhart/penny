@@ -12,7 +12,6 @@ import hashlib
 import pytest
 
 from penny.database import Database
-from penny.database.migrate import migrate
 from penny.llm.client import LlmClient
 from penny.tools.memory_context import current_agent, set_current_agent
 from penny.tools.memory_tools import (
@@ -42,10 +41,15 @@ from penny.tools.memory_tools import (
 
 
 def _make_db(tmp_path) -> Database:
+    """Empty test DB with schema only — no migrations.
+
+    Migration 0026 seeds three system log memories; these tool tests
+    exercise the tool surface in isolation and declare exactly the
+    memories they need.
+    """
     db_path = str(tmp_path / "test.db")
     db = Database(db_path)
     db.create_tables()
-    migrate(db_path)
     return db
 
 

@@ -22,6 +22,7 @@ from penny.constants import PennyConstants, ThinkingPromptType
 from penny.llm.embeddings import serialize_embedding
 from penny.llm.similarity import embed_text
 from penny.prompts import Prompt
+from penny.tools.memory_context import set_current_agent
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class ThinkingAgent(Agent):
 
     async def execute_for_user(self, user: str) -> bool:
         """Check unnotified cap before running. Returns True to reset the schedule timer."""
+        set_current_agent(self.name)
         max_unnotified = int(self.config.runtime.MAX_UNNOTIFIED_THOUGHTS)
         total = self.db.thoughts.count_unnotified(user)
         if total >= max_unnotified:

@@ -13,12 +13,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from penny.config import Config
 from penny.constants import PennyConstants
+from penny.database.memory_store import LogEntryInput
 from penny.database.models import MessageLog
 from penny.llm import LlmClient
 from penny.llm.embeddings import serialize_embedding
 from penny.llm.image_client import OllamaImageClient
 from penny.llm.similarity import embed_text
 from penny.responses import PennyResponse
+from penny.tools.memory_context import current_agent, set_current_agent
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -328,6 +330,7 @@ class MessageChannel(ABC):
             thought_id=thought_id,
             device_id=device_id,
         )
+        await self._append_to_memory_log("penny-messages", prepared, current_agent())
         external_id = await self.send_message(recipient, prepared, attachments, quote_message)
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
@@ -345,6 +348,19 @@ class MessageChannel(ABC):
         vec = await embed_text(self._embedding_model_client, content)
         if vec is not None:
             self._db.messages.update_embedding(message_id, serialize_embedding(vec))
+
+    async def _append_to_memory_log(self, name: str, content: str, author: str) -> None:
+        """Append ``content`` to a memory log, embedding at write time.
+
+        The embedding is best-effort — if no embedding client is configured
+        or embed_text fails, the entry is still appended without a vector.
+        """
+        vec = await embed_text(self._embedding_model_client, content)
+        self._db.memories.append(
+            name,
+            [LogEntryInput(content=content, content_embedding=vec)],
+            author=author,
+        )
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -523,8 +539,16 @@ class MessageChannel(ABC):
         device_id: int | None,
         progress: ProgressTracker | None,
     ) -> None:
-        """Invoke the agent, log the incoming message, and deliver the response."""
+        """Invoke the agent, log the incoming message, and deliver the response.
+
+        Sets ``current_agent`` to the message agent's name for the lifetime of
+        this call so the egress write to ``penny-messages`` (which happens
+        inside ``send_response`` after the agent returns) is correctly
+        attributed.
+        """
         logger.info("Dispatching to message agent for %s", message.sender)
+        set_current_agent(self._message_agent.name)
+        await self._append_to_memory_log("user-messages", message.content, "user")
         response = await self._message_agent.handle(
             content=message.content,
             sender=user_sender,
