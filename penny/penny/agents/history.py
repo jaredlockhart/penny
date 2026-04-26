@@ -25,7 +25,7 @@ from penny.constants import HistoryPromptType, PennyConstants
 from penny.database.models import PromptLog
 from penny.llm.embeddings import serialize_embedding
 from penny.prompts import Prompt
-from penny.tools.memory_tools import LogReadNextTool
+from penny.tools.memory_tools import DoneTool, LogReadNextTool
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,7 @@ class HistoryAgent(Agent):
         Hitting max_steps, raising a model error, or producing fallback
         text all leave the cursor untouched so the next run can retry.
         """
-        return any(record.tool == "done" for record in response.tool_calls)
+        return any(record.tool == DoneTool.name for record in response.tool_calls)
 
     # ── Shared helpers ────────────────────────────────────────────────────
 

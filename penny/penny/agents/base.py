@@ -26,7 +26,7 @@ from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.browse import BrowseTool
-from penny.tools.memory_tools import build_memory_tools
+from penny.tools.memory_tools import DoneTool, build_memory_tools
 from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -485,7 +485,7 @@ class Agent:
         Default: any call to the ``done`` tool is a graceful terminator.
         Subclasses can override to add their own exit signals.
         """
-        return any(record.tool == "done" for record in step_records)
+        return any(record.tool == DoneTool.name for record in step_records)
 
     async def _call_model_validated(
         self,
