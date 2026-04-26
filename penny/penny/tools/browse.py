@@ -81,12 +81,12 @@ class BrowseTool(Tool):
         max_calls: int,
         search_url: str = "https://duckduckgo.com/?q=",
         db: Database | None = None,
-        llm_client: LlmClient | None = None,
+        embedding_client: LlmClient | None = None,
     ):
         self._max_calls = max_calls
         self._search_url = search_url
         self._db = db
-        self._llm_client = llm_client
+        self._embedding_client = embedding_client
         self._browse_provider: Callable[[], tuple[RequestFn, PermissionManager] | None] | None = (
             None
         )
@@ -196,9 +196,9 @@ class BrowseTool(Tool):
         """
         if self._db is None:
             return
-        vec = await embed_text(self._llm_client, text)
+        vec = await embed_text(self._embedding_client, text)
         self._db.memories.append(
-            "browse-results",
+            PennyConstants.MEMORY_BROWSE_RESULTS_LOG,
             [LogEntryInput(content=text, content_embedding=vec)],
             author=current_agent(),
         )

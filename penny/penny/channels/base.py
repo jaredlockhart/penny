@@ -330,7 +330,9 @@ class MessageChannel(ABC):
             thought_id=thought_id,
             device_id=device_id,
         )
-        await self._append_to_memory_log("penny-messages", prepared, current_agent())
+        await self._append_to_memory_log(
+            PennyConstants.MEMORY_PENNY_MESSAGES_LOG, prepared, current_agent()
+        )
         external_id = await self.send_message(recipient, prepared, attachments, quote_message)
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
@@ -548,7 +550,9 @@ class MessageChannel(ABC):
         """
         logger.info("Dispatching to message agent for %s", message.sender)
         set_current_agent(self._message_agent.name)
-        await self._append_to_memory_log("user-messages", message.content, "user")
+        await self._append_to_memory_log(
+            PennyConstants.MEMORY_USER_MESSAGES_LOG, message.content, "user"
+        )
         response = await self._message_agent.handle(
             content=message.content,
             sender=user_sender,

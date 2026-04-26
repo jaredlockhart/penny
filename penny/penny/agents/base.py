@@ -680,7 +680,7 @@ class Agent:
             max_calls=max_calls,
             search_url=search_url,
             db=self.db,
-            llm_client=self._embedding_model_client,
+            embedding_client=self._embedding_model_client,
         )
         if self._browse_provider:
             tool.set_browse_provider(self._browse_provider)
