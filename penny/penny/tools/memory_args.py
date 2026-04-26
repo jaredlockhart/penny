@@ -71,6 +71,13 @@ class ReadRecentArgs(BaseModel):
     cap: int | None = None
 
 
+class ReadNextArgs(BaseModel):
+    """Cursor-based read: entries newer than the agent's last committed cursor."""
+
+    memory: str
+    cap: int | None = None
+
+
 # ── Collection writes ───────────────────────────────────────────────────────
 
 

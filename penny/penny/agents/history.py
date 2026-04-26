@@ -2,7 +2,14 @@
 
 Runs on a schedule. Each cycle:
 1. Extracts knowledge from browse tool results (user-independent)
-2. Per user: extracts preferences from unprocessed text messages
+2. Per user: runs the preference-extractor agent loop, which reads new
+   user messages via ``log_read_next``, identifies likes/dislikes, and
+   writes them via ``collection_write``.
+
+Preference dedup, mention counting, and reaction handling all moved out
+of Python into the tool layer (dedup-on-write) or were dropped entirely
+in the port to the memory framework.  Knowledge extraction stays
+bespoke for now (Stage 7 territory).
 """
 
 from __future__ import annotations
@@ -12,52 +19,43 @@ import uuid
 from datetime import datetime
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel
-from pydantic import Field as PydanticField
-from similarity.dedup import DedupStrategy, is_embedding_duplicate
-
 from penny.agents.base import Agent
+from penny.agents.models import ControllerResponse
 from penny.constants import HistoryPromptType, PennyConstants
-from penny.database.models import Preference, PromptLog
-from penny.llm.embeddings import deserialize_embedding, serialize_embedding
+from penny.database.models import PromptLog
+from penny.llm.embeddings import serialize_embedding
 from penny.prompts import Prompt
+from penny.tools.memory_tools import (
+    CollectionWriteTool,
+    DoneTool,
+    LogReadNextTool,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class IdentifiedPreferenceTopics(BaseModel):
-    """Schema for pass 1: preference topics found in conversation."""
+# Identity used both as the cursor key for ``user-messages`` and as the
+# author stamped on writes to ``likes``/``dislikes``.  Distinct from
+# ``HistoryAgent.name`` because the same HistoryAgent class may host
+# multiple agent flows (knowledge extraction, preferences, reactions etc.)
+# with their own per-flow cursors and write attribution.
+PREFERENCE_EXTRACTOR_AGENT_NAME = "preference-extractor"
 
-    new: list[str] = PydanticField(
-        default_factory=list,
-        description="New preference topics not already known (3-10 words each)",
-    )
-    existing: list[str] = PydanticField(
-        default_factory=list,
-        description="Already-known preference content strings discussed in the conversation",
-    )
-
-
-class ClassifiedPreference(BaseModel):
-    """A preference topic with its valence classification."""
-
-    content: str = PydanticField(description="The preference topic")
-    valence: str = PydanticField(description="'positive' or 'negative'")
-
-
-class ClassifiedPreferences(BaseModel):
-    """Schema for pass 2: valence classification of preference topics."""
-
-    preferences: list[ClassifiedPreference] = PydanticField(
-        default_factory=list,
-        description="Preference topics with valence classifications",
-    )
+# Cap on agentic loop iterations for the preference extractor.  The
+# expected flow is read_next → write(likes) → write(dislikes) → done,
+# so 8 leaves headroom for re-reads or batched writes without letting
+# a runaway loop tail through forever.
+PREFERENCE_EXTRACTOR_MAX_STEPS = 8
 
 
 class HistoryAgent(Agent):
     """Background worker that extracts knowledge and user preferences."""
 
     name = "history"
+
+    def get_max_steps(self) -> int:
+        """Cap on agentic loop iterations for HistoryAgent flows."""
+        return PREFERENCE_EXTRACTOR_MAX_STEPS
 
     async def execute(self) -> bool:
         """Extract knowledge (user-independent), then run per-user work."""
@@ -66,9 +64,8 @@ class HistoryAgent(Agent):
         return knowledge_work or user_work
 
     async def execute_for_user(self, user: str) -> bool:
-        """Extract preferences from unprocessed messages."""
-        run_id = uuid.uuid4().hex
-        return await self._extract_today_preferences(user, run_id)
+        """Run the preference-extractor agent loop for the user."""
+        return await self._run_preference_extractor()
 
     # ── Knowledge extraction ──────────────────────────────────────────────
 
@@ -214,288 +211,49 @@ class HistoryAgent(Agent):
         )
         return response.content.strip() if response.content else None
 
-    # ── Preference extraction ─────────────────────────────────────────────
+    # ── Preference extraction (agent loop) ────────────────────────────────
 
-    async def _extract_today_preferences(self, user: str, run_id: str) -> bool:
-        """Extract preferences from unprocessed text messages only.
+    async def _run_preference_extractor(self) -> bool:
+        """Read new user-messages, identify likes/dislikes, write them.
 
-        Reactions are processed for thought valence only (no preference extraction)
-        and are always marked processed so they don't accumulate.
+        The flow is fully model-driven: the agent loop wraps three tools
+        (``log_read_next``, ``collection_write``, ``done``) with the
+        extractor identity, lets the model do the work, and commits the
+        cursor advance only on a clean run.  Failed runs (max steps,
+        model error) leave the cursor untouched so the next pass sees
+        the same messages.
         """
-        messages = self.db.messages.get_unprocessed(user, limit=100)
-        reactions = self.db.messages.get_user_reactions(user, limit=100)
-        if not messages and not reactions:
-            return False
-
-        processed_ids: list[int] = []
-        did_work = False
-
-        if messages:
-            did_work = await self._extract_text_preferences(user, messages, run_id)
-            # Mark processed on any completed extraction attempt — only skip when
-            # identification itself failed (returned False) so we retry next tick.
-            # Otherwise zero-preference results (e.g. image-only messages) would
-            # re-extract forever.
-            if did_work:
-                processed_ids.extend(m.id for m in messages if m.id is not None)
-
-        if reactions:
-            self._process_reactions(reactions)
-            processed_ids.extend(r.id for r in reactions if r.id is not None)
-
-        if processed_ids:
-            self.db.messages.mark_processed(processed_ids)
-        return did_work
-
-    async def _extract_text_preferences(self, user: str, messages: list, run_id: str) -> bool:
-        """Extract preferences from text messages via two-pass LLM pipeline.
-
-        Returns True when the extraction attempt completed (messages can be marked
-        processed), False only when identification failed and retry is warranted.
-        """
-        conversation = self._format_messages(messages)
-        if not conversation:
-            return True
-        return await self._extract_preferences_from_content(user, conversation, run_id)
-
-    async def _extract_preferences_from_content(
-        self, user: str, conversation: str, run_id: str
-    ) -> bool:
-        """Two-pass preference extraction: identify topics, dedup, classify valence."""
-        existing = self.db.preferences.get_for_user(user)
-
-        identified = await self._identify_preference_topics(conversation, existing, run_id)
-        if identified is None:
-            return False
-
-        bumped_ids = self._bump_existing_mentions(identified.existing, existing)
-
-        new_topics = self._filter_new_topics(identified, existing)
-        if not new_topics:
-            return True
-
-        survivors = await self._dedup_preference_topics(new_topics, existing, bumped_ids)
-        if not survivors:
-            return True
-
-        survivor_topics = [topic for topic, _emb in survivors]
-        classified = await self._classify_preference_valence(survivor_topics, conversation, run_id)
-        if not classified:
-            return True
-
-        embedding_lookup = {topic.lower(): emb for topic, emb in survivors}
-        self._store_classified_preferences(user, classified, embedding_lookup)
-        return True
-
-    def _bump_existing_mentions(self, mentioned: list[str], existing: list[Preference]) -> set[int]:
-        """Increment mention_count for existing preferences the LLM recognized.
-
-        Returns set of preference IDs that were bumped (to avoid double-counting in dedup).
-        """
-        bumped: set[int] = set()
-        content_to_pref = {p.content.lower(): p for p in existing}
-        for name in mentioned:
-            pref = content_to_pref.get(name.strip().lower())
-            if pref and pref.id is not None:
-                self.db.preferences.increment_mention_count(pref.id)
-                bumped.add(pref.id)
-                logger.info("Preference '%s' mention count incremented", pref.content[:50])
-        return bumped
-
-    @staticmethod
-    def _filter_new_topics(
-        identified: IdentifiedPreferenceTopics, existing: list[Preference]
-    ) -> list[str]:
-        """Filter new topics to exclude anything already in existing or known preferences."""
-        existing_lower = {p.content.lower() for p in existing}
-        identified_existing_lower = {n.strip().lower() for n in identified.existing}
-        exclude = existing_lower | identified_existing_lower
-        return [t.strip() for t in identified.new if t.strip() and t.strip().lower() not in exclude]
-
-    # ── Pass 1: topic identification ─────────────────────────────────────
-
-    async def _identify_preference_topics(
-        self, conversation: str, existing: list, run_id: str
-    ) -> IdentifiedPreferenceTopics | None:
-        """Pass 1: ask model to identify new and existing preference topics."""
-        known_context = self._build_known_preferences_context(existing)
-        prompt = f"{Prompt.PREFERENCE_IDENTIFICATION_PROMPT}\n\n{conversation}"
-        if known_context:
-            prompt += f"\n\n{known_context}"
-
-        try:
-            response = await self._model_client.generate(
-                prompt=prompt,
-                tools=None,
-                format=IdentifiedPreferenceTopics.model_json_schema(),
-                agent_name=self.name,
-                prompt_type=HistoryPromptType.PREFERENCE_IDENTIFICATION,
-                run_id=run_id,
-            )
-            if not response.content or not response.content.strip():
-                return None
-            return IdentifiedPreferenceTopics.model_validate_json(response.content)
-        except Exception as e:
-            logger.error("Preference topic identification failed: %s", e)
-            return None
-
-    @staticmethod
-    def _build_known_preferences_context(existing: list) -> str:
-        """Format existing preferences so the model can skip already-known topics."""
-        if not existing:
-            return ""
-        lines = "\n".join(f"- {pref.valence}: {pref.content}" for pref in existing)
-        return (
-            f"Already known preferences (do NOT re-extract these or rephrasings of these):\n{lines}"
+        log_read_next = LogReadNextTool(self.db, agent_name=PREFERENCE_EXTRACTOR_AGENT_NAME)
+        write_tool = CollectionWriteTool(
+            self.db,
+            self._embedding_model_client,
+            author=PREFERENCE_EXTRACTOR_AGENT_NAME,
         )
+        self._install_tools([log_read_next, write_tool, DoneTool()])
 
-    # ── Dedup ────────────────────────────────────────────────────────────
-
-    async def _dedup_preference_topics(
-        self,
-        topics: list[str],
-        existing_prefs: list[Preference],
-        already_bumped: set[int] | None = None,
-    ) -> list[tuple[str, bytes | None]]:
-        """Embed topics, dedup against existing, increment mention count on match.
-
-        When a topic matches an existing DB preference, increments its mention_count
-        instead of silently skipping (unless already bumped this pass).
-        New unique topics are returned as survivors.
-        """
-        existing_items: list[tuple[str, bytes | None]] = [
-            (p.content, p.embedding) for p in existing_prefs
-        ]
-        db_pref_count = len(existing_prefs)
-        bumped = already_bumped or set()
-        survivors: list[tuple[str, bytes | None]] = []
-
-        for topic in topics:
-            embedding = await self._embed_text(topic)
-            candidate_vec = deserialize_embedding(embedding) if embedding else None
-
-            match_idx = is_embedding_duplicate(
-                topic,
-                candidate_vec,
-                existing_items,
-                DedupStrategy.TCR_OR_EMBEDDING,
-                embedding_threshold=self.config.runtime.PREFERENCE_DEDUP_EMBEDDING_THRESHOLD,
-                tcr_threshold=self.config.runtime.PREFERENCE_DEDUP_TCR_THRESHOLD,
-            )
-            if match_idx is not None:
-                self._handle_dedup_match(match_idx, db_pref_count, existing_prefs, topic, bumped)
-                continue
-
-            survivors.append((topic, embedding))
-            existing_items.append((topic, embedding))
-        return survivors
-
-    def _handle_dedup_match(
-        self,
-        match_idx: int,
-        db_pref_count: int,
-        existing_prefs: list[Preference],
-        topic: str,
-        already_bumped: set[int],
-    ) -> None:
-        """Increment mention count for DB matches, skip if already bumped this pass."""
-        if match_idx < db_pref_count:
-            matched = existing_prefs[match_idx]
-            if matched.id in already_bumped:
-                logger.debug("Skipping already-bumped preference: '%s'", matched.content[:50])
-                return
-            assert matched.id is not None
-            self.db.preferences.increment_mention_count(matched.id)
-            already_bumped.add(matched.id)
-            logger.info(
-                "Preference '%s' mention count incremented (matches '%s')",
-                topic[:50],
-                matched.content[:50],
-            )
-        else:
-            logger.debug("Skipping intra-batch duplicate: '%s'", topic[:50])
-
-    # ── Pass 2: valence classification ───────────────────────────────────
-
-    async def _classify_preference_valence(
-        self, topics: list[str], conversation: str, run_id: str
-    ) -> list[ClassifiedPreference]:
-        """Pass 2: classify each topic as positive or negative."""
-        topics_text = "\n".join(f"- {t}" for t in topics)
-        prompt = (
-            f"{Prompt.PREFERENCE_VALENCE_PROMPT}\n\n"
-            f"Topics to classify:\n{topics_text}\n\n"
-            f"Conversation:\n{conversation}"
+        run_id = uuid.uuid4().hex
+        response = await self.run(
+            prompt="",
+            max_steps=self.get_max_steps(),
+            system_prompt=Prompt.PREFERENCE_EXTRACTOR_SYSTEM_PROMPT,
+            run_id=run_id,
+            prompt_type=HistoryPromptType.PREFERENCE_EXTRACTION,
         )
-
-        try:
-            response = await self._model_client.generate(
-                prompt=prompt,
-                tools=None,
-                format=ClassifiedPreferences.model_json_schema(),
-                agent_name=self.name,
-                prompt_type=HistoryPromptType.PREFERENCE_VALENCE,
-                run_id=run_id,
-            )
-            if not response.content or not response.content.strip():
-                return []
-            result = ClassifiedPreferences.model_validate_json(response.content)
-            valid_valences = {
-                PennyConstants.PreferenceValence.POSITIVE,
-                PennyConstants.PreferenceValence.NEGATIVE,
-            }
-            return [
-                p for p in result.preferences if p.valence in valid_valences and p.content.strip()
-            ]
-        except Exception as e:
-            logger.error("Preference valence classification failed: %s", e)
-            return []
-
-    # ── Storage ──────────────────────────────────────────────────────────
-
-    def _store_classified_preferences(
-        self,
-        user: str,
-        classified: list[ClassifiedPreference],
-        embedding_lookup: dict[str, bytes | None],
-    ) -> None:
-        """Store classified preferences with pre-computed embeddings."""
-        for pref in classified:
-            content = pref.content.strip()
-            embedding = embedding_lookup.get(content.lower())
-            self.db.preferences.add(
-                user=user,
-                content=content,
-                valence=pref.valence,
-                embedding=embedding,
-                source=PennyConstants.PreferenceSource.EXTRACTED,
-            )
-            logger.info("Preference stored for %s: %s (%s)", user, content[:50], pref.valence)
-
-    # ── Reaction handling ────────────────────────────────────────────────
-
-    def _process_reactions(self, reactions: list) -> None:
-        """Set thought valence for reactions to thought notifications.
-
-        Reactions to regular messages are discarded — preference extraction
-        runs only on text messages. All reactions are marked processed by the caller.
-        """
-        for reaction in reactions:
-            parent = self.db.messages.get_by_id(reaction.parent_id) if reaction.parent_id else None
-            if not parent or parent.thought_id is None:
-                continue
-            int_valence = self._emoji_to_int_valence(reaction.content)
-            if int_valence is not None:
-                self.db.thoughts.set_valence(parent.thought_id, int_valence)
+        if self._extractor_run_succeeded(response):
+            log_read_next.commit_pending()
+            return True
+        log_read_next.discard_pending()
+        return False
 
     @staticmethod
-    def _emoji_to_int_valence(emoji: str) -> int | None:
-        """Classify an emoji as 1 (positive), -1 (negative), or None (unknown)."""
-        if emoji in PennyConstants.POSITIVE_REACTION_EMOJIS:
-            return 1
-        if emoji in PennyConstants.NEGATIVE_REACTION_EMOJIS:
-            return -1
-        return None
+    def _extractor_run_succeeded(response: ControllerResponse) -> bool:
+        """Success iff the model called ``done()`` to exit the loop.
+
+        Done is the only graceful terminator for this background flow.
+        Hitting max_steps, raising a model error, or producing fallback
+        text all leave the cursor untouched so the next run can retry.
+        """
+        return any(record.tool == "done" for record in response.tool_calls)
 
     # ── Shared helpers ────────────────────────────────────────────────────
 
@@ -509,18 +267,3 @@ class HistoryAgent(Agent):
         except Exception as e:
             logger.warning("Failed to embed text: %s", e)
             return None
-
-    @staticmethod
-    def _format_messages(messages: list) -> str:
-        """Format user messages for the summarization prompt.
-
-        Skips messages with empty/whitespace content (e.g. image-only attachments)
-        so we don't burn an LLM call on a conversation that's just timestamps.
-        """
-        lines: list[str] = []
-        for msg in messages:
-            if not msg.content or not msg.content.strip():
-                continue
-            ts = msg.timestamp.strftime("%H:%M")
-            lines.append(f"[{ts}] {msg.content}")
-        return "\n".join(lines)

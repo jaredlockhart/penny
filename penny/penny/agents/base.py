@@ -390,7 +390,9 @@ class Agent:
                 await self.after_step(result.records, result.messages, messages)
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
-                    break
+                    return ControllerResponse(
+                        answer="", tool_calls=tool_call_records, attachments=attachments
+                    )
                 abort = self._abort_if_all_tools_failed(tool_call_records)
                 if abort is not None:
                     return abort
@@ -477,8 +479,12 @@ class Agent:
                     self._tool_result_text.append(content)
 
     def should_stop_loop(self, step_records: list[ToolCallRecord]) -> bool:
-        """Check if the loop should stop early. Override in subclasses."""
-        return False
+        """Check if the loop should stop early.
+
+        Default: any call to the ``done`` tool is a graceful terminator.
+        Subclasses can override to add their own exit signals.
+        """
+        return any(record.tool == "done" for record in step_records)
 
     async def _call_model_validated(
         self,
