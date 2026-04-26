@@ -30,7 +30,6 @@ from penny.responses import PennyResponse
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
     from penny.config import Config
-    from penny.tools import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +52,10 @@ class NotificationMode:
     parameters.  The agent orchestrates the shared pipeline around
     these declarations.
 
-    Subclasses must override: get_tools, build_system_prompt, and prompt.
-    Other methods have sensible defaults.
+    Subclasses must override: build_system_prompt and prompt.  Tools
+    are not a per-mode concern — every notify run uses the agent's
+    default tool surface.  Other methods have sensible defaults.
     """
-
-    def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
-        """Tools available during generation."""
-        raise NotImplementedError
 
     def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
         """Full system prompt for this mode."""
@@ -102,10 +98,11 @@ class NotificationMode:
 
 
 class CheckinMode(NotificationMode):
-    """Check-in: slim context, no tools, single step, no validation."""
+    """Check-in: slim context, single step, no URL validation.
 
-    def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
-        return []
+    Tools are still installed (every agent gets every tool); the prompt
+    drives whether the model uses them.
+    """
 
     def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
         return "\n\n".join(
@@ -145,9 +142,6 @@ class ThoughtMode(NotificationMode):
     def __init__(self, thought: Thought | None, config: Config) -> None:
         self._thought = thought
         self._config = config
-
-    def get_tools(self, agent: NotifyAgent, user: str) -> list[Tool]:
-        return agent.get_tools(user)
 
     def build_system_prompt(self, agent: NotifyAgent, user: str) -> str:
         return "\n\n".join(
@@ -325,7 +319,7 @@ class NotifyAgent(Agent):
     ) -> NotifyCandidate | None:
         """Shared pipeline: prepare, tools, prompt, run, validate, candidate."""
         mode.prepare(self)
-        self._install_tools(mode.get_tools(self, user))
+        self._install_tools(self.get_tools(user))
         system_prompt = mode.build_system_prompt(self, user)
         response = await self._run_mode(user, mode, system_prompt, run_id, prompt_type)
         candidate = self._to_candidate(mode, response)

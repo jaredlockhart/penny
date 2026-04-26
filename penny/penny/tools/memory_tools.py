@@ -18,6 +18,7 @@ reads return empty.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from penny.database import Database
@@ -43,6 +44,7 @@ from penny.tools.memory_args import (
     LogAppendArgs,
     MemoryNameArgs,
     ReadLatestArgs,
+    ReadNextArgs,
     ReadRandomArgs,
     ReadRecentArgs,
     ReadSimilarArgs,
@@ -619,6 +621,63 @@ class LogReadAllTool(Tool):
         return _format_entries(entries)
 
 
+class LogReadNextTool(Tool):
+    """Read entries appended since the agent's last committed cursor.
+
+    Cursor advance is *pending* until the orchestration layer calls
+    ``commit_pending`` after a successful run.  A failed run discards the
+    pending cursor, so the next run sees the same entries again.
+    """
+
+    name = "log_read_next"
+    description = (
+        "Return entries appended to a log since this agent's last committed read. "
+        "Use this to process new content incrementally without re-seeing entries "
+        "from earlier runs."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string"},
+            "cap": {"type": "integer", "description": "Max entries; omit for all"},
+        },
+        "required": ["memory"],
+    }
+
+    def __init__(self, db: Database, agent_name: str) -> None:
+        self._db = db
+        self._agent_name = agent_name
+        self._pending: dict[str, datetime] = {}
+
+    async def execute(self, **kwargs: Any) -> str:
+        args = ReadNextArgs(**kwargs)
+        cursor = self._db.cursors.get(self._agent_name, args.memory) or datetime.min.replace(
+            tzinfo=UTC
+        )
+        entries = self._db.memories.read_since(args.memory, cursor, args.cap)
+        if entries:
+            max_seen = max(e.created_at for e in entries)
+            prev = self._pending.get(args.memory)
+            if prev is None or max_seen > prev:
+                self._pending[args.memory] = max_seen
+        return _format_entries(entries)
+
+    def commit_pending(self) -> None:
+        """Persist the highest timestamp seen during this run as the new cursor.
+
+        Called by the orchestration layer after a successful run.  Discards
+        any pending state on completion so a re-used tool instance starts
+        fresh.
+        """
+        for memory_name, last_read_at in self._pending.items():
+            self._db.cursors.advance_committed(self._agent_name, memory_name, last_read_at)
+        self._pending.clear()
+
+    def discard_pending(self) -> None:
+        """Drop pending cursor advance — used after a failed run."""
+        self._pending.clear()
+
+
 # ── Log writes ──────────────────────────────────────────────────────────────
 
 
@@ -721,18 +780,19 @@ class DoneTool(Tool):
 # ── Factory ─────────────────────────────────────────────────────────────────
 
 
-def build_memory_tools(db: Database, llm_client: LlmClient | None, author: str) -> list[Tool]:
+def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: str) -> list[Tool]:
     """Construct the full memory tool surface for an agent.
 
-    Each agent calls this with its own ``self.name`` as ``author``; that
-    value is baked into every write-capable tool so entries get attributed
-    correctly without any ambient/contextvar state.
+    Each agent calls this with its own identity as ``agent_name``; that
+    value is baked into every tool that needs to attribute writes
+    (CollectionWrite, CollectionUpdate, CollectionMove, LogAppend) and
+    every tool that maintains per-agent state (LogReadNext's cursor).
 
-    Callers can slice this list by tool name to give each agent a narrower
-    surface (e.g. the preference extractor only wants ``collection_write``
-    and ``done``).  The factory centralizes dependency wiring so individual
-    agents don't have to juggle ``db`` / ``llm_client`` / ``author`` across
-    21 constructors.
+    Callers can slice this list by tool name to give each agent a
+    narrower surface (e.g. the preference extractor only wants
+    ``log_read_next``, ``collection_write``, and ``done``).  The factory
+    centralizes dependency wiring so individual agents don't have to
+    juggle ``db`` / ``llm_client`` / ``agent_name`` across 22 constructors.
     """
     return [
         # Metadata
@@ -749,16 +809,17 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, author: str) 
         CollectionReadAllTool(db),
         CollectionKeysTool(db),
         # Collection writes
-        CollectionWriteTool(db, llm_client, author),
-        CollectionUpdateTool(db, author),
-        CollectionMoveTool(db, author),
+        CollectionWriteTool(db, llm_client, agent_name),
+        CollectionUpdateTool(db, agent_name),
+        CollectionMoveTool(db, agent_name),
         # Log reads
         LogReadLatestTool(db),
         LogReadRecentTool(db),
         LogReadSimilarTool(db, llm_client),
         LogReadAllTool(db),
+        LogReadNextTool(db, agent_name),
         # Log writes
-        LogAppendTool(db, llm_client, author),
+        LogAppendTool(db, llm_client, agent_name),
         # Introspection / lifecycle
         ExistsTool(db, llm_client),
         DoneTool(),

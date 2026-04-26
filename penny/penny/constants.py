@@ -68,8 +68,7 @@ class NotifyPromptType(StrEnum):
 class HistoryPromptType(StrEnum):
     """Prompt types emitted by HistoryAgent flows."""
 
-    PREFERENCE_IDENTIFICATION = "preference_identification"
-    PREFERENCE_VALENCE = "preference_valence"
+    PREFERENCE_EXTRACTION = "preference_extraction"
     KNOWLEDGE_SUMMARIZE = "knowledge_summarize"
 
 

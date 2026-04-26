@@ -33,6 +33,7 @@ from penny.tools.memory_tools import (
     LogCreateTool,
     LogReadAllTool,
     LogReadLatestTool,
+    LogReadNextTool,
     LogReadRecentTool,
     LogReadSimilarTool,
     build_memory_tools,
@@ -305,6 +306,74 @@ class TestLogTools:
         rendered = await LogReadSimilarTool(db, client).execute(memory="events", anchor="beverage")
         assert "coffee is great" in rendered
 
+    @pytest.mark.asyncio
+    async def test_read_next_returns_all_entries_when_no_cursor(self, tmp_path, mock_llm):
+        """Without a stored cursor, read_next returns every entry in the log."""
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        await append.execute(memory="events", content="first")
+        await append.execute(memory="events", content="second")
+
+        read_next = LogReadNextTool(db, agent_name="extractor")
+        rendered = await read_next.execute(memory="events")
+
+        assert "first" in rendered
+        assert "second" in rendered
+
+    @pytest.mark.asyncio
+    async def test_commit_pending_advances_cursor_to_max_seen(self, tmp_path, mock_llm):
+        """commit_pending writes the highest timestamp seen during the run."""
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        await append.execute(memory="events", content="first")
+        await append.execute(memory="events", content="second")
+
+        read_next = LogReadNextTool(db, agent_name="extractor")
+        await read_next.execute(memory="events")
+        read_next.commit_pending()
+
+        # A new instance after commit should see no entries (cursor caught up).
+        fresh = LogReadNextTool(db, agent_name="extractor")
+        rendered = await fresh.execute(memory="events")
+        assert rendered == "(no entries)"
+
+    @pytest.mark.asyncio
+    async def test_discard_pending_leaves_cursor_unchanged(self, tmp_path, mock_llm):
+        """discard_pending drops the in-memory state without touching the DB cursor."""
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        await append.execute(memory="events", content="first")
+
+        read_next = LogReadNextTool(db, agent_name="extractor")
+        await read_next.execute(memory="events")
+        read_next.discard_pending()
+
+        # Cursor still at None; a new read sees the same entries.
+        fresh = LogReadNextTool(db, agent_name="extractor")
+        rendered = await fresh.execute(memory="events")
+        assert "first" in rendered
+
+    @pytest.mark.asyncio
+    async def test_per_agent_cursors_are_independent(self, tmp_path, mock_llm):
+        """Two agents reading the same log have independent cursor state."""
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
+            memory="events", content="hello"
+        )
+
+        agent_a = LogReadNextTool(db, agent_name="a")
+        await agent_a.execute(memory="events")
+        agent_a.commit_pending()
+
+        # Agent B has its own cursor and still sees the entry.
+        agent_b = LogReadNextTool(db, agent_name="b")
+        rendered = await agent_b.execute(memory="events")
+        assert "hello" in rendered
+
 
 class TestExistsAndDone:
     @pytest.mark.asyncio
@@ -351,7 +420,7 @@ class TestAuthorAttribution:
 class TestFactory:
     def test_build_memory_tools_registers_every_tool(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        tools = build_memory_tools(db, _make_llm_client(mock_llm), author="test")
+        tools = build_memory_tools(db, _make_llm_client(mock_llm), agent_name="test")
         names = {tool.name for tool in tools}
         expected = {
             "collection_create",
@@ -371,6 +440,7 @@ class TestFactory:
             "log_read_recent",
             "log_read_similar",
             "log_read_all",
+            "log_read_next",
             "log_append",
             "list_memories",
             "exists",

@@ -26,6 +26,7 @@ from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.browse import BrowseTool
+from penny.tools.memory_tools import DoneTool, build_memory_tools
 from penny.tools.models import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -390,7 +391,9 @@ class Agent:
                 await self.after_step(result.records, result.messages, messages)
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
-                    break
+                    return ControllerResponse(
+                        answer="", tool_calls=tool_call_records, attachments=attachments
+                    )
                 abort = self._abort_if_all_tools_failed(tool_call_records)
                 if abort is not None:
                     return abort
@@ -477,8 +480,12 @@ class Agent:
                     self._tool_result_text.append(content)
 
     def should_stop_loop(self, step_records: list[ToolCallRecord]) -> bool:
-        """Check if the loop should stop early. Override in subclasses."""
-        return False
+        """Check if the loop should stop early.
+
+        Default: any call to the ``done`` tool is a graceful terminator.
+        Subclasses can override to add their own exit signals.
+        """
+        return any(record.tool == DoneTool.name for record in step_records)
 
     async def _call_model_validated(
         self,
@@ -661,16 +668,30 @@ class Agent:
     # ── Tool management ──────────────────────────────────────────────────
 
     def get_tools(self, user: str) -> list[Tool]:
-        """Build tool list for this agent.
+        """Full tool surface for this agent — memory tools + browse.
 
-        When max_queries_key is set, builds a fresh BrowseTool each cycle
-        so runtime config changes take effect immediately.
+        Every agent gets every tool: the prompt is responsible for
+        telling the model what to use.  Override only when an agent
+        legitimately needs a narrower surface (e.g. vision mode where
+        tool calls are disabled entirely).
+
+        Builds fresh each cycle so runtime config changes take effect
+        immediately and the underlying ``BrowseTool``'s author + cursor
+        identity match the agent's current ``name``.
         """
-        if self._max_queries_key is not None:
-            return [self._build_browse_tool()]
-        return []
+        return self._build_full_tools(agent_name=self.name)
 
-    def _build_browse_tool(self) -> BrowseTool:
+    def _build_full_tools(self, agent_name: str) -> list[Tool]:
+        """Memory tools + BrowseTool (when max_queries_key is set), all
+        attributed to ``agent_name``."""
+        tools: list[Tool] = build_memory_tools(
+            self.db, self._embedding_model_client, agent_name=agent_name
+        )
+        if self._max_queries_key is not None:
+            tools.append(self._build_browse_tool(author=agent_name))
+        return tools
+
+    def _build_browse_tool(self, author: str) -> BrowseTool:
         """Build a fresh BrowseTool from config, updating self._browse_tool."""
         if self._max_queries_key is None:
             raise RuntimeError("BrowseTool requested without max_queries_key")
@@ -681,7 +702,7 @@ class Agent:
             search_url=search_url,
             db=self.db,
             embedding_client=self._embedding_model_client,
-            author=self.name,
+            author=author,
         )
         if self._browse_provider:
             tool.set_browse_provider(self._browse_provider)

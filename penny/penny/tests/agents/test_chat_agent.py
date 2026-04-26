@@ -160,6 +160,55 @@ The user is talking to you — no greetings, no sign-offs, just pick up \
 the thread.
 
 You have tools available:
+- **collection_create**: Create a new keyed collection. \
+Collections store entries by key with similarity-based dedup on write. \
+Provide a short description and a recall mode (off, recent, relevant, all).
+- **log_create**: Create a new append-only log. Logs store keyless entries \
+in time order and are meant for streams of events (messages, measurements, etc.). \
+Provide a short description and a recall mode (off, recent, relevant, all).
+- **collection_archive**: Archive a collection. The data stays intact \
+but the collection is excluded from the chat agent's ambient recall \
+until unarchived.
+- **collection_unarchive**: Unarchive a previously archived collection.
+- **list_memories**: List every memory (collection or log) with its type, \
+recall mode, archived state, and description. Use this to discover what's available.
+- **collection_get**: Look up an entry by its exact key in a collection. \
+Returns the entry's content if found, or a 'not found' message otherwise.
+- **collection_read_latest**: Return the newest entries in a collection, \
+newest first. Omit ``k`` to return every entry.
+- **collection_read_random**: Return ``k`` entries sampled uniformly at random. \
+Omit ``k`` to return all.
+- **collection_read_similar**: Return entries from a collection ordered by \
+content similarity to an ``anchor`` phrase. Useful for finding related \
+preferences, facts, etc.
+- **collection_read_all**: Return every entry in a collection, oldest first.
+- **collection_keys**: List the unique keys in a collection (insertion order).
+- **collection_write**: Write one or more entries to a collection. Each \
+entry has a short ``key`` (topic/identifier) and a longer ``content`` body. \
+Dedup runs per entry — duplicates are reported but not treated as errors.
+- **collection_update**: Replace the content of an existing entry in a \
+collection, identified by key. Returns an error if the key doesn't exist.
+- **collection_move**: Move the entry with the given key from one collection \
+to another. Fails with 'collision' if the target already has an entry with that key.
+- **log_read_latest**: Return the newest entries in a log, newest first. \
+Omit ``k`` to return all.
+- **log_read_recent**: Return entries created within the past \
+``window_seconds`` seconds, oldest first. Use for 'what just happened' queries.
+- **log_read_similar**: Return log entries ordered by content similarity \
+to an ``anchor`` phrase. Useful for finding historically-relevant statements, \
+past browse results, etc.
+- **log_read_all**: Return every entry in a log, oldest first.
+- **log_read_next**: Return entries appended to a log since this agent's \
+last committed read. Use this to process new content incrementally without \
+re-seeing entries from earlier runs.
+- **log_append**: Append one keyless entry to a log. No dedup runs; every \
+append is stored.
+- **exists**: Check whether an entry equivalent to the given key/content \
+already exists in any of the listed memories. Uses the same similarity-based \
+dedup rule as ``collection_write``. Use this before writing to avoid \
+duplicates that span multiple collections.
+- **done**: Call this when you have completed the task and have no more \
+tool calls to make. Takes no arguments.
 - **browse**: Look things up. Pass up to 3 queries and/or URLs.
 
 Every tool call has a `reasoning` field — use it to think out loud. \

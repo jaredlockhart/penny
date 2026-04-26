@@ -1,569 +1,188 @@
-"""Integration tests for HistoryAgent: preference extraction and knowledge extraction."""
+"""Integration tests for HistoryAgent: preference extraction and knowledge extraction.
+
+Test organisation:
+1. Preference extraction (agent shell) — happy path with full verbatim system
+   prompt + cursor advancement on success / no advancement on failure
+2. Knowledge extraction — bespoke flow, unchanged from before the memory port
+"""
+
+from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 
 import pytest
 
 from penny.agents.history import HistoryAgent
 from penny.constants import PennyConstants
-from penny.database.models import MessageLog, PromptLog
+from penny.database.memory_store import LogEntryInput
+from penny.database.models import PromptLog
 from penny.tests.conftest import TEST_SENDER
 
 
-def _insert_message(penny, sender, content, direction, timestamp, **kwargs):
-    """Insert a message with a specific timestamp (bypasses log_message's auto-now)."""
-    with penny.db.get_session() as session:
-        msg = MessageLog(
-            direction=direction,
-            sender=sender,
-            content=content,
-            timestamp=timestamp,
-            **kwargs,
-        )
-        session.add(msg)
-        session.commit()
-        session.refresh(msg)
-        return msg.id
+def _seed_user_message(penny, content: str) -> None:
+    """Seed an entry into the user-messages log (simulates channel ingress)."""
+    penny.db.memories.append(
+        PennyConstants.MEMORY_USER_MESSAGES_LOG,
+        [LogEntryInput(content=content)],
+        author="user",
+    )
 
 
-# ── Preference extraction ────────────────────────────────────────────────
+def _cursor_for_preference_extractor(penny):
+    return penny.db.cursors.get(
+        HistoryAgent.PREFERENCE_EXTRACTOR_NAME, PennyConstants.MEMORY_USER_MESSAGES_LOG
+    )
+
+
+# ── 1. Preference extraction (agent shell) ───────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_preference_extraction_stores_preferences(
+async def test_preference_extraction_full_loop(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """Core success flow: extract & store preferences, with full exact identification prompt.
+    """Core success flow: read user-messages, write to likes, call done.
 
-    HistoryAgent issues plain ``generate()`` calls (no system prompt, no agentic
-    loop), so the "entire prompt" for this agent is the user-role content sent
-    to the identification pass.  A fixed-timestamp seed lets us match byte-for-byte.
+    Asserts the verbatim system prompt drives the loop, the model's
+    ``collection_write`` tool call lands an entry in the ``likes`` memory,
+    and the cursor advances so the next run sees no new messages.
     """
     config = make_config(history_interval=99999.0)
     requests_seen: list[dict] = []
 
     def handler(request, count):
         requests_seen.append(request)
-        messages = request.get("messages", [])
-        user_msgs = [m for m in messages if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-
-        # Summarization call (has "User:" formatting)
-        if "User:" in prompt_text:
-            return mock_llm._make_text_response(request, "- Discussed coffee preferences")
-
-        # Preference identification (pass 1) — check for identification keywords
-        if "identify" in prompt_text.lower() or "new preference" in prompt_text.lower():
-            result = json.dumps({"new": ["Single-origin coffee beans"], "existing": []})
-            return mock_llm._make_text_response(request, result)
-
-        # Preference valence classification (pass 2)
-        if "classify" in prompt_text.lower() or "valence" in prompt_text.lower():
-            result = json.dumps(
-                {"preferences": [{"content": "Single-origin coffee beans", "valence": "positive"}]}
+        if count == 1:
+            return mock_llm._make_tool_call_response(
+                request, "log_read_next", {"memory": "user-messages"}
             )
-            return mock_llm._make_text_response(request, result)
-
-        return mock_llm._make_text_response(request, "- Topics")
+        if count == 2:
+            return mock_llm._make_tool_call_response(
+                request,
+                "collection_write",
+                {
+                    "memory": "likes",
+                    "entries": [
+                        {
+                            "key": "single-origin coffee beans",
+                            "content": "I really love single-origin coffee beans",
+                        }
+                    ],
+                },
+            )
+        return mock_llm._make_tool_call_response(request, "done", {})
 
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        fixed_ts = datetime(2026, 4, 21, 14, 30, tzinfo=UTC).replace(tzinfo=None)
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "I really love single-origin coffee beans",
-            PennyConstants.MessageDirection.INCOMING,
-            fixed_ts,
-        )
+        _seed_user_message(penny, "I really love single-origin coffee beans")
 
-        await penny.history_agent.execute()
+        result = await penny.history_agent.execute_for_user(TEST_SENDER)
 
-        # Full exact identification-pass user prompt
-        identification_req = next(
-            r for r in requests_seen if "identify preference topics" in _user_prompt(r).lower()
-        )
-        actual = _user_prompt(identification_req)
+        assert result is True
+
+        # Full exact system prompt the model saw on its first step
+        system_text = [
+            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
+        ][0]
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
         expected = """\
-Identify preference topics in the following conversation — \
-things the user likes, dislikes, wants, or is frustrated by.
 
-RULES:
-- Return only topic names (3-10 words each)
-- Do NOT include sentiment or valence — just the topic
-- Make topics fully qualified so they can be understood without context
-- Bad: 'Talk', 'Talk (album)'
-- Good: 'Talk (album) by Yes (band)'
-- Bad: 'the new movie', 'that episode'
-- Good: 'Dune Part Two (2024 film)', 'Breaking Bad S5E14 Ozymandias'
-- Only extract topics the USER expressed interest in, not Penny's opinions
-- Skip factual statements that don't express preference
-- Skip questions, tasks, and troubleshooting requests — \
-'how do I connect X' or 'can you find Y' are actions, not preferences
-- If no clear preferences are expressed, return an empty list
+You extract the user's likes and dislikes from their recent messages.
 
-SORTING (CRITICAL):
-- Separate topics into 'new' and 'existing' lists
-- 'existing': known preferences that were discussed or referenced — \
-use the EXACT content string from the 'Already known preferences' list
-- 'new': genuinely new topics not already covered by any known preference
-- Do NOT put rephrasings, synonyms, or more specific versions of \
-known preferences in the 'new' list
-- Asking about reviews, specs, comparisons, or details of a known item \
-is NOT a new preference — it's engagement with the existing one
-- Example: if 'bass recording techniques' is known and the user discusses \
-bass tone, put 'bass recording techniques' in 'existing', not \
-'Yes Roundabout bass tone' in 'new'
-- Example: if 'Tubesteader pedals' is known and the user asks about \
-Eggnog reviews, put 'Tubesteader pedals' in 'existing', not \
-'Tubesteader Eggnog user reviews' in 'new'
+1. Call log_read_next("user-messages") to fetch messages you haven't seen yet.
+2. Identify every genuine preference across the returned messages.
+3. Call collection_write once per target collection — likes for things \
+the user wants/enjoys/seeks, dislikes for things they avoid/complain \
+about — batching all entries.
+4. Call done().
 
-REACTION CONTEXT (if present):
-Lines marked with 'User reacted [emoji] to:' show emoji reactions. \
-These indicate preference toward the topic of the reacted-to message.
+Each entry's key is a fully-qualified topic name (3-10 words, e.g. \
+'Talk (album) by Yes', 'Dune Part Two (2024 film)') — NOT a vague \
+phrase like 'the album'. The content is the user's raw message that \
+expressed the preference.
 
-[14:30] I really love single-origin coffee beans"""
-        assert actual == expected, (
-            f"Identification prompt mismatch:\n{actual!r}\n\nvs expected:\n{expected!r}"
+Skip factual statements, questions, and troubleshooting requests. \
+Only extract topics the USER expressed interest in — not Penny's \
+opinions, not topics merely mentioned in passing. If a user is \
+frustrated about NOT FINDING something they want, that's a like; \
+negative means they dislike the thing itself.
+
+If no preferences appear in the returned messages, just call done() \
+without writing anything."""
+        assert rest == expected, (
+            f"Preference extractor system prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
         )
 
-        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        assert prefs, "Expected at least one extracted preference"
-        assert any("coffee" in p.content.lower() for p in prefs)
-        coffee_prefs = [p for p in prefs if "coffee" in p.content.lower()]
-        for p in coffee_prefs:
-            assert p.source == "extracted"
-            assert p.mention_count == 1
+        # Write landed in the likes collection, attributed to the extractor
+        likes = penny.db.memories.read_all("likes")
+        assert any(e.key == "single-origin coffee beans" for e in likes)
+        coffee = next(e for e in likes if e.key == "single-origin coffee beans")
+        assert coffee.author == HistoryAgent.PREFERENCE_EXTRACTOR_NAME
 
-
-def _user_prompt(request: dict) -> str:
-    """Return the concatenated user-role content from an LLM request."""
-    return " ".join(
-        m.get("content", "") for m in request.get("messages", []) if m.get("role") == "user"
-    )
+        # Cursor advanced past the seeded message
+        cursor = _cursor_for_preference_extractor(penny)
+        assert cursor is not None
 
 
 @pytest.mark.asyncio
-async def test_existing_preference_mention_increments_count(
+async def test_cursor_does_not_advance_on_max_steps(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """When LLM identifies a known preference was discussed, mention_count goes up."""
+    """If the model exhausts max_steps without calling done, the cursor stays
+    where it was so the next run sees the same messages again."""
     config = make_config(history_interval=99999.0)
 
-    def handler(request, count):
-        messages = request.get("messages", [])
-        user_msgs = [m for m in messages if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-
-        # Identification: LLM recognizes known pref, no new topics
-        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
-            result = json.dumps({"new": [], "existing": ["dark roast coffee"]})
-            return mock_llm._make_text_response(request, result)
-
-        if "User:" in prompt_text:
-            return mock_llm._make_text_response(request, "- Discussed coffee")
-
-        return mock_llm._make_text_response(request, "- Topics")
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        # Seed an existing preference
-        existing = penny.db.preferences.add(
-            user=TEST_SENDER,
-            content="dark roast coffee",
-            valence="positive",
-        )
-        assert existing is not None
-        assert existing.mention_count == 1
-
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "I love dark roast coffee so much",
-        )
-
-        await penny.history_agent.execute()
-
-        # The existing preference should have its mention count incremented
-        updated = penny.db.preferences.get_by_id(existing.id)
-        assert updated is not None
-        assert updated.mention_count == 2
-
-        # No duplicate preference should be created
-        all_prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        coffee_prefs = [p for p in all_prefs if "coffee" in p.content.lower()]
-        assert len(coffee_prefs) == 1
-
-
-@pytest.mark.asyncio
-async def test_preference_extraction_marks_messages_processed(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Messages are marked processed after preference extraction, preventing re-bumps."""
-    config = make_config(history_interval=99999.0)
-
-    extract_call_count = 0
-
-    def handler(request, count):
-        nonlocal extract_call_count
-        messages = request.get("messages", [])
-        user_msgs = [m for m in messages if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-
-        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
-            extract_call_count += 1
-            result = json.dumps({"new": ["hiking trails"], "existing": []})
-            return mock_llm._make_text_response(request, result)
-
-        if "classify" in prompt_text.lower() or "valence" in prompt_text.lower():
-            result = json.dumps(
-                {"preferences": [{"content": "hiking trails", "valence": "positive"}]}
-            )
-            return mock_llm._make_text_response(request, result)
-
-        return mock_llm._make_text_response(request, "- Topics")
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "I love hiking trails in the mountains",
-        )
-
-        # First extraction: should process the message
-        await penny.history_agent.execute()
-        first_count = extract_call_count
-
-        # Second extraction: message is now processed, should NOT re-extract
-        extract_call_count = 0
-        await penny.history_agent.execute()
-
-        # Identification should not be called again (no unprocessed messages)
-        assert extract_call_count == 0, (
-            f"Expected 0 identification calls on second run, got {extract_call_count}"
-        )
-
-        # Only one preference should exist (not duplicated)
-        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        hiking_prefs = [p for p in prefs if "hiking" in p.content.lower()]
-        assert len(hiking_prefs) == 1
-        assert first_count >= 1
-
-
-@pytest.mark.asyncio
-async def test_failed_extraction_does_not_mark_processed(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """When preference extraction fails, messages stay unprocessed for retry."""
-    config = make_config(history_interval=99999.0)
-
-    call_count = 0
-
-    def handler(request, count):
-        nonlocal call_count
-        messages = request.get("messages", [])
-        user_msgs = [m for m in messages if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-
-        # Identification calls: fail on first run, succeed on second
-        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
-            call_count += 1
-            if call_count == 1:
-                return mock_llm._make_text_response(request, "INVALID JSON")
-            result = json.dumps({"new": ["espresso drinks"], "existing": []})
-            return mock_llm._make_text_response(request, result)
-
-        if "classify" in prompt_text.lower() or "valence" in prompt_text.lower():
-            result = json.dumps(
-                {"preferences": [{"content": "espresso drinks", "valence": "positive"}]}
-            )
-            return mock_llm._make_text_response(request, result)
-
-        return mock_llm._make_text_response(request, "- Topics")
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "I really enjoy espresso drinks",
-        )
-
-        # First run: identification returns invalid JSON, extraction fails
-        await penny.history_agent.execute()
-
-        # Messages should still be unprocessed
-        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
-        assert len(unprocessed) >= 1
-
-        # No preference should be created
-        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        espresso_prefs = [p for p in prefs if "espresso" in p.content.lower()]
-        assert len(espresso_prefs) == 0
-
-        # Second run: identification succeeds, messages get processed
-        await penny.history_agent.execute()
-
-        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
-        assert len(unprocessed) == 0
-
-        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        espresso_prefs = [p for p in prefs if "espresso" in p.content.lower()]
-        assert len(espresso_prefs) == 1
-
-
-@pytest.mark.asyncio
-async def test_image_only_messages_marked_processed_without_llm(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Image-only messages (empty content) are marked processed without calling the LLM.
-
-    Previously `_format_messages` emitted just a timestamp prefix for empty content,
-    so the LLM was called, returned no preferences, and `did_work=False` prevented
-    marking the message processed — causing the same empty message to be re-extracted
-    on every scheduler tick.
-    """
-    config = make_config(history_interval=99999.0)
-
-    identification_calls = 0
-
-    def handler(request, count):
-        nonlocal identification_calls
-        messages = request.get("messages", [])
-        user_msgs = [m for m in messages if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
-            identification_calls += 1
-        return mock_llm._make_text_response(request, json.dumps({"new": [], "existing": []}))
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "",
-            PennyConstants.MessageDirection.INCOMING,
-            datetime.now(UTC).replace(tzinfo=None),
-        )
-
-        await penny.history_agent.execute()
-        await penny.history_agent.execute()
-
-        assert identification_calls == 0, (
-            f"Expected no identification calls for image-only message, got {identification_calls}"
-        )
-        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
-        assert len(unprocessed) == 0
-
-
-@pytest.mark.asyncio
-async def test_empty_identification_result_marks_processed(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """When identification succeeds but returns no preferences, messages are marked processed.
-
-    Distinguishes legitimate "nothing to extract" from failed identification — only
-    the latter should leave messages unprocessed for retry.
-    """
-    config = make_config(history_interval=99999.0)
-
-    identification_calls = 0
-
-    def handler(request, count):
-        nonlocal identification_calls
-        messages = request.get("messages", [])
-        user_msgs = [m for m in messages if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-        if "identify" in prompt_text.lower() or "sorting" in prompt_text.lower():
-            identification_calls += 1
-        return mock_llm._make_text_response(request, json.dumps({"new": [], "existing": []}))
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
-            TEST_SENDER,
-            "the weather today is fine",
-        )
-
-        await penny.history_agent.execute()
-        await penny.history_agent.execute()
-
-        assert identification_calls == 1, (
-            f"Expected 1 identification call, got {identification_calls} — "
-            f"message should have been marked processed after the first attempt"
-        )
-        unprocessed = penny.db.messages.get_unprocessed(TEST_SENDER, limit=100)
-        assert len(unprocessed) == 0
-
-
-# ── Reaction handling ────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_reactions_to_regular_messages_create_no_preferences(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Reactions to regular Penny messages are marked processed with no preference created."""
-    config = make_config(history_interval=99999.0)
+    # Always return log_read_next — never done.  Loop hits max_steps.
     mock_llm.set_response_handler(
-        lambda req, count: mock_llm._make_text_response(req, "- No topics")
+        lambda request, _count: mock_llm._make_tool_call_response(
+            request, "log_read_next", {"memory": "user-messages"}
+        )
     )
 
     async with running_penny(config) as penny:
-        msg_id = penny.db.messages.log_message(
-            PennyConstants.MessageDirection.OUTGOING,
-            TEST_SENDER,
-            "You should try hiking near Boulder!",
-        )
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "\U0001f44d",
-            PennyConstants.MessageDirection.INCOMING,
-            datetime.now(UTC).replace(tzinfo=None),
-            is_reaction=True,
-            parent_id=msg_id,
-        )
+        _seed_user_message(penny, "first message")
+        before = _cursor_for_preference_extractor(penny)
 
-        await penny.history_agent.execute()
+        result = await penny.history_agent.execute_for_user(TEST_SENDER)
 
-        assert penny.db.preferences.get_for_user(TEST_SENDER) == []
-        assert penny.db.messages.get_user_reactions(TEST_SENDER, limit=100) == []
+        assert result is False
+        after = _cursor_for_preference_extractor(penny)
+        assert after == before
 
 
 @pytest.mark.asyncio
-async def test_reaction_without_parent_is_marked_processed(
+async def test_no_user_messages_completes_cleanly(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """Reactions without a parent message are still marked processed."""
-    config = make_config(history_interval=99999.0)
-    mock_llm.set_response_handler(
-        lambda req, count: mock_llm._make_text_response(req, "- No topics")
-    )
-
-    async with running_penny(config) as penny:
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "\U0001f44d",
-            PennyConstants.MessageDirection.INCOMING,
-            datetime.now(UTC).replace(tzinfo=None),
-            is_reaction=True,
-        )
-
-        await penny.history_agent.execute()
-
-        assert penny.db.preferences.get_for_user(TEST_SENDER) == []
-        assert penny.db.messages.get_user_reactions(TEST_SENDER, limit=100) == []
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_thought_reaction_sets_valence_not_preference(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Reactions to thought notification messages set valence on the thought, not preferences."""
+    """Empty user-messages log → model reads nothing, calls done immediately."""
     config = make_config(history_interval=99999.0)
 
-    def handler(request, count):
+    def handler(request, _count):
+        # First step: read the (empty) log; subsequent step: call done.
         messages = request.get("messages", [])
-        user_msgs = [m for m in messages if m.get("role") == "user"]
-        prompt_text = " ".join(m.get("content", "") for m in user_msgs)
-        if "User:" in prompt_text:
-            return mock_llm._make_text_response(request, "- No topics")
-        return mock_llm._make_text_response(request, "- Topics")
+        tool_messages = [m for m in messages if m.get("role") == "tool"]
+        if not tool_messages:
+            return mock_llm._make_tool_call_response(
+                request, "log_read_next", {"memory": "user-messages"}
+            )
+        return mock_llm._make_tool_call_response(request, "done", {})
 
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        # Store a thought, then log a notification message linked to it
-        thought = penny.db.thoughts.add(TEST_SENDER, "Interesting content about guitar amps")
-        assert thought is not None
-        notif_id = penny.db.messages.log_message(
-            PennyConstants.MessageDirection.OUTGOING,
-            TEST_SENDER,
-            thought.content[:200],
-            recipient=TEST_SENDER,
-            thought_id=thought.id,
-        )
-        # React to the notification (thumbs up)
-        _insert_message(
-            penny,
-            TEST_SENDER,
-            "\U0001f44d",
-            PennyConstants.MessageDirection.INCOMING,
-            datetime.now(UTC).replace(tzinfo=None),
-            is_reaction=True,
-            parent_id=notif_id,
-        )
+        result = await penny.history_agent.execute_for_user(TEST_SENDER)
 
-        await penny.history_agent.execute()
-
-        # Valence should be stored on the thought
-        updated = penny.db.thoughts.get_by_id(thought.id)
-        assert updated is not None
-        assert updated.valence == 1, f"Expected valence=1, got {updated.valence}"
-
-        # No preference should have been created from this reaction
-        prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        assert len(prefs) == 0, f"Expected no preferences, got {prefs}"
-
-        # Reaction should be marked processed
-        reactions = penny.db.messages.get_user_reactions(TEST_SENDER, limit=100)
-        assert len(reactions) == 0
+        assert result is True
+        assert penny.db.memories.read_all("likes") == []
+        assert penny.db.memories.read_all("dislikes") == []
 
 
-def test_reaction_emoji_classification():
-    """HistoryAgent classifies reaction emojis as 1, -1, or None."""
-    from penny.agents.history import HistoryAgent
-
-    classify = HistoryAgent._emoji_to_int_valence
-    assert classify("\u2764\ufe0f") == 1
-    assert classify("\U0001f44d") == 1
-    assert classify("\U0001f44e") == -1
-    assert classify("\U0001f937") is None
-
-
-@pytest.mark.asyncio
-async def test_known_preferences_context(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """_build_known_preferences_context formats existing preferences for dedup."""
-    config = make_config(history_interval=99999.0)
-
-    async with running_penny(config) as penny:
-        from penny.database.models import Preference
-
-        existing = [
-            Preference(
-                user=TEST_SENDER,
-                content="Jazz music",
-                valence="positive",
-            ),
-            Preference(
-                user=TEST_SENDER,
-                content="Country music",
-                valence="negative",
-            ),
-        ]
-        result = penny.history_agent._build_known_preferences_context(existing)
-        assert "Jazz music" in result
-        assert "Country music" in result
-        assert "positive" in result
-        assert "negative" in result
-
-        assert penny.history_agent._build_known_preferences_context([]) == ""
+def test_preference_extractor_max_steps_constant_is_set():
+    """Defensive check: the cap is non-zero so the loop can actually run."""
+    assert HistoryAgent.PREFERENCE_EXTRACTOR_MAX_STEPS > 0
 
 
 # ── Knowledge extraction ────────────────────────────────────────────────
