@@ -180,28 +180,6 @@ async def test_dislike_context_deduplicates(
 
 
 @pytest.mark.asyncio
-async def test_thought_context_scoped_to_seed_preference(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Thinking agent thought context only includes thoughts for the same seed preference."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        # Add thoughts for two different preferences
-        penny.db.thoughts.add(TEST_SENDER, "thought about AI", preference_id=1, title="AI advances")
-        penny.db.thoughts.add(
-            TEST_SENDER, "thought about music", preference_id=2, title="Music theory"
-        )
-
-        # Scope to preference 1 — should only see the AI thought title
-        penny.thinking_agent._seed_pref_id = 1
-        context = penny.thinking_agent._thought_section(TEST_SENDER)
-        assert context is not None
-        assert "AI advances" in context
-        assert "Music theory" not in context
-
-
-@pytest.mark.asyncio
 async def test_thought_context_none_when_no_thoughts(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):

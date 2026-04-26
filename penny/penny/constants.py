@@ -54,8 +54,7 @@ class ChatPromptType(StrEnum):
 class ThinkingPromptType(StrEnum):
     """Prompt types emitted by ThinkingAgent flows."""
 
-    FREE = "free"
-    SEEDED = "seeded"
+    CYCLE = "cycle"
 
 
 class NotifyPromptType(StrEnum):
