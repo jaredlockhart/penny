@@ -13,7 +13,6 @@ import pytest
 
 from penny.database import Database
 from penny.llm.client import LlmClient
-from penny.tools.memory_context import current_agent, set_current_agent
 from penny.tools.memory_tools import (
     CollectionArchiveTool,
     CollectionCreateTool,
@@ -119,7 +118,7 @@ class TestCollectionWritesAndReads:
     async def test_write_read_roundtrip(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="relevant")
-        write = CollectionWriteTool(db, _make_llm_client(mock_llm))
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         result = await write.execute(
             memory="likes",
             entries=[
@@ -136,7 +135,7 @@ class TestCollectionWritesAndReads:
     async def test_write_reports_duplicate_via_tcr(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        write = CollectionWriteTool(db, _make_llm_client(mock_llm))
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(
             memory="likes", entries=[{"key": "dark roast", "content": "first body"}]
         )
@@ -151,7 +150,7 @@ class TestCollectionWritesAndReads:
     async def test_get_returns_entry_or_not_found(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        await CollectionWriteTool(db, _make_llm_client(mock_llm)).execute(
+        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="likes", entries=[{"key": "k", "content": "hello"}]
         )
         assert "hello" in await CollectionGetTool(db).execute(memory="likes", key="k")
@@ -162,7 +161,7 @@ class TestCollectionWritesAndReads:
     async def test_keys_lists_unique_keys_in_order(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        write = CollectionWriteTool(db, _make_llm_client(mock_llm))
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(memory="likes", entries=[{"key": "first", "content": "1"}])
         await write.execute(memory="likes", entries=[{"key": "second", "content": "2"}])
         listing = await CollectionKeysTool(db).execute(memory="likes")
@@ -172,7 +171,7 @@ class TestCollectionWritesAndReads:
     async def test_read_random_returns_all_when_few(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        write = CollectionWriteTool(db, _make_llm_client(mock_llm))
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(memory="likes", entries=[{"key": "a", "content": "1"}])
         rendered = await CollectionReadRandomTool(db).execute(memory="likes", k=5)
         assert "[a] 1" in rendered
@@ -182,7 +181,7 @@ class TestCollectionWritesAndReads:
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
         client = _make_llm_client(mock_llm)
-        await CollectionWriteTool(db, client).execute(
+        await CollectionWriteTool(db, client, author="test").execute(
             memory="likes", entries=[{"key": "coffee", "content": "loves coffee"}]
         )
         rendered = await CollectionReadSimilarTool(db, client).execute(
@@ -211,10 +210,12 @@ class TestCollectionMutations:
     async def test_update_replaces_content(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        await CollectionWriteTool(db, _make_llm_client(mock_llm)).execute(
+        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="likes", entries=[{"key": "k", "content": "old"}]
         )
-        result = await CollectionUpdateTool(db).execute(memory="likes", key="k", content="new")
+        result = await CollectionUpdateTool(db, author="test").execute(
+            memory="likes", key="k", content="new"
+        )
         assert "Updated 'k' in 'likes'" in result
         fetched = await CollectionGetTool(db).execute(memory="likes", key="k")
         assert "new" in fetched
@@ -223,7 +224,9 @@ class TestCollectionMutations:
     async def test_update_missing_reports_not_found(self, tmp_path):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        result = await CollectionUpdateTool(db).execute(memory="likes", key="k", content="new")
+        result = await CollectionUpdateTool(db, author="test").execute(
+            memory="likes", key="k", content="new"
+        )
         assert "not found" in result
 
     @pytest.mark.asyncio
@@ -231,10 +234,10 @@ class TestCollectionMutations:
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="unnotified", description="x", recall="off")
         await CollectionCreateTool(db).execute(name="notified", description="x", recall="off")
-        await CollectionWriteTool(db, _make_llm_client(mock_llm)).execute(
+        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="unnotified", entries=[{"key": "t1", "content": "x"}]
         )
-        result = await CollectionMoveTool(db).execute(
+        result = await CollectionMoveTool(db, author="test").execute(
             key="t1", from_memory="unnotified", to_memory="notified"
         )
         assert "Moved 't1'" in result
@@ -244,10 +247,12 @@ class TestCollectionMutations:
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="a", description="x", recall="off")
         await CollectionCreateTool(db).execute(name="b", description="x", recall="off")
-        write = CollectionWriteTool(db, _make_llm_client(mock_llm))
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(memory="a", entries=[{"key": "k", "content": "src"}])
         await write.execute(memory="b", entries=[{"key": "k", "content": "dst"}])
-        result = await CollectionMoveTool(db).execute(key="k", from_memory="a", to_memory="b")
+        result = await CollectionMoveTool(db, author="test").execute(
+            key="k", from_memory="a", to_memory="b"
+        )
         assert "already has a 'k' entry" in result
 
     @pytest.mark.asyncio
@@ -263,7 +268,7 @@ class TestLogTools:
     async def test_append_and_read_latest(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await LogCreateTool(db).execute(name="events", description="x", recall="recent")
-        append = LogAppendTool(db, _make_llm_client(mock_llm))
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         await append.execute(memory="events", content="first")
         await append.execute(memory="events", content="second")
         rendered = await LogReadLatestTool(db).execute(memory="events")
@@ -273,7 +278,7 @@ class TestLogTools:
     async def test_read_all_returns_oldest_first(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await LogCreateTool(db).execute(name="events", description="x", recall="recent")
-        append = LogAppendTool(db, _make_llm_client(mock_llm))
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         await append.execute(memory="events", content="first")
         await append.execute(memory="events", content="second")
         rendered = await LogReadAllTool(db).execute(memory="events")
@@ -283,7 +288,7 @@ class TestLogTools:
     async def test_read_recent_window(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await LogCreateTool(db).execute(name="events", description="x", recall="recent")
-        await LogAppendTool(db, _make_llm_client(mock_llm)).execute(
+        await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="events", content="hello"
         )
         rendered = await LogReadRecentTool(db).execute(memory="events", window_seconds=3600)
@@ -294,7 +299,9 @@ class TestLogTools:
         db = _make_db(tmp_path)
         await LogCreateTool(db).execute(name="events", description="x", recall="relevant")
         client = _make_llm_client(mock_llm)
-        await LogAppendTool(db, client).execute(memory="events", content="coffee is great")
+        await LogAppendTool(db, client, author="test").execute(
+            memory="events", content="coffee is great"
+        )
         rendered = await LogReadSimilarTool(db, client).execute(memory="events", anchor="beverage")
         assert "coffee is great" in rendered
 
@@ -305,7 +312,7 @@ class TestExistsAndDone:
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
         client = _make_llm_client(mock_llm)
-        await CollectionWriteTool(db, client).execute(
+        await CollectionWriteTool(db, client, author="test").execute(
             memory="likes", entries=[{"key": "dark roast", "content": "body"}]
         )
         result = await ExistsTool(db, client).execute(
@@ -329,31 +336,22 @@ class TestExistsAndDone:
 
 class TestAuthorAttribution:
     @pytest.mark.asyncio
-    async def test_writes_use_current_agent(self, tmp_path, mock_llm):
+    async def test_writes_stamp_constructor_author(self, tmp_path, mock_llm):
+        """Author is bound at tool construction (not pulled from ambient state)."""
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        set_current_agent("preference-extractor")
-        try:
-            await CollectionWriteTool(db, _make_llm_client(mock_llm)).execute(
-                memory="likes", entries=[{"key": "k", "content": "v"}]
-            )
-        finally:
-            set_current_agent("unknown")
+        await CollectionWriteTool(
+            db, _make_llm_client(mock_llm), author="preference-extractor"
+        ).execute(memory="likes", entries=[{"key": "k", "content": "v"}])
 
         rows = db.memories.get_entry("likes", "k")
         assert rows[0].author == "preference-extractor"
-
-    def test_default_agent_is_unknown(self):
-        # The preceding test restores the default in its finally block, so
-        # whether this runs first or after, current_agent() must equal the
-        # module-level default.
-        assert current_agent() == "unknown"
 
 
 class TestFactory:
     def test_build_memory_tools_registers_every_tool(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        tools = build_memory_tools(db, _make_llm_client(mock_llm))
+        tools = build_memory_tools(db, _make_llm_client(mock_llm), author="test")
         names = {tool.name for tool in tools}
         expected = {
             "collection_create",

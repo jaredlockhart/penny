@@ -681,6 +681,7 @@ class Agent:
             search_url=search_url,
             db=self.db,
             embedding_client=self._embedding_model_client,
+            author=self.name,
         )
         if self._browse_provider:
             tool.set_browse_provider(self._browse_provider)

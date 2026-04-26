@@ -21,7 +21,6 @@ from penny.constants import HistoryPromptType, PennyConstants
 from penny.database.models import Preference, PromptLog
 from penny.llm.embeddings import deserialize_embedding, serialize_embedding
 from penny.prompts import Prompt
-from penny.tools.memory_context import set_current_agent
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +61,12 @@ class HistoryAgent(Agent):
 
     async def execute(self) -> bool:
         """Extract knowledge (user-independent), then run per-user work."""
-        set_current_agent(self.name)
         knowledge_work = await self._extract_knowledge()
         user_work = await super().execute()
         return knowledge_work or user_work
 
     async def execute_for_user(self, user: str) -> bool:
         """Extract preferences from unprocessed messages."""
-        set_current_agent(self.name)
         run_id = uuid.uuid4().hex
         return await self._extract_today_preferences(user, run_id)
 

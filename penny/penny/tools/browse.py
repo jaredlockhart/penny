@@ -20,7 +20,6 @@ from penny.llm.similarity import embed_text
 from penny.prompts import Prompt
 from penny.tools.base import Tool
 from penny.tools.content_cleaning import clean_browser_content
-from penny.tools.memory_context import current_agent
 from penny.tools.models import BrowseArgs, SearchResult
 
 if TYPE_CHECKING:
@@ -82,11 +81,13 @@ class BrowseTool(Tool):
         search_url: str = "https://duckduckgo.com/?q=",
         db: Database | None = None,
         embedding_client: LlmClient | None = None,
+        author: str = "unknown",
     ):
         self._max_calls = max_calls
         self._search_url = search_url
         self._db = db
         self._embedding_client = embedding_client
+        self._author = author
         self._browse_provider: Callable[[], tuple[RequestFn, PermissionManager] | None] | None = (
             None
         )
@@ -200,7 +201,7 @@ class BrowseTool(Tool):
         self._db.memories.append(
             PennyConstants.MEMORY_BROWSE_RESULTS_LOG,
             [LogEntryInput(content=text, content_embedding=vec)],
-            author=current_agent(),
+            author=self._author,
         )
 
     async def _read_page(self, url: str) -> SearchResult:

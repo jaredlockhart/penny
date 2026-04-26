@@ -12,7 +12,6 @@ from sqlmodel import Session, select
 
 from penny.agents.base import Agent
 from penny.database.models import Schedule
-from penny.tools.memory_context import set_current_agent
 
 if TYPE_CHECKING:
     from penny.channels import MessageChannel
@@ -43,7 +42,6 @@ class ScheduleExecutor(Agent):
         Returns:
             True if any schedules were executed, False otherwise
         """
-        set_current_agent(self.name)
         if not self._channel:
             logger.error("ScheduleExecutor: no channel set")
             return False
@@ -112,6 +110,7 @@ class ScheduleExecutor(Agent):
             schedule.user_id,
             answer,
             parent_id=None,
+            author=self.name,
             attachments=response.attachments or None,
             quote_message=None,
         )

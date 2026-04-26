@@ -20,7 +20,6 @@ from penny.llm.embeddings import serialize_embedding
 from penny.llm.image_client import OllamaImageClient
 from penny.llm.similarity import embed_text
 from penny.responses import PennyResponse
-from penny.tools.memory_context import current_agent, set_current_agent
 
 if TYPE_CHECKING:
     from penny.agents import ChatAgent
@@ -297,6 +296,7 @@ class MessageChannel(ABC):
         recipient: str,
         content: str,
         parent_id: int | None,
+        author: str,
         attachments: list[str] | None = None,
         quote_message: MessageLog | None = None,
         thought_id: int | None = None,
@@ -308,6 +308,10 @@ class MessageChannel(ABC):
             recipient: Identifier for the recipient
             content: Message content
             parent_id: Parent message ID for thread linking
+            author: Name of the agent producing this message — stamped onto
+                the side-effect write to ``penny-messages``.  Always passed
+                explicitly by the caller (chat reply path, notify, scheduler)
+                so attribution is correct without ambient state.
             attachments: Optional list of base64-encoded image attachments
             quote_message: Optional message to quote-reply to
             thought_id: Optional FK to the thought that triggered this message
@@ -330,9 +334,7 @@ class MessageChannel(ABC):
             thought_id=thought_id,
             device_id=device_id,
         )
-        await self._append_to_memory_log(
-            PennyConstants.MEMORY_PENNY_MESSAGES_LOG, prepared, current_agent()
-        )
+        await self._append_to_memory_log(PennyConstants.MEMORY_PENNY_MESSAGES_LOG, prepared, author)
         external_id = await self.send_message(recipient, prepared, attachments, quote_message)
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
@@ -543,13 +545,12 @@ class MessageChannel(ABC):
     ) -> None:
         """Invoke the agent, log the incoming message, and deliver the response.
 
-        Sets ``current_agent`` to the message agent's name for the lifetime of
-        this call so the egress write to ``penny-messages`` (which happens
-        inside ``send_response`` after the agent returns) is correctly
-        attributed.
+        The egress write inside ``send_response`` is attributed to the
+        message agent's ``name`` (template-method override on the agent
+        subclass) — passed explicitly down the call chain rather than
+        threaded through ambient state.
         """
         logger.info("Dispatching to message agent for %s", message.sender)
-        set_current_agent(self._message_agent.name)
         await self._append_to_memory_log(
             PennyConstants.MEMORY_USER_MESSAGES_LOG, message.content, "user"
         )
@@ -569,7 +570,9 @@ class MessageChannel(ABC):
         )
         if incoming_id:
             await self._embed_message(incoming_id, message.content)
-        await self._deliver_agent_response(message, user_sender, response, incoming_id, progress)
+        await self._deliver_agent_response(
+            message, user_sender, response, incoming_id, progress, self._message_agent.name
+        )
 
     async def _deliver_agent_response(
         self,
@@ -578,6 +581,7 @@ class MessageChannel(ABC):
         response: Any,
         incoming_id: int | None,
         progress: ProgressTracker | None,
+        author: str,
     ) -> None:
         """Send the agent's response and surface delivery failures."""
         answer = response.answer.strip() if response.answer else PennyResponse.FALLBACK_RESPONSE
@@ -597,6 +601,7 @@ class MessageChannel(ABC):
             message.sender,
             answer,
             parent_id=incoming_id,
+            author=author,
             attachments=response.attachments or None,
             quote_message=incoming_log,
         )
