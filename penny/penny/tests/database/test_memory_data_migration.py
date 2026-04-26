@@ -11,8 +11,6 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from penny.database import Database
 from penny.database.migrate import migrate
 from penny.llm.embeddings import serialize_embedding
@@ -118,8 +116,7 @@ def _entries(conn: sqlite3.Connection, name: str) -> list[tuple]:
 # ── Happy path: each source table populates its target memory ──────────────
 
 
-@pytest.mark.asyncio
-async def test_messages_split_into_user_and_penny_logs(tmp_path):
+def test_messages_split_into_user_and_penny_logs(tmp_path):
     db = _make_db(tmp_path)
     base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
 
@@ -162,8 +159,7 @@ async def test_messages_split_into_user_and_penny_logs(tmp_path):
     ]
 
 
-@pytest.mark.asyncio
-async def test_preferences_split_by_valence(tmp_path):
+def test_preferences_split_by_valence(tmp_path):
     db = _make_db(tmp_path)
     base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
 
@@ -184,8 +180,7 @@ async def test_preferences_split_by_valence(tmp_path):
     assert dislikes == [("country music", "country music", "history", None, None)]
 
 
-@pytest.mark.asyncio
-async def test_thoughts_split_by_notified_status(tmp_path):
+def test_thoughts_split_by_notified_status(tmp_path):
     db = _make_db(tmp_path)
     base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
 
@@ -225,8 +220,7 @@ async def test_thoughts_split_by_notified_status(tmp_path):
     assert notified == [("Black Holes", "shared insight", "thinking", None, None)]
 
 
-@pytest.mark.asyncio
-async def test_knowledge_collection_populated_with_url_in_content(tmp_path):
+def test_knowledge_collection_populated_with_url_in_content(tmp_path):
     db = _make_db(tmp_path)
     base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
 
@@ -258,8 +252,7 @@ async def test_knowledge_collection_populated_with_url_in_content(tmp_path):
 # ── Idempotency / skip-when-populated guards ──────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_running_migration_twice_does_not_duplicate_entries(tmp_path):
+def test_running_migration_twice_does_not_duplicate_entries(tmp_path):
     """Each block guards on the target memory being empty, so re-running
     the migration after a manual revert is safe."""
     db = _make_db(tmp_path)
@@ -282,8 +275,7 @@ async def test_running_migration_twice_does_not_duplicate_entries(tmp_path):
         assert len(_entries(conn, "likes")) == 1
 
 
-@pytest.mark.asyncio
-async def test_skips_block_when_target_memory_already_populated(tmp_path):
+def test_skips_block_when_target_memory_already_populated(tmp_path):
     """If the target memory already has entries, the migration leaves it alone."""
     db = _make_db(tmp_path)
     base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
