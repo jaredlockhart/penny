@@ -130,7 +130,7 @@ async def test_send_notify_thought_candidate(
         mode.prepare(penny.notify_agent)
         # Install tools so the {tools} block in the prompt reflects the
         # full surface the model actually sees during real notify runs.
-        penny.notify_agent._install_tools(mode.get_tools(penny.notify_agent, TEST_SENDER))
+        penny.notify_agent._install_tools(penny.notify_agent.get_tools(TEST_SENDER))
         prompt = mode.build_system_prompt(penny.notify_agent, TEST_SENDER)
         expected = """\
 ## Identity
