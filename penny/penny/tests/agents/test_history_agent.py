@@ -165,9 +165,7 @@ async def test_no_user_messages_completes_cleanly(
     config = make_config(history_interval=99999.0)
 
     def handler(request, _count):
-        if any(c.function.name == "log_read_next" for c in []):
-            pass  # no-op, kept for clarity
-        # Pre-loop: read empty, then done.
+        # First step: read the (empty) log; subsequent step: call done.
         messages = request.get("messages", [])
         tool_messages = [m for m in messages if m.get("role") == "tool"]
         if not tool_messages:
