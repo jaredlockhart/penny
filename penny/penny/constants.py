@@ -252,3 +252,9 @@ class PennyConstants:
     MEMORY_KEY_SIM_RELAXED_THRESHOLD = 0.75
     MEMORY_CONTENT_SIM_STRICT_THRESHOLD = 0.90
     MEMORY_CONTENT_SIM_RELAXED_THRESHOLD = 0.75
+
+    # Log-name pairs whose entries are merged chronologically into a single
+    # "Conversation" recall section when both are present.  The secondary log
+    # (index 1) appears only in the merged section; the primary (index 0) is
+    # also rendered individually under its own recall mode.
+    MEMORY_CONVERSATION_PAIRS: list[tuple[str, str]] = [("user-messages", "penny-messages")]

@@ -34,10 +34,17 @@ def _insert_message(penny, sender, content, direction, timestamp, **kwargs):
 async def test_preference_extraction_stores_preferences(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """HistoryAgent extracts and stores user preferences from conversation."""
+    """Core success flow: extract & store preferences, with full exact identification prompt.
+
+    HistoryAgent issues plain ``generate()`` calls (no system prompt, no agentic
+    loop), so the "entire prompt" for this agent is the user-role content sent
+    to the identification pass.  A fixed-timestamp seed lets us match byte-for-byte.
+    """
     config = make_config(history_interval=99999.0)
+    requests_seen: list[dict] = []
 
     def handler(request, count):
+        requests_seen.append(request)
         messages = request.get("messages", [])
         user_msgs = [m for m in messages if m.get("role") == "user"]
         prompt_text = " ".join(m.get("content", "") for m in user_msgs)
@@ -63,21 +70,79 @@ async def test_preference_extraction_stores_preferences(
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        penny.db.messages.log_message(
-            PennyConstants.MessageDirection.INCOMING,
+        fixed_ts = datetime(2026, 4, 21, 14, 30, tzinfo=UTC).replace(tzinfo=None)
+        _insert_message(
+            penny,
             TEST_SENDER,
             "I really love single-origin coffee beans",
+            PennyConstants.MessageDirection.INCOMING,
+            fixed_ts,
         )
 
         await penny.history_agent.execute()
 
+        # Full exact identification-pass user prompt
+        identification_req = next(
+            r for r in requests_seen if "identify preference topics" in _user_prompt(r).lower()
+        )
+        actual = _user_prompt(identification_req)
+        expected = """\
+Identify preference topics in the following conversation — \
+things the user likes, dislikes, wants, or is frustrated by.
+
+RULES:
+- Return only topic names (3-10 words each)
+- Do NOT include sentiment or valence — just the topic
+- Make topics fully qualified so they can be understood without context
+- Bad: 'Talk', 'Talk (album)'
+- Good: 'Talk (album) by Yes (band)'
+- Bad: 'the new movie', 'that episode'
+- Good: 'Dune Part Two (2024 film)', 'Breaking Bad S5E14 Ozymandias'
+- Only extract topics the USER expressed interest in, not Penny's opinions
+- Skip factual statements that don't express preference
+- Skip questions, tasks, and troubleshooting requests — \
+'how do I connect X' or 'can you find Y' are actions, not preferences
+- If no clear preferences are expressed, return an empty list
+
+SORTING (CRITICAL):
+- Separate topics into 'new' and 'existing' lists
+- 'existing': known preferences that were discussed or referenced — \
+use the EXACT content string from the 'Already known preferences' list
+- 'new': genuinely new topics not already covered by any known preference
+- Do NOT put rephrasings, synonyms, or more specific versions of \
+known preferences in the 'new' list
+- Asking about reviews, specs, comparisons, or details of a known item \
+is NOT a new preference — it's engagement with the existing one
+- Example: if 'bass recording techniques' is known and the user discusses \
+bass tone, put 'bass recording techniques' in 'existing', not \
+'Yes Roundabout bass tone' in 'new'
+- Example: if 'Tubesteader pedals' is known and the user asks about \
+Eggnog reviews, put 'Tubesteader pedals' in 'existing', not \
+'Tubesteader Eggnog user reviews' in 'new'
+
+REACTION CONTEXT (if present):
+Lines marked with 'User reacted [emoji] to:' show emoji reactions. \
+These indicate preference toward the topic of the reacted-to message.
+
+[14:30] I really love single-origin coffee beans"""
+        assert actual == expected, (
+            f"Identification prompt mismatch:\n{actual!r}\n\nvs expected:\n{expected!r}"
+        )
+
         prefs = penny.db.preferences.get_for_user(TEST_SENDER)
-        if prefs:
-            assert any("coffee" in p.content.lower() for p in prefs)
-            coffee_prefs = [p for p in prefs if "coffee" in p.content.lower()]
-            for p in coffee_prefs:
-                assert p.source == "extracted"
-                assert p.mention_count == 1
+        assert prefs, "Expected at least one extracted preference"
+        assert any("coffee" in p.content.lower() for p in prefs)
+        coffee_prefs = [p for p in prefs if "coffee" in p.content.lower()]
+        for p in coffee_prefs:
+            assert p.source == "extracted"
+            assert p.mention_count == 1
+
+
+def _user_prompt(request: dict) -> str:
+    """Return the concatenated user-role content from an LLM request."""
+    return " ".join(
+        m.get("content", "") for m in request.get("messages", []) if m.get("role") == "user"
+    )
 
 
 @pytest.mark.asyncio
