@@ -26,21 +26,16 @@ logger = logging.getLogger(__name__)
 class ChatAgent(Agent):
     """Conversation-mode agent — handles user messages.
 
-    Context matrix:
+    Two context mechanisms, kept independent:
 
-        Mode     | History | Thought    | Turns | Tools | Steps
-        -------- | ------- | ---------- | ----- | ----- | -----
-        User Msg | 7d      | 1 notified | yes   | all   | 5
-        Vision   | 7d      | 1 notified | yes   | none  | 1
+    - Memory stores → system prompt via the recall block, each memory
+      rendered by its own ``recall`` flag (off / recent / relevant / all).
+    - Chat turns → messages array as alternating user/assistant turns
+      via ``_build_conversation`` and ``history=``.
 
-    All modes include profile (user name).
-
-    Conv turns only include messages since the last history rollup's
-    period_end, so rolled-up content isn't duplicated as raw turns.
-
-    Agentic loop: model responds with tool calls or text. Tool results
-    are appended and the loop continues. Final step removes tools to
-    force text output. Text response = done.
+    The system prompt is identity + (profile + recall + page hint)
+    + instructions.  Vision messages bypass the tool surface and use
+    the captioner; everything else runs the standard agentic loop.
     """
 
     name: str = "chat"

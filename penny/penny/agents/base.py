@@ -932,16 +932,6 @@ class Agent:
         messages.append(ChatMessage(role=MessageRole.USER, content=prompt).to_dict())
         return messages
 
-    def _build_tool_summary(self) -> str:
-        """Build a dynamic tool summary from registered tools for prompt injection."""
-        tools = self._tool_registry.get_all()
-        if not tools:
-            return ""
-        names = [t.name for t in tools]
-        logger.debug("Injecting tool summary into prompt: %s", ", ".join(names))
-        lines = [f"- **{t.name}**: {t.description}" for t in tools]
-        return "\n".join(lines)
-
     # ── System prompt building (template method pattern) ─────────────────
 
     async def _build_system_prompt(self, user: str) -> str:
@@ -964,13 +954,8 @@ class Agent:
         return f"## Identity\n{Prompt.PENNY_IDENTITY}"
 
     def _instructions_section(self, override: str | None = None) -> str:
-        """## Instructions — agent-specific prompt with tool descriptions."""
+        """## Instructions — agent-specific prompt body."""
         prompt = override or self.system_prompt
-        format_args: dict = {}
-        if "{tools}" in prompt:
-            format_args["tools"] = self._build_tool_summary()
-        if format_args:
-            prompt = prompt.format(**format_args)
         return f"## Instructions\n{prompt}"
 
     @staticmethod

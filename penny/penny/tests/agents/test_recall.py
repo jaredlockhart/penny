@@ -2,8 +2,7 @@
 
 Test organisation:
 1. Happy paths — each recall mode renders correctly
-2. Conversation pair — pair merge + primary individual pass
-3. Edge/skip cases — off mode, archived, empty, no embedding
+2. Edge/skip cases — off mode, archived, empty, no embedding
 """
 
 from __future__ import annotations

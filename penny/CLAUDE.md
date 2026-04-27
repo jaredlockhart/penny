@@ -178,14 +178,11 @@ The base `Agent` class implements the core agentic loop:
 - Appends source URLs to responses when model omits them
 
 **System prompt building (template method pattern):**
-Each agent overrides `_build_system_prompt(user)` to compose its prompt from reusable building blocks on the base class: `_identity_section()`, `_profile_section()`, `_thought_section()`, `_dislike_section()`, `_related_knowledge_section()`, `_related_messages_section()`, `_instructions_section()`, `_context_block()`. No flags or conditionals — each agent explicitly declares what goes in its prompt. Tests assert on the exact full system prompt string to catch structural drift.
+Each agent overrides `_build_system_prompt(user)` to compose its prompt from reusable building blocks on the base class: `_identity_section()`, `_profile_section()`, `_instructions_section()`, `_context_block()`. No flags or conditionals — each agent explicitly declares what goes in its prompt. Tests assert on the exact full system prompt string to catch structural drift.
 
-**Knowledge vs related-message retrieval scoring**: These use deliberately different algorithms:
+**Memory recall** is the single mechanism for surfacing memory contents in the system prompt: every active memory is rendered into the prompt according to its own `recall` flag (off / recent / relevant / all) by the recall block (`agents/recall.py`). Chat agents call `build_recall_block` and slot the result into the context block alongside profile and page hint. There is no bespoke per-section retrieval — knowledge, likes, dislikes, notified-thoughts, etc. all surface via this one path.
 
-- **Knowledge retrieval** scores each candidate as `max(weighted_decay, current_message_cosine)` and applies an absolute floor (`RELATED_KNOWLEDGE_SCORE_FLOOR`, default 0.34). The weighted-decay leg (decay=0.5 over the conversation window) preserves the "vague follow-up needs prior context" case — e.g. asking "is it a dud?" after a storm-glass thread still surfaces storm-glass entries. The current-message-cosine leg lets a strong direct match stand on its own merit even when the conversation has drifted to a different topic, so a topic-bearing question isn't dragged toward the prior thread. The absolute floor suppresses noise on greetings and topics the corpus doesn't cover, instead of forcing retrieval to pick its top-N least-bad guesses.
-- **Related-message retrieval** scores by `cosine_to_current_message - α × centrality`, where centrality is the candidate's mean cosine to the rest of the corpus. Past messages should match what's being asked right now, not adjacent topics from earlier in the thread (which caused derailment when the model latched onto a stale prior turn). The centrality penalty (α=0.5) suppresses generic centroid-magnet boilerplate that would otherwise leak into every unrelated query. After scoring, an adaptive cutoff is applied: a cluster-strength gate (`head_mean / sample_mean ≥ 1.15`, in adjusted-score space, where head=top-5 and sample=top-20) suppresses flat noise plateaus entirely, then `cutoff = max(head_mean × 0.85, 0.25)` combines a relative band against the cluster center with an empirical absolute floor. Strong clusters return many messages, weak clusters return few, no cluster returns nothing. After cutoff selects hits, a single-pass neighbor expansion pulls user messages within ±5 minutes of each hit's timestamp, deduped by id and content and excluding the current conversation window — this captures conversational follow-ups that share no entity overlap with the current message ("yeah exactly i can't wait to try it") but live in the same conversation as a real hit. Neighbors are not themselves expanded. Centrality is cached per-sender in memory (lazy on first retrieval, drifts as new messages arrive — revisit with a DB column or background refresh if precision degrades or the corpus grows past a few thousand messages). Constants live in `penny/constants.py` under `PennyConstants.RELATED_MESSAGES_*`.
-
-Conversation embeddings are computed once per request and shared between knowledge and message retrieval (the message path uses just the last element).
+The chat turns array (alternating user/assistant messages passed via `history=`) is independent of the recall flag — it is reconstructed from the last N messages in `db.messages` regardless of which memories are active.
 
 ### Shared LLM Client Instances
 
@@ -199,8 +196,9 @@ All `LlmClient` instances are created centrally in `Penny.__init__()` and shared
 ### Specialized Agents
 
 **ChatAgent** (`agents/chat.py`)
-- Handles incoming user messages with tools (BrowseTool for search and page reading)
-- Prompt: identity + profile + knowledge + related messages + page hint + conversation instructions
+- Handles incoming user messages with the full tool surface
+- Prompt: identity + (profile + recall block + page hint) + instructions; recall block injects every active memory by its own `recall` flag
+- Conversation history flows independently as alternating user/assistant turns passed via `history=`
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the text LLM
 
 **NotifyAgent** (`agents/notify.py`)
