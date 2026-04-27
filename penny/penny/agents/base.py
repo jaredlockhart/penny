@@ -22,7 +22,7 @@ from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.browse import BrowseTool
-from penny.tools.memory_tools import DoneTool, build_memory_tools
+from penny.tools.memory_tools import DoneTool, LogReadNextTool, build_memory_tools
 from penny.tools.models import SearchResult
 from penny.tools.send_message import SendMessageTool
 
@@ -178,6 +178,15 @@ class Agent:
 
     name: str = "Agent"
 
+    # Subagent identity for the prompt log; chat overrides via get_prompt_type
+    # in its own message-handling path.  None means "don't tag".
+    prompt_type: str | None = None
+
+    # Tool name that signals a successful cycle exit.  ``done`` is the
+    # default; ``send_message`` for agents that signal completion by
+    # delivering a message (notify).
+    terminator_tool: str = DoneTool.name
+
     def __init__(
         self,
         system_prompt: str,
@@ -214,7 +223,11 @@ class Agent:
             self._tool_registry.register(tool)
 
         self._tool_executor = ToolExecutor(self._tool_registry, timeout=tool_timeout)
-        self._keep_tools_on_final_step = False
+        # Background subagents exit via the terminator tool (`done` / `send_message`)
+        # — they keep tools available on the final step so the model can call its
+        # exit tool. Chat overrides to False because its terminator is final
+        # text output, not a tool call.
+        self._keep_tools_on_final_step = True
         self._on_tool_start_factory: (
             Callable[
                 [],
@@ -252,74 +265,58 @@ class Agent:
         return did_work
 
     async def execute_for_user(self, user: str) -> bool:
-        """Standard scheduled cycle: build tools, get prompt, run loop, post-process."""
-        self._current_user = user
-        try:
-            tools = self.get_tools(user)
-            if not tools:
-                return False
-            self._install_tools(tools)
+        """Run a scheduled cycle for ``user``.  Default delegates to ``_run_cycle``.
 
-            prompt = await self.get_prompt(user)
-            if not prompt:
-                return False
+        Override only when the agent needs eligibility guardrails (cooldown,
+        cap, mute) that gate the cycle — those checks live in the agent and
+        return early before calling ``_run_cycle``.
+        """
+        return await self._run_cycle(user)
 
-            logger.info("%s starting for %s", self.name, user)
-            run_id = uuid.uuid4().hex
-            prompt_type = self.get_prompt_type()
-            system_prompt = await self._build_system_prompt(user)
-            history = self.get_history(user)
-            on_tool_start, tool_cleanup = (
-                self._on_tool_start_factory() if self._on_tool_start_factory else (None, None)
-            )
-            try:
-                await self.run(
-                    prompt=prompt,
-                    max_steps=self.get_max_steps(),
-                    system_prompt=system_prompt,
-                    history=history,
-                    on_tool_start=on_tool_start,
-                    run_id=run_id,
-                    prompt_type=prompt_type,
-                )
-            finally:
-                if tool_cleanup:
-                    await tool_cleanup()
-            did_work = await self.after_run(user, run_id, prompt_type)
-            logger.info("%s complete for %s", self.name, user)
-            return did_work
-        except Exception:
-            logger.exception("%s failed for %s", self.name, user)
-            return False
-        finally:
-            self._current_user = None
+    async def _run_cycle(self, user: str | None) -> bool:
+        """Generic agentic shell: install tools, run the loop, commit cursor.
+
+        Reads ``self.system_prompt`` (constructor arg), ``self.prompt_type``
+        (class attr), and ``self.terminator_tool`` (class attr) to drive the
+        cycle.  If a ``LogReadNextTool`` is in the surface, its pending
+        cursor is committed on success and discarded on failure.
+
+        ``user`` is forwarded to ``get_tools`` as the recipient binding for
+        ``send_message``.  Pass ``None`` for flows with no specific
+        recipient (e.g. user-independent extractors).
+        """
+        tools = self.get_tools(user)
+        log_read_next = next((t for t in tools if isinstance(t, LogReadNextTool)), None)
+        self._install_tools(tools)
+
+        run_id = uuid.uuid4().hex
+        response = await self.run(
+            prompt="",
+            max_steps=self.get_max_steps(),
+            system_prompt=self.system_prompt,
+            run_id=run_id,
+            prompt_type=self.prompt_type,
+        )
+        success = any(record.tool == self.terminator_tool for record in response.tool_calls)
+
+        if log_read_next is not None:
+            if success:
+                log_read_next.commit_pending()
+            else:
+                log_read_next.discard_pending()
+
+        return success
 
     # ── Override hooks ───────────────────────────────────────────────────
 
     def get_max_steps(self) -> int:
-        """Return max agentic loop steps. Subclasses must override."""
-        raise NotImplementedError(f"{type(self).__name__} must override get_max_steps()")
+        """Cap on agentic loop iterations.  Override to read a different config key."""
+        return int(self.config.runtime.MESSAGE_MAX_STEPS)
 
     def get_users(self) -> list[str]:
         """Return the single user to process (Penny is single-user)."""
         primary = self.db.users.get_primary_sender()
         return [primary] if primary else []
-
-    async def get_prompt(self, user: str) -> str | None:
-        """Build the prompt for the agentic loop. Return None to skip this user."""
-        return None
-
-    def get_history(self, user: str) -> list[tuple[str, str]] | None:
-        """Conversation history for the agentic loop. Override for conversation agents."""
-        return None
-
-    def get_prompt_type(self) -> str | None:
-        """Return the prompt type for the current cycle. Override in subclasses."""
-        return None
-
-    async def after_run(self, user: str, run_id: str, prompt_type: str | None = None) -> bool:
-        """Post-processing after the agentic loop. Return True if work was done."""
-        return True
 
     # ── Agentic loop entry ───────────────────────────────────────────────
 

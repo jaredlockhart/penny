@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from penny.agents.history import HistoryAgent
+from penny.agents.knowledge_extractor import KnowledgeExtractorAgent
+from penny.agents.preference_extractor import PreferenceExtractorAgent
 from penny.constants import PennyConstants
 from penny.database.memory_store import LogEntryInput
 from penny.tests.conftest import TEST_SENDER
@@ -47,13 +48,13 @@ def _seed_browse_page(penny, url: str, title: str, body: str) -> None:
 
 def _cursor_for_preference_extractor(penny):
     return penny.db.cursors.get(
-        HistoryAgent.PREFERENCE_EXTRACTOR_NAME, PennyConstants.MEMORY_USER_MESSAGES_LOG
+        PreferenceExtractorAgent.name, PennyConstants.MEMORY_USER_MESSAGES_LOG
     )
 
 
 def _cursor_for_knowledge_extractor(penny):
     return penny.db.cursors.get(
-        HistoryAgent.KNOWLEDGE_EXTRACTOR_NAME, PennyConstants.MEMORY_BROWSE_RESULTS_LOG
+        KnowledgeExtractorAgent.name, PennyConstants.MEMORY_BROWSE_RESULTS_LOG
     )
 
 
@@ -100,7 +101,7 @@ async def test_preference_extraction_full_loop(
     async with running_penny(config) as penny:
         _seed_user_message(penny, "I really love single-origin coffee beans")
 
-        result = await penny.history_agent.execute_for_user(TEST_SENDER)
+        result = await penny.preference_extractor_agent.execute_for_user(TEST_SENDER)
 
         assert result is True
 
@@ -143,7 +144,7 @@ without writing anything."""
         likes = penny.db.memories.read_all("likes")
         assert any(e.key == "single-origin coffee beans" for e in likes)
         coffee = next(e for e in likes if e.key == "single-origin coffee beans")
-        assert coffee.author == HistoryAgent.PREFERENCE_EXTRACTOR_NAME
+        assert coffee.author == PreferenceExtractorAgent.name
 
         # Cursor advanced past the seeded message
         cursor = _cursor_for_preference_extractor(penny)
@@ -169,7 +170,7 @@ async def test_cursor_does_not_advance_on_max_steps(
         _seed_user_message(penny, "first message")
         before = _cursor_for_preference_extractor(penny)
 
-        result = await penny.history_agent.execute_for_user(TEST_SENDER)
+        result = await penny.preference_extractor_agent.execute_for_user(TEST_SENDER)
 
         assert result is False
         after = _cursor_for_preference_extractor(penny)
@@ -196,7 +197,7 @@ async def test_no_user_messages_completes_cleanly(
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        result = await penny.history_agent.execute_for_user(TEST_SENDER)
+        result = await penny.preference_extractor_agent.execute_for_user(TEST_SENDER)
 
         assert result is True
         assert penny.db.memories.read_all("likes") == []
@@ -205,7 +206,7 @@ async def test_no_user_messages_completes_cleanly(
 
 def test_preference_extractor_max_steps_constant_is_set():
     """Defensive check: the cap is non-zero so the loop can actually run."""
-    assert HistoryAgent.PREFERENCE_EXTRACTOR_MAX_STEPS > 0
+    assert PreferenceExtractorAgent.MAX_STEPS > 0
 
 
 # ── 2. Knowledge extraction (agent shell) ────────────────────────────────
@@ -263,7 +264,7 @@ async def test_knowledge_extraction_full_loop(
             "The Eggnog uses a 12AX7 tube driven at 250 VDC.",
         )
 
-        result = await penny.history_agent._run_knowledge_extractor()
+        result = await penny.knowledge_extractor_agent.execute()
 
         assert result is True
 
@@ -314,7 +315,7 @@ anything."""
         knowledge = penny.db.memories.read_all("knowledge")
         eggnog = next((e for e in knowledge if e.key == "TubeSteader Eggnog"), None)
         assert eggnog is not None
-        assert eggnog.author == HistoryAgent.KNOWLEDGE_EXTRACTOR_NAME
+        assert eggnog.author == KnowledgeExtractorAgent.name
         assert "12AX7" in eggnog.content
         assert eggnog.content.startswith("https://tubesteader.com/products/eggnog")
 
@@ -340,7 +341,7 @@ async def test_knowledge_cursor_does_not_advance_on_max_steps(
         _seed_browse_page(penny, "https://example.com", "Example", "Some content.")
         before = _cursor_for_knowledge_extractor(penny)
 
-        result = await penny.history_agent._run_knowledge_extractor()
+        result = await penny.knowledge_extractor_agent.execute()
 
         assert result is False
         after = _cursor_for_knowledge_extractor(penny)
@@ -369,7 +370,7 @@ async def test_no_browse_pages_completes_cleanly(
         # Seed only the entries the migration backfilled — no fresh pages.
         before = penny.db.memories.read_all("knowledge")
 
-        result = await penny.history_agent._run_knowledge_extractor()
+        result = await penny.knowledge_extractor_agent.execute()
 
         assert result is True
         # No new entries written
@@ -379,4 +380,4 @@ async def test_no_browse_pages_completes_cleanly(
 
 def test_knowledge_extractor_max_steps_constant_is_set():
     """Defensive check: the cap is non-zero so the loop can actually run."""
-    assert HistoryAgent.KNOWLEDGE_EXTRACTOR_MAX_STEPS > 0
+    assert KnowledgeExtractorAgent.MAX_STEPS > 0

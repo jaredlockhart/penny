@@ -43,6 +43,11 @@ class ChatAgent(Agent):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._pending_page_context: PageContext | None = None
+        # Chat replies via final text — tools are stripped on the final
+        # agentic step to force the model to produce its reply.  Background
+        # agents inherit the True default to keep tools available so they
+        # can call ``done`` / ``send_message`` on the final step.
+        self._keep_tools_on_final_step = False
 
     def get_max_steps(self) -> int:
         """Read from config each call so /config changes take effect immediately."""

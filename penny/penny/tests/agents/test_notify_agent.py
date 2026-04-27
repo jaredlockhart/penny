@@ -91,7 +91,7 @@ async def test_cooldown_elapsed_when_no_prior_autonomous(
     config = make_config()
 
     async with running_penny(config) as penny:
-        assert penny.notify_agent._cooldown_elapsed(TEST_SENDER)
+        assert penny.notify_agent._cooldown_elapsed()
 
 
 # ── 2. Happy path ─────────────────────────────────────────────────────────

@@ -12,8 +12,9 @@ from typing import Any
 from penny.agents import (
     Agent,
     ChatAgent,
-    HistoryAgent,
+    KnowledgeExtractorAgent,
     NotifyAgent,
+    PreferenceExtractorAgent,
     ThinkingAgent,
 )
 from penny.channels import MessageChannel, create_channel_manager
@@ -178,17 +179,37 @@ class Penny:
         }
 
     def _init_background_agents(self, config: Config) -> None:
-        """Create monologue, history, and schedule agents."""
+        """Create monologue + extractor + schedule agents."""
         kwargs = self._background_agent_kwargs(config)
         self.thinking_agent = ThinkingAgent(
+            system_prompt=Prompt.THINKING_SYSTEM_PROMPT,
             max_queries_key="INNER_MONOLOGUE_MAX_QUERIES",
+            model_client=self.model_client,
+            tools=[],
+            db=self.db,
+            config=config,
+            tool_timeout=config.tool_timeout,
             embedding_model_client=self.embedding_model_client,
-            **kwargs,
         )
-        self.history_agent = HistoryAgent(
+        self.preference_extractor_agent = PreferenceExtractorAgent(
+            system_prompt=Prompt.PREFERENCE_EXTRACTOR_SYSTEM_PROMPT,
             max_queries_key="CHAT_MAX_QUERIES",
+            model_client=self.model_client,
+            tools=[],
+            db=self.db,
+            config=config,
+            tool_timeout=config.tool_timeout,
             embedding_model_client=self.embedding_model_client,
-            **kwargs,
+        )
+        self.knowledge_extractor_agent = KnowledgeExtractorAgent(
+            system_prompt=Prompt.KNOWLEDGE_EXTRACTOR_SYSTEM_PROMPT,
+            max_queries_key="CHAT_MAX_QUERIES",
+            model_client=self.model_client,
+            tools=[],
+            db=self.db,
+            config=config,
+            tool_timeout=config.tool_timeout,
+            embedding_model_client=self.embedding_model_client,
         )
         self.schedule_executor = ScheduleExecutor(max_queries_key="CHAT_MAX_QUERIES", **kwargs)
 
@@ -259,7 +280,8 @@ class Penny:
         self.chat_agent.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
         self.thinking_agent.set_channel(self.channel)
-        self.history_agent.set_channel(self.channel)
+        self.preference_extractor_agent.set_channel(self.channel)
+        self.knowledge_extractor_agent.set_channel(self.channel)
         self._wire_browser_tools(config)
 
     def _wire_browser_tools(self, config: Config) -> None:
@@ -292,7 +314,12 @@ class Penny:
         schedules: list[Schedule] = [
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
-                agent=self.history_agent,
+                agent=self.preference_extractor_agent,
+                interval=lambda: config.runtime.HISTORY_INTERVAL,
+                requires_idle=False,
+            ),
+            PeriodicSchedule(
+                agent=self.knowledge_extractor_agent,
                 interval=lambda: config.runtime.HISTORY_INTERVAL,
                 requires_idle=False,
             ),

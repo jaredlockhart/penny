@@ -68,6 +68,11 @@ def _make_agent(test_db, mock_llm, *, max_steps=3, runtime_overrides=None):
         db=db,
         config=config,
     )
+    # These tests exercise the "strip tools on final step → force text"
+    # path that powers chat agent's final-answer reply mechanism.
+    # Subagents (notify, thinking, etc.) keep tools on the final step
+    # because they exit via a terminator tool call (done / send_message).
+    agent._keep_tools_on_final_step = False
     return agent, db, max_steps
 
 
