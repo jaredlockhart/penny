@@ -16,9 +16,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.memory_store import LogEntryInput, RecallMode
 from penny.tools.send_message import SendMessageTool
+
+_PENNY_LOG = PennyConstants.MEMORY_PENNY_MESSAGES_LOG
+_USER_LOG = PennyConstants.MEMORY_USER_MESSAGES_LOG
 
 _RECIPIENT = "+15551234567"
 _AGENT = "notify"
@@ -29,8 +33,8 @@ def _make_db(tmp_path) -> Database:
     db.create_tables()
     # The cooldown helper reads the system penny-messages and user-messages
     # logs; create them up-front so the tool's lookups don't ImportError.
-    db.memories.create_log("penny-messages", "outbound", RecallMode.OFF)
-    db.memories.create_log("user-messages", "inbound", RecallMode.OFF)
+    db.memories.create_log(_PENNY_LOG, "outbound", RecallMode.OFF)
+    db.memories.create_log(_USER_LOG, "inbound", RecallMode.OFF)
     return db
 
 
@@ -98,7 +102,7 @@ async def test_send_message_refuses_when_cooldown_not_elapsed(tmp_path):
     """A recent send from the same agent (no user reply since) → cooldown gate fires."""
     db = _make_db(tmp_path)
     # Seed a prior send authored by this agent — count = 1, cooldown = MIN.
-    db.memories.append("penny-messages", [LogEntryInput(content="prior")], author=_AGENT)
+    db.memories.append(_PENNY_LOG, [LogEntryInput(content="prior")], author=_AGENT)
     channel = _make_channel()
     tool = _make_tool(db, channel=channel, config=_make_config(min_cooldown=3600.0))
 
@@ -113,10 +117,10 @@ def test_user_reply_resets_cooldown_count(tmp_path):
     """A user-messages entry newer than prior sends resets the backoff count to zero."""
     db = _make_db(tmp_path)
     # Old send → would normally count toward backoff.
-    db.memories.append("penny-messages", [LogEntryInput(content="old")], author=_AGENT)
+    db.memories.append(_PENNY_LOG, [LogEntryInput(content="old")], author=_AGENT)
     # User replied since — entries are timestamped at write time, so this
     # user-messages entry's created_at is newer than the old send.
-    db.memories.append("user-messages", [LogEntryInput(content="hi back")], author="user")
+    db.memories.append(_USER_LOG, [LogEntryInput(content="hi back")], author="user")
     tool = _make_tool(db)
 
     # The count walks newest-first and breaks once entries are older than the
@@ -127,9 +131,9 @@ def test_user_reply_resets_cooldown_count(tmp_path):
 def test_latest_send_time_filters_by_author(tmp_path):
     """Only entries authored by ``self.agent_name`` count toward this agent's history."""
     db = _make_db(tmp_path)
-    db.memories.append("penny-messages", [LogEntryInput(content="from chat")], author="chat")
-    db.memories.append("penny-messages", [LogEntryInput(content="from notify")], author=_AGENT)
-    db.memories.append("penny-messages", [LogEntryInput(content="another chat")], author="chat")
+    db.memories.append(_PENNY_LOG, [LogEntryInput(content="from chat")], author="chat")
+    db.memories.append(_PENNY_LOG, [LogEntryInput(content="from notify")], author=_AGENT)
+    db.memories.append(_PENNY_LOG, [LogEntryInput(content="another chat")], author="chat")
     tool = _make_tool(db)
 
     latest = tool._latest_send_time()

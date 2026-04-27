@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from penny.constants import PennyConstants
 from penny.tools.base import Tool
+from penny.tools.memory_tools import DoneTool
 from penny.tools.models import SendMessageArgs
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ class SendMessageTool(Tool):
         "what to say — the ``content`` is the exact text the user will "
         "see.  The send is gated on mute state and an exponential "
         "backoff cooldown; if either refuses, the response will say so "
-        "and you should call ``done`` to exit."
+        f"and you should call ``{DoneTool.name}`` to exit."
     )
     parameters = {
         "type": "object",
@@ -59,11 +60,11 @@ class SendMessageTool(Tool):
 
     _MUTED_RESPONSE = (
         "Message NOT sent: the user has muted autonomous messages.  "
-        "Call ``done`` to exit — do not retry."
+        f"Call ``{DoneTool.name}`` to exit — do not retry."
     )
     _COOLDOWN_RESPONSE = (
         "Message NOT sent: cooldown has not elapsed since the last "
-        "autonomous send.  Call ``done`` to exit — do not retry."
+        f"autonomous send.  Call ``{DoneTool.name}`` to exit — do not retry."
     )
 
     def __init__(
