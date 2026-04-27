@@ -167,20 +167,8 @@ class Penny:
         )
         self._init_background_agents(config)
 
-    def _background_agent_kwargs(self, config: Config) -> dict:
-        """Common kwargs shared by all background processing agents."""
-        return {
-            "system_prompt": "",
-            "model_client": self.model_client,
-            "tools": [],
-            "db": self.db,
-            "tool_timeout": config.tool_timeout,
-            "config": config,
-        }
-
     def _init_background_agents(self, config: Config) -> None:
         """Create monologue + extractor + schedule agents."""
-        kwargs = self._background_agent_kwargs(config)
         self.thinking_agent = ThinkingAgent(
             system_prompt=Prompt.THINKING_SYSTEM_PROMPT,
             max_queries_key="INNER_MONOLOGUE_MAX_QUERIES",
@@ -211,7 +199,15 @@ class Penny:
             tool_timeout=config.tool_timeout,
             embedding_model_client=self.embedding_model_client,
         )
-        self.schedule_executor = ScheduleExecutor(max_queries_key="CHAT_MAX_QUERIES", **kwargs)
+        self.schedule_executor = ScheduleExecutor(
+            system_prompt="",
+            max_queries_key="CHAT_MAX_QUERIES",
+            model_client=self.model_client,
+            tools=[],
+            db=self.db,
+            config=config,
+            tool_timeout=config.tool_timeout,
+        )
 
     def _init_github_client(self, config: Config) -> Any:
         """Initialize GitHub API client if configured. Returns GitHubAPI or None."""
@@ -393,22 +389,6 @@ class Penny:
                     model_name,
                 )
 
-    async def _backfill_all_embeddings(self) -> None:
-        """Backfill all missing embeddings at startup.
-
-        Only the preference legacy table still feeds an active reader
-        (chat agent's bespoke retrieval is gone, but preferences still
-        underpin the ``likes``/``dislikes`` mention threshold check
-        before extraction promotes them).  Thought/message backfills
-        were dropped along with the bespoke similarity scoring.
-        """
-        if not self.embedding_model_client:
-            return
-        batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
-        total_prefs = await self._backfill_preference_embeddings(batch_limit)
-        if total_prefs:
-            logger.info("Startup embedding backfill complete: %d preferences", total_prefs)
-
     async def _backfill_preference_embeddings(self, batch_limit: int) -> int:
         """Backfill preferences with missing embeddings. Returns count embedded."""
         assert self.embedding_model_client is not None
@@ -444,7 +424,11 @@ class Penny:
         await self.channel.validate_connectivity()
 
         await self._validate_optional_models()
-        await self._backfill_all_embeddings()
+        if self.embedding_model_client:
+            batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
+            total_prefs = await self._backfill_preference_embeddings(batch_limit)
+            if total_prefs:
+                logger.info("Startup embedding backfill complete: %d preferences", total_prefs)
 
         await self._send_startup_announcement()
         await self._prompt_for_missing_profiles()

@@ -690,7 +690,15 @@ class Agent:
         if self._max_queries_key is not None:
             tools.append(self._build_browse_tool(author=agent_name))
         if self._channel is not None and recipient is not None:
-            tools.append(SendMessageTool(self._channel, recipient, agent_name))
+            tools.append(
+                SendMessageTool(
+                    channel=self._channel,
+                    recipient=recipient,
+                    agent_name=agent_name,
+                    db=self.db,
+                    config=self.config,
+                )
+            )
         return tools
 
     def _build_browse_tool(self, author: str) -> BrowseTool:
