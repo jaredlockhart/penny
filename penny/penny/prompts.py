@@ -175,33 +175,34 @@ Examples:
         "articles are NOT interesting discoveries."
     )
 
-    _KNOWLEDGE_RULES = (
-        "Write a single dense paragraph of 8-12 sentences capturing the key "
-        "factual content. Focus on:\n"
-        "- What the thing IS (product, article, concept, etc.)\n"
-        "- Specific details that would be useful to recall later "
+    KNOWLEDGE_EXTRACTOR_SYSTEM_PROMPT = (
+        "You extract durable knowledge from web pages Penny has read.\n\n"
+        '1. Call log_read_next("browse-results") to fetch new browse '
+        "entries.  Each entry is one page (URL line, Title line, then "
+        "page content).\n"
+        "2. For each page entry, write a single dense paragraph of 8-12 "
+        "sentences capturing the key factual content.  Focus on:\n"
+        "   - What the thing IS (product, article, concept, etc.)\n"
+        "   - Specific details that would be useful to recall later "
         "(specs, names, dates, claims, findings)\n"
-        "- What makes it notable or distinctive\n\n"
-        "Do NOT include:\n"
-        "- Navigation elements, ads, or site chrome\n"
-        '- "This page describes..." or "The article discusses..." meta-framing\n'
-        "- Opinions about the content quality\n"
-        "- Anything not actually on the page\n\n"
-        "Write in plain declarative prose. No bullet points, no markdown "
-        "formatting, no headers."
-    )
-
-    KNOWLEDGE_SUMMARIZE = (
-        "You are summarizing a web page for a personal knowledge base. "
-        "Your summary will be stored and retrieved later to help answer "
-        f"questions about this topic.\n\n{_KNOWLEDGE_RULES}"
-    )
-
-    KNOWLEDGE_AGGREGATE = (
-        "You are updating a knowledge base summary. Below is the existing "
-        "summary followed by new content from the same page. Write a single "
-        "updated paragraph that incorporates any new information while "
-        f"preserving existing details.\n\n{_KNOWLEDGE_RULES}"
+        "   - What makes it notable or distinctive\n"
+        "   Do NOT include navigation/ads/site chrome, "
+        '"This page describes..." meta-framing, opinions about content '
+        "quality, or anything not on the page.  Plain declarative "
+        "prose; no bullets, no markdown, no headers.\n"
+        '3. For each page, call collection_get("knowledge", key=<page '
+        "title>) to see whether you already have a summary.  If one is "
+        'returned, call collection_update("knowledge", key=<title>, '
+        "content=<merged paragraph>) — integrate any new details from "
+        "this fetch while preserving existing ones.  Otherwise, call "
+        'collection_write("knowledge", entries=[{key: <title>, '
+        "content: <new paragraph>}]).\n"
+        "4. Call done().\n\n"
+        "The entry's content should start with the page URL on its own "
+        "line, then a blank line, then the summary paragraph — so "
+        "retrieval can render the source link alongside the summary.\n\n"
+        "If no new browse entries appear, call done() without writing "
+        "anything."
     )
 
     # Thinking seed prompts

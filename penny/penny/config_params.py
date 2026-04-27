@@ -298,14 +298,6 @@ ConfigParam(
     group=GROUP_HISTORY,
 )
 
-ConfigParam(
-    key="KNOWLEDGE_EXTRACTION_BATCH_LIMIT",
-    description="Max browse-containing prompts to process per knowledge extraction cycle",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_HISTORY,
-)
 
 ConfigParam(
     key="EMBEDDING_BACKFILL_BATCH_LIMIT",

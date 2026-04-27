@@ -163,6 +163,7 @@ class BrowseTool(Tool):
         results = await asyncio.gather(*[coro for _, _, coro in tasks], return_exceptions=True)
 
         sections: list[str] = []
+        page_sections: list[str] = []
         all_urls: list[str] = []
         first_image: str | None = None
         for (header, value, _), result in zip(tasks, results, strict=True):
@@ -176,31 +177,37 @@ class BrowseTool(Tool):
             if header == PennyConstants.BROWSE_SEARCH_HEADER:
                 text = _trim_search_result(text)
             all_urls.extend(result.urls)
-            sections.append(f"{label}\n{text}")
+            section = f"{label}\n{text}"
+            sections.append(section)
+            if header == PennyConstants.BROWSE_PAGE_HEADER:
+                page_sections.append(section)
             if not first_image and result.image_base64:
                 first_image = result.image_base64
 
-        result = SearchResult(
+        await self._append_pages_to_browse_results(page_sections)
+        return SearchResult(
             text=PennyConstants.SECTION_SEPARATOR.join(sections),
             urls=all_urls,
             image_base64=first_image,
         )
-        await self._append_to_browse_results(result.text)
-        return result
 
-    async def _append_to_browse_results(self, text: str) -> None:
-        """Side-effect-write the rendered browse output to the browse-results log.
+    async def _append_pages_to_browse_results(self, page_sections: list[str]) -> None:
+        """Side-effect-write each successful page as its own log entry.
 
-        No-op if no database was wired in (legacy callsites).  Embeds at
-        write time so the entry can be retrieved by similarity later if the
-        memory's recall mode is changed away from 'off'.
+        Search-result and error sections are skipped — only full page
+        reads carry knowledge worth indexing.  Embeds each entry at
+        write time so similarity recall (and the knowledge extractor)
+        can address pages individually.
         """
-        if self._db is None:
+        if self._db is None or not page_sections:
             return
-        vec = await embed_text(self._embedding_client, text)
+        entries: list[LogEntryInput] = []
+        for section in page_sections:
+            vec = await embed_text(self._embedding_client, section)
+            entries.append(LogEntryInput(content=section, content_embedding=vec))
         self._db.memories.append(
             PennyConstants.MEMORY_BROWSE_RESULTS_LOG,
-            [LogEntryInput(content=text, content_embedding=vec)],
+            entries,
             author=self._author,
         )
 
