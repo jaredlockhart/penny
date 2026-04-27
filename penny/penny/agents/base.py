@@ -676,7 +676,7 @@ class Agent:
         """Bind a channel so this agent can send messages via SendMessageTool."""
         self._channel = channel
 
-    def get_tools(self, user: str) -> list[Tool]:
+    def get_tools(self, user: str | None) -> list[Tool]:
         """Full tool surface for this agent — memory tools + browse + send_message.
 
         Every agent gets every tool: the prompt is responsible for
@@ -684,22 +684,26 @@ class Agent:
         legitimately needs a narrower surface (e.g. vision mode where
         tool calls are disabled entirely).
 
+        Pass ``user=None`` for background agents that have no specific
+        recipient (thinking, history) — ``send_message`` is omitted
+        from the surface in that case.
+
         Builds fresh each cycle so runtime config changes take effect
         immediately and the underlying ``BrowseTool``'s author + cursor
         identity match the agent's current ``name``.
         """
         return self._build_full_tools(agent_name=self.name, recipient=user)
 
-    def _build_full_tools(self, agent_name: str, recipient: str = "") -> list[Tool]:
+    def _build_full_tools(self, agent_name: str, recipient: str | None = None) -> list[Tool]:
         """Memory tools + BrowseTool (when max_queries_key is set) +
-        SendMessageTool (when a channel is bound), all attributed to
-        ``agent_name``."""
+        SendMessageTool (when both a channel is bound and a recipient
+        is set), all attributed to ``agent_name``."""
         tools: list[Tool] = build_memory_tools(
             self.db, self._embedding_model_client, agent_name=agent_name
         )
         if self._max_queries_key is not None:
             tools.append(self._build_browse_tool(author=agent_name))
-        if self._channel is not None and recipient:
+        if self._channel is not None and recipient is not None:
             tools.append(SendMessageTool(self._channel, recipient, agent_name))
         return tools
 
