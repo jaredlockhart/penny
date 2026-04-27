@@ -157,33 +157,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="RELATED_MESSAGES_LIMIT",
-    description="Max similar past messages to inject into chat context",
-    type=int,
-    default=10,
-    validator=_validate_positive_int,
-    group=GROUP_CHAT,
-)
-
-ConfigParam(
-    key="RELATED_KNOWLEDGE_LIMIT",
-    description="Max knowledge entries to inject into chat context",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_CHAT,
-)
-
-ConfigParam(
-    key="RELATED_KNOWLEDGE_SCORE_FLOOR",
-    description="Minimum hybrid score for a knowledge entry to be injected",
-    type=float,
-    default=0.34,
-    validator=_validate_unit_float,
-    group=GROUP_CHAT,
-)
-
-ConfigParam(
     key="DOMAIN_PERMISSION_MODE",
     description="Domain mode: restrict (prompt) or allow_all (auto-allow unknown)",
     type=str,

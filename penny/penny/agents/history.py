@@ -68,7 +68,7 @@ class HistoryAgent(Agent):
 
     async def execute_for_user(self, user: str) -> bool:
         """Run the preference-extractor agent loop for the user."""
-        return await self._run_preference_extractor()
+        return await self._run_preference_extractor(user)
 
     # ── Knowledge extraction (agent loop) ─────────────────────────────────
 
@@ -101,7 +101,7 @@ class HistoryAgent(Agent):
 
     # ── Preference extraction (agent loop) ────────────────────────────────
 
-    async def _run_preference_extractor(self) -> bool:
+    async def _run_preference_extractor(self, user: str) -> bool:
         """Read new user-messages, identify likes/dislikes, write them.
 
         The flow is fully model-driven: the agent loop is given the full
@@ -115,7 +115,7 @@ class HistoryAgent(Agent):
         only encodes the prompt's intent twice.  The model decides what
         to call from the prompt's instructions.
         """
-        tools = self._build_full_tools(agent_name=self.PREFERENCE_EXTRACTOR_NAME)
+        tools = self._build_full_tools(agent_name=self.PREFERENCE_EXTRACTOR_NAME, recipient=user)
         log_read_next = next(t for t in tools if isinstance(t, LogReadNextTool))
         self._install_tools(tools)
 

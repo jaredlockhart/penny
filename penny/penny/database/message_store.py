@@ -711,32 +711,6 @@ class MessageStore:
                 ).all()
             )
 
-    def get_user_messages_in_window(
-        self, sender: str, around: datetime, window: timedelta
-    ) -> list[MessageLog]:
-        """Get incoming non-reaction messages within ±window of `around`, oldest first.
-
-        Used by related-message neighbor expansion: after scoring finds high-signal
-        hits, we pull surrounding user messages to capture context-dependent
-        follow-ups that wouldn't match on similarity alone.
-        """
-        lo = around - window
-        hi = around + window
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.sender == sender,
-                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
-                        MessageLog.is_reaction == False,  # noqa: E712
-                        MessageLog.timestamp >= lo,
-                        MessageLog.timestamp <= hi,
-                    )
-                    .order_by(MessageLog.timestamp.asc())
-                ).all()
-            )
-
     def get_incoming_with_embeddings(self, sender: str) -> list[MessageLog]:
         """Get all incoming non-reaction messages that have embeddings, for similarity search."""
         with self._session() as session:
