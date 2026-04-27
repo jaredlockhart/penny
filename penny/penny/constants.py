@@ -60,8 +60,7 @@ class ThinkingPromptType(StrEnum):
 class NotifyPromptType(StrEnum):
     """Prompt types emitted by NotifyAgent flows."""
 
-    CHECKIN = "checkin"
-    THOUGHT = "thought"
+    CYCLE = "cycle"
 
 
 class HistoryPromptType(StrEnum):
@@ -174,7 +173,6 @@ class PennyConstants:
 
     # Agent loop constants
     VISION_MAX_STEPS = 1
-    CHECKIN_MAX_STEPS = 1
     RESPONSE_VALIDATION_RETRIES = 5
     # Minimum count of alphabetic characters for a model response to be
     # considered substantive. Catches garbage shapes — bare separators
@@ -189,12 +187,6 @@ class PennyConstants:
     # Thinking constants
     MIN_THOUGHT_WORDS = 50
     SUMMARY_URL_RETRIES = 2
-
-    # Notify constants
-    CHECKIN_ACTIVE_WINDOW = 1800
-    CHECKIN_COOLDOWN_SECONDS = 86400
-    THOUGHT_TOPIC_COOLDOWN_SECONDS = 86400
-    NOTIFY_URL_RETRIES = 2
 
     # Browser channel constants
     TOOL_REQUEST_TIMEOUT = 60.0
@@ -256,6 +248,11 @@ class PennyConstants:
     MEMORY_USER_MESSAGES_LOG = "user-messages"
     MEMORY_PENNY_MESSAGES_LOG = "penny-messages"
     MEMORY_BROWSE_RESULTS_LOG = "browse-results"
+
+    # System collections (created by migration 0027) that agents read and
+    # write through the memory tool surface.
+    MEMORY_UNNOTIFIED_THOUGHTS = "unnotified-thoughts"
+    MEMORY_NOTIFIED_THOUGHTS = "notified-thoughts"
 
     # Log-name pairs whose entries are merged chronologically into a single
     # "Conversation" recall section when both are present.  The secondary log
