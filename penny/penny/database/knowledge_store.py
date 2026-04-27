@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
-from penny.database.models import Knowledge, PromptLog
+from penny.database.models import Knowledge
 
 logger = logging.getLogger(__name__)
 
@@ -101,14 +101,3 @@ class KnowledgeStore:
                     select(Knowledge).where(Knowledge.embedding != None)  # noqa: E711
                 ).all()
             )
-
-    def get_latest_prompt_timestamp(self) -> datetime | None:
-        """Get the timestamp of the most recently processed prompt via FK join."""
-        with self._session() as session:
-            result = session.exec(
-                select(PromptLog.timestamp)
-                .join(Knowledge, Knowledge.source_prompt_id == PromptLog.id)  # ty: ignore[invalid-argument-type]
-                .order_by(PromptLog.timestamp.desc())
-                .limit(1)
-            ).first()
-            return result

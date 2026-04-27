@@ -67,7 +67,7 @@ class HistoryPromptType(StrEnum):
     """Prompt types emitted by HistoryAgent flows."""
 
     PREFERENCE_EXTRACTION = "preference_extraction"
-    KNOWLEDGE_SUMMARIZE = "knowledge_summarize"
+    KNOWLEDGE_EXTRACTION = "knowledge_extraction"
 
 
 class PennyConstants:

@@ -37,9 +37,12 @@ async def test_basic_message_flow(
     """
     config = make_config()
 
-    # Configure Ollama to return fetch tool call, then final response
+    # Configure Ollama to return fetch tool call, then final response.
+    # Use a URL query so the browse side-effect produces a page entry in
+    # the browse-results log (search-only queries don't, by design).
     mock_llm.set_default_flow(
         final_response="here's what i found about your question! 🌟",
+        search_query="https://weather.example.com/today",
     )
 
     async with running_penny(config) as penny:

@@ -1,21 +1,23 @@
-"""Integration tests for HistoryAgent: preference extraction and knowledge extraction.
+"""Integration tests for HistoryAgent: preference and knowledge extraction.
 
-Test organisation:
-1. Preference extraction (agent shell) — happy path with full verbatim system
-   prompt + cursor advancement on success / no advancement on failure
-2. Knowledge extraction — bespoke flow, unchanged from before the memory port
+Both flows are model-driven shells around the standard memory tool
+surface.  Test organisation:
+
+1. Preference extraction (agent shell) — happy path with verbatim
+   system prompt + cursor advancement on success / no advancement on
+   failure / empty log path
+2. Knowledge extraction (agent shell) — happy path with verbatim
+   system prompt + cursor advancement, plus the no-pages and
+   max-steps shapes
 """
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
 from penny.agents.history import HistoryAgent
 from penny.constants import PennyConstants
 from penny.database.memory_store import LogEntryInput
-from penny.database.models import PromptLog
 from penny.tests.conftest import TEST_SENDER
 
 
@@ -28,9 +30,30 @@ def _seed_user_message(penny, content: str) -> None:
     )
 
 
+def _seed_browse_page(penny, url: str, title: str, body: str) -> None:
+    """Seed one page section into the browse-results log (simulates BrowseTool)."""
+    section = (
+        f"{PennyConstants.BROWSE_PAGE_HEADER}{url}\n"
+        f"{PennyConstants.BROWSE_TITLE_PREFIX}{title}\n"
+        f"{PennyConstants.BROWSE_URL_PREFIX}{url}\n\n"
+        f"{body}"
+    )
+    penny.db.memories.append(
+        PennyConstants.MEMORY_BROWSE_RESULTS_LOG,
+        [LogEntryInput(content=section)],
+        author="chat",
+    )
+
+
 def _cursor_for_preference_extractor(penny):
     return penny.db.cursors.get(
         HistoryAgent.PREFERENCE_EXTRACTOR_NAME, PennyConstants.MEMORY_USER_MESSAGES_LOG
+    )
+
+
+def _cursor_for_knowledge_extractor(penny):
+    return penny.db.cursors.get(
+        HistoryAgent.KNOWLEDGE_EXTRACTOR_NAME, PennyConstants.MEMORY_BROWSE_RESULTS_LOG
     )
 
 
@@ -185,399 +208,175 @@ def test_preference_extractor_max_steps_constant_is_set():
     assert HistoryAgent.PREFERENCE_EXTRACTOR_MAX_STEPS > 0
 
 
-# ── Knowledge extraction ────────────────────────────────────────────────
-
-
-def _insert_prompt_with_browse(penny, url, title, page_content):
-    """Insert a prompt log with a browse tool result."""
-    browse_header = PennyConstants.BROWSE_PAGE_HEADER
-    tool_content = f"{browse_header}{url}\nTitle: {title}\nURL: {url}\n\n{page_content}"
-    messages = json.dumps(
-        [
-            {"role": "system", "content": "test"},
-            {"role": "user", "content": "test"},
-            {"role": "assistant", "content": None, "tool_calls": []},
-            {"role": "tool", "tool_call_id": "call_1", "content": tool_content},
-        ]
-    )
-    with penny.db.get_session() as session:
-        prompt = PromptLog(
-            model="test",
-            messages=messages,
-            response=json.dumps({"choices": []}),
-            agent_name="chat",
-            prompt_type="user_message",
-        )
-        session.add(prompt)
-        session.commit()
-        session.refresh(prompt)
-        return prompt.id
+# ── 2. Knowledge extraction (agent shell) ────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_extract_knowledge_from_browse_results(
+async def test_knowledge_extraction_full_loop(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """Knowledge extraction creates an entry from browse tool results."""
+    """Core success flow: read browse-results, write to knowledge, call done.
+
+    Asserts the verbatim system prompt drives the loop, the model's
+    ``collection_write`` tool call lands a summary in the ``knowledge``
+    memory attributed to the extractor identity, and the cursor advances
+    so the next run sees no new pages.
+    """
     config = make_config(history_interval=99999.0)
+    requests_seen: list[dict] = []
+    summary = (
+        "https://tubesteader.com/products/eggnog\n\n"
+        "The TubeSteader Eggnog is a single-channel tube overdrive pedal driven by "
+        "a 12AX7 vacuum tube at 250 VDC, designed for boutique guitar rigs."
+    )
 
     def handler(request, count):
-        return mock_llm._make_text_response(
-            request, "The Eggnog is a tube overdrive pedal by TubeSteader."
-        )
+        requests_seen.append(request)
+        if count == 1:
+            return mock_llm._make_tool_call_response(
+                request, "log_read_next", {"memory": "browse-results"}
+            )
+        if count == 2:
+            return mock_llm._make_tool_call_response(
+                request,
+                "collection_get",
+                {"memory": "knowledge", "key": "TubeSteader Eggnog"},
+            )
+        if count == 3:
+            return mock_llm._make_tool_call_response(
+                request,
+                "collection_write",
+                {
+                    "memory": "knowledge",
+                    "entries": [{"key": "TubeSteader Eggnog", "content": summary}],
+                },
+            )
+        return mock_llm._make_tool_call_response(request, "done", {})
 
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        _insert_prompt_with_browse(
+        _seed_browse_page(
             penny,
             "https://tubesteader.com/products/eggnog",
             "TubeSteader Eggnog",
             "The Eggnog uses a 12AX7 tube driven at 250 VDC.",
         )
 
-        await penny.history_agent._extract_knowledge()
+        result = await penny.history_agent._run_knowledge_extractor()
 
-        entry = penny.db.knowledge.get_by_url("https://tubesteader.com/products/eggnog")
-        assert entry is not None
-        assert entry.title == "TubeSteader Eggnog"
-        assert "tube overdrive" in entry.summary
+        assert result is True
+
+        # Full exact system prompt the model saw on its first step
+        system_text = [
+            m.get("content", "") for m in requests_seen[0]["messages"] if m.get("role") == "system"
+        ][0]
+        lines = system_text.split("\n")
+        assert lines[0].startswith("Current date and time: ")
+        rest = "\n".join(lines[1:])
+        expected = """\
+
+You extract durable knowledge from web pages Penny has read.
+
+1. Call log_read_next("browse-results") to fetch new browse \
+entries.  Each entry is one page (URL line, Title line, then \
+page content).
+2. For each page entry, write a single dense paragraph of 8-12 \
+sentences capturing the key factual content.  Focus on:
+   - What the thing IS (product, article, concept, etc.)
+   - Specific details that would be useful to recall later \
+(specs, names, dates, claims, findings)
+   - What makes it notable or distinctive
+   Do NOT include navigation/ads/site chrome, \
+"This page describes..." meta-framing, opinions about content \
+quality, or anything not on the page.  Plain declarative \
+prose; no bullets, no markdown, no headers.
+3. For each page, call collection_get("knowledge", key=<page \
+title>) to see whether you already have a summary.  If one is \
+returned, call collection_update("knowledge", key=<title>, \
+content=<merged paragraph>) — integrate any new details from \
+this fetch while preserving existing ones.  Otherwise, call \
+collection_write("knowledge", entries=[{key: <title>, \
+content: <new paragraph>}]).
+4. Call done().
+
+The entry's content should start with the page URL on its own \
+line, then a blank line, then the summary paragraph — so \
+retrieval can render the source link alongside the summary.
+
+If no new browse entries appear, call done() without writing \
+anything."""
+        assert rest == expected, (
+            f"Knowledge extractor system prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
+        )
+
+        # Summary landed in the knowledge collection, attributed to the extractor
+        knowledge = penny.db.memories.read_all("knowledge")
+        eggnog = next((e for e in knowledge if e.key == "TubeSteader Eggnog"), None)
+        assert eggnog is not None
+        assert eggnog.author == HistoryAgent.KNOWLEDGE_EXTRACTOR_NAME
+        assert "12AX7" in eggnog.content
+        assert eggnog.content.startswith("https://tubesteader.com/products/eggnog")
+
+        # Cursor advanced past the seeded page
+        cursor = _cursor_for_knowledge_extractor(penny)
+        assert cursor is not None
 
 
 @pytest.mark.asyncio
-async def test_extract_knowledge_upserts_existing_url(
+async def test_knowledge_cursor_does_not_advance_on_max_steps(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """Re-browsing the same URL aggregates into the existing knowledge entry."""
+    """Failed run leaves the knowledge cursor untouched so the next pass replays."""
     config = make_config(history_interval=99999.0)
 
-    call_count = 0
+    mock_llm.set_response_handler(
+        lambda request, _count: mock_llm._make_tool_call_response(
+            request, "log_read_next", {"memory": "browse-results"}
+        )
+    )
 
-    def handler(request, count):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return mock_llm._make_text_response(request, "First summary of the page.")
-        return mock_llm._make_text_response(request, "Updated summary with new info.")
+    async with running_penny(config) as penny:
+        _seed_browse_page(penny, "https://example.com", "Example", "Some content.")
+        before = _cursor_for_knowledge_extractor(penny)
+
+        result = await penny.history_agent._run_knowledge_extractor()
+
+        assert result is False
+        after = _cursor_for_knowledge_extractor(penny)
+        assert after == before
+
+
+@pytest.mark.asyncio
+async def test_no_browse_pages_completes_cleanly(
+    signal_server, mock_llm, make_config, test_user_info, running_penny
+):
+    """Empty browse-results log → model reads nothing, calls done immediately."""
+    config = make_config(history_interval=99999.0)
+
+    def handler(request, _count):
+        messages = request.get("messages", [])
+        tool_messages = [m for m in messages if m.get("role") == "tool"]
+        if not tool_messages:
+            return mock_llm._make_tool_call_response(
+                request, "log_read_next", {"memory": "browse-results"}
+            )
+        return mock_llm._make_tool_call_response(request, "done", {})
 
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        _insert_prompt_with_browse(
-            penny,
-            "https://example.com/page",
-            "Example Page",
-            "Original content.",
-        )
-        await penny.history_agent._extract_knowledge()
+        # Seed only the entries the migration backfilled — no fresh pages.
+        before = penny.db.memories.read_all("knowledge")
 
-        entry = penny.db.knowledge.get_by_url("https://example.com/page")
-        assert entry is not None
-        assert entry.summary == "First summary of the page."
+        result = await penny.history_agent._run_knowledge_extractor()
 
-        # Insert another prompt with the same URL
-        _insert_prompt_with_browse(
-            penny,
-            "https://example.com/page",
-            "Example Page",
-            "Updated content with more details.",
-        )
-        await penny.history_agent._extract_knowledge()
+        assert result is True
+        # No new entries written
+        after = penny.db.memories.read_all("knowledge")
+        assert len(after) == len(before)
 
-        entry = penny.db.knowledge.get_by_url("https://example.com/page")
-        assert entry is not None
-        assert entry.summary == "Updated summary with new info."
 
-
-@pytest.mark.asyncio
-async def test_extract_knowledge_dedupes_same_url_within_batch(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Same URL re-logged across an agentic loop's steps is summarized once.
-
-    Each step of an agentic loop re-logs the prior tool result messages, so a
-    single browse appears in multiple PromptLog rows. Knowledge extraction must
-    process that URL exactly once per batch (latest content wins) instead of
-    re-aggregating identical content for every step.
-    """
-    config = make_config(history_interval=99999.0)
-
-    summaries_generated = []
-
-    def handler(request, count):
-        summary = f"Summary {len(summaries_generated) + 1}"
-        summaries_generated.append(summary)
-        return mock_llm._make_text_response(request, summary)
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        # Simulate three steps of an agentic loop, each re-logging the same
-        # browse tool result. The third step has the freshest content.
-        _insert_prompt_with_browse(
-            penny, "https://loop.example/page", "Loop Page", "Step 1 content"
-        )
-        _insert_prompt_with_browse(
-            penny, "https://loop.example/page", "Loop Page", "Step 2 content"
-        )
-        _insert_prompt_with_browse(
-            penny, "https://loop.example/page", "Loop Page", "Step 3 content"
-        )
-
-        await penny.history_agent._extract_knowledge()
-
-        # Exactly one LLM call (the dedup), not three.
-        assert len(summaries_generated) == 1
-        entry = penny.db.knowledge.get_by_url("https://loop.example/page")
-        assert entry is not None
-        assert entry.summary == "Summary 1"
-
-
-@pytest.mark.asyncio
-async def test_extract_knowledge_dedupes_url_fragments_within_batch(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """`/page` and `/page#anchor` are the same page; collapse to one summarize.
-
-    The browser tool sometimes follows in-page anchor links from search
-    results, producing browse entries whose URLs differ only by `#fragment`.
-    Without normalization the dedup keys them as distinct URLs and the model
-    summarizes byte-identical content N times, also writing N rows to the
-    knowledge table that all point at the same page.
-    """
-    config = make_config(history_interval=99999.0)
-
-    summaries_generated = []
-
-    def handler(request, count):
-        summary = f"Summary {len(summaries_generated) + 1}"
-        summaries_generated.append(summary)
-        return mock_llm._make_text_response(request, summary)
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        _insert_prompt_with_browse(penny, "https://Example.com/page", "Example", "Same content")
-        _insert_prompt_with_browse(
-            penny, "https://example.com/page#intro", "Example", "Same content"
-        )
-        _insert_prompt_with_browse(
-            penny, "https://example.com/page#summary", "Example", "Same content"
-        )
-
-        await penny.history_agent._extract_knowledge()
-
-        # Exactly one LLM call across the three fragment variants.
-        assert len(summaries_generated) == 1
-
-        # Knowledge is stored under the canonical (fragment-stripped, lowercase
-        # host) URL and no duplicate rows exist for the fragment variants.
-        entry = penny.db.knowledge.get_by_url("https://example.com/page")
-        assert entry is not None
-        assert penny.db.knowledge.get_by_url("https://example.com/page#intro") is None
-        assert penny.db.knowledge.get_by_url("https://example.com/page#summary") is None
-        assert penny.db.knowledge.get_by_url("https://Example.com/page") is None
-
-
-def test_normalize_url_strips_fragment_and_lowercases_host():
-    """`_normalize_url` canonicalizes URLs for dedup keying."""
-    normalize = HistoryAgent._normalize_url
-    # Fragment stripped
-    assert normalize("https://example.com/page#anchor") == "https://example.com/page"
-    # Host lowercased, scheme lowercased
-    assert normalize("HTTPS://Example.COM/Path") == "https://example.com/Path"
-    # Path case preserved (servers can be case-sensitive)
-    assert (
-        normalize("https://example.com/CaseSensitive/Path#x")
-        == "https://example.com/CaseSensitive/Path"
-    )
-    # Query string preserved
-    assert (
-        normalize("https://example.com/search?q=Foo&p=1#results")
-        == "https://example.com/search?q=Foo&p=1"
-    )
-    # Already-canonical URL is unchanged
-    assert normalize("https://example.com/page") == "https://example.com/page"
-
-
-@pytest.mark.asyncio
-async def test_extract_knowledge_respects_watermark(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Knowledge extraction only processes prompts after the watermark."""
-    config = make_config(history_interval=99999.0)
-
-    summaries_generated = []
-
-    def handler(request, count):
-        summary = f"Summary {len(summaries_generated) + 1}"
-        summaries_generated.append(summary)
-        return mock_llm._make_text_response(request, summary)
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        _insert_prompt_with_browse(penny, "https://a.com", "Page A", "Content A")
-        _insert_prompt_with_browse(penny, "https://b.com", "Page B", "Content B")
-
-        # First extraction processes both
-        await penny.history_agent._extract_knowledge()
-        assert penny.db.knowledge.get_by_url("https://a.com") is not None
-        assert penny.db.knowledge.get_by_url("https://b.com") is not None
-
-        summaries_generated.clear()
-
-        # Add a third prompt
-        _insert_prompt_with_browse(penny, "https://c.com", "Page C", "Content C")
-        await penny.history_agent._extract_knowledge()
-
-        # Only the new prompt should be processed
-        assert len(summaries_generated) == 1
-        assert penny.db.knowledge.get_by_url("https://c.com") is not None
-
-
-def _insert_prompt_without_browse(penny):
-    """Insert a prompt log with no browse tool results."""
-    messages = json.dumps(
-        [
-            {"role": "system", "content": "test"},
-            {"role": "user", "content": "hey penny what's up"},
-            {"role": "assistant", "content": "not much!"},
-        ]
-    )
-    with penny.db.get_session() as session:
-        prompt = PromptLog(
-            model="test",
-            messages=messages,
-            response=json.dumps({"choices": []}),
-            agent_name="chat",
-            prompt_type="user_message",
-        )
-        session.add(prompt)
-        session.commit()
-        session.refresh(prompt)
-        return prompt.id
-
-
-@pytest.mark.asyncio
-async def test_extract_knowledge_skips_prompts_without_browse(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Knowledge extraction only queries prompts containing browse results."""
-    config = make_config(history_interval=99999.0)
-
-    summaries_generated = []
-
-    def handler(request, count):
-        summary = f"Summary {len(summaries_generated) + 1}"
-        summaries_generated.append(summary)
-        return mock_llm._make_text_response(request, summary)
-
-    mock_llm.set_response_handler(handler)
-
-    async with running_penny(config) as penny:
-        # Insert many prompts without browse results
-        for _ in range(10):
-            _insert_prompt_without_browse(penny)
-
-        # Insert one prompt with browse results
-        _insert_prompt_with_browse(penny, "https://found.com", "Found Page", "Content")
-
-        await penny.history_agent._extract_knowledge()
-
-        # Only the browse-containing prompt should be processed
-        assert len(summaries_generated) == 1
-        assert penny.db.knowledge.get_by_url("https://found.com") is not None
-
-
-# ── Browse section parsing (unit tests) ─────────────────────────────────
-
-
-_HEADER = PennyConstants.BROWSE_PAGE_HEADER
-
-
-def test_parse_browse_section_healthy():
-    """Healthy browse result with Title + URL + content is parsed."""
-    section = (
-        f"{_HEADER}https://example.com/page\n"
-        "Title: Example Page\n"
-        "URL: https://example.com/page\n"
-        "\nThis is the page content with lots of useful information."
-    )
-    result = HistoryAgent._parse_browse_section(section)
-    assert result is not None
-    url, title, content = result
-    assert url == "https://example.com/page"
-    assert title == "Example Page"
-    assert "useful information" in content
-
-
-def test_parse_browse_section_rejects_error_section_header():
-    """Sections under the dedicated error header never reach the parser, but if
-    one were passed in directly it would be rejected (no Title:/URL: lines)."""
-    section = (
-        f"{PennyConstants.BROWSE_ERROR_HEADER}https://example.com\n"
-        "Could not read page: extraction failed after 10 retries"
-    )
-    assert HistoryAgent._parse_browse_section(section) is None
-
-
-def test_parse_browse_section_missing_title_line():
-    """Sections without a Title: line are rejected."""
-    section = f"{_HEADER}https://example.com\nNo title here\nURL: https://example.com\nbody"
-    assert HistoryAgent._parse_browse_section(section) is None
-
-
-def test_parse_browse_section_missing_url_line():
-    """Sections without a URL: line are rejected."""
-    section = f"{_HEADER}https://example.com\nTitle: Some Page\nNo url here\nbody"
-    assert HistoryAgent._parse_browse_section(section) is None
-
-
-def test_parse_browse_section_empty_body():
-    """Page with Title + URL but empty body is rejected — nothing to summarize."""
-    section = f"{_HEADER}https://example.com\nTitle: Some Page\nURL: https://example.com\n"
-    assert HistoryAgent._parse_browse_section(section) is None
-
-
-def test_parse_browse_section_whitespace_body():
-    """Page with Title + URL but whitespace-only body is rejected."""
-    section = f"{_HEADER}https://example.com\nTitle: Some Page\nURL: https://example.com\n   \n\n"
-    assert HistoryAgent._parse_browse_section(section) is None
-
-
-def test_parse_browse_section_single_line():
-    """Single-line browse header with no content is rejected."""
-    section = f"{_HEADER}https://example.com"
-    assert HistoryAgent._parse_browse_section(section) is None
-
-
-def test_parse_browse_results_skips_error_sections():
-    """Mixed tool message: a healthy section is parsed, an error section is skipped."""
-    from penny.database.models import PromptLog
-
-    healthy = (
-        f"{PennyConstants.BROWSE_PAGE_HEADER}https://good.com\n"
-        "Title: Good Page\n"
-        "URL: https://good.com\n"
-        "\nReal page content with substance."
-    )
-    error = (
-        f"{PennyConstants.BROWSE_ERROR_HEADER}https://bad.com\n"
-        "Could not read page: extraction failed after 10 retries"
-    )
-    tool_content = PennyConstants.SECTION_SEPARATOR.join([healthy, error])
-    prompt = PromptLog(
-        model="test",
-        messages=json.dumps(
-            [
-                {"role": "user", "content": "test"},
-                {"role": "tool", "tool_call_id": "x", "content": tool_content},
-            ]
-        ),
-        response="{}",
-    )
-    results = HistoryAgent._parse_browse_results(prompt)
-    assert len(results) == 1
-    assert results[0][0] == "https://good.com"
-    assert "substance" in results[0][2]
+def test_knowledge_extractor_max_steps_constant_is_set():
+    """Defensive check: the cap is non-zero so the loop can actually run."""
+    assert HistoryAgent.KNOWLEDGE_EXTRACTOR_MAX_STEPS > 0
