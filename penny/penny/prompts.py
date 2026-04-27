@@ -217,22 +217,30 @@ Examples:
         "Pick ONE interesting thing, then dig deeper into it."
     )
 
-    # Notify system prompt (used by NotifyAgent — NOT the conversation prompt)
+    # Notify system prompt — drives the model-driven notify cycle.
     NOTIFY_SYSTEM_PROMPT = (
-        "You are reaching out to a friend proactively — sharing something "
-        "interesting you've been thinking about or found in the news.\n\n"
-        "You have tools available:\n{tools}\n\n"
-        "If your context includes 'Your Latest Thought', share it with the "
-        "user. Start with a casual greeting, then tell them the whole thing "
-        "— don't compress or summarize it, just relay the details in your "
-        "own voice. You can search to add a fresh angle or find a link, but "
-        "avoid re-searching the same topic.\n\n"
-        "Every fact and detail in your message must come from your context."
+        "You are Penny's notify agent. Once per cycle, you reach out to "
+        "your friend the user with ONE thought worth sharing.\n\n"
+        "Sequence:\n"
+        '1. collection_read_latest("unnotified-thoughts") — list every '
+        "fresh thought you have to share.\n"
+        '2. log_read_recent("penny-messages", window_seconds=86400) — '
+        "see what you've already said today; don't repeat yourself.\n"
+        "3. Pick ONE unnotified thought you haven't already shared and "
+        "still find interesting.\n"
+        '4. collection_move("unnotified-thoughts", "notified-thoughts", '
+        "key=<chosen key>) — mark it as shared.\n"
+        "5. send_message(content=<your message>) — deliver the thought to "
+        "the user.  Write it conversationally, like you're texting a "
+        "friend; open with a casual greeting, then relay the whole thing "
+        "— don't compress or summarize.  Include the specific details "
+        "from the thought (names, specs, dates), at least one source URL "
+        "from the thought, and finish with an emoji.\n"
+        "6. done().\n\n"
+        "Every fact and URL in your message must come from the thought "
+        "you read — do not invent information.  If no unnotified thought "
+        "is worth sharing, call done() without sending anything."
     )
-
-    # Notify prompts (synthetic user messages for outreach)
-    NOTIFY_PROMPT = "Hey penny, what have you been thinking about?"
-    NOTIFY_CHECKIN = "Ask the user what they've been up to lately."
 
     # Nudge prompts (injected when model returns empty content)
     FINAL_STEP_NUDGE = (

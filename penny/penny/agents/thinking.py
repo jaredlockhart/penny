@@ -58,7 +58,7 @@ class ThinkingAgent(Agent):
         model called ``done()`` to exit gracefully — anything else
         (max steps, model error) returns False.
         """
-        self._install_tools(self.get_tools(user=""))
+        self._install_tools(self.get_tools(user=None))
         run_id = uuid.uuid4().hex
         response = await self.run(
             prompt="",
