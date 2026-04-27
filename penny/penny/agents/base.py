@@ -672,9 +672,10 @@ class Agent:
         legitimately needs a narrower surface (e.g. vision mode where
         tool calls are disabled entirely).
 
-        Pass ``user=None`` for background agents that have no specific
-        recipient (thinking, history) — ``send_message`` is omitted
-        from the surface in that case.
+        Pass ``user=None`` only for flows that have no specific
+        recipient (e.g. the knowledge extractor, which is
+        user-independent) — ``send_message`` can't be bound without a
+        recipient and is omitted from the surface in that case.
 
         Builds fresh each cycle so runtime config changes take effect
         immediately and the underlying ``BrowseTool``'s author + cursor
