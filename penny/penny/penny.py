@@ -256,7 +256,10 @@ class Penny:
             command_registry=self.command_registry,
         )
         self.schedule_executor.set_channel(self.channel)
+        self.chat_agent.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
+        self.thinking_agent.set_channel(self.channel)
+        self.history_agent.set_channel(self.channel)
         self._wire_browser_tools(config)
 
     def _wire_browser_tools(self, config: Config) -> None:

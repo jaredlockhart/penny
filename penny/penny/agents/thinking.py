@@ -48,17 +48,18 @@ class ThinkingAgent(Agent):
         if total >= max_unnotified:
             logger.info("Skipping thinking: %d unnotified thoughts (max %d)", total, max_unnotified)
             return True
-        return await self._run_thinking_cycle()
+        return await self._run_thinking_cycle(user)
 
-    async def _run_thinking_cycle(self) -> bool:
+    async def _run_thinking_cycle(self, user: str) -> bool:
         """Run one model-driven thinking cycle.
 
-        Tool surface is the agent's default (memory + browse).  Cursor
-        and write attribution use ``self.name``.  Success means the
-        model called ``done()`` to exit gracefully — anything else
-        (max steps, model error) returns False.
+        Tool surface is the agent's default — memory + browse +
+        send_message (bound to ``user``).  Cursor and write
+        attribution use ``self.name``.  Success means the model
+        called ``done()`` to exit gracefully — anything else (max
+        steps, model error) returns False.
         """
-        self._install_tools(self.get_tools(user=None))
+        self._install_tools(self.get_tools(user=user))
         run_id = uuid.uuid4().hex
         response = await self.run(
             prompt="",
