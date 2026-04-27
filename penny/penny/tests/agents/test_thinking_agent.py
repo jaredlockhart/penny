@@ -137,7 +137,11 @@ async def test_skip_when_unnotified_queue_is_full(
 
     async with running_penny(config) as penny:
         # Seed one unnotified thought so the cap is reached
-        penny.db.thoughts.add(TEST_SENDER, "existing thought", title="seed")
+        penny.db.memories.write(
+            "unnotified-thoughts",
+            [EntryInput(key="seed", content="existing thought")],
+            author="thinking",
+        )
 
         result = await penny.thinking_agent.execute_for_user(TEST_SENDER)
 

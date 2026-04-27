@@ -32,7 +32,7 @@ class NotifyAgent(Agent):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._boot_time = datetime.now(UTC).replace(tzinfo=None)
+        self._boot_time = datetime.now(UTC)
         # Tools stay available on the final agentic step — notify exits
         # via ``done()`` once it has called ``send_message``.
         self._keep_tools_on_final_step = True
@@ -66,17 +66,55 @@ class NotifyAgent(Agent):
         return len(self.db.memories.read_latest(PennyConstants.MEMORY_UNNOTIFIED_THOUGHTS, k=1)) > 0
 
     def _cooldown_elapsed(self, user: str) -> bool:
-        """Exponential backoff cooldown between autonomous outreach messages."""
-        latest = self.db.messages.get_latest_autonomous_outgoing_time(user)
+        """Exponential backoff cooldown between autonomous outreach messages.
+
+        Reads the ``penny-messages`` log filtered by ``author == self.name``
+        to find prior notifications and ``user-messages`` for the user's
+        most recent reply.  No reliance on the legacy ``MessageLog`` table.
+        """
+        latest = self._latest_notify_time()
         if latest is None:
             return True
-        elapsed = (datetime.now(UTC).replace(tzinfo=None) - latest).total_seconds()
-        count = self.db.messages.count_autonomous_since_last_incoming(user, self._boot_time)
+        now_utc = datetime.now(UTC)
+        elapsed = (now_utc - latest).total_seconds()
+        count = self._count_notifies_since_user_response()
         cooldown = min(
             self.config.runtime.NOTIFY_COOLDOWN_MIN * (2 ** max(count - 1, 0)),
             self.config.runtime.NOTIFY_COOLDOWN_MAX,
         )
         return elapsed >= cooldown
+
+    def _latest_notify_time(self) -> datetime | None:
+        """Created-at of the most recent ``penny-messages`` entry from notify."""
+        for entry in self.db.memories.read_latest(PennyConstants.MEMORY_PENNY_MESSAGES_LOG):
+            if entry.author == self.name:
+                return entry.created_at
+        return None
+
+    def _count_notifies_since_user_response(self) -> int:
+        """Count notify-authored ``penny-messages`` entries newer than the cutoff.
+
+        Cutoff is the later of ``self._boot_time`` and the user's latest
+        ``user-messages`` entry — so a service restart resets the
+        backoff count, and so does a fresh user message.
+        """
+        latest_user = self._latest_user_message_time()
+        cutoff = self._boot_time
+        if latest_user is not None and latest_user > cutoff:
+            cutoff = latest_user
+        count = 0
+        for entry in self.db.memories.read_latest(PennyConstants.MEMORY_PENNY_MESSAGES_LOG):
+            if entry.author != self.name:
+                continue
+            if entry.created_at <= cutoff:
+                break
+            count += 1
+        return count
+
+    def _latest_user_message_time(self) -> datetime | None:
+        """Created-at of the most recent ``user-messages`` entry."""
+        entries = self.db.memories.read_latest(PennyConstants.MEMORY_USER_MESSAGES_LOG, k=1)
+        return entries[0].created_at if entries else None
 
     # ── Cycle ────────────────────────────────────────────────────────────
 

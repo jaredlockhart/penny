@@ -4,10 +4,10 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
-from sqlmodel import Session, func, select
+from sqlmodel import Session, select
 
 from penny.agents.models import MessageRole
 from penny.constants import PennyConstants
@@ -449,61 +449,6 @@ class MessageStore:
                 select(func.count()).select_from(MessageLog).where(MessageLog.id.notin_(has_child))
             ).one()
 
-    def get_latest_incoming_time(self, sender: str) -> datetime | None:
-        """Get timestamp of the most recent incoming message from a user."""
-        with self._session() as session:
-            return session.exec(
-                select(MessageLog.timestamp)
-                .where(
-                    MessageLog.sender == sender,
-                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
-                    MessageLog.is_reaction == False,  # noqa: E712
-                )
-                .order_by(MessageLog.timestamp.desc())
-                .limit(1)
-            ).first()
-
-    def get_latest_autonomous_outgoing_time(self, recipient: str) -> datetime | None:
-        """Get timestamp of the most recent autonomous outgoing message to a user."""
-        with self._session() as session:
-            return session.exec(
-                select(MessageLog.timestamp)
-                .where(
-                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                    MessageLog.parent_id == None,  # noqa: E711
-                    MessageLog.recipient == recipient,
-                )
-                .order_by(MessageLog.timestamp.desc())
-                .limit(1)
-            ).first()
-
-    def count_autonomous_since_last_incoming(self, user: str, after: datetime | None = None) -> int:
-        """Count autonomous outgoing messages since the user's last incoming message.
-
-        Args:
-            user: The user identifier.
-            after: Optional floor timestamp — messages before this are excluded.
-                   Used to reset backoff count on service restart.
-        """
-        latest_incoming = self.get_latest_incoming_time(user)
-        # Use the later of last incoming and the floor timestamp
-        cutoff = latest_incoming
-        if after is not None and (cutoff is None or after > cutoff):
-            cutoff = after
-        with self._session() as session:
-            query = (
-                select(func.count())
-                .select_from(MessageLog)
-                .where(
-                    MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                    MessageLog.parent_id == None,  # noqa: E711
-                    MessageLog.recipient == user,
-                )
-            )
-            if cutoff is not None:
-                query = query.where(MessageLog.timestamp > cutoff)
-            return session.exec(query).one()
-
     def set_run_outcome(self, run_id: str, outcome: str) -> None:
         """Set the run_outcome on the last prompt log for a given run_id."""
         try:
@@ -628,101 +573,3 @@ class MessageStore:
             "run_outcome": run_outcome,
             "prompts": serialized_prompts,
         }
-
-    def get_last_checkin_time(self, prompt_text: str, hours: int = 48) -> datetime | None:
-        """Get timestamp of the most recent prompt log containing the check-in prompt."""
-        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
-        with self._session() as session:
-            return session.exec(
-                select(PromptLog.timestamp)
-                .where(
-                    PromptLog.messages.contains(prompt_text),
-                    PromptLog.timestamp >= cutoff,
-                )
-                .order_by(PromptLog.timestamp.desc())
-                .limit(1)
-            ).first()
-
-    def get_recent_outgoing_content(
-        self, recipient: str, hours: int = 24, limit: int = 20
-    ) -> list[str]:
-        """Get content of recent outgoing messages for novelty scoring."""
-        return [m.content for m in self.get_recent_outgoing(recipient, hours, limit)]
-
-    def get_recent_outgoing(
-        self, recipient: str, hours: int = 24, limit: int = 20
-    ) -> list[MessageLog]:
-        """Get recent outgoing messages for novelty scoring (with embeddings)."""
-        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                        MessageLog.recipient == recipient,
-                        MessageLog.timestamp >= cutoff,
-                    )
-                    .order_by(MessageLog.timestamp.desc())
-                    .limit(limit)
-                ).all()
-            )
-
-    def update_embedding(self, message_id: int, embedding: bytes) -> None:
-        """Update the embedding for a message."""
-        try:
-            with self._session() as session:
-                msg = session.get(MessageLog, message_id)
-                if msg:
-                    msg.embedding = embedding
-                    session.add(msg)
-                    session.commit()
-        except Exception as e:
-            logger.error("Failed to update message %d embedding: %s", message_id, e)
-
-    def get_outgoing_without_embeddings(self, limit: int = 50) -> list[MessageLog]:
-        """Get outgoing messages that don't have embeddings yet, newest first."""
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
-                        MessageLog.embedding == None,  # noqa: E711
-                    )
-                    .order_by(MessageLog.timestamp.desc())
-                    .limit(limit)
-                ).all()
-            )
-
-    def get_incoming_without_embeddings(self, limit: int = 50) -> list[MessageLog]:
-        """Get incoming non-reaction messages that don't have embeddings yet, newest first."""
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
-                        MessageLog.is_reaction == False,  # noqa: E712
-                        MessageLog.embedding == None,  # noqa: E711
-                    )
-                    .order_by(MessageLog.timestamp.desc())
-                    .limit(limit)
-                ).all()
-            )
-
-    def get_incoming_with_embeddings(self, sender: str) -> list[MessageLog]:
-        """Get all incoming non-reaction messages that have embeddings, for similarity search."""
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(MessageLog)
-                    .where(
-                        MessageLog.sender == sender,
-                        MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
-                        MessageLog.is_reaction == False,  # noqa: E712
-                        MessageLog.embedding != None,  # noqa: E711
-                    )
-                    .order_by(MessageLog.timestamp.desc())
-                ).all()
-            )

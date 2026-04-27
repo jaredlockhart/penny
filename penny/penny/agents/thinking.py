@@ -19,7 +19,7 @@ import uuid
 from typing import Any
 
 from penny.agents.base import Agent
-from penny.constants import ThinkingPromptType
+from penny.constants import PennyConstants, ThinkingPromptType
 from penny.prompts import Prompt
 from penny.tools.memory_tools import DoneTool
 
@@ -44,9 +44,13 @@ class ThinkingAgent(Agent):
     async def execute_for_user(self, user: str) -> bool:
         """Skip when the unnotified queue is full; otherwise run a cycle."""
         max_unnotified = int(self.config.runtime.MAX_UNNOTIFIED_THOUGHTS)
-        total = self.db.thoughts.count_unnotified(user)
-        if total >= max_unnotified:
-            logger.info("Skipping thinking: %d unnotified thoughts (max %d)", total, max_unnotified)
+        unnotified = self.db.memories.read_latest(PennyConstants.MEMORY_UNNOTIFIED_THOUGHTS)
+        if len(unnotified) >= max_unnotified:
+            logger.info(
+                "Skipping thinking: %d unnotified thoughts (max %d)",
+                len(unnotified),
+                max_unnotified,
+            )
             return True
         return await self._run_thinking_cycle(user)
 

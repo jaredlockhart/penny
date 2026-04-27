@@ -16,7 +16,6 @@ from penny.constants import PennyConstants
 from penny.database.memory_store import LogEntryInput
 from penny.database.models import MessageLog
 from penny.llm import LlmClient
-from penny.llm.embeddings import serialize_embedding
 from penny.llm.image_client import OllamaImageClient
 from penny.llm.similarity import embed_text
 from penny.responses import PennyResponse
@@ -339,19 +338,8 @@ class MessageChannel(ABC):
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
             self._db.messages.set_external_id(message_id, str(external_id))
-        # Cache embedding for novelty scoring
-        if message_id:
-            await self._embed_message(message_id, prepared)
         logger.info("Sent response to %s (%d chars)", recipient, len(content))
         return message_id if external_id is not None else None
-
-    async def _embed_message(self, message_id: int, content: str) -> None:
-        """Compute and cache embedding for an outgoing message."""
-        if not self._embedding_model_client:
-            return
-        vec = await embed_text(self._embedding_model_client, content)
-        if vec is not None:
-            self._db.messages.update_embedding(message_id, serialize_embedding(vec))
 
     async def _append_to_memory_log(self, name: str, content: str, author: str) -> None:
         """Append ``content`` to a memory log, embedding at write time.
@@ -568,8 +556,6 @@ class MessageChannel(ABC):
             signal_timestamp=message.signal_timestamp,
             device_id=device_id,
         )
-        if incoming_id:
-            await self._embed_message(incoming_id, message.content)
         await self._deliver_agent_response(
             message, user_sender, response, incoming_id, progress, self._message_agent.name
         )
