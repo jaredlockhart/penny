@@ -7,11 +7,6 @@ whose ``recall`` mode is not ``'off'``.  Each memory is rendered by mode:
   recent   — newest-first slice (``read_latest``)
   relevant — similarity-ranked slice (``read_similar``; skipped without embedding)
   all      — full set in insertion order (``read_all``)
-
-Log-name pairs listed in ``PennyConstants.MEMORY_CONVERSATION_PAIRS`` are
-merged chronologically into a single ``### Conversation`` section when both
-are present.  The secondary member appears only in the merged section; the
-primary is also rendered individually under its own recall mode.
 """
 
 from __future__ import annotations
@@ -19,7 +14,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.memory_store import RecallMode
 from penny.database.models import Memory, MemoryEntry
@@ -38,17 +32,11 @@ async def build_recall_block(
     similarity_floor: float = 0.0,
 ) -> str | None:
     """Assemble recall context for all active memories — summary method."""
-    memories = _active_memories(db)
-    if not memories:
-        return None
-    memory_map = {m.name: m for m in memories}
     sections: list[str] = []
-    pair_secondary: set[str] = set()
-
-    _render_conversation_pairs(db, memory_map, sections, pair_secondary)
-    await _render_all_individual(
-        db, llm_client, memory_map, pair_secondary, current_message, similarity_floor, sections
-    )
+    for memory in _active_memories(db):
+        section = await _render_memory(db, llm_client, memory, current_message, similarity_floor)
+        if section:
+            sections.append(section)
     return "\n\n".join(sections) if sections else None
 
 
@@ -58,44 +46,6 @@ async def build_recall_block(
 def _active_memories(db: Database) -> list[Memory]:
     """Non-archived memories with recall != 'off'."""
     return [m for m in db.memories.list_all() if not m.archived and m.recall != RecallMode.OFF]
-
-
-def _render_conversation_pairs(
-    db: Database,
-    memory_map: dict[str, Memory],
-    sections: list[str],
-    pair_secondary: set[str],
-) -> None:
-    """Merge paired logs chronologically and append a Conversation section."""
-    for primary_name, secondary_name in PennyConstants.MEMORY_CONVERSATION_PAIRS:
-        if primary_name not in memory_map or secondary_name not in memory_map:
-            continue
-        primary_entries = db.memories.read_latest(primary_name)
-        secondary_entries = db.memories.read_latest(secondary_name)
-        merged = sorted(primary_entries + secondary_entries, key=lambda e: e.created_at)
-        if not merged:
-            continue
-        lines = [f"[{e.author}] {e.content}" for e in merged]
-        sections.append("### Conversation\n" + "\n".join(lines))
-        pair_secondary.add(secondary_name)
-
-
-async def _render_all_individual(
-    db: Database,
-    llm_client: LlmClient | None,
-    memory_map: dict[str, Memory],
-    pair_secondary: set[str],
-    current_message: str | None,
-    similarity_floor: float,
-    sections: list[str],
-) -> None:
-    """Render each non-secondary memory by its recall mode."""
-    for memory in memory_map.values():
-        if memory.name in pair_secondary:
-            continue
-        section = await _render_memory(db, llm_client, memory, current_message, similarity_floor)
-        if section:
-            sections.append(section)
 
 
 async def _render_memory(

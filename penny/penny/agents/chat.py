@@ -164,23 +164,20 @@ class ChatAgent(Agent):
         content: str | None = None,
         instructions: str | None = None,
     ) -> str:
-        """Identity + profile + knowledge + related messages + recall + page hint + instructions."""
-        conversation_embeddings = await self._embed_conversation(user, content) if content else None
-        knowledge = (
-            await self._related_knowledge_section(conversation_embeddings) if content else None
-        )
-        related = (
-            await self._related_messages_section(user, conversation_embeddings) if content else None
-        )
-        recall = await self._recall_section(content)
+        """Identity + (profile + recall + page hint) + instructions.
+
+        Memory context is brokered entirely by the recall block: each
+        active memory is rendered into the system prompt according to
+        its own ``recall`` flag (off / recent / relevant / all).  No
+        bespoke per-section retrieval lives here.
+        """
+        recall = await build_recall_block(self.db, self._embedding_model_client, content)
         return "\n\n".join(
             s
             for s in [
                 self._identity_section(),
                 self._context_block(
                     self._profile_section(user),
-                    knowledge,
-                    related,
                     recall,
                     self._page_hint_section(),
                 ),
@@ -188,10 +185,6 @@ class ChatAgent(Agent):
             ]
             if s
         )
-
-    async def _recall_section(self, current_message: str | None) -> str | None:
-        """Ambient recall block from active memories."""
-        return await build_recall_block(self.db, self._embedding_model_client, current_message)
 
     def _page_hint_section(self) -> str | None:
         """Minimal hint about what page the user is currently viewing."""

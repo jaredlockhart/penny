@@ -95,28 +95,3 @@ def centrality_score(vec: list[float], corpus_vecs: list[list[float]]) -> float:
     if not corpus_vecs:
         return 0.0
     return sum(cosine_similarity(vec, cv) for cv in corpus_vecs) / len(corpus_vecs)
-
-
-def centrality_scores(vecs: dict[int, list[float]]) -> dict[int, float]:
-    """Batch-compute centrality for every vector against the rest of the corpus.
-
-    O(N²) over the corpus — for each vector, mean cosine similarity to every
-    other vector in the dict. Returns a parallel dict keyed by the same ids.
-    Used to precompute a centrality cache once per process for the related-
-    messages retrieval path.
-    """
-    if not vecs:
-        return {}
-    ids = list(vecs.keys())
-    if len(ids) < 2:
-        return {ids[0]: 0.0} if ids else {}
-    # Compute the upper triangle once and mirror it; cosine is symmetric.
-    sums = dict.fromkeys(ids, 0.0)
-    for i in range(len(ids)):
-        vec_i = vecs[ids[i]]
-        for j in range(i + 1, len(ids)):
-            sim = cosine_similarity(vec_i, vecs[ids[j]])
-            sums[ids[i]] += sim
-            sums[ids[j]] += sim
-    divisor = len(ids) - 1
-    return {mid: total / divisor for mid, total in sums.items()}

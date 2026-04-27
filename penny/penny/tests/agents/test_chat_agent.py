@@ -145,9 +145,6 @@ Just wrap them in conversational text, not a clinical dump.
 ### User Profile
 The user's name is Test User.
 
-### Conversation
-[user] what's the weather like today?
-
 ### playlists
 favorite playlists
 
@@ -162,77 +159,24 @@ useful tips
 The user is talking to you — no greetings, no sign-offs, just pick up \
 the thread.
 
-You have tools available:
-- **collection_create**: Create a new keyed collection. \
-Collections store entries by key with similarity-based dedup on write. \
-Provide a short description and a recall mode (off, recent, relevant, all).
-- **log_create**: Create a new append-only log. Logs store keyless entries \
-in time order and are meant for streams of events (messages, measurements, etc.). \
-Provide a short description and a recall mode (off, recent, relevant, all).
-- **collection_archive**: Archive a collection. The data stays intact \
-but the collection is excluded from the chat agent's ambient recall \
-until unarchived.
-- **collection_unarchive**: Unarchive a previously archived collection.
-- **list_memories**: List every memory (collection or log) with its type, \
-recall mode, archived state, and description. Use this to discover what's available.
-- **collection_get**: Look up an entry by its exact key in a collection. \
-Returns the entry's content if found, or a 'not found' message otherwise.
-- **collection_read_latest**: Return the newest entries in a collection, \
-newest first. Omit ``k`` to return every entry.
-- **collection_read_random**: Return ``k`` entries sampled uniformly at random. \
-Omit ``k`` to return all.
-- **collection_read_similar**: Return entries from a collection ordered by \
-content similarity to an ``anchor`` phrase. Useful for finding related \
-preferences, facts, etc.
-- **collection_read_all**: Return every entry in a collection, oldest first.
-- **collection_keys**: List the unique keys in a collection (insertion order).
-- **collection_write**: Write one or more entries to a collection. Each \
-entry has a short ``key`` (topic/identifier) and a longer ``content`` body. \
-Dedup runs per entry — duplicates are reported but not treated as errors.
-- **collection_update**: Replace the content of an existing entry in a \
-collection, identified by key. Returns an error if the key doesn't exist.
-- **collection_move**: Move the entry with the given key from one collection \
-to another. Fails with 'collision' if the target already has an entry with that key.
-- **log_read_latest**: Return the newest entries in a log, newest first. \
-Omit ``k`` to return all.
-- **log_read_recent**: Return entries created within the past \
-``window_seconds`` seconds, oldest first. Use for 'what just happened' queries.
-- **log_read_similar**: Return log entries ordered by content similarity \
-to an ``anchor`` phrase. Useful for finding historically-relevant statements, \
-past browse results, etc.
-- **log_read_all**: Return every entry in a log, oldest first.
-- **log_read_next**: Return entries appended to a log since this agent's \
-last committed read. Use this to process new content incrementally without \
-re-seeing entries from earlier runs.
-- **log_append**: Append one keyless entry to a log. No dedup runs; every \
-append is stored.
-- **exists**: Check whether an entry equivalent to the given key/content \
-already exists in any of the listed memories. Uses the same similarity-based \
-dedup rule as ``collection_write``. Use this before writing to avoid \
-duplicates that span multiple collections.
-- **done**: Call this when you have completed the task and have no more \
-tool calls to make. Takes no arguments.
-- **browse**: Look things up. Pass up to 3 queries and/or URLs.
-
 Every tool call has a `reasoning` field — use it to think out loud. \
 Explain what you're looking for, what you already know, \
 and what you'll do with the result.
 
-Use your tools to look up information before replying when the user mentions \
-a product, topic, or anything you could look up — even if it appeared in \
-Related Past Messages or Knowledge. Past messages tell you what was discussed, \
-not the facts about those things. The Knowledge section contains factual \
-summaries of pages previously read — use this as background context but always \
-verify with fresh lookups when the user asks specific questions. \
-The ONLY exception is pure greetings ('hey', 'hi') \
-or direct follow-ups to a tool call you made earlier in THIS conversation.
+Use the browse tool to look up information before replying when the user \
+mentions a product, topic, or anything you could look up — even if it \
+appeared in your recall context.  Recall sections (knowledge, likes, \
+dislikes, etc.) are background context summaries; always verify with \
+fresh lookups when the user asks specific questions.  The ONLY exception \
+is pure greetings ('hey', 'hi') or direct follow-ups to a tool call you \
+made earlier in THIS conversation.
 
 When a 'Current Browser Page' section appears above, the user is browsing \
 that page right now. If they say 'this page', 'this thread', 'this article', \
 or anything ambiguous, they mean the Current Browser Page — not something \
 from earlier in the conversation.
 
-How to use your tools:
+How to use the browse tool:
 1. If the user gave you URLs, read them directly — pass the URLs in the \
 queries array. Do NOT search for a site the user already linked.
 2. If the user gave you a topic (no URLs), search first to discover \
@@ -248,7 +192,7 @@ If a page had limited content, report what was there.
 Do NOT answer from search snippets alone — read actual pages first.
 
 Every fact, name, and detail in your response must come from pages you \
-read or injected context — not from search snippet summaries.
+read or your recall context — not from search snippet summaries.
 
 Search results contain a 'Sources:' section at the bottom with real URLs. \
 When you reference something from a search, use ONLY these source URLs. \
@@ -347,41 +291,6 @@ async def test_chat_prompt_renders_relevant_mode_via_embedding(
     assert "### trivia" in prompt
     assert "facts" in prompt
     assert "- [espresso] espresso uses 9 bars of pressure" in prompt
-
-
-@pytest.mark.asyncio
-async def test_chat_prompt_renders_conversation_pair(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """user-messages + penny-messages logs render as one merged Conversation section.
-
-    Entries are sorted by created_at; author prefixes come from each entry's
-    author field.  The secondary member (penny-messages) does not appear under
-    its own header — only inside the merged block.
-    """
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        # user-messages and penny-messages are pre-created by migration 0026
-        penny.db.memories.append(
-            "user-messages",
-            [LogEntryInput(content="how's the weather?")],
-            author="user",
-        )
-        penny.db.memories.append(
-            "penny-messages",
-            [LogEntryInput(content="clear skies today")],
-            author="penny",
-        )
-        penny.chat_agent._pending_page_context = None
-
-        prompt = await penny.chat_agent._build_system_prompt(TEST_SENDER, content="thanks!")
-
-    assert "### Conversation" in prompt
-    assert "[user] how's the weather?" in prompt
-    assert "[penny] clear skies today" in prompt
-    # Secondary member never gets its own section
-    assert "### penny-messages" not in prompt
 
 
 # ── 2. Special success cases ──────────────────────────────────────────────
