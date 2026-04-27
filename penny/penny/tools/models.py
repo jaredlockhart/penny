@@ -24,6 +24,12 @@ class BrowseArgs(BaseModel):
     reasoning: str | None = None
 
 
+class SendMessageArgs(BaseModel):
+    """Validated arguments for the send_message tool."""
+
+    content: str
+
+
 class SearchEmailsArgs(BaseModel):
     """Validated arguments for the search_emails tool."""
 

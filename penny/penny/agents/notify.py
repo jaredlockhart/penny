@@ -1,13 +1,13 @@
 """NotifyAgent — Penny's proactive outreach.
 
-Runs on the scheduler when the user has unnotified thoughts and
-the cooldown has elapsed.  Each cycle is a fully model-driven
-agent loop: the system prompt steers the model through reading
-its unnotified thoughts, picking one to share, moving it to the
-notified-thoughts collection, and producing the message text as
-its final answer.  Python wraps the cycle with eligibility
-guardrails (channel set, user not muted, cooldown elapsed) and
-sends the answer through the channel.
+Runs on the scheduler when the user has unnotified thoughts and the
+cooldown has elapsed.  Each cycle is a fully model-driven agent
+loop: the system prompt steers the model through reading its
+unnotified thoughts, picking one to share, moving it to the
+notified-thoughts collection, sending the message via
+``send_message``, and exiting via ``done()``.  Python wraps the
+cycle with eligibility guardrails (channel set, user not muted,
+cooldown elapsed) — everything else is handled by tools.
 """
 
 from __future__ import annotations
@@ -15,14 +15,12 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from penny.agents.base import Agent
 from penny.constants import NotifyPromptType, PennyConstants
 from penny.prompts import Prompt
-
-if TYPE_CHECKING:
-    from penny.channels import MessageChannel
+from penny.tools.send_message import SendMessageTool
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +33,9 @@ class NotifyAgent(Agent):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._boot_time = datetime.now(UTC).replace(tzinfo=None)
-        self._channel: MessageChannel | None = None
-
-    def set_channel(self, channel: MessageChannel) -> None:
-        """Set the channel used to deliver notifications."""
-        self._channel = channel
+        # Tools stay available on the final agentic step — notify exits
+        # via ``done()`` once it has called ``send_message``.
+        self._keep_tools_on_final_step = True
 
     def get_max_steps(self) -> int:
         """Read from config so /config changes take effect immediately."""
@@ -85,10 +81,12 @@ class NotifyAgent(Agent):
     # ── Cycle ────────────────────────────────────────────────────────────
 
     async def _run_notify_cycle(self, user: str) -> bool:
-        """Run one model-driven notify cycle and deliver its answer."""
-        channel = self._channel
-        if channel is None:
-            raise RuntimeError("notify cycle started without a channel set")
+        """Run one model-driven notify cycle.
+
+        The cycle succeeds when the model calls ``send_message`` at
+        least once before exiting; otherwise the cycle is treated as a
+        skip (model decided nothing was worth sharing).
+        """
         self._install_tools(self.get_tools(user))
         run_id = uuid.uuid4().hex
         response = await self.run(
@@ -98,12 +96,4 @@ class NotifyAgent(Agent):
             run_id=run_id,
             prompt_type=NotifyPromptType.CYCLE,
         )
-        answer = response.answer.strip() if response.answer else ""
-        if not answer:
-            logger.info("Notify cycle produced no message for %s", user)
-            return False
-        await channel.send_response(
-            user, answer, parent_id=None, author=self.name, quote_message=None
-        )
-        logger.info("Notification sent to %s", user)
-        return True
+        return any(record.tool == SendMessageTool.name for record in response.tool_calls)

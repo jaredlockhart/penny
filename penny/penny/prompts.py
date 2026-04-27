@@ -230,14 +230,16 @@ Examples:
         "still find interesting.\n"
         '4. collection_move("unnotified-thoughts", "notified-thoughts", '
         "key=<chosen key>) — mark it as shared.\n"
-        "5. Reply with the thought, conversational, like you're texting "
-        "a friend.  Open with a casual greeting, then relay the whole "
-        "thing — don't compress or summarize.  Include the specific "
-        "details from the thought (names, specs, dates), at least one "
-        "source URL from the thought, and finish with an emoji.\n\n"
+        "5. send_message(content=<your message>) — deliver the thought to "
+        "the user.  Write it conversationally, like you're texting a "
+        "friend; open with a casual greeting, then relay the whole thing "
+        "— don't compress or summarize.  Include the specific details "
+        "from the thought (names, specs, dates), at least one source URL "
+        "from the thought, and finish with an emoji.\n"
+        "6. done().\n\n"
         "Every fact and URL in your message must come from the thought "
         "you read — do not invent information.  If no unnotified thought "
-        "is worth sharing, reply with nothing."
+        "is worth sharing, call done() without sending anything."
     )
 
     # Nudge prompts (injected when model returns empty content)
