@@ -503,6 +503,28 @@ class MemoryStore:
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return scored
 
+    def precompute_centrality(self) -> None:
+        """Warm the centrality cache for every relevant-mode memory.
+
+        Centrality is O(N²) over the corpus and only needs to run once per
+        memory per process — call this at startup so the first chat message
+        doesn't pay the compute tax mid-request.  Skips archived memories,
+        non-relevant modes, and memories with no embedded entries (where
+        the lazy path would also have nothing to do).
+        """
+        for memory in self.list_all():
+            if memory.archived or memory.recall != RecallMode.RELEVANT.value:
+                continue
+            rows = self._embedded_rows(memory.name)
+            if not rows:
+                continue
+            logger.info(
+                "Precomputing centrality for memory %s (%d entries)",
+                memory.name,
+                len(rows),
+            )
+            self._centralities_for(memory.name, rows)
+
     def _centralities_for(self, name: str, rows: list[MemoryEntry]) -> dict[int, float]:
         """Lazily compute and cache mean-cosine centrality per entry id."""
         cached = self._centrality_cache.get(name)
