@@ -401,6 +401,12 @@ class Penny:
             if total_prefs:
                 logger.info("Startup embedding backfill complete: %d preferences", total_prefs)
 
+        # Pay the O(N²) centrality compute up front instead of on first
+        # chat message — otherwise the first request after restart blocks
+        # for tens of seconds while every relevant-mode memory's cache
+        # warms during prompt assembly.
+        self.db.memories.precompute_centrality()
+
         await self._send_startup_announcement()
         await self._prompt_for_missing_profiles()
 
