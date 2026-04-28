@@ -135,6 +135,30 @@ async def test_send_message_refuses_when_cooldown_not_elapsed(tmp_path):
     channel.send_response.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_cooldown_skipped_when_user_replied_since_last_send(tmp_path):
+    """User has spoken since the agent's last send → count=0 → cooldown bypassed.
+
+    The exponential backoff is meant to throttle *autonomous* outreach
+    (background agent spamming the user when ignored).  When a new user
+    message has arrived between sends the conversation is alive, so the
+    next send is conversational, not autonomous — no cooldown applies.
+    """
+    db = _make_db(tmp_path)
+    # Prior send, then a user reply, then this new send attempt.
+    db.memories.append(_PENNY_LOG, [LogEntryInput(content="prior")], author=_AGENT)
+    db.memories.append(
+        _USER_LOG, [LogEntryInput(content="actually here's a follow-up")], author="user"
+    )
+    channel = _make_channel()
+    tool = _make_tool(db, channel=channel, config=_make_config(min_cooldown=3600.0))
+
+    result = await tool.execute(content="responding to your follow-up")
+
+    assert result == "Message sent."
+    channel.send_response.assert_awaited_once()
+
+
 def test_user_reply_resets_cooldown_count(tmp_path):
     """A user-messages entry newer than prior sends resets the backoff count to zero."""
     db = _make_db(tmp_path)
