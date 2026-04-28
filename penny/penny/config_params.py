@@ -121,8 +121,8 @@ def _validate_unit_float(value: str) -> float:
 # ── Chat — foreground conversation, retrieval context, and browser ───────────
 
 ConfigParam(
-    key="MESSAGE_MAX_STEPS",
-    description="Max agent loop steps per message",
+    key="MAX_STEPS",
+    description="Max agent loop steps per cycle (interactive agents; extractors use static caps)",
     type=int,
     default=8,
     validator=_validate_positive_int,
@@ -130,8 +130,8 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="CHAT_MAX_QUERIES",
-    description="Max parallel queries per chat tool call",
+    key="MAX_QUERIES",
+    description="Max parallel queries per browse tool call (every agent)",
     type=int,
     default=3,
     validator=_validate_positive_int,
@@ -177,24 +177,6 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="INNER_MONOLOGUE_MAX_STEPS",
-    description="Max thinking loop steps per inner monologue cycle",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_THINKING,
-)
-
-ConfigParam(
-    key="INNER_MONOLOGUE_MAX_QUERIES",
-    description="Max parallel queries per thinking tool call",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
-    group=GROUP_THINKING,
-)
-
-ConfigParam(
     key="THOUGHT_DEDUP_EMBEDDING_THRESHOLD",
     description="Content embedding similarity threshold for thought dedup (0-1)",
     type=float,
@@ -209,15 +191,6 @@ ConfigParam(
     type=float,
     default=0.50,
     validator=_validate_unit_float,
-    group=GROUP_THINKING,
-)
-
-ConfigParam(
-    key="MAX_UNNOTIFIED_THOUGHTS",
-    description="Max unnotified thoughts before thinking agent pauses",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
     group=GROUP_THINKING,
 )
 

@@ -1,9 +1,11 @@
 """SendMessageTool — model-driven outbound message delivery.
 
-Bound at construction to a specific (channel, recipient, agent_name)
-triple plus the database and runtime config.  The model calls this
-tool with a message body when it has decided what to say.  The
-tool checks three gates before dispatching:
+Bound at construction to a (channel, agent_name) pair plus the database
+and runtime config.  The recipient is always the primary user (Penny is
+single-user) and is resolved from ``db`` at execute time, not plumbed
+through agent construction.  The model calls this tool with a message
+body when it has decided what to say.  The tool checks three gates
+before dispatching:
 
 - **Refusal**: if the content is itself a model refusal ("I'm sorry,
   I can't..."), don't dispatch — that's not a real reply.  Tells
@@ -79,13 +81,11 @@ class SendMessageTool(Tool):
     def __init__(
         self,
         channel: MessageChannel,
-        recipient: str,
         agent_name: str,
         db: Database,
         config: Config,
     ) -> None:
         self._channel = channel
-        self._recipient = recipient
         self._agent_name = agent_name
         self._db = db
         self._config = config
@@ -95,28 +95,27 @@ class SendMessageTool(Tool):
         if is_refusal(args.content):
             logger.info("send_message refused (refusal content): %s", self._agent_name)
             return self._REFUSAL_RESPONSE
-        if self._is_muted():
-            logger.info("send_message refused (muted): %s", self._recipient)
+        recipient = self._db.users.get_primary_sender()
+        if recipient is None:
+            logger.info("send_message refused (no primary user): %s", self._agent_name)
+            return self._REFUSAL_RESPONSE
+        if self._db.users.is_muted(recipient):
+            logger.info("send_message refused (muted): %s", recipient)
             return self._MUTED_RESPONSE
         if not self._cooldown_elapsed():
-            logger.info(
-                "send_message refused (cooldown): %s → %s", self._agent_name, self._recipient
-            )
+            logger.info("send_message refused (cooldown): %s → %s", self._agent_name, recipient)
             return self._COOLDOWN_RESPONSE
         await self._channel.send_response(
-            recipient=self._recipient,
+            recipient=recipient,
             content=args.content,
             parent_id=None,
             author=self._agent_name,
             quote_message=None,
         )
-        logger.info("send_message: %s → %s", self._agent_name, self._recipient)
+        logger.info("send_message: %s → %s", self._agent_name, recipient)
         return "Message sent."
 
     # ── Gating helpers ──────────────────────────────────────────────────
-
-    def _is_muted(self) -> bool:
-        return self._db.users.is_muted(self._recipient)
 
     def _cooldown_elapsed(self) -> bool:
         """Exponential backoff: cooldown doubles per send since the last user message."""

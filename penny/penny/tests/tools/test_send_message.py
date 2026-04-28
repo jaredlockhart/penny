@@ -56,9 +56,15 @@ def _make_channel():
 
 
 def _make_tool(db, channel=None, config=None):
+    db.users.save_info(
+        sender=_RECIPIENT,
+        name="user",
+        location="Toronto",
+        timezone="America/Toronto",
+        date_of_birth="1990-01-01",
+    )
     return SendMessageTool(
         channel=channel or _make_channel(),
-        recipient=_RECIPIENT,
         agent_name=_AGENT,
         db=db,
         config=config or _make_config(),

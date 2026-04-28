@@ -165,9 +165,12 @@ class Agent:
 
     name: str = "Agent"
 
-    # Subagent identity for the prompt log; chat overrides via get_prompt_type
-    # in its own message-handling path.  None means "don't tag".
-    prompt_type: str | None = None
+    # Static system prompt for this agent.  Subclasses with a fixed prompt
+    # set this class attribute (e.g. ``system_prompt = Prompt.NOTIFY_SYSTEM_PROMPT``).
+    # Agents that build their prompt dynamically (e.g. ChatAgent's
+    # _build_system_prompt) leave this empty and pass ``system_prompt=``
+    # explicitly to ``run()``.
+    system_prompt: str = ""
 
     # Tool name that signals a successful cycle exit.  ``done`` is the
     # default; ``send_message`` for agents that signal completion by
@@ -176,20 +179,25 @@ class Agent:
 
     def __init__(
         self,
-        system_prompt: str,
         model_client: LlmClient,
-        tools: list[Tool],
         db: Database,
         config: Config,
-        tool_timeout: float = 60.0,
         vision_model_client: LlmClient | None = None,
         embedding_model_client: LlmClient | None = None,
         allow_repeat_tools: bool = False,
-        max_queries_key: str | None = None,
+        *,
+        system_prompt: str | None = None,
+        tools: list[Tool] | None = None,
     ):
+        """Configure the agent.
+
+        Long-lived subagents (chat, notify, thinking, extractors) declare
+        ``system_prompt`` as a class attribute and let ``get_tools()`` build
+        their surface fresh per cycle, so they don't pass ``system_prompt``
+        or ``tools`` here.  Ad-hoc command agents (email, zoho) pass both
+        because their prompt and tool set vary per invocation.
+        """
         self.config = config
-        self.system_prompt = system_prompt
-        self.tools = tools
         self.db = db
         self.allow_repeat_tools = allow_repeat_tools
 
@@ -197,7 +205,6 @@ class Agent:
         self._vision_model_client = vision_model_client
         self._embedding_model_client = embedding_model_client
 
-        self._max_queries_key = max_queries_key
         self._browse_tool: BrowseTool | None = None
         self._browse_provider: Callable[[], Any] | None = None
         self._channel: MessageChannel | None = None
@@ -205,11 +212,17 @@ class Agent:
         self._tool_result_text: list[str] = []
         self._tool_result_images: list[str] = []
 
-        self._tool_registry = ToolRegistry()
-        for tool in self.tools:
-            self._tool_registry.register(tool)
+        if system_prompt is not None:
+            self.system_prompt = system_prompt
 
-        self._tool_executor = ToolExecutor(self._tool_registry, timeout=tool_timeout)
+        # Long-lived agents leave the registry empty here and let
+        # ``_install_tools(self.get_tools(...))`` rebuild it before each
+        # cycle.  Ad-hoc agents pass their fixed tool list at construction.
+        self._tool_registry = ToolRegistry()
+        if tools is not None:
+            for tool in tools:
+                self._tool_registry.register(tool)
+        self._tool_executor = ToolExecutor(self._tool_registry, timeout=config.tool_timeout)
         # Background subagents exit via the terminator tool (`done` / `send_message`)
         # — they keep tools available on the final step so the model can call its
         # exit tool. Chat overrides to False because its terminator is final
@@ -229,50 +242,33 @@ class Agent:
         Agent._instances.append(self)
 
         logger.info(
-            "Initialized agent: model=%s, tools=%d",
+            "Initialized agent %s: model=%s",
+            self.name,
             self._model_client.model,
-            len(self.tools),
         )
 
     # ── Top-level execution ──────────────────────────────────────────────
 
     async def execute(self) -> bool:
-        """Run a scheduled cycle — iterate users and delegate to execute_for_user.
+        """Run a scheduled cycle.
 
-        Override execute_for_user for per-user work, or override execute
-        entirely for non-user-based work.
+        Penny is single-user — every agent gets the identical tool surface
+        (memory + browse + send_message), and ``send_message`` resolves the
+        primary recipient itself at execute time.  No per-agent user
+        binding is plumbed through here.
         """
-        users = self.get_users()
-        if not users:
-            return False
-        did_work = False
-        for user in users:
-            if await self.execute_for_user(user):
-                did_work = True
-        return did_work
+        return await self._run_cycle()
 
-    async def execute_for_user(self, user: str) -> bool:
-        """Run a scheduled cycle for ``user``.  Default delegates to ``_run_cycle``.
-
-        Override only when the agent needs eligibility guardrails (cooldown,
-        cap, mute) that gate the cycle — those checks live in the agent and
-        return early before calling ``_run_cycle``.
-        """
-        return await self._run_cycle(user)
-
-    async def _run_cycle(self, user: str | None) -> bool:
+    async def _run_cycle(self) -> bool:
         """Generic agentic shell: install tools, run the loop, commit cursor.
 
-        Reads ``self.system_prompt`` (constructor arg), ``self.prompt_type``
-        (class attr), and ``self.terminator_tool`` (class attr) to drive the
-        cycle.  If a ``LogReadNextTool`` is in the surface, its pending
-        cursor is committed on success and discarded on failure.
-
-        ``user`` is forwarded to ``get_tools`` as the recipient binding for
-        ``send_message``.  Pass ``None`` for flows with no specific
-        recipient (e.g. user-independent extractors).
+        Reads ``self.system_prompt`` (class attr), ``self.name`` (class
+        attr — also used as the prompt type identifier in promptlog), and
+        ``self.terminator_tool`` (class attr) to drive the cycle.  If a
+        ``LogReadNextTool`` is in the surface, its pending cursor is
+        committed on success and discarded on failure.
         """
-        tools = self.get_tools(user)
+        tools = self.get_tools()
         log_read_next = next((t for t in tools if isinstance(t, LogReadNextTool)), None)
         self._install_tools(tools)
 
@@ -282,7 +278,7 @@ class Agent:
             max_steps=self.get_max_steps(),
             system_prompt=self.system_prompt,
             run_id=run_id,
-            prompt_type=self.prompt_type,
+            prompt_type=self.name,
         )
         success = any(record.tool == self.terminator_tool for record in response.tool_calls)
 
@@ -297,13 +293,8 @@ class Agent:
     # ── Override hooks ───────────────────────────────────────────────────
 
     def get_max_steps(self) -> int:
-        """Cap on agentic loop iterations.  Override to read a different config key."""
-        return int(self.config.runtime.MESSAGE_MAX_STEPS)
-
-    def get_users(self) -> list[str]:
-        """Return the single user to process (Penny is single-user)."""
-        primary = self.db.users.get_primary_sender()
-        return [primary] if primary else []
+        """Cap on agentic loop iterations — reads the shared runtime config."""
+        return int(self.config.runtime.MAX_STEPS)
 
     # ── Agentic loop entry ───────────────────────────────────────────────
 
@@ -329,8 +320,6 @@ class Agent:
         )
 
     # ── Agentic loop internals ───────────────────────────────────────────
-
-    _is_refusal = staticmethod(is_refusal)
 
     async def _run_agentic_loop(
         self,
@@ -561,7 +550,7 @@ class Agent:
 
         if (
             effective_content
-            and self._is_refusal(effective_content)
+            and is_refusal(effective_content)
             and ValidationReason.REFUSAL not in already_retried
         ):
             return ValidationReason.REFUSAL
@@ -644,40 +633,26 @@ class Agent:
         """Bind a channel so this agent can send messages via SendMessageTool."""
         self._channel = channel
 
-    def get_tools(self, user: str | None) -> list[Tool]:
+    def get_tools(self) -> list[Tool]:
         """Full tool surface for this agent — memory tools + browse + send_message.
 
-        Every agent gets every tool: the prompt is responsible for
-        telling the model what to use.  Override only when an agent
-        legitimately needs a narrower surface (e.g. vision mode where
-        tool calls are disabled entirely).
-
-        Pass ``user=None`` only for flows that have no specific
-        recipient (e.g. the knowledge extractor, which is
-        user-independent) — ``send_message`` can't be bound without a
-        recipient and is omitted from the surface in that case.
+        Every agent gets every tool, all attributed to ``self.name``.
+        ``send_message`` resolves the recipient itself (single-user
+        Penny); the prompt tells the model when to call it.
 
         Builds fresh each cycle so runtime config changes take effect
         immediately and the underlying ``BrowseTool``'s author + cursor
         identity match the agent's current ``name``.
         """
-        return self._build_full_tools(agent_name=self.name, recipient=user)
-
-    def _build_full_tools(self, agent_name: str, recipient: str | None = None) -> list[Tool]:
-        """Memory tools + BrowseTool (when max_queries_key is set) +
-        SendMessageTool (when both a channel is bound and a recipient
-        is set), all attributed to ``agent_name``."""
         tools: list[Tool] = build_memory_tools(
-            self.db, self._embedding_model_client, agent_name=agent_name
+            self.db, self._embedding_model_client, agent_name=self.name
         )
-        if self._max_queries_key is not None:
-            tools.append(self._build_browse_tool(author=agent_name))
-        if self._channel is not None and recipient is not None:
+        tools.append(self._build_browse_tool(author=self.name))
+        if self._channel is not None:
             tools.append(
                 SendMessageTool(
                     channel=self._channel,
-                    recipient=recipient,
-                    agent_name=agent_name,
+                    agent_name=self.name,
                     db=self.db,
                     config=self.config,
                 )
@@ -686,9 +661,7 @@ class Agent:
 
     def _build_browse_tool(self, author: str) -> BrowseTool:
         """Build a fresh BrowseTool from config, updating self._browse_tool."""
-        if self._max_queries_key is None:
-            raise RuntimeError("BrowseTool requested without max_queries_key")
-        max_calls = int(getattr(self.config.runtime, self._max_queries_key))
+        max_calls = int(self.config.runtime.MAX_QUERIES)
         search_url = str(self.config.runtime.SEARCH_URL)
         tool = BrowseTool(
             max_calls=max_calls,

@@ -5,8 +5,7 @@ loop with the full tool surface, and the prompt steers everything.
 
 Test organisation:
 1. Happy path — full verbatim system prompt + done() exits with True
-2. Skip when the unnotified queue is full (Python guardrail)
-3. Failure case — model never calls done() → returns False
+2. Failure case — model never calls done() → returns False
 """
 
 from __future__ import annotations
@@ -14,10 +13,7 @@ from __future__ import annotations
 import pytest
 
 from penny.agents.preference_extractor import PreferenceExtractorAgent
-from penny.agents.thinking import ThinkingAgent
-from penny.constants import PennyConstants
 from penny.database.memory_store import EntryInput
-from penny.tests.conftest import TEST_SENDER
 
 
 def _seed_likes(penny, *topics: str) -> None:
@@ -41,7 +37,7 @@ async def test_thinking_cycle_happy_path(
     Asserts the verbatim system prompt drives the loop and the model's
     write to ``unnotified-thoughts`` lands as expected.
     """
-    config = make_config(inner_monologue_max_steps=8)
+    config = make_config(max_steps=8)
     requests_seen: list[dict] = []
 
     def handler(request, count):
@@ -77,7 +73,7 @@ async def test_thinking_cycle_happy_path(
     async with running_penny(config) as penny:
         _seed_likes(penny, "guitar pedals")
 
-        result = await penny.thinking_agent.execute_for_user(TEST_SENDER)
+        result = await penny.thinking_agent.execute()
 
         assert result is True
 
@@ -128,33 +124,7 @@ articles are NOT interesting discoveries."""
         assert new_entry.author == "thinking"
 
 
-# ── 2. Skip when unnotified queue is full ─────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_skip_when_unnotified_queue_is_full(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Python guardrail: if too many unnotified thoughts pile up, skip the cycle."""
-    config = make_config(max_unnotified_thoughts=1)
-
-    async with running_penny(config) as penny:
-        # Seed one unnotified thought so the cap is reached
-        penny.db.memories.write(
-            PennyConstants.MEMORY_UNNOTIFIED_THOUGHTS,
-            [EntryInput(key="seed", content="existing thought")],
-            author=ThinkingAgent.name,
-        )
-
-        result = await penny.thinking_agent.execute_for_user(TEST_SENDER)
-
-        # Returns True to reset the schedule timer, but doesn't make any
-        # LLM calls — the cycle was skipped before the agent loop ran.
-        assert result is True
-        assert len(mock_llm.requests) == 0
-
-
-# ── 3. Failure: model exhausts steps without calling done ─────────────────
+# ── 2. Failure: model exhausts steps without calling done ─────────────────
 
 
 @pytest.mark.asyncio
@@ -162,7 +132,7 @@ async def test_returns_false_when_model_does_not_call_done(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """No done() call → run is treated as failed; result is False."""
-    config = make_config(inner_monologue_max_steps=2)
+    config = make_config(max_steps=2)
 
     # Always return collection_read_all — never done.  Loop hits max_steps.
     mock_llm.set_response_handler(
@@ -173,5 +143,5 @@ async def test_returns_false_when_model_does_not_call_done(
 
     async with running_penny(config) as penny:
         _seed_likes(penny, "jazz")
-        result = await penny.thinking_agent.execute_for_user(TEST_SENDER)
+        result = await penny.thinking_agent.execute()
         assert result is False

@@ -1,6 +1,6 @@
 """Integration tests for NotifyAgent — fully model-driven shell.
 
-The agent is just ``name`` + ``prompt_type`` + ``terminator_tool``;
+The agent is just ``name`` + ``terminator_tool``;
 the prompt steers the model through reading ``unnotified-thoughts``,
 picking one, moving it to ``notified-thoughts``, and dispatching via
 ``send_message``.  Mute and cooldown gating live inside
@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from penny.database.memory_store import EntryInput
-from penny.tests.conftest import TEST_SENDER, wait_until
+from penny.tests.conftest import wait_until
 
 
 def _seed_unnotified_thought(penny, key: str, content: str) -> None:
@@ -88,7 +88,7 @@ async def test_notify_cycle_happy_path(
             "Found a great review of the Tubesteader Beekeeper fuzz pedal 🐝",
         )
 
-        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        result = await penny.notify_agent.execute()
 
         assert result is True
 
@@ -157,7 +157,7 @@ async def test_no_message_sent_when_model_calls_done(
     async with running_penny(config) as penny:
         _seed_unnotified_thought(penny, "Boring topic", "nothing worth sharing")
 
-        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
+        result = await penny.notify_agent.execute()
 
         assert result is False
         assert signal_server.outgoing_messages == []

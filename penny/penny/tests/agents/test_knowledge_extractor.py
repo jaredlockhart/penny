@@ -211,8 +211,3 @@ async def test_no_browse_pages_completes_cleanly(
         # No new entries written
         after = penny.db.memories.read_all("knowledge")
         assert len(after) == len(before)
-
-
-def test_max_steps_constant_is_set():
-    """Defensive check: the cap is non-zero so the loop can actually run."""
-    assert KnowledgeExtractorAgent.MAX_STEPS > 0

@@ -18,7 +18,6 @@ import pytest
 from penny.agents.preference_extractor import PreferenceExtractorAgent
 from penny.constants import PennyConstants
 from penny.database.memory_store import LogEntryInput
-from penny.tests.conftest import TEST_SENDER
 
 
 def _seed_user_message(penny, content: str) -> None:
@@ -79,7 +78,7 @@ async def test_preference_extraction_full_loop(
     async with running_penny(config) as penny:
         _seed_user_message(penny, "I really love single-origin coffee beans")
 
-        result = await penny.preference_extractor_agent.execute_for_user(TEST_SENDER)
+        result = await penny.preference_extractor_agent.execute()
 
         assert result is True
 
@@ -150,7 +149,7 @@ async def test_cursor_does_not_advance_on_max_steps(
         _seed_user_message(penny, "first message")
         before = _cursor(penny)
 
-        result = await penny.preference_extractor_agent.execute_for_user(TEST_SENDER)
+        result = await penny.preference_extractor_agent.execute()
 
         assert result is False
         assert _cursor(penny) == before
@@ -179,13 +178,8 @@ async def test_no_user_messages_completes_cleanly(
     mock_llm.set_response_handler(handler)
 
     async with running_penny(config) as penny:
-        result = await penny.preference_extractor_agent.execute_for_user(TEST_SENDER)
+        result = await penny.preference_extractor_agent.execute()
 
         assert result is True
         assert penny.db.memories.read_all("likes") == []
         assert penny.db.memories.read_all("dislikes") == []
-
-
-def test_max_steps_constant_is_set():
-    """Defensive check: the cap is non-zero so the loop can actually run."""
-    assert PreferenceExtractorAgent.MAX_STEPS > 0

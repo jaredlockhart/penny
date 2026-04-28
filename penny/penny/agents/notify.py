@@ -12,7 +12,7 @@ sending.
 from __future__ import annotations
 
 from penny.agents.base import Agent
-from penny.constants import NotifyPromptType
+from penny.prompts import Prompt
 from penny.tools.send_message import SendMessageTool
 
 
@@ -20,5 +20,5 @@ class NotifyAgent(Agent):
     """Background outreach agent — sends thoughts when the user is idle."""
 
     name = "notify"
-    prompt_type = NotifyPromptType.CYCLE
+    system_prompt = Prompt.NOTIFY_SYSTEM_PROMPT
     terminator_tool = SendMessageTool.name

@@ -594,12 +594,12 @@ class TestBrowserConfigHandlers:
         ws = _MockWs()
         await channel._handle_config_update(
             ws,  # ty: ignore[invalid-argument-type]
-            {"type": "config_update", "key": "MESSAGE_MAX_STEPS", "value": "12"},
+            {"type": "config_update", "key": "MAX_STEPS", "value": "12"},
         )
 
         with Session(db.engine) as session:
             row = session.exec(
-                select(RuntimeConfig).where(RuntimeConfig.key == "MESSAGE_MAX_STEPS")
+                select(RuntimeConfig).where(RuntimeConfig.key == "MAX_STEPS")
             ).first()
         assert row is not None
         assert row.value == "12"
@@ -611,13 +611,13 @@ class TestBrowserConfigHandlers:
         ws = _MockWs()
         await channel._handle_config_update(
             ws,  # ty: ignore[invalid-argument-type]
-            {"type": "config_update", "key": "MESSAGE_MAX_STEPS", "value": "15"},
+            {"type": "config_update", "key": "MAX_STEPS", "value": "15"},
         )
 
         assert len(ws.sent) == 1
         resp = ws.sent[0]
         assert resp["type"] == "config_response"
-        param = next(p for p in resp["params"] if p["key"] == "MESSAGE_MAX_STEPS")
+        param = next(p for p in resp["params"] if p["key"] == "MAX_STEPS")
         assert param["value"] == "15"
 
     @pytest.mark.asyncio
@@ -639,7 +639,7 @@ class TestBrowserConfigHandlers:
         ws = _MockWs()
         await channel._handle_config_update(
             ws,  # ty: ignore[invalid-argument-type]
-            {"type": "config_update", "key": "MESSAGE_MAX_STEPS", "value": "-5"},
+            {"type": "config_update", "key": "MAX_STEPS", "value": "-5"},
         )
 
         assert ws.sent == []
@@ -665,7 +665,7 @@ class TestBrowserConfigHandlers:
         ws = _MockWs()
         await channel._process_raw_message(
             ws,  # ty: ignore[invalid-argument-type]
-            json.dumps({"type": "config_update", "key": "MESSAGE_MAX_STEPS", "value": "10"}),
+            json.dumps({"type": "config_update", "key": "MAX_STEPS", "value": "10"}),
             None,
         )
 

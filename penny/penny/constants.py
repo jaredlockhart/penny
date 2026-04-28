@@ -51,25 +51,6 @@ class ChatPromptType(StrEnum):
     VISION_CAPTION = "vision_caption"
 
 
-class ThinkingPromptType(StrEnum):
-    """Prompt types emitted by ThinkingAgent flows."""
-
-    CYCLE = "cycle"
-
-
-class NotifyPromptType(StrEnum):
-    """Prompt types emitted by NotifyAgent flows."""
-
-    CYCLE = "cycle"
-
-
-class HistoryPromptType(StrEnum):
-    """Prompt types emitted by the preference and knowledge extractor agents."""
-
-    PREFERENCE_EXTRACTION = "preference_extraction"
-    KNOWLEDGE_EXTRACTION = "knowledge_extraction"
-
-
 class PennyConstants:
     """All constants for the Penny agent."""
 
