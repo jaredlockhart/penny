@@ -115,9 +115,12 @@ still find interesting.
 key=<chosen key>) — mark it as shared.
 5. send_message(content=<your message>) — deliver the thought to \
 the user.  Write it conversationally, like you're texting a \
-friend; open with a casual greeting, then relay the whole thing \
-— don't compress or summarize.  Include the specific details \
-from the thought (names, specs, dates), at least one source URL \
+friend; open with a casual greeting, then write out every \
+detail in full.  No ellipses ('...', '…'), no 'etc.', no 'and \
+more', no teaser phrasing — finish every sentence and bullet \
+you start.  The user only sees what you put in `content`; \
+nothing else is attached.  Include the specific details from \
+the thought (names, specs, dates), at least one source URL \
 from the thought, and finish with an emoji.
 6. done().
 
