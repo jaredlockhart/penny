@@ -982,3 +982,16 @@ class Agent:
         """Close all agent instances."""
         for agent in cls._instances[:]:
             await agent.close()
+
+
+class BackgroundAgent(Agent):
+    """Subagent shape — thinking, notify, extractors.
+
+    Reads ``BACKGROUND_MAX_STEPS`` instead of the chat ``MAX_STEPS`` cap,
+    since background agents navigate the unified tool surface end-to-end
+    (read inputs → process → write outputs → done) and need more loop
+    iterations than a single chat turn.
+    """
+
+    def get_max_steps(self) -> int:
+        return int(self.config.runtime.BACKGROUND_MAX_STEPS)

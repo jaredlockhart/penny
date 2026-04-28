@@ -9,11 +9,11 @@ on the next schedule.
 
 from __future__ import annotations
 
-from penny.agents.base import Agent
+from penny.agents.base import BackgroundAgent
 from penny.prompts import Prompt
 
 
-class PreferenceExtractorAgent(Agent):
+class PreferenceExtractorAgent(BackgroundAgent):
     """Background worker that extracts preferences from user messages."""
 
     name = "preference-extractor"

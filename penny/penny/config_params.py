@@ -122,9 +122,22 @@ def _validate_unit_float(value: str) -> float:
 
 ConfigParam(
     key="MAX_STEPS",
-    description="Max agent loop steps per cycle (interactive agents; extractors use static caps)",
+    description="Max agent loop steps per chat message cycle",
     type=int,
     default=8,
+    validator=_validate_positive_int,
+    group=GROUP_CHAT,
+)
+
+ConfigParam(
+    key="BACKGROUND_MAX_STEPS",
+    description=(
+        "Max agent loop steps per background-agent cycle "
+        "(thinking, notify, extractors). Higher than chat since background "
+        "agents navigate the unified tool surface to complete their flow."
+    ),
+    type=int,
+    default=20,
     validator=_validate_positive_int,
     group=GROUP_CHAT,
 )

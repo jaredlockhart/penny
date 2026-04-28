@@ -9,11 +9,11 @@ exit.
 
 from __future__ import annotations
 
-from penny.agents.base import Agent
+from penny.agents.base import BackgroundAgent
 from penny.prompts import Prompt
 
 
-class KnowledgeExtractorAgent(Agent):
+class KnowledgeExtractorAgent(BackgroundAgent):
     """Background worker that builds the knowledge base from browse output."""
 
     name = "knowledge-extractor"

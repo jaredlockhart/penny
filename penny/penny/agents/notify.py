@@ -11,12 +11,12 @@ sending.
 
 from __future__ import annotations
 
-from penny.agents.base import Agent
+from penny.agents.base import BackgroundAgent
 from penny.prompts import Prompt
 from penny.tools.send_message import SendMessageTool
 
 
-class NotifyAgent(Agent):
+class NotifyAgent(BackgroundAgent):
     """Background outreach agent — sends thoughts when the user is idle."""
 
     name = "notify"

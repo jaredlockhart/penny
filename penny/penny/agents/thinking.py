@@ -13,11 +13,11 @@ is the shared agent shell.
 
 from __future__ import annotations
 
-from penny.agents.base import Agent
+from penny.agents.base import BackgroundAgent
 from penny.prompts import Prompt
 
 
-class ThinkingAgent(Agent):
+class ThinkingAgent(BackgroundAgent):
     """Background worker that produces inner-monologue thoughts."""
 
     name = "thinking"
