@@ -221,7 +221,8 @@ async def test_relevant_mode_collection_skips_temporal_expansion(tmp_path, mock_
 @pytest.mark.asyncio
 async def test_relevant_mode_without_history_skips_vague_current_message(tmp_path, mock_llm):
     """Same vague current message with no conversation history scores zero —
-    the absolute floor suppresses it cleanly."""
+    the absolute floor suppresses content rendering, but the inventory header
+    still names the memory."""
     db = _make_db(tmp_path)
     db.memories.create_collection("prefs", "user prefs", RecallMode.RELEVANT)
     client = _make_llm_client(mock_llm)
@@ -229,43 +230,53 @@ async def test_relevant_mode_without_history_skips_vague_current_message(tmp_pat
 
     result = await build_recall_block(db, client, "yeah")
 
-    assert result is None
+    assert result is not None
+    assert "### Memory Inventory" in result
+    assert "prefs (collection)" in result
+    assert "coffee" not in result  # content not rendered
 
 
 @pytest.mark.asyncio
-async def test_relevant_mode_without_client_returns_none(tmp_path):
+async def test_relevant_mode_without_client_returns_only_inventory(tmp_path):
     db = _make_db(tmp_path)
     db.memories.create_collection("prefs", "user prefs", RecallMode.RELEVANT)
     _write_entry(db, "prefs", "coffee", "loves coffee")
 
     result = await build_recall_block(db, None, "coffee")
 
-    assert result is None
+    assert result is not None
+    assert "### Memory Inventory" in result
+    assert "loves coffee" not in result  # similarity unavailable, content skipped
 
 
 @pytest.mark.asyncio
-async def test_relevant_mode_without_message_returns_none(tmp_path, mock_llm):
+async def test_relevant_mode_without_message_returns_only_inventory(tmp_path, mock_llm):
     db = _make_db(tmp_path)
     db.memories.create_collection("prefs", "user prefs", RecallMode.RELEVANT)
     _write_entry(db, "prefs", "coffee", "loves coffee")
 
     result = await build_recall_block(db, _make_llm_client(mock_llm), None)
 
-    assert result is None
+    assert result is not None
+    assert "### Memory Inventory" in result
+    assert "loves coffee" not in result  # no anchor, content skipped
 
 
 # ── 2. Edge / skip cases ──────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_off_mode_skipped(tmp_path):
+async def test_off_mode_inventoried_but_content_skipped(tmp_path):
     db = _make_db(tmp_path)
     db.memories.create_collection("hidden", "not shown", RecallMode.OFF)
     _write_entry(db, "hidden", "k", "content")
 
     result = await build_recall_block(db, None, None)
 
-    assert result is None
+    # off-mode memories appear in the inventory but contribute no content section.
+    assert result is not None
+    assert "hidden (collection) — not shown" in result
+    assert "### hidden" not in result  # no content section, just inventory line
 
 
 @pytest.mark.asyncio
@@ -277,6 +288,7 @@ async def test_archived_memory_skipped(tmp_path):
 
     result = await build_recall_block(db, None, None)
 
+    # archived memories don't appear in the inventory or content sections.
     assert result is None
 
 
@@ -288,10 +300,13 @@ async def test_empty_database_returns_none(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_memory_with_no_entries_omitted(tmp_path):
+async def test_memory_with_no_entries_inventoried_but_content_skipped(tmp_path):
     db = _make_db(tmp_path)
     db.memories.create_collection("empty", "no entries yet", RecallMode.ALL)
 
     result = await build_recall_block(db, None, None)
 
-    assert result is None
+    # memory exists → appears in inventory; no entries → no content section.
+    assert result is not None
+    assert "empty (collection) — no entries yet" in result
+    assert "### empty" not in result

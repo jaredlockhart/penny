@@ -249,12 +249,13 @@ class CollectionGetTool(Tool):
         return _format_entries(rows)
 
 
-class CollectionReadLatestTool(Tool):
-    """Return the newest entries in a collection."""
+class ReadLatestTool(Tool):
+    """Return the newest entries in a memory (works for collections and logs)."""
 
-    name = "collection_read_latest"
+    name = "read_latest"
     description = (
-        "Return the newest entries in a collection, newest first. Omit ``k`` to return every entry."
+        "Return the newest entries in a memory, newest first. Works for "
+        "both collections and logs. Omit ``k`` to return every entry."
     )
     parameters = {
         "type": "object",
@@ -297,13 +298,16 @@ class CollectionReadRandomTool(Tool):
         return _format_entries(entries)
 
 
-class CollectionReadSimilarTool(Tool):
-    """Return collection entries most similar to an anchor phrase."""
+class ReadSimilarTool(Tool):
+    """Return entries most similar to an anchor phrase (collections or logs)."""
 
-    name = "collection_read_similar"
+    name = "read_similar"
     description = (
-        "Return entries from a collection ordered by content similarity to an "
-        "``anchor`` phrase. Useful for finding related preferences, facts, etc."
+        "Return entries from a memory ordered by content similarity to an "
+        "``anchor`` phrase. Works for both collections and logs — use this "
+        "to find past conversations on a topic (search ``user-messages`` or "
+        "``penny-messages``), past browse results, related preferences or "
+        "facts, or any other historically-relevant entry."
     )
     parameters = {
         "type": "object",
@@ -313,11 +317,7 @@ class CollectionReadSimilarTool(Tool):
                 "type": "string",
                 "description": "Text whose meaning drives the similarity search",
             },
-            "k": {"type": "integer", "description": "Max entries; omit for all above ``floor``"},
-            "floor": {
-                "type": "number",
-                "description": "Minimum cosine similarity; default 0.0 (include everything)",
-            },
+            "k": {"type": "integer", "description": "Max entries; omit for all"},
         },
         "required": ["memory", "anchor"],
     }
@@ -334,15 +334,17 @@ class CollectionReadSimilarTool(Tool):
                 "%s: similarity search unavailable — no embedding model configured", self.name
             )
             return "(similarity search unavailable — no embedding model configured)"
-        entries = self._db.memories.read_similar(args.memory, vec, args.k, args.floor)
+        entries = self._db.memories.read_similar(args.memory, vec, args.k)
         return _format_entries(entries)
 
 
-class CollectionReadAllTool(Tool):
-    """Return every entry in a collection, oldest first."""
+class ReadAllTool(Tool):
+    """Return every entry in a memory, oldest first (collections or logs)."""
 
-    name = "collection_read_all"
-    description = "Return every entry in a collection, oldest first."
+    name = "read_all"
+    description = (
+        "Return every entry in a memory, oldest first. Works for both collections and logs."
+    )
     parameters = {
         "type": "object",
         "properties": {"memory": {"type": "string"}},
@@ -516,29 +518,6 @@ class CollectionMoveTool(Tool):
 # ── Log reads ───────────────────────────────────────────────────────────────
 
 
-class LogReadLatestTool(Tool):
-    """Return the newest entries in a log, newest first."""
-
-    name = "log_read_latest"
-    description = "Return the newest entries in a log, newest first. Omit ``k`` to return all."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "memory": {"type": "string"},
-            "k": {"type": "integer"},
-        },
-        "required": ["memory"],
-    }
-
-    def __init__(self, db: Database) -> None:
-        self._db = db
-
-    async def execute(self, **kwargs: Any) -> str:
-        args = ReadLatestArgs(**kwargs)
-        entries = self._db.memories.read_latest(args.memory, args.k)
-        return _format_entries(entries)
-
-
 class LogReadRecentTool(Tool):
     """Return log entries created within the past ``window_seconds`` seconds."""
 
@@ -563,61 +542,6 @@ class LogReadRecentTool(Tool):
     async def execute(self, **kwargs: Any) -> str:
         args = ReadRecentArgs(**kwargs)
         entries = self._db.memories.read_recent(args.memory, args.window_seconds, args.cap)
-        return _format_entries(entries)
-
-
-class LogReadSimilarTool(Tool):
-    """Return log entries most similar to an anchor phrase."""
-
-    name = "log_read_similar"
-    description = (
-        "Return log entries ordered by content similarity to an ``anchor`` phrase. "
-        "Useful for finding historically-relevant statements, past browse results, etc."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "memory": {"type": "string"},
-            "anchor": {"type": "string"},
-            "k": {"type": "integer"},
-            "floor": {"type": "number"},
-        },
-        "required": ["memory", "anchor"],
-    }
-
-    def __init__(self, db: Database, llm_client: LlmClient | None) -> None:
-        self._db = db
-        self._llm = llm_client
-
-    async def execute(self, **kwargs: Any) -> str:
-        args = ReadSimilarArgs(**kwargs)
-        vec = await embed_text(self._llm, args.anchor)
-        if vec is None:
-            logger.warning(
-                "%s: similarity search unavailable — no embedding model configured", self.name
-            )
-            return "(similarity search unavailable — no embedding model configured)"
-        entries = self._db.memories.read_similar(args.memory, vec, args.k, args.floor)
-        return _format_entries(entries)
-
-
-class LogReadAllTool(Tool):
-    """Return every entry in a log, oldest first."""
-
-    name = "log_read_all"
-    description = "Return every entry in a log, oldest first."
-    parameters = {
-        "type": "object",
-        "properties": {"memory": {"type": "string"}},
-        "required": ["memory"],
-    }
-
-    def __init__(self, db: Database) -> None:
-        self._db = db
-
-    async def execute(self, **kwargs: Any) -> str:
-        args = MemoryNameArgs(**kwargs)
-        entries = self._db.memories.read_all(args.memory)
         return _format_entries(entries)
 
 
@@ -789,12 +713,18 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
     every tool that maintains per-agent state (LogReadNext's cursor).
 
     The factory centralizes dependency wiring so individual agents don't
-    have to juggle ``db`` / ``llm_client`` / ``agent_name`` across 21
+    have to juggle ``db`` / ``llm_client`` / ``agent_name`` across 18
     constructors.  ``DoneTool`` is intentionally not in this surface —
     it's a background-agent terminator and gets added in
     ``BackgroundAgent.get_tools()`` alongside ``send_message``.  Chat
     replies via final text and must not have ``done`` available, or the
     model may call it instead of producing a reply.
+
+    ``read_latest``, ``read_similar``, and ``read_all`` are shape-agnostic
+    — they work for both collections and logs.  Earlier this surface had
+    parallel ``collection_*`` / ``log_*`` versions of each, but they
+    shared the same underlying ``MemoryStore`` calls and forced the
+    model to disambiguate by memory shape with no functional benefit.
     """
     return [
         # Metadata
@@ -803,22 +733,20 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
         CollectionArchiveTool(db),
         CollectionUnarchiveTool(db),
         ListMemoriesTool(db),
-        # Collection reads
+        # Reads (shape-agnostic)
+        ReadLatestTool(db),
+        ReadSimilarTool(db, llm_client),
+        ReadAllTool(db),
+        # Collection-specific reads
         CollectionGetTool(db),
-        CollectionReadLatestTool(db),
         CollectionReadRandomTool(db),
-        CollectionReadSimilarTool(db, llm_client),
-        CollectionReadAllTool(db),
         CollectionKeysTool(db),
         # Collection writes
         CollectionWriteTool(db, llm_client, agent_name),
         CollectionUpdateTool(db, agent_name),
         CollectionMoveTool(db, agent_name),
-        # Log reads
-        LogReadLatestTool(db),
+        # Log-specific reads
         LogReadRecentTool(db),
-        LogReadSimilarTool(db, llm_client),
-        LogReadAllTool(db),
         LogReadNextTool(db, agent_name),
         # Log writes
         LogAppendTool(db, llm_client, agent_name),

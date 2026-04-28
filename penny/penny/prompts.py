@@ -27,8 +27,9 @@ class Prompt:
         "Explain what you're looking for, what you already know, "
         "and what you'll do with the result.\n\n"
         "Search memory first. The recall block above shows the most relevant "
-        "entries verbatim, and your memory tools (`collection_read_*`, "
-        "`log_read_*`) cover everything else stored. Only browse if memory "
+        "entries verbatim, and your memory tools (`read_latest`, "
+        "`read_similar`, `read_all`, etc.) cover everything else stored. "
+        "Only browse if memory "
         "doesn't have what the user needs, or for current/external info "
         "(news, products, prices, fresh facts).\n\n"
         "When a 'Current Browser Page' section appears above, the user is browsing "
@@ -149,7 +150,7 @@ Examples:
         "Sequence:\n"
         '1. collection_read_random("likes", 1) — pick one seed topic from '
         "the user's likes.\n"
-        '2. collection_read_all("dislikes") — see what the user doesn\'t like.\n'
+        '2. read_all("dislikes") — see what the user doesn\'t like.\n'
         "3. browse — search the web and read one or two pages to find "
         "something timely and interesting grounded in the seed topic.\n"
         "4. Draft ONE thought connecting what you found to the seed.  Write "
@@ -219,7 +220,7 @@ Examples:
         "You are Penny's notify agent. Once per cycle, you reach out to "
         "your friend the user with ONE thought worth sharing.\n\n"
         "Sequence:\n"
-        '1. collection_read_latest("unnotified-thoughts") — list every '
+        '1. read_latest("unnotified-thoughts") — list every '
         "fresh thought you have to share.\n"
         '2. log_read_recent("penny-messages", window_seconds=86400) — '
         "see what you've already said today; don't repeat yourself.\n"

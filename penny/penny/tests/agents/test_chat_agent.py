@@ -145,6 +145,19 @@ Just wrap them in conversational text, not a clinical dump.
 ### User Profile
 The user's name is Test User.
 
+### Memory Inventory
+- browse-results (log) — Every browse-tool fetch result
+- dislikes (collection) — Topics the user has expressed negative sentiment about
+- knowledge (collection) — Summarized facts from web pages Penny has read
+- likes (collection) — Topics the user has expressed positive sentiment about
+- notified-thoughts (collection) — Thoughts already shared with the user
+- penny-messages (log) — Every outgoing Penny reply
+- playlists (collection) — favorite playlists
+- secrets (collection) — hidden
+- tips (log) — useful tips
+- unnotified-thoughts (collection) — Pending thoughts to share with the user
+- user-messages (log) — Every incoming user message
+
 ### playlists
 favorite playlists
 
@@ -164,8 +177,9 @@ Explain what you're looking for, what you already know, \
 and what you'll do with the result.
 
 Search memory first. The recall block above shows the most relevant \
-entries verbatim, and your memory tools (`collection_read_*`, \
-`log_read_*`) cover everything else stored. Only browse if memory \
+entries verbatim, and your memory tools (`read_latest`, \
+`read_similar`, `read_all`, etc.) cover everything else stored. \
+Only browse if memory \
 doesn't have what the user needs, or for current/external info \
 (news, products, prices, fresh facts).
 
