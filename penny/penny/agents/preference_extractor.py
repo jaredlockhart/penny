@@ -9,21 +9,12 @@ on the next schedule.
 
 from __future__ import annotations
 
-from penny.agents.base import Agent
-from penny.constants import HistoryPromptType
+from penny.agents.base import BackgroundAgent
+from penny.prompts import Prompt
 
 
-class PreferenceExtractorAgent(Agent):
+class PreferenceExtractorAgent(BackgroundAgent):
     """Background worker that extracts preferences from user messages."""
 
     name = "preference-extractor"
-    prompt_type = HistoryPromptType.PREFERENCE_EXTRACTION
-
-    # Cap on agentic loop iterations.  The expected flow is
-    # read_next → write(likes) → write(dislikes) → done, so 8 leaves
-    # headroom for re-reads or batched writes without letting a
-    # runaway loop tail through forever.
-    MAX_STEPS = 8
-
-    def get_max_steps(self) -> int:
-        return self.MAX_STEPS
+    system_prompt = Prompt.PREFERENCE_EXTRACTOR_SYSTEM_PROMPT

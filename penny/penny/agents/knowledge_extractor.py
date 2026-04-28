@@ -9,25 +9,12 @@ exit.
 
 from __future__ import annotations
 
-from penny.agents.base import Agent
-from penny.constants import HistoryPromptType
+from penny.agents.base import BackgroundAgent
+from penny.prompts import Prompt
 
 
-class KnowledgeExtractorAgent(Agent):
+class KnowledgeExtractorAgent(BackgroundAgent):
     """Background worker that builds the knowledge base from browse output."""
 
     name = "knowledge-extractor"
-    prompt_type = HistoryPromptType.KNOWLEDGE_EXTRACTION
-
-    # Cap on agentic loop iterations.  The expected flow is
-    # read_next → (get + write/update)*N → done.  N scales with the
-    # number of new page entries, so 16 gives headroom for several
-    # pages per cycle.
-    MAX_STEPS = 16
-
-    def get_max_steps(self) -> int:
-        return self.MAX_STEPS
-
-    async def execute(self) -> bool:
-        """User-independent: run a single cycle without iterating users."""
-        return await self._run_cycle(user=None)
+    system_prompt = Prompt.KNOWLEDGE_EXTRACTOR_SYSTEM_PROMPT

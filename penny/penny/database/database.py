@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine
 
+from penny.config_params import RuntimeParams
 from penny.database.cursor_store import CursorStore
 from penny.database.device_store import DeviceStore
 from penny.database.domain_permission_store import DomainPermissionStore
@@ -33,7 +34,7 @@ class Database:
         users: UserInfo, sender queries, mute state
     """
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, runtime: RuntimeParams | None = None):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(f"sqlite:///{db_path}")
@@ -42,7 +43,7 @@ class Database:
         self.devices = DeviceStore(self.engine)
         self.domain_permissions = DomainPermissionStore(self.engine)
         self.media = MediaStore(self.engine)
-        self.memories = MemoryStore(self.engine)
+        self.memories = MemoryStore(self.engine, runtime=runtime)
         self.messages = MessageStore(self.engine)
         self.preferences = PreferenceStore(self.engine)
         self.thoughts = ThoughtStore(self.engine)

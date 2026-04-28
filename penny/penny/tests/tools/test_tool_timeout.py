@@ -89,13 +89,13 @@ class TestToolTimeout:
             max_retries=1,
             retry_delay=0.1,
         )
+        config.tool_timeout = 90.0
         agent = Agent(
             system_prompt="test",
             model_client=client,
             tools=[],
             db=db,
             config=config,
-            tool_timeout=90.0,
         )
 
         # Check that the ToolExecutor was initialized with the correct timeout

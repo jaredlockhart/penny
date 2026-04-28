@@ -15,12 +15,12 @@ async def test_config_list(signal_server, test_config, mock_llm, running_penny):
         # Wait for response
         response = await signal_server.wait_for_message(timeout=5.0)
 
-        # Should list all config parameters grouped by agent/feature
+        # Should list all config parameters grouped by scope
         assert "**Runtime Configuration**" in response["message"]
         assert "**Chat**" in response["message"]
-        assert "**Thinking**" in response["message"]
-        assert "**Notify**" in response["message"]
-        assert "MESSAGE_MAX_STEPS" in response["message"]
+        assert "**Background**" in response["message"]
+        assert "**Memory**" in response["message"]
+        assert "MAX_STEPS" in response["message"]
         assert "IDLE_SECONDS" in response["message"]
         assert "Use `/config <key> <value>` to change a setting" in response["message"]
 
@@ -38,7 +38,10 @@ async def test_config_get_specific(signal_server, test_config, mock_llm, running
         # Should show IDLE_SECONDS value (test config uses 99999.0)
         assert "**IDLE_SECONDS**:" in response["message"]
         assert "99999.0" in response["message"]
-        assert "Seconds of silence before background agents become eligible" in response["message"]
+        assert (
+            "Seconds of silence before idle-gated background agents become eligible"
+            in response["message"]
+        )
 
 
 @pytest.mark.asyncio
@@ -104,16 +107,14 @@ async def test_config_set_invalid_value(signal_server, test_config, mock_llm, ru
 async def test_config_set_non_numeric(signal_server, test_config, mock_llm, running_penny):
     """Test /config with non-numeric value shows error."""
     async with running_penny(test_config) as _penny:
-        # Send /config MESSAGE_MAX_STEPS abc
-        await signal_server.push_message(
-            sender=TEST_SENDER, content="/config MESSAGE_MAX_STEPS abc"
-        )
+        # Send /config MAX_STEPS abc
+        await signal_server.push_message(sender=TEST_SENDER, content="/config MAX_STEPS abc")
 
         # Wait for response
         response = await signal_server.wait_for_message(timeout=5.0)
 
         # Should show error
-        assert "Invalid value for MESSAGE_MAX_STEPS" in response["message"]
+        assert "Invalid value for MAX_STEPS" in response["message"]
         assert "must be a positive integer" in response["message"]
 
 

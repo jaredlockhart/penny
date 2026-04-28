@@ -61,7 +61,6 @@ class EmailCommand(Command):
                 tools=tools,
                 db=context.db,
                 config=context.config,
-                tool_timeout=context.config.tool_timeout,
                 allow_repeat_tools=True,
             )
 

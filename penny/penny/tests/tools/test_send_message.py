@@ -43,7 +43,7 @@ def _make_config(min_cooldown: float = 60.0, max_cooldown: float = 3600.0):
     runtime = type(
         "Runtime",
         (),
-        {"NOTIFY_COOLDOWN_MIN": min_cooldown, "NOTIFY_COOLDOWN_MAX": max_cooldown},
+        {"SEND_COOLDOWN_MIN": min_cooldown, "SEND_COOLDOWN_MAX": max_cooldown},
     )()
     return type("Config", (), {"runtime": runtime})()
 
@@ -56,9 +56,15 @@ def _make_channel():
 
 
 def _make_tool(db, channel=None, config=None):
+    db.users.save_info(
+        sender=_RECIPIENT,
+        name="user",
+        location="Toronto",
+        timezone="America/Toronto",
+        date_of_birth="1990-01-01",
+    )
     return SendMessageTool(
         channel=channel or _make_channel(),
-        recipient=_RECIPIENT,
         agent_name=_AGENT,
         db=db,
         config=config or _make_config(),
@@ -93,6 +99,22 @@ async def test_send_message_refuses_when_user_muted(tmp_path):
     result = await tool.execute(content="hey there!")
 
     assert "muted" in result.lower()
+    assert "done" in result.lower()
+    channel.send_response.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_message_refuses_when_content_is_a_refusal(tmp_path):
+    """Refusal content ("I'm sorry, I can't...") is not dispatched as a reply."""
+    db = _make_db(tmp_path)
+    channel = _make_channel()
+    tool = _make_tool(db, channel=channel)
+
+    result = await tool.execute(
+        content="I'm sorry, I can't help with that as an AI language model."
+    )
+
+    assert "refusal" in result.lower()
     assert "done" in result.lower()
     channel.send_response.assert_not_awaited()
 

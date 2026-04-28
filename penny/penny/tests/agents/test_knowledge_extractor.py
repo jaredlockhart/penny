@@ -55,7 +55,7 @@ async def test_knowledge_extraction_full_loop(
     memory attributed to the extractor identity, and the cursor advances
     so the next run sees no new pages.
     """
-    config = make_config(history_interval=99999.0)
+    config = make_config(knowledge_extractor_interval=99999.0)
     requests_seen: list[dict] = []
     summary = (
         "https://tubesteader.com/products/eggnog\n\n"
@@ -163,7 +163,7 @@ async def test_cursor_does_not_advance_on_max_steps(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Failed run leaves the knowledge cursor untouched so the next pass replays."""
-    config = make_config(history_interval=99999.0)
+    config = make_config(knowledge_extractor_interval=99999.0)
 
     mock_llm.set_response_handler(
         lambda request, _count: mock_llm._make_tool_call_response(
@@ -189,7 +189,7 @@ async def test_no_browse_pages_completes_cleanly(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Empty browse-results log → model reads nothing, calls done immediately."""
-    config = make_config(history_interval=99999.0)
+    config = make_config(knowledge_extractor_interval=99999.0)
 
     def handler(request, _count):
         messages = request.get("messages", [])
@@ -211,8 +211,3 @@ async def test_no_browse_pages_completes_cleanly(
         # No new entries written
         after = penny.db.memories.read_all("knowledge")
         assert len(after) == len(before)
-
-
-def test_max_steps_constant_is_set():
-    """Defensive check: the cap is non-zero so the loop can actually run."""
-    assert KnowledgeExtractorAgent.MAX_STEPS > 0

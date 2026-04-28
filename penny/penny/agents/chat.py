@@ -39,6 +39,7 @@ class ChatAgent(Agent):
     """
 
     name: str = "chat"
+    system_prompt = Prompt.CONVERSATION_PROMPT
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -48,10 +49,6 @@ class ChatAgent(Agent):
         # agents inherit the True default to keep tools available so they
         # can call ``done`` / ``send_message`` on the final step.
         self._keep_tools_on_final_step = False
-
-    def get_max_steps(self) -> int:
-        """Read from config each call so /config changes take effect immediately."""
-        return int(self.config.runtime.MESSAGE_MAX_STEPS)
 
     # ── Message handling ───────────────────────────────────────────────
 
@@ -88,7 +85,7 @@ class ChatAgent(Agent):
                 )
 
             logger.info("Handling message from %s (conversation mode)", sender)
-            self._install_tools(self.get_tools(sender))
+            self._install_tools(self.get_tools())
             system_prompt = await self._build_system_prompt(sender, content)
             return await self.run(
                 prompt=content,
@@ -170,8 +167,18 @@ class ChatAgent(Agent):
         active memory is rendered into the system prompt according to
         its own ``recall`` flag (off / recent / relevant / all).  No
         bespoke per-section retrieval lives here.
+
+        Relevant-mode recall scores against the conversation window with
+        hybrid (weighted-decay-over-history vs. cosine-to-current) similarity,
+        so vague follow-ups still pull in topic-relevant memory.
         """
-        recall = await build_recall_block(self.db, self._embedding_model_client, content)
+        history_texts = [text for _, text in self._build_conversation(user)]
+        recall = await build_recall_block(
+            self.db,
+            self._embedding_model_client,
+            content,
+            conversation_history=history_texts,
+        )
         return "\n\n".join(
             s
             for s in [

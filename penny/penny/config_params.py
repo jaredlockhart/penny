@@ -14,17 +14,19 @@ RUNTIME_CONFIG_PARAMS: dict[str, ConfigParam] = {}
 
 # Group names (display order)
 GROUP_CHAT = "Chat"
-GROUP_THINKING = "Thinking"
-GROUP_HISTORY = "History"
-GROUP_NOTIFY = "Notify"
+GROUP_BACKGROUND = "Background"
+GROUP_MEMORY = "Memory"
+GROUP_BROWSE = "Browse"
+GROUP_SEND = "Send"
 GROUP_EMAIL = "Email"
 
 # Ordered list for display
 CONFIG_GROUPS: list[str] = [
     GROUP_CHAT,
-    GROUP_THINKING,
-    GROUP_HISTORY,
-    GROUP_NOTIFY,
+    GROUP_BACKGROUND,
+    GROUP_MEMORY,
+    GROUP_BROWSE,
+    GROUP_SEND,
     GROUP_EMAIL,
 ]
 
@@ -118,11 +120,11 @@ def _validate_unit_float(value: str) -> float:
     return parsed
 
 
-# ── Chat — foreground conversation, retrieval context, and browser ───────────
+# ── Chat — foreground conversation ───────────────────────────────────────────
 
 ConfigParam(
-    key="MESSAGE_MAX_STEPS",
-    description="Max agent loop steps per message",
+    key="MAX_STEPS",
+    description="Max agent loop steps per chat message cycle",
     type=int,
     default=8,
     validator=_validate_positive_int,
@@ -130,21 +132,159 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="CHAT_MAX_QUERIES",
-    description="Max parallel queries per chat tool call",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
-    group=GROUP_CHAT,
-)
-
-ConfigParam(
     key="MESSAGE_CONTEXT_LIMIT",
-    description="Max recent conversation messages injected into message context",
+    description="Max recent conversation messages injected into chat context",
     type=int,
     default=20,
     validator=_validate_positive_int,
     group=GROUP_CHAT,
+)
+
+# ── Background — every background agent (thinking, notify, extractors) ───────
+
+ConfigParam(
+    key="BACKGROUND_MAX_STEPS",
+    description=(
+        "Max agent loop steps per background-agent cycle. Higher than chat "
+        "since background agents navigate the unified tool surface to "
+        "complete their flow."
+    ),
+    type=int,
+    default=20,
+    validator=_validate_positive_int,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="NOTIFY_INTERVAL",
+    description="Seconds between notify-agent cycles (proactive outreach)",
+    type=float,
+    default=300.0,
+    validator=_validate_positive_float,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="THINKING_INTERVAL",
+    description="Seconds between thinking-agent cycles (autonomous inner monologue)",
+    type=float,
+    default=1200.0,
+    validator=_validate_positive_float,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="PREFERENCE_EXTRACTOR_INTERVAL",
+    description="Seconds between preference-extractor cycles (likes/dislikes from messages)",
+    type=float,
+    default=900.0,
+    validator=_validate_positive_float,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="KNOWLEDGE_EXTRACTOR_INTERVAL",
+    description="Seconds between knowledge-extractor cycles (summaries from browse results)",
+    type=float,
+    default=900.0,
+    validator=_validate_positive_float,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="IDLE_SECONDS",
+    description="Seconds of silence before idle-gated background agents become eligible",
+    type=float,
+    default=60.0,
+    validator=_validate_positive_float,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="EMBEDDING_BACKFILL_BATCH_LIMIT",
+    description="Max items per embedding backfill cycle on startup",
+    type=int,
+    default=50,
+    validator=_validate_positive_int,
+    group=GROUP_BACKGROUND,
+)
+
+# ── Memory tool — collection dedup thresholds ────────────────────────────────
+#
+# A candidate write is a duplicate if ANY signal hits its strict threshold,
+# OR if any TWO signals hit their relaxed thresholds.  Three signals:
+#   1. key TCR (token-containment ratio; lexical)
+#   2. key embedding cosine (paraphrase)
+#   3. content embedding cosine
+# Strict catches obvious matches on one axis; relaxed catches weak-on-every-
+# axis matches a single-signal gate would miss.
+
+ConfigParam(
+    key="MEMORY_DEDUP_KEY_TCR_STRICT",
+    description="Strict key token-containment threshold for memory dedup",
+    type=float,
+    default=1.0,
+    validator=_validate_unit_float,
+    group=GROUP_MEMORY,
+)
+
+ConfigParam(
+    key="MEMORY_DEDUP_KEY_TCR_RELAXED",
+    description=(
+        "Relaxed key token-containment threshold (catches abbreviation pairs "
+        "like 'applied ai conference' / 'applied ai conf' at exactly 2/3)"
+    ),
+    type=float,
+    default=0.65,
+    validator=_validate_unit_float,
+    group=GROUP_MEMORY,
+)
+
+ConfigParam(
+    key="MEMORY_DEDUP_KEY_SIM_STRICT",
+    description="Strict key embedding cosine threshold for memory dedup",
+    type=float,
+    default=0.90,
+    validator=_validate_unit_float,
+    group=GROUP_MEMORY,
+)
+
+ConfigParam(
+    key="MEMORY_DEDUP_KEY_SIM_RELAXED",
+    description="Relaxed key embedding cosine threshold for memory dedup",
+    type=float,
+    default=0.75,
+    validator=_validate_unit_float,
+    group=GROUP_MEMORY,
+)
+
+ConfigParam(
+    key="MEMORY_DEDUP_CONTENT_SIM_STRICT",
+    description="Strict content embedding cosine threshold for memory dedup",
+    type=float,
+    default=0.90,
+    validator=_validate_unit_float,
+    group=GROUP_MEMORY,
+)
+
+ConfigParam(
+    key="MEMORY_DEDUP_CONTENT_SIM_RELAXED",
+    description="Relaxed content embedding cosine threshold for memory dedup",
+    type=float,
+    default=0.75,
+    validator=_validate_unit_float,
+    group=GROUP_MEMORY,
+)
+
+# ── Browse tool ──────────────────────────────────────────────────────────────
+
+ConfigParam(
+    key="MAX_QUERIES",
+    description="Max parallel queries per browse tool call",
+    type=int,
+    default=3,
+    validator=_validate_positive_int,
+    group=GROUP_BROWSE,
 )
 
 ConfigParam(
@@ -153,7 +293,7 @@ ConfigParam(
     type=str,
     default="https://duckduckgo.com/?q=",
     validator=_validate_non_empty_string,
-    group=GROUP_CHAT,
+    group=GROUP_BROWSE,
 )
 
 ConfigParam(
@@ -162,173 +302,30 @@ ConfigParam(
     type=str,
     default=DOMAIN_MODE_RESTRICT,
     validator=_validate_domain_mode,
-    group=GROUP_CHAT,
+    group=GROUP_BROWSE,
 )
 
-# ── Thinking — inner monologue ───────────────────────────────────────────────
+# ── Send tool — outbound message rate limiting ───────────────────────────────
 
 ConfigParam(
-    key="INNER_MONOLOGUE_INTERVAL",
-    description="Interval in seconds between inner monologue cycles",
-    type=float,
-    default=1200.0,
-    validator=_validate_positive_float,
-    group=GROUP_THINKING,
-)
-
-ConfigParam(
-    key="INNER_MONOLOGUE_MAX_STEPS",
-    description="Max thinking loop steps per inner monologue cycle",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_THINKING,
-)
-
-ConfigParam(
-    key="INNER_MONOLOGUE_MAX_QUERIES",
-    description="Max parallel queries per thinking tool call",
-    type=int,
-    default=3,
-    validator=_validate_positive_int,
-    group=GROUP_THINKING,
-)
-
-ConfigParam(
-    key="THOUGHT_DEDUP_EMBEDDING_THRESHOLD",
-    description="Content embedding similarity threshold for thought dedup (0-1)",
-    type=float,
-    default=0.70,
-    validator=_validate_unit_float,
-    group=GROUP_THINKING,
-)
-
-ConfigParam(
-    key="THOUGHT_DEDUP_TCR_THRESHOLD",
-    description="Title token containment ratio threshold for thought dedup (0-1)",
-    type=float,
-    default=0.50,
-    validator=_validate_unit_float,
-    group=GROUP_THINKING,
-)
-
-ConfigParam(
-    key="MAX_UNNOTIFIED_THOUGHTS",
-    description="Max unnotified thoughts before thinking agent pauses",
-    type=int,
-    default=20,
-    validator=_validate_positive_int,
-    group=GROUP_THINKING,
-)
-
-ConfigParam(
-    key="FREE_THINKING_PROBABILITY",
-    description="Target ratio of free-exploration thoughts (0-1, remainder is seeded)",
-    type=float,
-    default=0.2,
-    validator=_validate_unit_float,
-    group=GROUP_THINKING,
-)
-
-# ── History — background preference and knowledge extraction ─────────────────
-
-ConfigParam(
-    key="HISTORY_INTERVAL",
-    description="Interval in seconds between history agent runs (preferences + knowledge)",
-    type=float,
-    default=900.0,
-    validator=_validate_positive_float,
-    group=GROUP_HISTORY,
-)
-
-ConfigParam(
-    key="PREFERENCE_DEDUP_EMBEDDING_THRESHOLD",
-    description="Embedding similarity threshold for preference deduplication",
-    type=float,
-    default=0.85,
-    validator=_validate_unit_float,
-    group=GROUP_HISTORY,
-)
-
-ConfigParam(
-    key="PREFERENCE_DEDUP_TCR_THRESHOLD",
-    description="Token containment ratio threshold for preference deduplication",
-    type=float,
-    default=0.6,
-    validator=_validate_unit_float,
-    group=GROUP_HISTORY,
-)
-
-ConfigParam(
-    key="PREFERENCE_MENTION_THRESHOLD",
-    description=(
-        "Minimum mention count for a preference to qualify as a thinking"
-        " seed and for sentiment scoring"
-    ),
-    type=int,
-    default=2,
-    validator=_validate_positive_int,
-    group=GROUP_HISTORY,
-)
-
-
-ConfigParam(
-    key="EMBEDDING_BACKFILL_BATCH_LIMIT",
-    description="Max items per embedding backfill cycle (preferences, thoughts, messages)",
-    type=int,
-    default=50,
-    validator=_validate_positive_int,
-    group=GROUP_HISTORY,
-)
-
-# ── Notify — notification outreach and idle timing ───────────────────────────
-
-ConfigParam(
-    key="IDLE_SECONDS",
-    description="Seconds of silence before background agents become eligible",
-    type=float,
-    default=60.0,
-    validator=_validate_positive_float,
-    group=GROUP_NOTIFY,
-)
-
-ConfigParam(
-    key="NOTIFY_CHECK_INTERVAL",
-    description="Interval in seconds between notification check cycles",
-    type=float,
-    default=300.0,
-    validator=_validate_positive_float,
-    group=GROUP_NOTIFY,
-)
-
-ConfigParam(
-    key="NOTIFY_COOLDOWN_MIN",
-    description="Initial cooldown in seconds between autonomous messages",
+    key="SEND_COOLDOWN_MIN",
+    description="Initial cooldown in seconds between autonomous sends",
     type=float,
     default=600.0,
     validator=_validate_positive_float,
-    group=GROUP_NOTIFY,
+    group=GROUP_SEND,
 )
 
 ConfigParam(
-    key="NOTIFY_COOLDOWN_MAX",
+    key="SEND_COOLDOWN_MAX",
     description="Max cooldown in seconds (ceiling for exponential backoff)",
     type=float,
     default=5400.0,
     validator=_validate_positive_float,
-    group=GROUP_NOTIFY,
+    group=GROUP_SEND,
 )
 
-ConfigParam(
-    key="NOTIFY_CANDIDATES",
-    description="Number of candidate messages to generate per notification cycle",
-    type=int,
-    default=5,
-    validator=_validate_positive_int,
-    group=GROUP_NOTIFY,
-)
-
-# ── Email — email tool settings ──────────────────────────────────────────────
+# ── Email tools ──────────────────────────────────────────────────────────────
 
 ConfigParam(
     key="EMAIL_BODY_MAX_LENGTH",

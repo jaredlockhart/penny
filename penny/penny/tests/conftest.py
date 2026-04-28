@@ -43,9 +43,12 @@ DEFAULT_TEST_CONFIG = {
 # Default runtime param overrides for tests (disable background tasks)
 DEFAULT_TEST_RUNTIME_OVERRIDES: dict[str, int | float] = {
     "IDLE_SECONDS": 99999.0,
-    # Thinking and history run independent of idle — suppress via long intervals
-    "INNER_MONOLOGUE_INTERVAL": 99999.0,
-    "HISTORY_INTERVAL": 99999.0,
+    # Bump every background-agent interval past any test timeout so the
+    # scheduler never fires them mid-test.
+    "NOTIFY_INTERVAL": 99999.0,
+    "THINKING_INTERVAL": 99999.0,
+    "PREFERENCE_EXTRACTOR_INTERVAL": 99999.0,
+    "KNOWLEDGE_EXTRACTOR_INTERVAL": 99999.0,
 }
 
 
