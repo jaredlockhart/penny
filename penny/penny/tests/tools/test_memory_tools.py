@@ -77,13 +77,20 @@ def _hash_embed(model: str, text: str | list[str]) -> list[list[float]]:
 
 
 def _single_hash_vec(text: str, dim: int = 4096) -> list[float]:
-    """Deterministic one-hot vector. SHA-256 (process-stable, not salted like
-    Python's built-in hash) → modulo dim picks an axis. Dim 4096 keeps accidental
-    collisions between distinct short strings vanishingly rare in tests."""
-    digest = hashlib.sha256(text.encode("utf-8")).digest()
-    axis = int.from_bytes(digest[:8], "big") % dim
+    """Bag-of-words deterministic embedding.  Each word picks an axis via
+    SHA-256 → modulo ``dim``; the vector is L2-normalised so cosine is
+    comparable across strings.  Identical strings map to identical
+    vectors; strings sharing words have meaningful cosine > 0;
+    fully-distinct strings map to cosine = 0."""
     vec = [0.0] * dim
-    vec[axis] = 1.0
+    words = text.lower().split() or [text]
+    for word in words:
+        digest = hashlib.sha256(word.encode("utf-8")).digest()
+        axis = int.from_bytes(digest[:8], "big") % dim
+        vec[axis] += 1.0
+    norm = sum(v * v for v in vec) ** 0.5
+    if norm > 0:
+        vec = [v / norm for v in vec]
     return vec
 
 
@@ -185,8 +192,11 @@ class TestCollectionWritesAndReads:
         await CollectionWriteTool(db, client, author="test").execute(
             memory="likes", entries=[{"key": "coffee", "content": "loves coffee"}]
         )
+        # Anchor shares the "coffee" word with the entry — the bag-of-words
+        # mock embedding gives meaningful cosine, so the entry survives the
+        # adaptive cutoff in ``read_similar``.
         rendered = await CollectionReadSimilarTool(db, client).execute(
-            memory="likes", anchor="caffeine"
+            memory="likes", anchor="coffee please"
         )
         assert "coffee" in rendered
 
@@ -303,7 +313,12 @@ class TestLogTools:
         await LogAppendTool(db, client, author="test").execute(
             memory="events", content="coffee is great"
         )
-        rendered = await LogReadSimilarTool(db, client).execute(memory="events", anchor="beverage")
+        # Anchor shares words with the entry so the bag-of-words mock
+        # embedding gives meaningful cosine and the entry survives the
+        # adaptive cutoff in ``read_similar``.
+        rendered = await LogReadSimilarTool(db, client).execute(
+            memory="events", anchor="coffee morning"
+        )
         assert "coffee is great" in rendered
 
     @pytest.mark.asyncio

@@ -170,8 +170,18 @@ class ChatAgent(Agent):
         active memory is rendered into the system prompt according to
         its own ``recall`` flag (off / recent / relevant / all).  No
         bespoke per-section retrieval lives here.
+
+        Relevant-mode recall scores against the conversation window with
+        hybrid (weighted-decay-over-history vs. cosine-to-current) similarity,
+        so vague follow-ups still pull in topic-relevant memory.
         """
-        recall = await build_recall_block(self.db, self._embedding_model_client, content)
+        history_texts = [text for _, text in self._build_conversation(user)]
+        recall = await build_recall_block(
+            self.db,
+            self._embedding_model_client,
+            content,
+            conversation_history=history_texts,
+        )
         return "\n\n".join(
             s
             for s in [

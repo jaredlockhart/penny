@@ -5,8 +5,15 @@ whose ``recall`` mode is not ``'off'``.  Each memory is rendered by mode:
 
   off      — skipped
   recent   — newest-first slice (``read_latest``)
-  relevant — similarity-ranked slice (``read_similar``; skipped without embedding)
+  relevant — hybrid similarity over the conversation window
+             (``read_similar_hybrid``; skipped without embedding)
   all      — full set in insertion order (``read_all``)
+
+Relevant-mode recall scores each candidate as
+``max(weighted_decay_over_history, cosine_to_current) - α * centrality``.
+Strong direct hits on the current message stand alone; vague follow-ups
+still benefit from earlier conversation drift.  When ``conversation_history``
+is omitted the behaviour collapses cleanly to single-anchor cosine ranking.
 """
 
 from __future__ import annotations
@@ -14,10 +21,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from penny.constants import PennyConstants
 from penny.database import Database
-from penny.database.memory_store import RecallMode
+from penny.database.memory_store import MemoryType, RecallMode
 from penny.database.models import Memory, MemoryEntry
-from penny.llm.similarity import embed_text
+from penny.llm.models import LlmError
 
 if TYPE_CHECKING:
     from penny.llm.client import LlmClient
@@ -30,11 +38,13 @@ async def build_recall_block(
     llm_client: LlmClient | None,
     current_message: str | None,
     similarity_floor: float = 0.0,
+    conversation_history: list[str] | None = None,
 ) -> str | None:
     """Assemble recall context for all active memories — summary method."""
+    anchors = await _embed_conversation_anchors(llm_client, current_message, conversation_history)
     sections: list[str] = []
     for memory in _active_memories(db):
-        section = await _render_memory(db, llm_client, memory, current_message, similarity_floor)
+        section = _render_memory(db, memory, anchors, similarity_floor)
         if section:
             sections.append(section)
     return "\n\n".join(sections) if sections else None
@@ -48,11 +58,31 @@ def _active_memories(db: Database) -> list[Memory]:
     return [m for m in db.memories.list_all() if not m.archived and m.recall != RecallMode.OFF]
 
 
-async def _render_memory(
-    db: Database,
+async def _embed_conversation_anchors(
     llm_client: LlmClient | None,
-    memory: Memory,
     current_message: str | None,
+    history: list[str] | None,
+) -> list[list[float]] | None:
+    """Embed history + current_message as ordered anchors (oldest→newest).
+
+    Returns ``None`` when no current message is available, when no client
+    is configured, or when the embed call fails.  Empty history is fine —
+    the result is just ``[current_embedding]``.
+    """
+    if not current_message or llm_client is None:
+        return None
+    texts = [*(history or []), current_message]
+    try:
+        return await llm_client.embed(texts)
+    except LlmError:
+        logger.warning("Skipping relevant recall — conversation embedding failed")
+        return None
+
+
+def _render_memory(
+    db: Database,
+    memory: Memory,
+    anchors: list[list[float]] | None,
     similarity_floor: float,
 ) -> str | None:
     """Dispatch to the correct renderer for a single memory's recall mode."""
@@ -60,9 +90,7 @@ async def _render_memory(
     if mode == RecallMode.RECENT:
         entries = db.memories.read_latest(memory.name)
     elif mode == RecallMode.RELEVANT:
-        entries = await _relevant_entries(
-            db, llm_client, memory.name, current_message, similarity_floor
-        )
+        entries = _relevant_entries(db, memory, anchors, similarity_floor)
     elif mode == RecallMode.ALL:
         entries = db.memories.read_all(memory.name)
     else:
@@ -72,21 +100,29 @@ async def _render_memory(
     return _format_memory_section(memory, entries)
 
 
-async def _relevant_entries(
+def _relevant_entries(
     db: Database,
-    llm_client: LlmClient | None,
-    name: str,
-    current_message: str | None,
+    memory: Memory,
+    anchors: list[list[float]] | None,
     floor: float,
 ) -> list[MemoryEntry]:
-    """Embed current_message and return similarity-ranked entries."""
-    if not current_message:
+    """Run hybrid similarity, expanding logs with their temporal neighbors.
+
+    For log-shaped memories the similarity hits are augmented with every
+    entry within ±``MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES`` of any hit's
+    timestamp, so a single keyword match pulls in the surrounding
+    conversation rather than a single line stripped of context.
+    """
+    if not anchors:
         return []
-    anchor = await embed_text(llm_client, current_message)
-    if anchor is None:
-        logger.warning("Skipping relevant recall for '%s' — embedding unavailable", name)
-        return []
-    return db.memories.read_similar(name, anchor, floor=floor)
+    hits = db.memories.read_similar_hybrid(memory.name, anchors, floor=floor)
+    if not hits or memory.type != MemoryType.LOG.value:
+        return hits
+    return db.memories.expand_with_temporal_neighbors(
+        memory.name,
+        hits,
+        PennyConstants.MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES,
+    )
 
 
 def _format_memory_section(memory: Memory, entries: list[MemoryEntry]) -> str:

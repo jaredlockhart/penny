@@ -220,3 +220,35 @@ class PennyConstants:
     # write through the memory tool surface.
     MEMORY_UNNOTIFIED_THOUGHTS = "unnotified-thoughts"
     MEMORY_NOTIFIED_THOUGHTS = "notified-thoughts"
+
+    # Similarity-ranked retrieval scoring (applied by ``MemoryStore.read_similar``
+    # to every ``relevant``-mode read).  Each candidate is scored as
+    # ``adjusted = cosine_to_anchor - α * centrality``, where centrality is
+    # the candidate's mean cosine to every other entry in the same memory —
+    # the centroid-magnet penalty that suppresses generic boilerplate which
+    # would otherwise leak into every unrelated query.  Calibrated empirically
+    # against the embeddinggemma corpus on user-messages.
+    MEMORY_RELEVANT_CENTRALITY_PENALTY = 0.5
+    # Cluster-strength gate: top_head_mean / top_sample_mean must exceed this
+    # for any entries to be returned — separates real clusters from flat
+    # noise plateaus.  Calibrated in adjusted-score space.
+    MEMORY_RELEVANT_CLUSTER_GATE = 1.15
+    # Cutoff is ``max(top_head_mean * RELATIVE_RATIO, ABSOLUTE_FLOOR)``.
+    # The relative band adapts cluster width to cluster height; the
+    # absolute floor is the empirical noise ceiling below which adjusted
+    # scores are statistically indistinguishable from random.
+    MEMORY_RELEVANT_RELATIVE_RATIO = 0.85
+    MEMORY_RELEVANT_ABSOLUTE_FLOOR = 0.25
+    # Number of top candidates averaged to estimate the cluster center
+    # (numerator of the gate ratio).
+    MEMORY_RELEVANT_GATE_HEAD_SIZE = 5
+    # Number of top candidates averaged to estimate the broader noise floor
+    # (denominator of the gate ratio).  Also doubles as the cold-start
+    # threshold — below this we skip the gate and use just the absolute floor.
+    MEMORY_RELEVANT_GATE_SAMPLE_SIZE = 20
+    # Temporal neighbor expansion window for ``relevant``-mode log reads:
+    # after similarity hits are selected, expand each by ±N minutes of
+    # surrounding entries from the same log.  Captures conversational
+    # follow-ups that share no entity overlap with the current message
+    # but live in the same conversation as a real hit.
+    MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES = 5

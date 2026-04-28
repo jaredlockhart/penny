@@ -18,6 +18,7 @@ from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.llm.models import LlmError
+from penny.llm.refusal import is_refusal
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
@@ -139,20 +140,6 @@ def _build_strong_nudge(messages: list[dict]) -> str:
     ]
     original_question = user_messages[-1]
     return Prompt.FINAL_STEP_NUDGE.format(original_question=original_question)
-
-
-# Phrases that indicate a model refusal — used to detect and retry unhelpful responses
-_REFUSAL_PHRASES = (
-    "i can't",
-    "i cannot",
-    "i'm sorry",
-    "i am sorry",
-    "i'm unable",
-    "i am unable",
-    "i apologize",
-    "as an ai",
-    "as a language model",
-)
 
 
 @dataclass
@@ -343,11 +330,7 @@ class Agent:
 
     # ── Agentic loop internals ───────────────────────────────────────────
 
-    @staticmethod
-    def _is_refusal(content: str) -> bool:
-        """Return True if content looks like a model refusal."""
-        lower = content.lower()
-        return any(phrase in lower for phrase in _REFUSAL_PHRASES)
+    _is_refusal = staticmethod(is_refusal)
 
     async def _run_agentic_loop(
         self,

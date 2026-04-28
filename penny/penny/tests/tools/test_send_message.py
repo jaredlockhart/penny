@@ -98,6 +98,22 @@ async def test_send_message_refuses_when_user_muted(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_send_message_refuses_when_content_is_a_refusal(tmp_path):
+    """Refusal content ("I'm sorry, I can't...") is not dispatched as a reply."""
+    db = _make_db(tmp_path)
+    channel = _make_channel()
+    tool = _make_tool(db, channel=channel)
+
+    result = await tool.execute(
+        content="I'm sorry, I can't help with that as an AI language model."
+    )
+
+    assert "refusal" in result.lower()
+    assert "done" in result.lower()
+    channel.send_response.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_send_message_refuses_when_cooldown_not_elapsed(tmp_path):
     """A recent send from the same agent (no user reply since) → cooldown gate fires."""
     db = _make_db(tmp_path)

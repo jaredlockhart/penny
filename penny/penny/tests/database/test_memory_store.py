@@ -380,6 +380,93 @@ class TestReads:
 
         assert db.memories.read_similar("likes", anchor, k=5, floor=0.5) == []
 
+    def test_read_similar_demotes_centroid_magnet(self, tmp_path):
+        """Centrality penalty: an entry with high cosine to the anchor AND
+        high mean cosine to the rest of the corpus is demoted below a less
+        central entry whose cosine to the anchor is slightly lower."""
+        db = _make_db(tmp_path)
+        db.memories.create_collection("notes", "x", RecallMode.RELEVANT)
+        anchor = [1.0, 0.0, 0.0]
+        db.memories.write(
+            "notes",
+            [
+                EntryInput(
+                    key="magnet",
+                    content="centroid magnet",
+                    # cos to anchor = 0.9, but lives on the same axis as the crowd
+                    content_embedding=[0.9, 0.436, 0.0],
+                ),
+                EntryInput(
+                    key="specific",
+                    content="orthogonal to crowd",
+                    # cos to anchor = 0.85, orthogonal to the crowd axis
+                    content_embedding=[0.85, 0.0, 0.527],
+                ),
+                EntryInput(
+                    key="crowd1",
+                    content="boilerplate one",
+                    content_embedding=[0.5, 0.866, 0.0],
+                ),
+                EntryInput(
+                    key="crowd2",
+                    content="boilerplate two",
+                    content_embedding=[0.4, 0.917, 0.0],
+                ),
+            ],
+            author="chat",
+        )
+
+        similar = db.memories.read_similar("notes", anchor)
+        keys = [e.key for e in similar]
+        # Without the centrality penalty 'magnet' (raw cos 0.9) would lead.
+        # With the penalty, 'specific' (raw cos 0.85, far from the crowd) wins.
+        assert "specific" in keys and "magnet" in keys
+        assert keys.index("specific") < keys.index("magnet")
+
+    def test_read_similar_suppresses_flat_noise_plateau(self, tmp_path):
+        """Adaptive cluster gate: a corpus with no real cluster around the
+        anchor (head_mean ≈ sample_mean) returns empty rather than emitting
+        the noise floor."""
+        db = _make_db(tmp_path)
+        db.memories.create_log("events", "x", RecallMode.RELEVANT)
+        anchor = [1.0, 0.0, 0.0]
+        # Twenty entries with identical content embeddings — every adjusted
+        # score is the same, so head_mean / sample_mean = 1.0, well below
+        # CLUSTER_GATE (1.15).
+        for i in range(20):
+            db.memories.append(
+                "events",
+                [LogEntryInput(content=f"flat-{i}", content_embedding=[0.7, 0.7, 0.07])],
+                author="chat",
+            )
+
+        assert db.memories.read_similar("events", anchor) == []
+
+    def test_read_similar_returns_real_cluster_above_noise(self, tmp_path):
+        """Adaptive cluster gate: when the corpus has a real cluster around
+        the anchor, the gate passes and only the cluster — not the noise
+        floor — is returned."""
+        db = _make_db(tmp_path)
+        db.memories.create_log("events", "x", RecallMode.RELEVANT)
+        anchor = [1.0, 0.0, 0.0]
+        # 5 strong matches (cos ≈ 0.95)
+        for i in range(5):
+            db.memories.append(
+                "events",
+                [LogEntryInput(content=f"hit-{i}", content_embedding=[0.95, 0.31, 0.0])],
+                author="chat",
+            )
+        # 15 weak matches (cos ≈ 0.3)
+        for i in range(15):
+            db.memories.append(
+                "events",
+                [LogEntryInput(content=f"miss-{i}", content_embedding=[0.3, 0.95, 0.0])],
+                author="chat",
+            )
+
+        contents = [e.content for e in db.memories.read_similar("events", anchor)]
+        assert contents and all(c.startswith("hit-") for c in contents)
+
     def test_keys_returns_unique_in_insertion_order(self, tmp_path):
         db = _make_db(tmp_path)
         db.memories.create_collection("likes", "x", RecallMode.RELEVANT)

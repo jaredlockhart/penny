@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import random
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Literal, NamedTuple
 
@@ -131,6 +131,13 @@ class MemoryStore:
 
     def __init__(self, engine):
         self.engine = engine
+        # Per-memory centrality cache, lazy on first read.  Each entry is a
+        # dict ``{entry_id: centrality_score}`` for the named memory.
+        # Drifts as new entries arrive — acceptable for the MVP; revisit
+        # (incremental update, background refresh) if precision degrades or
+        # corpora grow past a few thousand entries where O(N²)
+        # recomputation becomes painful.
+        self._centrality_cache: dict[str, dict[int, float]] = {}
 
     def _session(self) -> Session:
         return Session(self.engine)
@@ -370,14 +377,58 @@ class MemoryStore:
         k: int | None = None,
         floor: float = 0.0,
     ) -> list[MemoryEntry]:
-        """Return entries sorted by content cosine similarity to ``anchor``.
+        """Return entries similar to ``anchor`` with centrality + adaptive cutoff.
 
-        Entries without a content_embedding are skipped. Scores below ``floor``
-        are excluded. With ``k=None`` every qualifying entry is returned.
-        Caller embeds the anchor text ahead of time.
+        Each candidate is scored as ``cosine_to_anchor - α * centrality``
+        (centrality = mean cosine to every other entry in the same memory).
+        After scoring + sort, an adaptive cluster-strength gate suppresses
+        flat noise plateaus entirely; the cutoff combines a relative band
+        against the cluster center with an absolute floor.
+
+        Entries without a ``content_embedding`` are skipped.  ``floor`` is
+        merged with the configured ``MEMORY_RELEVANT_ABSOLUTE_FLOOR`` —
+        cutoff is the larger of the two.  With ``k=None`` every qualifying
+        entry is returned.
         """
         rows = self._embedded_rows(name)
-        ordered = self._rank_against_anchor(rows, anchor, floor)
+        scored = self._score_with_centrality(name, rows, anchor)
+        cutoff = _adaptive_cutoff(scored, floor)
+        if cutoff is None:
+            return []
+        ordered = [row for score, row in scored if score >= cutoff]
+        return ordered if k is None else ordered[:k]
+
+    def read_similar_hybrid(
+        self,
+        name: str,
+        conversation_anchors: list[list[float]],
+        k: int | None = None,
+        floor: float = 0.0,
+    ) -> list[MemoryEntry]:
+        """Hybrid relevance over a conversation window.
+
+        ``conversation_anchors`` is ordered oldest→newest; the last element
+        is the *current* message, the rest are prior turns providing topic
+        context.  Each candidate is scored as
+
+            max(weighted_decay_over_history, cosine_to_current) - α * centrality
+
+        so a strong direct hit on the current message stands alone, while
+        vague follow-ups still benefit from conversation drift.  Centrality
+        and adaptive cutoff are applied identically to ``read_similar``.
+
+        Single-element ``conversation_anchors`` reduces cleanly to the same
+        ranking as ``read_similar`` — the weighted-decay branch is just the
+        lone cosine, so ``max()`` picks it.
+        """
+        if not conversation_anchors:
+            return []
+        rows = self._embedded_rows(name)
+        scored = self._score_hybrid_with_centrality(name, rows, conversation_anchors)
+        cutoff = _adaptive_cutoff(scored, floor)
+        if cutoff is None:
+            return []
+        ordered = [row for score, row in scored if score >= cutoff]
         return ordered if k is None else ordered[:k]
 
     def _embedded_rows(self, name: str) -> list[MemoryEntry]:
@@ -391,18 +442,99 @@ class MemoryStore:
                 ).all()
             )
 
-    def _rank_against_anchor(
-        self, rows: list[MemoryEntry], anchor: list[float], floor: float
-    ) -> list[MemoryEntry]:
+    def _score_with_centrality(
+        self, name: str, rows: list[MemoryEntry], anchor: list[float]
+    ) -> list[tuple[float, MemoryEntry]]:
+        """Score each candidate as ``cosine - α * centrality``, sorted desc."""
+        centralities = self._centralities_for(name, rows)
+        penalty = PennyConstants.MEMORY_RELEVANT_CENTRALITY_PENALTY
         scored: list[tuple[float, MemoryEntry]] = []
         for row in rows:
-            if row.content_embedding is None:
+            if row.content_embedding is None or row.id is None:
                 continue
             sim = cosine_similarity(anchor, deserialize_embedding(row.content_embedding))
-            if sim >= floor:
-                scored.append((sim, row))
+            adjusted = sim - penalty * centralities.get(row.id, 0.0)
+            scored.append((adjusted, row))
         scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [row for _, row in scored]
+        return scored
+
+    def _score_hybrid_with_centrality(
+        self,
+        name: str,
+        rows: list[MemoryEntry],
+        anchors: list[list[float]],
+    ) -> list[tuple[float, MemoryEntry]]:
+        """Score each candidate as ``max(weighted, current_cos) - α * centrality``."""
+        centralities = self._centralities_for(name, rows)
+        penalty = PennyConstants.MEMORY_RELEVANT_CENTRALITY_PENALTY
+        current = anchors[-1]
+        scored: list[tuple[float, MemoryEntry]] = []
+        for row in rows:
+            if row.content_embedding is None or row.id is None:
+                continue
+            candidate = deserialize_embedding(row.content_embedding)
+            weighted = _weighted_similarity(anchors, candidate)
+            current_cos = cosine_similarity(current, candidate)
+            hybrid = max(weighted, current_cos)
+            adjusted = hybrid - penalty * centralities.get(row.id, 0.0)
+            scored.append((adjusted, row))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return scored
+
+    def _centralities_for(self, name: str, rows: list[MemoryEntry]) -> dict[int, float]:
+        """Lazily compute and cache mean-cosine centrality per entry id."""
+        cached = self._centrality_cache.get(name)
+        if cached is not None:
+            return cached
+        vecs: dict[int, list[float]] = {}
+        for row in rows:
+            if row.id is None or row.content_embedding is None:
+                continue
+            vecs[row.id] = deserialize_embedding(row.content_embedding)
+        result = _compute_centralities(vecs)
+        self._centrality_cache[name] = result
+        return result
+
+    def expand_with_temporal_neighbors(
+        self,
+        name: str,
+        hits: list[MemoryEntry],
+        window_minutes: int,
+    ) -> list[MemoryEntry]:
+        """Expand each hit by ±``window_minutes`` of surrounding entries.
+
+        Used by relevant-mode recall on log-shaped memories: similarity
+        finds the conversational anchor; the temporal window pulls in the
+        follow-ups that share no entity overlap with the current message
+        but live in the same conversation as a real hit.
+
+        Returns the union of all in-window entries deduplicated by id and
+        ordered chronologically (oldest→newest).
+        """
+        if not hits:
+            return []
+        delta = timedelta(minutes=window_minutes)
+        seen_ids: set[int] = set()
+        expanded: list[MemoryEntry] = []
+        with self._session() as session:
+            for hit in hits:
+                start = hit.created_at - delta
+                end = hit.created_at + delta
+                rows = session.exec(
+                    select(MemoryEntry)
+                    .where(
+                        MemoryEntry.memory_name == name,
+                        MemoryEntry.created_at >= start,
+                        MemoryEntry.created_at <= end,
+                    )
+                    .order_by(MemoryEntry.created_at.asc())  # type: ignore[union-attr]
+                ).all()
+                for row in rows:
+                    if row.id is not None and row.id not in seen_ids:
+                        seen_ids.add(row.id)
+                        expanded.append(row)
+        expanded.sort(key=lambda r: r.created_at)
+        return expanded
 
     def read_all(self, name: str) -> list[MemoryEntry]:
         with self._session() as session:
@@ -557,3 +689,82 @@ def _safe_cosine(a: list[float] | None, b: list[float] | None) -> float | None:
     if a is None or b is None:
         return None
     return cosine_similarity(a, b)
+
+
+def _compute_centralities(vecs: dict[int, list[float]]) -> dict[int, float]:
+    """Mean cosine to every other vector in the corpus, per id.
+
+    O(N²) over the corpus.  Cosine is symmetric, so the upper triangle is
+    computed once and mirrored.  Empty / single-vector corpora return zero
+    centralities (no other entries to compare against).
+    """
+    if not vecs:
+        return {}
+    ids = list(vecs.keys())
+    if len(ids) < 2:
+        return {ids[0]: 0.0}
+    sums = dict.fromkeys(ids, 0.0)
+    for i in range(len(ids)):
+        vec_i = vecs[ids[i]]
+        for j in range(i + 1, len(ids)):
+            sim = cosine_similarity(vec_i, vecs[ids[j]])
+            sums[ids[i]] += sim
+            sums[ids[j]] += sim
+    divisor = len(ids) - 1
+    return {entry_id: total / divisor for entry_id, total in sums.items()}
+
+
+def _weighted_similarity(
+    anchors: list[list[float]],
+    candidate: list[float],
+    decay: float = 0.5,
+) -> float:
+    """Exponentially-decayed weighted average of cos(anchor, candidate).
+
+    Anchors are ordered oldest→newest; the most recent gets weight ``1.0``,
+    the previous gets ``decay``, before that ``decay**2``, and so on.
+    """
+    count = len(anchors)
+    if count == 0:
+        return 0.0
+    total = 0.0
+    weight_sum = 0.0
+    for index, anchor in enumerate(anchors):
+        age = count - 1 - index
+        weight = decay**age
+        total += cosine_similarity(anchor, candidate) * weight
+        weight_sum += weight
+    return total / weight_sum
+
+
+def _adaptive_cutoff(scored: list[tuple[float, MemoryEntry]], floor: float) -> float | None:
+    """Adaptive cutoff for similarity-ranked retrieval.
+
+    With at least ``GATE_SAMPLE_SIZE`` candidates, applies a cluster-strength
+    gate: if the head-mean / sample-mean ratio falls below
+    ``CLUSTER_GATE``, returns ``None`` to suppress the result entirely
+    (flat noise plateau, no real cluster).  Otherwise the cutoff combines
+    a relative band against the cluster center with the absolute floor.
+
+    Below the cold-start sample-size threshold, the gate is skipped and the
+    larger of the configured absolute floor and the caller's ``floor`` is
+    used directly.
+    """
+    if not scored:
+        return None
+    head_size = PennyConstants.MEMORY_RELEVANT_GATE_HEAD_SIZE
+    sample_size = PennyConstants.MEMORY_RELEVANT_GATE_SAMPLE_SIZE
+    absolute_floor = max(floor, PennyConstants.MEMORY_RELEVANT_ABSOLUTE_FLOOR)
+    if len(scored) >= sample_size:
+        head_mean = sum(score for score, _ in scored[:head_size]) / head_size
+        sample_mean = sum(score for score, _ in scored[:sample_size]) / sample_size
+        if (
+            sample_mean <= 0
+            or head_mean / sample_mean < PennyConstants.MEMORY_RELEVANT_CLUSTER_GATE
+        ):
+            return None
+        return max(
+            head_mean * PennyConstants.MEMORY_RELEVANT_RELATIVE_RATIO,
+            absolute_floor,
+        )
+    return absolute_floor
