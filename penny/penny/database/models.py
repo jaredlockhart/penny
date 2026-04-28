@@ -174,14 +174,20 @@ class Device(SQLModel, table=True):
 
 
 class Knowledge(SQLModel, table=True):
-    """A summarized web page stored for factual recall during conversation."""
+    """Legacy summarized-page table.  No Python readers anymore — kept so
+    ``create_tables()`` materialises the schema that migration 0027 reads
+    from when backfilling the ``knowledge`` memory collection.
+
+    Per Stage 12 of the migration plan, legacy tables stay in place until
+    a separate, post-migration drop.
+    """
 
     id: int | None = Field(default=None, primary_key=True)
-    url: str = Field(unique=True, index=True)  # Upsert key — one entry per URL
+    url: str = Field(unique=True, index=True)
     title: str
-    summary: str  # Dense prose paragraph (8-12 sentences)
-    embedding: bytes | None = None  # Serialized float32 embedding vector
-    source_prompt_id: int = Field(foreign_key="promptlog.id", index=True)  # High-water mark
+    summary: str
+    embedding: bytes | None = None
+    source_prompt_id: int = Field(foreign_key="promptlog.id", index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

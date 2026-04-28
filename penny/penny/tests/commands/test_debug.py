@@ -31,7 +31,10 @@ async def test_debug_command(signal_server, test_config, mock_llm, running_penny
         # Should show actual scheduler status, not "Unknown (no scheduler)"
         assert "Unknown (no scheduler)" not in response["message"]
         # Should show at least one agent name from the scheduler
-        assert any(agent in response["message"] for agent in ["inner_monologue", "history", "chat"])
+        assert any(
+            agent in response["message"]
+            for agent in ["thinking", "preference-extractor", "knowledge-extractor", "notify"]
+        )
 
 
 @pytest.mark.asyncio

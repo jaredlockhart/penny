@@ -12,8 +12,9 @@ from typing import Any
 from penny.agents import (
     Agent,
     ChatAgent,
-    HistoryAgent,
+    KnowledgeExtractorAgent,
     NotifyAgent,
+    PreferenceExtractorAgent,
     ThinkingAgent,
 )
 from penny.channels import MessageChannel, create_channel_manager
@@ -166,31 +167,47 @@ class Penny:
         )
         self._init_background_agents(config)
 
-    def _background_agent_kwargs(self, config: Config) -> dict:
-        """Common kwargs shared by all background processing agents."""
-        return {
-            "system_prompt": "",
-            "model_client": self.model_client,
-            "tools": [],
-            "db": self.db,
-            "tool_timeout": config.tool_timeout,
-            "config": config,
-        }
-
     def _init_background_agents(self, config: Config) -> None:
-        """Create monologue, history, and schedule agents."""
-        kwargs = self._background_agent_kwargs(config)
+        """Create monologue + extractor + schedule agents."""
         self.thinking_agent = ThinkingAgent(
+            system_prompt=Prompt.THINKING_SYSTEM_PROMPT,
             max_queries_key="INNER_MONOLOGUE_MAX_QUERIES",
+            model_client=self.model_client,
+            tools=[],
+            db=self.db,
+            config=config,
+            tool_timeout=config.tool_timeout,
             embedding_model_client=self.embedding_model_client,
-            **kwargs,
         )
-        self.history_agent = HistoryAgent(
+        self.preference_extractor_agent = PreferenceExtractorAgent(
+            system_prompt=Prompt.PREFERENCE_EXTRACTOR_SYSTEM_PROMPT,
             max_queries_key="CHAT_MAX_QUERIES",
+            model_client=self.model_client,
+            tools=[],
+            db=self.db,
+            config=config,
+            tool_timeout=config.tool_timeout,
             embedding_model_client=self.embedding_model_client,
-            **kwargs,
         )
-        self.schedule_executor = ScheduleExecutor(max_queries_key="CHAT_MAX_QUERIES", **kwargs)
+        self.knowledge_extractor_agent = KnowledgeExtractorAgent(
+            system_prompt=Prompt.KNOWLEDGE_EXTRACTOR_SYSTEM_PROMPT,
+            max_queries_key="CHAT_MAX_QUERIES",
+            model_client=self.model_client,
+            tools=[],
+            db=self.db,
+            config=config,
+            tool_timeout=config.tool_timeout,
+            embedding_model_client=self.embedding_model_client,
+        )
+        self.schedule_executor = ScheduleExecutor(
+            system_prompt="",
+            max_queries_key="CHAT_MAX_QUERIES",
+            model_client=self.model_client,
+            tools=[],
+            db=self.db,
+            config=config,
+            tool_timeout=config.tool_timeout,
+        )
 
     def _init_github_client(self, config: Config) -> Any:
         """Initialize GitHub API client if configured. Returns GitHubAPI or None."""
@@ -259,7 +276,8 @@ class Penny:
         self.chat_agent.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
         self.thinking_agent.set_channel(self.channel)
-        self.history_agent.set_channel(self.channel)
+        self.preference_extractor_agent.set_channel(self.channel)
+        self.knowledge_extractor_agent.set_channel(self.channel)
         self._wire_browser_tools(config)
 
     def _wire_browser_tools(self, config: Config) -> None:
@@ -292,7 +310,12 @@ class Penny:
         schedules: list[Schedule] = [
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
-                agent=self.history_agent,
+                agent=self.preference_extractor_agent,
+                interval=lambda: config.runtime.HISTORY_INTERVAL,
+                requires_idle=False,
+            ),
+            PeriodicSchedule(
+                agent=self.knowledge_extractor_agent,
                 interval=lambda: config.runtime.HISTORY_INTERVAL,
                 requires_idle=False,
             ),
@@ -366,87 +389,6 @@ class Penny:
                     model_name,
                 )
 
-    async def _backfill_all_embeddings(self) -> None:
-        """Backfill all missing embeddings at startup."""
-        if not self.embedding_model_client:
-            return
-        batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
-        total_prefs = await self._backfill_preference_embeddings(batch_limit)
-        total_thoughts = await self._backfill_thought_embeddings(batch_limit)
-        total_outgoing = await self._backfill_message_embeddings(batch_limit)
-        total_incoming = await self._backfill_incoming_message_embeddings(batch_limit)
-        total = total_prefs + total_thoughts + total_outgoing + total_incoming
-        if total:
-            logger.info(
-                "Startup embedding backfill complete: %d preferences, %d thoughts, "
-                "%d outgoing messages, %d incoming messages",
-                total_prefs,
-                total_thoughts,
-                total_outgoing,
-                total_incoming,
-            )
-
-    async def _backfill_thought_embeddings(self, batch_limit: int) -> int:
-        """Backfill thoughts with missing embeddings. Returns count embedded."""
-        assert self.embedding_model_client is not None
-        total = 0
-        while True:
-            thoughts = self.db.thoughts.get_without_embeddings(limit=batch_limit)
-            if not thoughts:
-                break
-            try:
-                texts = [t.content for t in thoughts]
-                vecs = await self.embedding_model_client.embed(texts)
-                for thought, vec in zip(thoughts, vecs, strict=True):
-                    assert thought.id is not None
-                    self.db.thoughts.update_embedding(thought.id, serialize_embedding(vec))
-                    logger.info("Embedded thought %d: %s", thought.id, thought.content[:80])
-                total += len(thoughts)
-            except Exception as e:
-                logger.warning("Startup embedding backfill failed for thoughts: %s", e)
-                break
-        return total
-
-    async def _backfill_message_embeddings(self, batch_limit: int) -> int:
-        """Backfill outgoing messages with missing embeddings. Returns count embedded."""
-        assert self.embedding_model_client is not None
-        total = 0
-        while True:
-            messages = self.db.messages.get_outgoing_without_embeddings(limit=batch_limit)
-            if not messages:
-                break
-            try:
-                texts = [m.content for m in messages]
-                vecs = await self.embedding_model_client.embed(texts)
-                for msg, vec in zip(messages, vecs, strict=True):
-                    assert msg.id is not None
-                    self.db.messages.update_embedding(msg.id, serialize_embedding(vec))
-                total += len(messages)
-            except Exception as e:
-                logger.warning("Startup embedding backfill failed for messages: %s", e)
-                break
-        return total
-
-    async def _backfill_incoming_message_embeddings(self, batch_limit: int) -> int:
-        """Backfill incoming messages with missing embeddings. Returns count embedded."""
-        assert self.embedding_model_client is not None
-        total = 0
-        while True:
-            messages = self.db.messages.get_incoming_without_embeddings(limit=batch_limit)
-            if not messages:
-                break
-            try:
-                texts = [m.content for m in messages]
-                vecs = await self.embedding_model_client.embed(texts)
-                for message, vec in zip(messages, vecs, strict=True):
-                    assert message.id is not None
-                    self.db.messages.update_embedding(message.id, serialize_embedding(vec))
-                total += len(messages)
-            except Exception as e:
-                logger.warning("Startup embedding backfill failed for incoming messages: %s", e)
-                break
-        return total
-
     async def _backfill_preference_embeddings(self, batch_limit: int) -> int:
         """Backfill preferences with missing embeddings. Returns count embedded."""
         assert self.embedding_model_client is not None
@@ -482,7 +424,11 @@ class Penny:
         await self.channel.validate_connectivity()
 
         await self._validate_optional_models()
-        await self._backfill_all_embeddings()
+        if self.embedding_model_client:
+            batch_limit = int(self.config.runtime.EMBEDDING_BACKFILL_BATCH_LIMIT)
+            total_prefs = await self._backfill_preference_embeddings(batch_limit)
+            if total_prefs:
+                logger.info("Startup embedding backfill complete: %d preferences", total_prefs)
 
         await self._send_startup_announcement()
         await self._prompt_for_missing_profiles()
@@ -504,7 +450,7 @@ class Penny:
                 return
 
             # Only announce if the user has chatted before (not a fresh profile)
-            if not self.db.messages.get_latest_incoming_time(sender):
+            if not self.db.memories.read_latest(PennyConstants.MEMORY_USER_MESSAGES_LOG, k=1):
                 logger.info("No message history yet, skipping startup announcement")
                 return
 

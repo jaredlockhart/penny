@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import pytest
 
+from penny.agents.preference_extractor import PreferenceExtractorAgent
+from penny.agents.thinking import ThinkingAgent
+from penny.constants import PennyConstants
 from penny.database.memory_store import EntryInput
 from penny.tests.conftest import TEST_SENDER
 
@@ -22,7 +25,7 @@ def _seed_likes(penny, *topics: str) -> None:
         penny.db.memories.write(
             "likes",
             [EntryInput(key=topic, content=topic)],
-            author="history",
+            author=PreferenceExtractorAgent.name,
         )
 
 
@@ -137,7 +140,11 @@ async def test_skip_when_unnotified_queue_is_full(
 
     async with running_penny(config) as penny:
         # Seed one unnotified thought so the cap is reached
-        penny.db.thoughts.add(TEST_SENDER, "existing thought", title="seed")
+        penny.db.memories.write(
+            PennyConstants.MEMORY_UNNOTIFIED_THOUGHTS,
+            [EntryInput(key="seed", content="existing thought")],
+            author=ThinkingAgent.name,
+        )
 
         result = await penny.thinking_agent.execute_for_user(TEST_SENDER)
 

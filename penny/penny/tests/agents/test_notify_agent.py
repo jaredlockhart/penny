@@ -1,23 +1,21 @@
 """Integration tests for NotifyAgent — fully model-driven shell.
 
-The agent has no bespoke logic anymore: a single shell calls the
-agent loop with the full tool surface, and the prompt steers the
-model through reading ``unnotified-thoughts``, picking one, moving
-it to ``notified-thoughts``, and producing the message text as its
-final answer.  Python wraps the cycle with eligibility guardrails
-and sends the answer through the channel.
+The agent is just ``name`` + ``prompt_type`` + ``terminator_tool``;
+the prompt steers the model through reading ``unnotified-thoughts``,
+picking one, moving it to ``notified-thoughts``, and dispatching via
+``send_message``.  Mute and cooldown gating live inside
+``SendMessageTool``; if no unnotified thoughts exist, the prompt
+tells the model to call ``done()``.
 
 Test organisation:
-1. Eligibility — Python guardrails (channel, mute, has-thoughts, cooldown)
-2. Happy path — full verbatim system prompt + model-driven sequence
-3. Skip cases — empty model answer / no eligibility
+1. Happy path — full verbatim system prompt + model-driven sequence
+2. Skip cases — model calls ``done()`` without sending
 """
 
 from __future__ import annotations
 
 import pytest
 
-from penny.constants import PennyConstants
 from penny.database.memory_store import EntryInput
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -31,70 +29,7 @@ def _seed_unnotified_thought(penny, key: str, content: str) -> None:
     )
 
 
-# ── 1. Eligibility ────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_notify_blocked_when_no_channel(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Notification is blocked when no channel is set."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        _seed_unnotified_thought(penny, "Quantum entanglement", "neat physics tidbit")
-        penny.notify_agent._channel = None
-        assert not penny.notify_agent._should_notify(TEST_SENDER)
-
-
-@pytest.mark.asyncio
-async def test_notify_blocked_when_muted(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Notification is blocked when user is muted."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        _seed_unnotified_thought(penny, "Quantum entanglement", "neat physics tidbit")
-        penny.db.users.set_muted(TEST_SENDER)
-        assert not penny.notify_agent._should_notify(TEST_SENDER)
-
-
-@pytest.mark.asyncio
-async def test_notify_blocked_when_no_unnotified_thoughts(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Notification is blocked when the unnotified-thoughts collection is empty."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        assert not penny.notify_agent._should_notify(TEST_SENDER)
-
-
-@pytest.mark.asyncio
-async def test_notify_eligible_with_thought_and_channel(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Notification is eligible when an unnotified thought exists and channel is set."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        _seed_unnotified_thought(penny, "Quantum entanglement", "neat physics tidbit")
-        assert penny.notify_agent._should_notify(TEST_SENDER)
-
-
-@pytest.mark.asyncio
-async def test_cooldown_elapsed_when_no_prior_autonomous(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """Cooldown is always elapsed when no prior autonomous messages exist."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        assert penny.notify_agent._cooldown_elapsed(TEST_SENDER)
-
-
-# ── 2. Happy path ─────────────────────────────────────────────────────────
+# ── 1. Happy path ─────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -104,8 +39,8 @@ async def test_notify_cycle_happy_path(
     """Core success flow: read unnotified, move it, send_message, done.
 
     Asserts the verbatim system prompt drives the loop, the model's
-    move call lands the entry in ``notified-thoughts``, and the
-    model's ``send_message`` tool call delivers through the channel.
+    ``collection_move`` tool call lands the entry in ``notified-thoughts``,
+    and the model's ``send_message`` tool call delivers through the channel.
     """
     config = make_config()
     requests_seen: list[dict] = []
@@ -205,14 +140,14 @@ is worth sharing, call done() without sending anything."""
         assert "Tubesteader Beekeeper review" in notified_keys
 
 
-# ── 3. Skip cases ─────────────────────────────────────────────────────────
+# ── 2. Skip cases ─────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_no_message_sent_when_model_calls_done(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
-    """Model exits via ``done()`` without producing text → no notification sent."""
+    """Model exits via ``done()`` without sending — cycle reports False, nothing sent."""
     config = make_config()
 
     mock_llm.set_response_handler(
@@ -225,22 +160,4 @@ async def test_no_message_sent_when_model_calls_done(
         result = await penny.notify_agent.execute_for_user(TEST_SENDER)
 
         assert result is False
-        assert signal_server.outgoing_messages == []
-
-
-@pytest.mark.asyncio
-async def test_no_message_sent_when_no_unnotified_thoughts(
-    signal_server, mock_llm, make_config, test_user_info, running_penny
-):
-    """No unnotified thoughts → cycle skipped before the agent loop runs."""
-    config = make_config()
-
-    async with running_penny(config) as penny:
-        # No seeds — also seed an incoming message so cooldown isn't the gate
-        penny.db.messages.log_message(PennyConstants.MessageDirection.INCOMING, TEST_SENDER, "hi")
-
-        result = await penny.notify_agent.execute_for_user(TEST_SENDER)
-
-        assert result is False
-        assert len(mock_llm.requests) == 0
         assert signal_server.outgoing_messages == []

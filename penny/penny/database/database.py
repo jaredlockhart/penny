@@ -8,7 +8,6 @@ from sqlmodel import Session, SQLModel, create_engine
 from penny.database.cursor_store import CursorStore
 from penny.database.device_store import DeviceStore
 from penny.database.domain_permission_store import DomainPermissionStore
-from penny.database.knowledge_store import KnowledgeStore
 from penny.database.media_store import MediaStore
 from penny.database.memory_store import MemoryStore
 from penny.database.message_store import MessageStore
@@ -26,7 +25,6 @@ class Database:
         cursors: Per-agent read cursors into log-shaped memories
         devices: Device registration and lookup
         domain_permissions: Domain access permissions for browser tools
-        knowledge: Summarized web page content for factual recall
         media: Binary media referenced by memory entries via <media:ID> tokens
         memories: Unified collection + log access (task/memory framework)
         messages: Message/prompt/command logging, threading, queries
@@ -43,7 +41,6 @@ class Database:
         self.cursors = CursorStore(self.engine)
         self.devices = DeviceStore(self.engine)
         self.domain_permissions = DomainPermissionStore(self.engine)
-        self.knowledge = KnowledgeStore(self.engine)
         self.media = MediaStore(self.engine)
         self.memories = MemoryStore(self.engine)
         self.messages = MessageStore(self.engine)

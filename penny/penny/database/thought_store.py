@@ -3,7 +3,7 @@
 import logging
 from datetime import UTC, datetime
 
-from sqlmodel import Session, func, select
+from sqlmodel import Session, select
 
 from penny.database.models import Thought
 
@@ -139,32 +139,6 @@ class ThoughtStore:
                 ).all()
             )
 
-    def count_unnotified(self, user: str) -> int:
-        """Count un-notified thoughts for a user."""
-        with self._session() as session:
-            result = session.exec(
-                select(func.count())
-                .select_from(Thought)
-                .where(
-                    Thought.user == user,
-                    Thought.notified_at == None,  # noqa: E711
-                )
-            ).one()
-            return result
-
-    def count_unnotified_free(self, user: str) -> int:
-        """Count un-notified free thoughts (preference_id IS NULL)."""
-        with self._session() as session:
-            return session.exec(
-                select(func.count())
-                .select_from(Thought)
-                .where(
-                    Thought.user == user,
-                    Thought.notified_at == None,  # noqa: E711
-                    Thought.preference_id == None,  # noqa: E711
-                )
-            ).one()
-
     def get_recent_notified(self, user: str, limit: int = 1) -> list[Thought]:
         """Get most recently notified thoughts, newest first."""
         with self._session() as session:
@@ -193,30 +167,6 @@ class ThoughtStore:
         except Exception as e:
             logger.error("Failed to mark thought %d as notified: %s", thought_id, e)
 
-    def update_embedding(self, thought_id: int, embedding: bytes) -> None:
-        """Update the embedding for a thought."""
-        try:
-            with self._session() as session:
-                thought = session.get(Thought, thought_id)
-                if thought:
-                    thought.embedding = embedding
-                    session.add(thought)
-                    session.commit()
-        except Exception as e:
-            logger.error("Failed to update thought %d embedding: %s", thought_id, e)
-
-    def get_without_embeddings(self, limit: int = 50) -> list[Thought]:
-        """Get thoughts that don't have embeddings yet, newest first."""
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(Thought)
-                    .where(Thought.embedding == None)  # noqa: E711
-                    .order_by(Thought.created_at.desc())
-                    .limit(limit)
-                ).all()
-            )
-
     def set_valence(self, thought_id: int, valence: int) -> None:
         """Set the user reaction valence on a thought (1 = positive, -1 = negative)."""
         try:
@@ -229,21 +179,6 @@ class ThoughtStore:
                     logger.debug("Set valence %d on thought %d", valence, thought_id)
         except Exception as e:
             logger.error("Failed to set valence on thought %d: %s", thought_id, e)
-
-    def get_valenced(self, user: str) -> list[Thought]:
-        """Get all thoughts with a user reaction valence and an embedding."""
-        with self._session() as session:
-            return list(
-                session.exec(
-                    select(Thought)
-                    .where(
-                        Thought.user == user,
-                        Thought.valence != None,  # noqa: E711
-                        Thought.embedding != None,  # noqa: E711
-                    )
-                    .order_by(Thought.created_at.asc())
-                ).all()
-            )
 
     def count(self, user: str) -> int:
         """Count total thoughts for a user."""
