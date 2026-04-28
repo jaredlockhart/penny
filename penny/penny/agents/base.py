@@ -634,11 +634,12 @@ class Agent:
         self._channel = channel
 
     def get_tools(self) -> list[Tool]:
-        """Full tool surface for this agent — memory tools + browse + send_message.
+        """Tool surface for chat-style agents — memory tools + browse.
 
-        Every agent gets every tool, all attributed to ``self.name``.
-        ``send_message`` resolves the recipient itself (single-user
-        Penny); the prompt tells the model when to call it.
+        Chat replies via the final-text path (``response.answer`` →
+        ``channel.send_response``), so it doesn't need ``send_message``;
+        background agents (notify, thinking, extractors) extend this
+        surface in ``BackgroundAgent.get_tools()`` to add it.
 
         Builds fresh each cycle so runtime config changes take effect
         immediately and the underlying ``BrowseTool``'s author + cursor
@@ -648,15 +649,6 @@ class Agent:
             self.db, self._embedding_model_client, agent_name=self.name
         )
         tools.append(self._build_browse_tool(author=self.name))
-        if self._channel is not None:
-            tools.append(
-                SendMessageTool(
-                    channel=self._channel,
-                    agent_name=self.name,
-                    db=self.db,
-                    config=self.config,
-                )
-            )
         return tools
 
     def _build_browse_tool(self, author: str) -> BrowseTool:
@@ -991,7 +983,24 @@ class BackgroundAgent(Agent):
     since background agents navigate the unified tool surface end-to-end
     (read inputs → process → write outputs → done) and need more loop
     iterations than a single chat turn.
+
+    Adds ``send_message`` to the chat-style tool surface so background
+    flows have a way to deliver to the user — chat agents reply inline
+    via final text and don't need it.
     """
 
     def get_max_steps(self) -> int:
         return int(self.config.runtime.BACKGROUND_MAX_STEPS)
+
+    def get_tools(self) -> list[Tool]:
+        tools = super().get_tools()
+        if self._channel is not None:
+            tools.append(
+                SendMessageTool(
+                    channel=self._channel,
+                    agent_name=self.name,
+                    db=self.db,
+                    config=self.config,
+                )
+            )
+        return tools

@@ -118,14 +118,28 @@ class SendMessageTool(Tool):
     # ── Gating helpers ──────────────────────────────────────────────────
 
     def _cooldown_elapsed(self) -> bool:
-        """Exponential backoff: cooldown doubles per send since the last user message."""
+        """Exponential backoff between *autonomous* sends.
+
+        The gate's purpose is to stop a background agent from spamming the
+        user with multiple messages in a row when there's been no reply.
+        When ``count == 0`` the user has spoken since this agent's last
+        send, so any new message is conversational, not autonomous —
+        no cooldown applies.
+
+        Once the agent sends without a user reply between, ``count``
+        climbs and the cooldown doubles each step (capped at
+        ``SEND_COOLDOWN_MAX``); the next send must wait that long since
+        the previous one.
+        """
+        count = self._count_sends_since_user_message()
+        if count == 0:
+            return True
         latest = self._latest_send_time()
         if latest is None:
             return True
         elapsed = (_naive_utc_now() - _to_naive(latest)).total_seconds()
-        count = self._count_sends_since_user_message()
         cooldown = min(
-            self._config.runtime.SEND_COOLDOWN_MIN * (2 ** max(count - 1, 0)),
+            self._config.runtime.SEND_COOLDOWN_MIN * (2 ** (count - 1)),
             self._config.runtime.SEND_COOLDOWN_MAX,
         )
         return elapsed >= cooldown
