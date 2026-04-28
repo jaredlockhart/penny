@@ -125,8 +125,8 @@ class SendMessageTool(Tool):
         elapsed = (_naive_utc_now() - _to_naive(latest)).total_seconds()
         count = self._count_sends_since_user_message()
         cooldown = min(
-            self._config.runtime.NOTIFY_COOLDOWN_MIN * (2 ** max(count - 1, 0)),
-            self._config.runtime.NOTIFY_COOLDOWN_MAX,
+            self._config.runtime.SEND_COOLDOWN_MIN * (2 ** max(count - 1, 0)),
+            self._config.runtime.SEND_COOLDOWN_MAX,
         )
         return elapsed >= cooldown
 

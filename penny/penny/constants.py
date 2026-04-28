@@ -171,26 +171,6 @@ class PennyConstants:
     TOOL_REQUEST_TIMEOUT = 60.0
     PERMISSION_PROMPT_TIMEOUT = 60.0
 
-    # Memory dedup thresholds. Three signals are evaluated per candidate/
-    # existing pair:
-    #   1. key TCR (token-containment ratio; lexical, cheap, catches
-    #      "dark roast" vs "dark roast coffee" and year-stripped variants)
-    #   2. key embedding cosine (catches paraphrases the lexical signal misses)
-    #   3. content embedding cosine
-    # Duplicate if ANY signal >= its strict threshold, OR if ANY TWO signals
-    # >= their relaxed thresholds. Strict catches obvious matches on one axis;
-    # relaxed catches weak-on-every-axis matches a single-signal gate misses.
-    # Starting values; tune empirically against false-positive/false-negative
-    # rates on real memory writes.
-    MEMORY_KEY_TCR_STRICT_THRESHOLD = 1.0
-    # Abbreviation band: "applied ai conference" vs "applied ai conf" scores
-    # exactly 2/3. Float-literal 0.67 would miss it by one bit.
-    MEMORY_KEY_TCR_RELAXED_THRESHOLD = 0.65
-    MEMORY_KEY_SIM_STRICT_THRESHOLD = 0.90
-    MEMORY_KEY_SIM_RELAXED_THRESHOLD = 0.75
-    MEMORY_CONTENT_SIM_STRICT_THRESHOLD = 0.90
-    MEMORY_CONTENT_SIM_RELAXED_THRESHOLD = 0.75
-
     # System log memories (created by migration 0026) that the channel
     # adapter and browse tool side-effect-write to on every turn.
     MEMORY_USER_MESSAGES_LOG = "user-messages"

@@ -43,7 +43,7 @@ def _make_config(min_cooldown: float = 60.0, max_cooldown: float = 3600.0):
     runtime = type(
         "Runtime",
         (),
-        {"NOTIFY_COOLDOWN_MIN": min_cooldown, "NOTIFY_COOLDOWN_MAX": max_cooldown},
+        {"SEND_COOLDOWN_MIN": min_cooldown, "SEND_COOLDOWN_MAX": max_cooldown},
     )()
     return type("Config", (), {"runtime": runtime})()
 

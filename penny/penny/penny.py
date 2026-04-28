@@ -68,7 +68,7 @@ class Penny:
         materialise the schema. Migrations then apply on top — including
         data-insert migrations like 0026 that seed system log memories.
         """
-        self.db = Database(config.db_path)
+        self.db = Database(config.db_path, runtime=config.runtime)
         self.db.create_tables()
         migrate(config.db_path)
         config.runtime._db = self.db
@@ -282,21 +282,21 @@ class Penny:
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
                 agent=self.preference_extractor_agent,
-                interval=lambda: config.runtime.HISTORY_INTERVAL,
+                interval=lambda: config.runtime.BACKGROUND_INTERVAL,
                 requires_idle=False,
             ),
             PeriodicSchedule(
                 agent=self.knowledge_extractor_agent,
-                interval=lambda: config.runtime.HISTORY_INTERVAL,
+                interval=lambda: config.runtime.BACKGROUND_INTERVAL,
                 requires_idle=False,
             ),
             PeriodicSchedule(
                 agent=self.notify_agent,
-                interval=lambda: config.runtime.NOTIFY_CHECK_INTERVAL,
+                interval=lambda: config.runtime.BACKGROUND_INTERVAL,
             ),
             PeriodicSchedule(
                 agent=self.thinking_agent,
-                interval=lambda: config.runtime.INNER_MONOLOGUE_INTERVAL,
+                interval=lambda: config.runtime.BACKGROUND_INTERVAL,
                 requires_idle=False,
             ),
         ]

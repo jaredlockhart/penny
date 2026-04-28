@@ -40,6 +40,7 @@ from similarity.embeddings import (
 )
 from sqlmodel import Session, select
 
+from penny.config_params import RuntimeParams
 from penny.constants import PennyConstants
 from penny.database.models import Memory, MemoryEntry
 
@@ -69,12 +70,24 @@ class MemoryNotFoundError(Exception):
 class DedupThresholds(BaseModel):
     """Per-signal strict + relaxed thresholds for the memory dedup rule."""
 
-    key_tcr_strict: float = PennyConstants.MEMORY_KEY_TCR_STRICT_THRESHOLD
-    key_tcr_relaxed: float = PennyConstants.MEMORY_KEY_TCR_RELAXED_THRESHOLD
-    key_sim_strict: float = PennyConstants.MEMORY_KEY_SIM_STRICT_THRESHOLD
-    key_sim_relaxed: float = PennyConstants.MEMORY_KEY_SIM_RELAXED_THRESHOLD
-    content_sim_strict: float = PennyConstants.MEMORY_CONTENT_SIM_STRICT_THRESHOLD
-    content_sim_relaxed: float = PennyConstants.MEMORY_CONTENT_SIM_RELAXED_THRESHOLD
+    key_tcr_strict: float
+    key_tcr_relaxed: float
+    key_sim_strict: float
+    key_sim_relaxed: float
+    content_sim_strict: float
+    content_sim_relaxed: float
+
+    @classmethod
+    def from_runtime(cls, runtime: RuntimeParams) -> DedupThresholds:
+        """Read the six dedup thresholds from runtime config."""
+        return cls(
+            key_tcr_strict=runtime.MEMORY_DEDUP_KEY_TCR_STRICT,
+            key_tcr_relaxed=runtime.MEMORY_DEDUP_KEY_TCR_RELAXED,
+            key_sim_strict=runtime.MEMORY_DEDUP_KEY_SIM_STRICT,
+            key_sim_relaxed=runtime.MEMORY_DEDUP_KEY_SIM_RELAXED,
+            content_sim_strict=runtime.MEMORY_DEDUP_CONTENT_SIM_STRICT,
+            content_sim_relaxed=runtime.MEMORY_DEDUP_CONTENT_SIM_RELAXED,
+        )
 
 
 class EntryInput(BaseModel):
@@ -129,8 +142,13 @@ class MemoryStore:
     this layer stays sync. The tool layer (Stage 2) owns async embedding.
     """
 
-    def __init__(self, engine):
+    def __init__(self, engine, runtime: RuntimeParams | None = None):
         self.engine = engine
+        # Runtime accessor for /config-tunable dedup thresholds.  Tests
+        # pass nothing and get a vanilla ``RuntimeParams()`` that falls
+        # back to ``ConfigParam.default`` values; production wires the
+        # live runtime so dedup respects /config tweaks.
+        self._runtime = runtime if runtime is not None else RuntimeParams()
         # Per-memory centrality cache, lazy on first read.  Each entry is a
         # dict ``{entry_id: centrality_score}`` for the named memory.
         # Drifts as new entries arrive — acceptable for the MVP; revisit
@@ -138,6 +156,10 @@ class MemoryStore:
         # corpora grow past a few thousand entries where O(N²)
         # recomputation becomes painful.
         self._centrality_cache: dict[str, dict[int, float]] = {}
+
+    def _default_thresholds(self) -> DedupThresholds:
+        """Resolve dedup thresholds from the wired runtime accessor."""
+        return DedupThresholds.from_runtime(self._runtime)
 
     def _session(self) -> Session:
         return Session(self.engine)
@@ -216,7 +238,7 @@ class MemoryStore:
         configured thresholds (or the module defaults).
         """
         self._require_type(name, MemoryType.COLLECTION)
-        thresholds = thresholds or DedupThresholds()
+        thresholds = thresholds or self._default_thresholds()
         existing = self._load_entries_with_vectors(name)
         results: list[WriteResult] = []
         with self._session() as session:
@@ -582,7 +604,7 @@ class MemoryStore:
         Runs the same similarity-based dedup used by `write`, plus an exact
         key-match shortcut when a key is supplied. Returns True on the first hit.
         """
-        thresholds = thresholds or DedupThresholds()
+        thresholds = thresholds or self._default_thresholds()
         candidate = EntrySide(key, key_embedding, content_embedding)
         for name in names:
             if key is not None and self.get_entry(name, key):

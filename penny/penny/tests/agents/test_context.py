@@ -112,43 +112,6 @@ async def test_profile_context_none_for_unknown_user(
         assert context is None
 
 
-# ── Sentiment scoring ────────────────────────────────────────────────────
-
-
-def _make_pref(vec: list[float], valence: str, mention_count: int = 2):
-    """Build a minimal preference-like object for sentiment scoring tests."""
-    from types import SimpleNamespace
-
-    from penny.llm.embeddings import serialize_embedding
-
-    return SimpleNamespace(
-        embedding=serialize_embedding(vec),
-        valence=valence,
-        mention_count=mention_count,
-    )
-
-
-def test_compute_mention_weighted_sentiment_likes_minus_dislikes():
-    """Score = weighted avg similarity to likes - weighted avg similarity to dislikes."""
-    from penny.llm.similarity import compute_mention_weighted_sentiment
-
-    vec = [1.0, 0.0, 0.0]
-    prefs = [
-        _make_pref([1.0, 0.0, 0.0], "positive"),  # identical = similarity 1.0
-        _make_pref([0.0, 1.0, 0.0], "negative"),  # orthogonal = similarity 0.0
-    ]
-    score = compute_mention_weighted_sentiment(vec, prefs, min_mentions=2)
-    assert score > 0.9  # close to 1.0
-
-
-def test_compute_mention_weighted_sentiment_no_preferences():
-    """Score is 0 when no qualifying preferences exist."""
-    from penny.llm.similarity import compute_mention_weighted_sentiment
-
-    score = compute_mention_weighted_sentiment([1.0, 0.0, 0.0], [], min_mentions=2)
-    assert score == 0.0
-
-
 # ── Page context ─────────────────────────────────────────────────────────
 
 
