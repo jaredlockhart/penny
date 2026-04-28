@@ -459,6 +459,5 @@ class TestFactory:
             "log_append",
             "list_memories",
             "exists",
-            "done",
         }
         assert names == expected
