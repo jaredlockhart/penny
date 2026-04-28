@@ -52,12 +52,16 @@ class ReadRandomArgs(BaseModel):
 
 
 class ReadSimilarArgs(BaseModel):
-    """Top-k by content cosine similarity to ``anchor`` (embedded by the tool)."""
+    """Top-k by content cosine similarity to ``anchor`` (embedded by the tool).
+
+    The similarity floor is fixed (``MEMORY_RELEVANT_ABSOLUTE_FLOOR`` plus
+    the adaptive cluster gate) — the model can't override it, since cosine
+    thresholds are opaque values it has no grounding to pick.
+    """
 
     memory: str
     anchor: str
     k: int | None = None
-    floor: float = 0.0
 
 
 # ── Log-specific reads ──────────────────────────────────────────────────────

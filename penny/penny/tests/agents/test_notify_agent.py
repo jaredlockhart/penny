@@ -54,7 +54,7 @@ async def test_notify_cycle_happy_path(
         if count == 1:
             return mock_llm._make_tool_call_response(
                 request,
-                "collection_read_latest",
+                "read_latest",
                 {"memory": "unnotified-thoughts"},
             )
         if count == 2:
@@ -105,7 +105,7 @@ You are Penny's notify agent. Once per cycle, you reach out to \
 your friend the user with ONE thought worth sharing.
 
 Sequence:
-1. collection_read_latest("unnotified-thoughts") — list every \
+1. read_latest("unnotified-thoughts") — list every \
 fresh thought you have to share.
 2. log_read_recent("penny-messages", window_seconds=86400) — \
 see what you've already said today; don't repeat yourself.

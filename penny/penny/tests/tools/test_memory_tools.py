@@ -19,10 +19,7 @@ from penny.tools.memory_tools import (
     CollectionGetTool,
     CollectionKeysTool,
     CollectionMoveTool,
-    CollectionReadAllTool,
-    CollectionReadLatestTool,
     CollectionReadRandomTool,
-    CollectionReadSimilarTool,
     CollectionUnarchiveTool,
     CollectionUpdateTool,
     CollectionWriteTool,
@@ -31,11 +28,11 @@ from penny.tools.memory_tools import (
     ListMemoriesTool,
     LogAppendTool,
     LogCreateTool,
-    LogReadAllTool,
-    LogReadLatestTool,
     LogReadNextTool,
     LogReadRecentTool,
-    LogReadSimilarTool,
+    ReadAllTool,
+    ReadLatestTool,
+    ReadSimilarTool,
     build_memory_tools,
 )
 
@@ -135,7 +132,7 @@ class TestCollectionWritesAndReads:
             ],
         )
         assert "Wrote 2 entries to 'likes'" in result
-        latest = await CollectionReadLatestTool(db).execute(memory="likes")
+        latest = await ReadLatestTool(db).execute(memory="likes")
         assert "dark roast" in latest
         assert "cold brew" in latest
 
@@ -195,25 +192,21 @@ class TestCollectionWritesAndReads:
         # Anchor shares the "coffee" word with the entry — the bag-of-words
         # mock embedding gives meaningful cosine, so the entry survives the
         # adaptive cutoff in ``read_similar``.
-        rendered = await CollectionReadSimilarTool(db, client).execute(
-            memory="likes", anchor="coffee please"
-        )
+        rendered = await ReadSimilarTool(db, client).execute(memory="likes", anchor="coffee please")
         assert "coffee" in rendered
 
     @pytest.mark.asyncio
     async def test_read_similar_without_llm_client_returns_sentinel(self, tmp_path):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        result = await CollectionReadSimilarTool(db, None).execute(
-            memory="likes", anchor="whatever"
-        )
+        result = await ReadSimilarTool(db, None).execute(memory="likes", anchor="whatever")
         assert "similarity search unavailable" in result
 
     @pytest.mark.asyncio
     async def test_read_all_empty_sentinel(self, tmp_path):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        assert await CollectionReadAllTool(db).execute(memory="likes") == "(no entries)"
+        assert await ReadAllTool(db).execute(memory="likes") == "(no entries)"
 
 
 class TestCollectionMutations:
@@ -282,7 +275,7 @@ class TestLogTools:
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         await append.execute(memory="events", content="first")
         await append.execute(memory="events", content="second")
-        rendered = await LogReadLatestTool(db).execute(memory="events")
+        rendered = await ReadLatestTool(db).execute(memory="events")
         assert rendered.splitlines() == ["- second", "- first"]
 
     @pytest.mark.asyncio
@@ -292,7 +285,7 @@ class TestLogTools:
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         await append.execute(memory="events", content="first")
         await append.execute(memory="events", content="second")
-        rendered = await LogReadAllTool(db).execute(memory="events")
+        rendered = await ReadAllTool(db).execute(memory="events")
         assert rendered.splitlines() == ["- first", "- second"]
 
     @pytest.mark.asyncio
@@ -316,7 +309,7 @@ class TestLogTools:
         # Anchor shares words with the entry so the bag-of-words mock
         # embedding gives meaningful cosine and the entry survives the
         # adaptive cutoff in ``read_similar``.
-        rendered = await LogReadSimilarTool(db, client).execute(
+        rendered = await ReadSimilarTool(db, client).execute(
             memory="events", anchor="coffee morning"
         )
         assert "coffee is great" in rendered
@@ -440,10 +433,7 @@ class TestFactory:
         expected = {
             "collection_create",
             "collection_get",
-            "collection_read_latest",
             "collection_read_random",
-            "collection_read_similar",
-            "collection_read_all",
             "collection_keys",
             "collection_write",
             "collection_update",
@@ -451,12 +441,12 @@ class TestFactory:
             "collection_archive",
             "collection_unarchive",
             "log_create",
-            "log_read_latest",
             "log_read_recent",
-            "log_read_similar",
-            "log_read_all",
             "log_read_next",
             "log_append",
+            "read_latest",
+            "read_similar",
+            "read_all",
             "list_memories",
             "exists",
         }

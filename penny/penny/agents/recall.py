@@ -43,6 +43,12 @@ async def build_recall_block(
 ) -> str | None:
     """Assemble recall context for all active memories — summary method.
 
+    Always emits a Memory Inventory header listing every non-archived
+    memory (name, type, description) so the model knows what's
+    available to read on demand without calling ``list_memories`` —
+    including memories whose ``recall`` is ``off`` and therefore have
+    no content section below.
+
     ``limit`` caps how many entries each memory contributes, applied to all
     three modes (recent, relevant, all).  Without it a large log/collection
     would dump every entry into the prompt.  Production callers (ChatAgent)
@@ -52,6 +58,9 @@ async def build_recall_block(
     """
     anchors = await _embed_conversation_anchors(llm_client, current_message, conversation_history)
     sections: list[str] = []
+    inventory = _memory_inventory_section(db)
+    if inventory:
+        sections.append(inventory)
     for memory in _active_memories(db):
         section = _render_memory(db, memory, anchors, similarity_floor, limit)
         if section:
@@ -60,6 +69,25 @@ async def build_recall_block(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _memory_inventory_section(db: Database) -> str | None:
+    """Inventory of every non-archived memory: name, type, description.
+
+    Includes memories with ``recall=off`` so the model knows what tool
+    calls are possible for on-demand reads.  Sorted alphabetically by
+    name for stable prompt structure.
+    """
+    memories = sorted(
+        (m for m in db.memories.list_all() if not m.archived),
+        key=lambda m: m.name,
+    )
+    if not memories:
+        return None
+    lines = ["### Memory Inventory"]
+    for memory in memories:
+        lines.append(f"- {memory.name} ({memory.type}) — {memory.description}")
+    return "\n".join(lines)
 
 
 def _active_memories(db: Database) -> list[Memory]:
