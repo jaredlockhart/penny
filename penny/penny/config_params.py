@@ -220,6 +220,18 @@ ConfigParam(
 # axis matches a single-signal gate would miss.
 
 ConfigParam(
+    key="RECALL_LIMIT",
+    description=(
+        "Max entries each memory contributes to the agent's recall block "
+        "(applies to recent, relevant, and all modes)"
+    ),
+    type=int,
+    default=5,
+    validator=_validate_positive_int,
+    group=GROUP_MEMORY,
+)
+
+ConfigParam(
     key="MEMORY_DEDUP_KEY_TCR_STRICT",
     description="Strict key token-containment threshold for memory dedup",
     type=float,

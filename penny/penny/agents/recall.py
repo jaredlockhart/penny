@@ -39,12 +39,21 @@ async def build_recall_block(
     current_message: str | None,
     similarity_floor: float = 0.0,
     conversation_history: list[str] | None = None,
+    limit: int = 99,
 ) -> str | None:
-    """Assemble recall context for all active memories — summary method."""
+    """Assemble recall context for all active memories — summary method.
+
+    ``limit`` caps how many entries each memory contributes, applied to all
+    three modes (recent, relevant, all).  Without it a large log/collection
+    would dump every entry into the prompt.  Production callers (ChatAgent)
+    pass ``RECALL_LIMIT`` from runtime config; the in-test default of 99
+    is high enough that existing assertions on small fixture sets still
+    cover the same entries they did before the cap.
+    """
     anchors = await _embed_conversation_anchors(llm_client, current_message, conversation_history)
     sections: list[str] = []
     for memory in _active_memories(db):
-        section = _render_memory(db, memory, anchors, similarity_floor)
+        section = _render_memory(db, memory, anchors, similarity_floor, limit)
         if section:
             sections.append(section)
     return "\n\n".join(sections) if sections else None
@@ -84,15 +93,16 @@ def _render_memory(
     memory: Memory,
     anchors: list[list[float]] | None,
     similarity_floor: float,
+    limit: int,
 ) -> str | None:
     """Dispatch to the correct renderer for a single memory's recall mode."""
     mode = RecallMode(memory.recall)
     if mode == RecallMode.RECENT:
-        entries = db.memories.read_latest(memory.name)
+        entries = db.memories.read_latest(memory.name, k=limit)
     elif mode == RecallMode.RELEVANT:
-        entries = _relevant_entries(db, memory, anchors, similarity_floor)
+        entries = _relevant_entries(db, memory, anchors, similarity_floor, limit)
     elif mode == RecallMode.ALL:
-        entries = db.memories.read_all(memory.name)
+        entries = db.memories.read_all(memory.name)[:limit]
     else:
         return None
     if not entries:
@@ -105,6 +115,7 @@ def _relevant_entries(
     memory: Memory,
     anchors: list[list[float]] | None,
     floor: float,
+    limit: int,
 ) -> list[MemoryEntry]:
     """Run hybrid similarity, expanding logs with their temporal neighbors.
 
@@ -115,7 +126,7 @@ def _relevant_entries(
     """
     if not anchors:
         return []
-    hits = db.memories.read_similar_hybrid(memory.name, anchors, floor=floor)
+    hits = db.memories.read_similar_hybrid(memory.name, anchors, k=limit, floor=floor)
     if not hits or memory.type != MemoryType.LOG.value:
         return hits
     return db.memories.expand_with_temporal_neighbors(

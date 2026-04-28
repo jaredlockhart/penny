@@ -177,6 +177,7 @@ class ChatAgent(Agent):
             self.db,
             self._embedding_model_client,
             content,
+            limit=int(self.config.runtime.RECALL_LIMIT),
             conversation_history=history_texts,
         )
         return "\n\n".join(
