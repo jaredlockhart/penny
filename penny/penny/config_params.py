@@ -156,10 +156,37 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="BACKGROUND_INTERVAL",
-    description="Seconds between every background-agent cycle (notify, thinking, extractors)",
+    key="NOTIFY_INTERVAL",
+    description="Seconds between notify-agent cycles (proactive outreach)",
     type=float,
     default=300.0,
+    validator=_validate_positive_float,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="THINKING_INTERVAL",
+    description="Seconds between thinking-agent cycles (autonomous inner monologue)",
+    type=float,
+    default=1200.0,
+    validator=_validate_positive_float,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="PREFERENCE_EXTRACTOR_INTERVAL",
+    description="Seconds between preference-extractor cycles (likes/dislikes from messages)",
+    type=float,
+    default=900.0,
+    validator=_validate_positive_float,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="KNOWLEDGE_EXTRACTOR_INTERVAL",
+    description="Seconds between knowledge-extractor cycles (summaries from browse results)",
+    type=float,
+    default=900.0,
     validator=_validate_positive_float,
     group=GROUP_BACKGROUND,
 )

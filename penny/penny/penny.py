@@ -282,21 +282,21 @@ class Penny:
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
                 agent=self.preference_extractor_agent,
-                interval=lambda: config.runtime.BACKGROUND_INTERVAL,
+                interval=lambda: config.runtime.PREFERENCE_EXTRACTOR_INTERVAL,
                 requires_idle=False,
             ),
             PeriodicSchedule(
                 agent=self.knowledge_extractor_agent,
-                interval=lambda: config.runtime.BACKGROUND_INTERVAL,
+                interval=lambda: config.runtime.KNOWLEDGE_EXTRACTOR_INTERVAL,
                 requires_idle=False,
             ),
             PeriodicSchedule(
                 agent=self.notify_agent,
-                interval=lambda: config.runtime.BACKGROUND_INTERVAL,
+                interval=lambda: config.runtime.NOTIFY_INTERVAL,
             ),
             PeriodicSchedule(
                 agent=self.thinking_agent,
-                interval=lambda: config.runtime.BACKGROUND_INTERVAL,
+                interval=lambda: config.runtime.THINKING_INTERVAL,
                 requires_idle=False,
             ),
         ]

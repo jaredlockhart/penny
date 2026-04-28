@@ -48,7 +48,7 @@ async def test_preference_extraction_full_loop(
     ``collection_write`` tool call lands an entry in the ``likes`` memory,
     and the cursor advances so the next run sees no new messages.
     """
-    config = make_config(background_interval=99999.0)
+    config = make_config(preference_extractor_interval=99999.0)
     requests_seen: list[dict] = []
 
     def handler(request, count):
@@ -136,7 +136,7 @@ async def test_cursor_does_not_advance_on_max_steps(
 ):
     """If the model exhausts max_steps without calling done, the cursor stays
     where it was so the next run sees the same messages again."""
-    config = make_config(background_interval=99999.0)
+    config = make_config(preference_extractor_interval=99999.0)
 
     # Always return log_read_next — never done.  Loop hits max_steps.
     mock_llm.set_response_handler(
@@ -163,7 +163,7 @@ async def test_no_user_messages_completes_cleanly(
     signal_server, mock_llm, make_config, test_user_info, running_penny
 ):
     """Empty user-messages log → model reads nothing, calls done immediately."""
-    config = make_config(background_interval=99999.0)
+    config = make_config(preference_extractor_interval=99999.0)
 
     def handler(request, _count):
         # First step: read the (empty) log; subsequent step: call done.
