@@ -788,11 +788,13 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
     (CollectionWrite, CollectionUpdate, CollectionMove, LogAppend) and
     every tool that maintains per-agent state (LogReadNext's cursor).
 
-    Callers can slice this list by tool name to give each agent a
-    narrower surface (e.g. the preference extractor only wants
-    ``log_read_next``, ``collection_write``, and ``done``).  The factory
-    centralizes dependency wiring so individual agents don't have to
-    juggle ``db`` / ``llm_client`` / ``agent_name`` across 22 constructors.
+    The factory centralizes dependency wiring so individual agents don't
+    have to juggle ``db`` / ``llm_client`` / ``agent_name`` across 21
+    constructors.  ``DoneTool`` is intentionally not in this surface —
+    it's a background-agent terminator and gets added in
+    ``BackgroundAgent.get_tools()`` alongside ``send_message``.  Chat
+    replies via final text and must not have ``done`` available, or the
+    model may call it instead of producing a reply.
     """
     return [
         # Metadata
@@ -820,7 +822,6 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
         LogReadNextTool(db, agent_name),
         # Log writes
         LogAppendTool(db, llm_client, agent_name),
-        # Introspection / lifecycle
+        # Introspection
         ExistsTool(db, llm_client),
-        DoneTool(),
     ]

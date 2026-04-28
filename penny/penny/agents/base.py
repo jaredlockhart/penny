@@ -984,9 +984,11 @@ class BackgroundAgent(Agent):
     (read inputs → process → write outputs → done) and need more loop
     iterations than a single chat turn.
 
-    Adds ``send_message`` to the chat-style tool surface so background
-    flows have a way to deliver to the user — chat agents reply inline
-    via final text and don't need it.
+    Adds ``done`` and ``send_message`` to the chat-style tool surface
+    so background flows have a way to terminate and deliver to the
+    user.  Chat agents reply inline via final text and don't need
+    either — having ``done`` available there causes the model to call
+    it instead of producing a reply.
     """
 
     def get_max_steps(self) -> int:
@@ -994,6 +996,7 @@ class BackgroundAgent(Agent):
 
     def get_tools(self) -> list[Tool]:
         tools = super().get_tools()
+        tools.append(DoneTool())
         if self._channel is not None:
             tools.append(
                 SendMessageTool(
