@@ -29,7 +29,6 @@ from penny.tools.memory_tools import (
     LogCreateTool,
     LogReadNextTool,
     LogReadRecentTool,
-    ReadAllTool,
     ReadLatestTool,
     ReadSimilarTool,
     build_memory_tools,
@@ -198,12 +197,6 @@ class TestCollectionWritesAndReads:
         result = await ReadSimilarTool(db, None).execute(memory="likes", anchor="whatever")
         assert "similarity search unavailable" in result
 
-    @pytest.mark.asyncio
-    async def test_read_all_empty_sentinel(self, tmp_path):
-        db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        assert await ReadAllTool(db).execute(memory="likes") == "(no entries)"
-
 
 class TestCollectionMutations:
     @pytest.mark.asyncio
@@ -273,16 +266,6 @@ class TestLogTools:
         await append.execute(memory="events", content="second")
         rendered = await ReadLatestTool(db).execute(memory="events")
         assert rendered.splitlines() == ["- second", "- first"]
-
-    @pytest.mark.asyncio
-    async def test_read_all_returns_oldest_first(self, tmp_path, mock_llm):
-        db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
-        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
-        await append.execute(memory="events", content="first")
-        await append.execute(memory="events", content="second")
-        rendered = await ReadAllTool(db).execute(memory="events")
-        assert rendered.splitlines() == ["- first", "- second"]
 
     @pytest.mark.asyncio
     async def test_read_recent_window(self, tmp_path, mock_llm):
@@ -442,7 +425,6 @@ class TestFactory:
             "log_append",
             "read_latest",
             "read_similar",
-            "read_all",
             "exists",
         }
         assert names == expected
