@@ -25,12 +25,13 @@ are effectively notify-only in practice.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from penny.constants import PennyConstants
 from penny.llm.refusal import is_refusal
-from penny.tools.base import Tool
+from penny.tools.base import InvalidArgumentError, Tool
 from penny.tools.memory_tools import DoneTool
 from penny.tools.models import SendMessageArgs
 
@@ -77,6 +78,13 @@ class SendMessageTool(Tool):
         "Message NOT sent: cooldown has not elapsed since the last "
         f"autonomous send.  Call ``{DoneTool.name}`` to exit — do not retry."
     )
+    _TRUNCATION_REJECTION = (
+        "Message NOT sent: the content ended with an ellipsis "
+        "('…' or '...'), which means it was cut off mid-thought.  "
+        "Call send_message again with the COMPLETE message body — "
+        "finish every sentence and bullet you start, no ellipses, "
+        "no 'etc.', no 'and more', no teaser phrasing."
+    )
 
     def __init__(
         self,
@@ -95,6 +103,9 @@ class SendMessageTool(Tool):
         if is_refusal(args.content):
             logger.info("send_message refused (refusal content): %s", self._agent_name)
             return self._REFUSAL_RESPONSE
+        if _appears_truncated(args.content):
+            logger.info("send_message rejected (truncation): %s", self._agent_name)
+            raise InvalidArgumentError(self._TRUNCATION_REJECTION)
         recipient = self._db.users.get_primary_sender()
         if recipient is None:
             logger.info("send_message refused (no primary user): %s", self._agent_name)
@@ -168,6 +179,22 @@ class SendMessageTool(Tool):
         """Created-at of the most recent ``user-messages`` entry."""
         entries = self._db.memories.read_latest(PennyConstants.MEMORY_USER_MESSAGES_LOG, k=1)
         return entries[0].created_at if entries else None
+
+
+_TRUNCATION_TAIL_PATTERN = re.compile(r"(?:…+|\.{3,})\s*[?!.]?\s*$")
+
+
+def _appears_truncated(content: str) -> bool:
+    """Return True if ``content`` looks like a model self-truncation.
+
+    Matches a tail of one-or-more ``…`` characters or three-or-more ASCII
+    dots, optionally followed by a single ``?``/``!``/``.`` and trailing
+    whitespace.  Production failures look like ``"...the original …"`` or
+    ``"all-time-best ‑ …?"``.  Conversational mid-sentence ellipsis
+    (``"Anyway… 🤓"``) doesn't match because the message ends with text
+    after the ellipsis.
+    """
+    return bool(_TRUNCATION_TAIL_PATTERN.search(content))
 
 
 def _naive_utc_now() -> datetime:

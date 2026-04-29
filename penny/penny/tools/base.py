@@ -11,6 +11,25 @@ from penny.tools.models import ToolCall, ToolDefinition, ToolResult
 logger = logging.getLogger(__name__)
 
 
+class InvalidArgumentError(Exception):
+    """A tool's semantic validation rejected its arguments.
+
+    Use this when an argument's value violates a constraint the JSON
+    schema can't express — e.g. a message body that ends with an
+    ellipsis (mid-thought truncation), an entry whose content duplicates
+    something in another collection, a URL that doesn't match a domain
+    allowlist.  The exception's message becomes the tool result the
+    model sees, so phrase it as a directive that tells the model how to
+    fix the call (e.g. "Message NOT sent: content ended with '…'.
+    Call send_message again with the COMPLETE message body.").
+
+    The agent loop catches this, marks the call as failed, and feeds
+    the message back to the model for the next step.  The standard
+    failure-abort threshold prevents infinite retry loops if the model
+    can't produce a valid value.
+    """
+
+
 class Tool(ABC):
     """Abstract base class for tools."""
 
@@ -200,7 +219,13 @@ class ToolExecutor:
         )
 
     async def _execute_with_timeout(self, tool: Tool, tool_call: ToolCall) -> ToolResult:
-        """Execute tool with timeout and error handling."""
+        """Execute tool with timeout and error handling.
+
+        ``InvalidArgumentError`` raised by the tool's semantic validation
+        propagates to the agent loop, which converts it to a tool-result
+        the model sees on its next step.  Generic exceptions and
+        timeouts are caught and reported as tool errors.
+        """
         try:
             logger.info("Executing tool: %s", tool_call.tool)
             logger.debug("Tool arguments: %s", tool_call.arguments)
@@ -211,6 +236,8 @@ class ToolExecutor:
             logger.info("Tool executed successfully: %s", tool_call.tool)
             logger.debug("Tool result: %s", result)
             return ToolResult(tool=tool_call.tool, result=result, error=None, id=tool_call.id)
+        except InvalidArgumentError:
+            raise
         except TimeoutError:
             logger.error("Tool execution timeout: %s", tool_call.tool)
             return ToolResult(

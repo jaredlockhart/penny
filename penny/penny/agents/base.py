@@ -22,6 +22,7 @@ from penny.llm.refusal import is_refusal
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
+from penny.tools.base import InvalidArgumentError
 from penny.tools.browse import BrowseTool
 from penny.tools.memory_tools import DoneTool, LogReadNextTool, build_memory_tools
 from penny.tools.models import SearchResult
@@ -778,14 +779,27 @@ class Agent:
         arguments: dict,
         reasoning: str | None,
     ) -> tuple[str, ToolCallRecord, list[str], str | None]:
-        """Execute one tool call. Returns (result_str, record, source_urls, image)."""
+        """Execute one tool call. Returns (result_str, record, source_urls, image).
+
+        ``InvalidArgumentError`` raised inside the tool is caught here and
+        converted into a tool-result the model sees on its next step.
+        The record is marked as failed so it counts toward the standard
+        failure-abort threshold — that prevents infinite retry loops if
+        the model keeps producing the same invalid argument.
+        """
         logger.info("Executing tool: %s", tool_name)
         if reasoning:
             logger.debug("Tool reasoning: %s", reasoning[:200])
 
         record = ToolCallRecord(tool=tool_name, arguments=arguments, reasoning=reasoning)
         tool_call = ToolCall(tool=tool_name, arguments=arguments)
-        tool_result = await self._tool_executor.execute(tool_call)
+        try:
+            tool_result = await self._tool_executor.execute(tool_call)
+        except InvalidArgumentError as exc:
+            result_str = f"Error: {exc}"
+            record.failed = True
+            logger.info("Tool argument rejected by %s: %s", tool_name, exc)
+            return result_str, record, [], None
 
         if tool_result.error:
             result_str = f"Error: {tool_result.error}"
