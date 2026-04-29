@@ -426,6 +426,7 @@ class MemoryStore:
         conversation_anchors: list[list[float]],
         k: int | None = None,
         floor: float = 0.0,
+        exclude_contents: set[str] | None = None,
     ) -> list[MemoryEntry]:
         """Hybrid relevance over a conversation window.
 
@@ -442,10 +443,20 @@ class MemoryStore:
         Single-element ``conversation_anchors`` reduces cleanly to the same
         ranking as ``read_similar`` — the weighted-decay branch is just the
         lone cosine, so ``max()`` picks it.
+
+        ``exclude_contents`` (optional) drops corpus rows whose content
+        matches any string in the set.  Use this to keep the conversation
+        anchors themselves out of their own retrieval: the chat path
+        writes the user's incoming message to ``user-messages`` before
+        recall runs, and any conversation-history message similarly lives
+        in the corpus, so without exclusion they'd self-match their own
+        anchor at cosine ≈ 1.0 and dominate the hit list.
         """
         if not conversation_anchors:
             return []
         rows = self._embedded_rows(name)
+        if exclude_contents:
+            rows = [r for r in rows if r.content not in exclude_contents]
         scored = self._score_hybrid_with_centrality(name, rows, conversation_anchors)
         cutoff = _adaptive_cutoff(scored, floor)
         if cutoff is None:

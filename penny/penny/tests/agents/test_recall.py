@@ -203,6 +203,41 @@ async def test_relevant_mode_log_expands_with_temporal_neighbors(tmp_path, mock_
 
 
 @pytest.mark.asyncio
+async def test_relevant_mode_log_excludes_self_match_within_cutoff(tmp_path, mock_llm):
+    """The current turn lands in the log corpus before recall runs.
+
+    Without the cutoff it self-matches the current-message anchor at
+    cosine ≈ 1.0 and dominates scoring; temporal expansion would then
+    anchor on the self-match and pull in the recent conversation
+    instead of historical hits.  With the cutoff in place, entries
+    newer than ``now - SELF_MATCH_CUTOFF_SECONDS`` are filtered out of
+    the corpus before scoring, so the historical hit surfaces.
+    """
+    db = _make_db(tmp_path)
+    db.memories.create_log("user-messages", "incoming", RecallMode.RELEVANT)
+    client = _make_llm_client(mock_llm)
+
+    # Historical entry: 30 days ago, contains the topic.
+    _write_entry_embedded(db, "user-messages", None, "what video games should i try")
+    historical = datetime.now(UTC) - timedelta(days=30)
+    _backfill_created_at(db, "user-messages", "what video games should i try", historical)
+
+    # Current turn: just-written, identical anchor text.  Without the
+    # cutoff this would self-match at cosine 1.0.
+    current_text = "do you remember any conversations about video games"
+    _write_entry_embedded(db, "user-messages", None, current_text)
+
+    result = await build_recall_block(db, client, current_text)
+
+    assert result is not None
+    # Historical hit surfaces (not drowned out by the self-match)
+    assert "what video games should i try" in result
+    # Current-turn entry must NOT appear via the relevant path — it's
+    # the anchor, not a retrieval.
+    assert current_text not in result
+
+
+@pytest.mark.asyncio
 async def test_relevant_mode_collection_skips_temporal_expansion(tmp_path, mock_llm):
     """Collections don't have a temporal-stream meaning, so similarity hits
     are returned without neighbor expansion even if entries are nearby in time."""

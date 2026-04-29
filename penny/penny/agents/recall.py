@@ -84,9 +84,10 @@ async def build_recall_block(
     cover the same entries they did before the cap.
     """
     anchors = await _embed_conversation_anchors(llm_client, current_message, conversation_history)
+    anchor_contents = _anchor_contents(current_message, conversation_history)
     sections: list[str] = []
     for memory in _active_memories(db):
-        section = _render_memory(db, memory, anchors, similarity_floor, limit)
+        section = _render_memory(db, memory, anchors, similarity_floor, limit, anchor_contents)
         if section:
             sections.append(section)
     return "\n\n".join(sections) if sections else None
@@ -121,19 +122,38 @@ async def _embed_conversation_anchors(
         return None
 
 
+def _anchor_contents(current_message: str | None, history: list[str] | None) -> set[str]:
+    """Build the set of texts that are *anchors*, not retrievals.
+
+    Channel ingress writes both the current incoming message and prior
+    user/assistant turns into log memories before recall runs, so any
+    of those would otherwise self-match its own anchor at cosine ≈ 1.0
+    and dominate scoring.  This set is passed to ``read_similar_hybrid``
+    to filter the corpus before scoring — anchors stay anchors, never
+    retrievals.
+    """
+    contents: set[str] = set()
+    if current_message:
+        contents.add(current_message)
+    if history:
+        contents.update(t for t in history if t)
+    return contents
+
+
 def _render_memory(
     db: Database,
     memory: Memory,
     anchors: list[list[float]] | None,
     similarity_floor: float,
     limit: int,
+    anchor_contents: set[str],
 ) -> str | None:
     """Dispatch to the correct renderer for a single memory's recall mode."""
     mode = RecallMode(memory.recall)
     if mode == RecallMode.RECENT:
         entries = db.memories.read_latest(memory.name, k=limit)
     elif mode == RecallMode.RELEVANT:
-        entries = _relevant_entries(db, memory, anchors, similarity_floor, limit)
+        entries = _relevant_entries(db, memory, anchors, similarity_floor, limit, anchor_contents)
     elif mode == RecallMode.ALL:
         entries = db.memories.read_all(memory.name)[:limit]
     else:
@@ -149,6 +169,7 @@ def _relevant_entries(
     anchors: list[list[float]] | None,
     floor: float,
     limit: int,
+    anchor_contents: set[str],
 ) -> list[MemoryEntry]:
     """Run hybrid similarity, expanding logs with their temporal neighbors.
 
@@ -156,10 +177,23 @@ def _relevant_entries(
     entry within ±``MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES`` of any hit's
     timestamp, so a single keyword match pulls in the surrounding
     conversation rather than a single line stripped of context.
+
+    ``anchor_contents`` (the texts being used as anchors) are filtered
+    out of the corpus before scoring — channel ingress writes user/penny
+    messages into log memories, so without exclusion any anchor that
+    matches an existing entry would self-match at cosine ≈ 1.0 and
+    dominate the hit list.  Collections aren't written to from channel
+    ingress, so the filter is a no-op for them.
     """
     if not anchors:
         return []
-    hits = db.memories.read_similar_hybrid(memory.name, anchors, k=limit, floor=floor)
+    hits = db.memories.read_similar_hybrid(
+        memory.name,
+        anchors,
+        k=limit,
+        floor=floor,
+        exclude_contents=anchor_contents or None,
+    )
     if not hits or memory.type != MemoryType.LOG.value:
         return hits
     return db.memories.expand_with_temporal_neighbors(
