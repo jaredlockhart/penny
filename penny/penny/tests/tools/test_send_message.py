@@ -19,7 +19,7 @@ import pytest
 from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.memory_store import LogEntryInput, RecallMode
-from penny.tools.send_message import SendMessageTool
+from penny.tools.send_message import SendMessageTool, _appears_truncated
 
 _PENNY_LOG = PennyConstants.MEMORY_PENNY_MESSAGES_LOG
 _USER_LOG = PennyConstants.MEMORY_USER_MESSAGES_LOG
@@ -117,6 +117,59 @@ async def test_send_message_refuses_when_content_is_a_refusal(tmp_path):
     assert "refusal" in result.lower()
     assert "done" in result.lower()
     channel.send_response.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_ellipsis_truncated_content(tmp_path):
+    """Content ending mid-thought with '…' returns a failure-prefixed string
+    so the agent loop marks the call as failed; the model retries with the
+    complete body on its next step."""
+    db = _make_db(tmp_path)
+    channel = _make_channel()
+    tool = _make_tool(db, channel=channel)
+
+    result = await tool.execute(content="here's the news, the model …")
+
+    assert result.startswith("Error: ")
+    assert "ended with an ellipsis" in result.lower()
+    assert "complete" in result.lower()
+    channel.send_response.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_message_allows_conversational_mid_sentence_ellipsis(tmp_path):
+    """A '…' followed by trailing text (e.g. 'Anyway… 🤓') is a complete
+    message, not a truncation — the tool dispatches it normally."""
+    db = _make_db(tmp_path)
+    channel = _make_channel()
+    tool = _make_tool(db, channel=channel)
+
+    result = await tool.execute(content="anyway… that's the gist 🤓")
+
+    assert result == "Message sent."
+    channel.send_response.assert_awaited_once()
+
+
+def test_appears_truncated_detects_production_failure_tails():
+    """Regression cases captured from production: model self-truncations."""
+    truncated = [
+        "lets you play 2-player co-op in style-themed ……",
+        "still uses the original …",
+        "precision engineering. Scientists …",
+        "all-time-best-efficiency - …?",
+        "Hello world...",
+    ]
+    for body in truncated:
+        assert _appears_truncated(body), f"should detect truncation in: {body!r}"
+
+    complete = [
+        "anyway… that's the gist 🤓",
+        "Hello world.",
+        "What a great find!",
+        "Source: https://example.com/page 🚀",
+    ]
+    for body in complete:
+        assert not _appears_truncated(body), f"should NOT detect truncation in: {body!r}"
 
 
 @pytest.mark.asyncio
