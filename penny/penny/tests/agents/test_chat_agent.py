@@ -734,15 +734,19 @@ async def test_recall_relevant_mode_uses_embedding(
 ):
     async with running_penny(test_config) as penny:
         penny.db.memories.create_collection("prefs-test", "user prefs", RecallMode.RELEVANT)
-        _write_embedded(penny.db, "prefs-test", "coffee", "loves dark roast coffee")
-        _write_embedded(penny.db, "prefs-test", "noise", "hates loud construction")
+        _write_embedded(
+            penny.db, "prefs-test", "coffee", "really loves dark roast coffee in the morning"
+        )
+        _write_embedded(
+            penny.db, "prefs-test", "noise", "really hates loud construction at sunrise"
+        )
         _install_hash_embedding(penny.chat_agent)
 
         result = await penny.chat_agent._recall_section(current_message="dark roast coffee")
 
         assert result is not None
-        assert "loves dark roast coffee" in result
-        assert "hates loud construction" not in result
+        assert "really loves dark roast coffee in the morning" in result
+        assert "really hates loud construction at sunrise" not in result
 
 
 @pytest.mark.asyncio
@@ -754,16 +758,18 @@ async def test_recall_relevant_mode_hybrid_lifts_via_history(
     pulls the entry above the absolute floor."""
     async with running_penny(test_config) as penny:
         penny.db.memories.create_collection("prefs-test", "user prefs", RecallMode.RELEVANT)
-        _write_embedded(penny.db, "prefs-test", "coffee", "loves dark roast coffee")
+        _write_embedded(
+            penny.db, "prefs-test", "coffee", "really loves dark roast coffee in the morning"
+        )
         _install_hash_embedding(penny.chat_agent)
 
         result = await penny.chat_agent._recall_section(
             current_message="yeah",
-            conversation_history=["dark roast coffee"],
+            conversation_history=["dark roast coffee in the morning"],
         )
 
         assert result is not None
-        assert "loves dark roast coffee" in result
+        assert "really loves dark roast coffee in the morning" in result
 
 
 @pytest.mark.asyncio
@@ -774,31 +780,50 @@ async def test_recall_relevant_mode_log_expands_with_temporal_neighbors(
     temporal expansion window (±MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES)."""
     async with running_penny(test_config) as penny:
         penny.db.memories.create_log("conversation-test", "shared chat log", RecallMode.RELEVANT)
-        _write_embedded(penny.db, "conversation-test", None, "dark roast coffee notes")
-        _write_embedded(penny.db, "conversation-test", None, "follow up question one")
-        _write_embedded(penny.db, "conversation-test", None, "follow up question two")
-        _write_embedded(penny.db, "conversation-test", None, "stale earlier comment")
+        _write_embedded(
+            penny.db, "conversation-test", None, "dark roast coffee notes from this week"
+        )
+        _write_embedded(
+            penny.db, "conversation-test", None, "follow up question number one in conversation"
+        )
+        _write_embedded(
+            penny.db, "conversation-test", None, "follow up question number two in conversation"
+        )
+        _write_embedded(
+            penny.db, "conversation-test", None, "stale earlier comment from last month"
+        )
 
         base = datetime.now(UTC)
         _backfill_created_at(
-            penny.db, "conversation-test", "stale earlier comment", base - timedelta(hours=1)
+            penny.db,
+            "conversation-test",
+            "stale earlier comment from last month",
+            base - timedelta(hours=1),
         )
         _backfill_created_at(
-            penny.db, "conversation-test", "dark roast coffee notes", base - timedelta(minutes=2)
+            penny.db,
+            "conversation-test",
+            "dark roast coffee notes from this week",
+            base - timedelta(minutes=2),
         )
         _backfill_created_at(
-            penny.db, "conversation-test", "follow up question one", base - timedelta(minutes=1)
+            penny.db,
+            "conversation-test",
+            "follow up question number one in conversation",
+            base - timedelta(minutes=1),
         )
-        _backfill_created_at(penny.db, "conversation-test", "follow up question two", base)
+        _backfill_created_at(
+            penny.db, "conversation-test", "follow up question number two in conversation", base
+        )
         _install_hash_embedding(penny.chat_agent)
 
         result = await penny.chat_agent._recall_section(current_message="dark roast coffee")
 
         assert result is not None
-        assert "dark roast coffee notes" in result
-        assert "follow up question one" in result
-        assert "follow up question two" in result
-        assert "stale earlier comment" not in result
+        assert "dark roast coffee notes from this week" in result
+        assert "follow up question number one in conversation" in result
+        assert "follow up question number two in conversation" in result
+        assert "stale earlier comment from last month" not in result
 
 
 @pytest.mark.asyncio
@@ -849,15 +874,19 @@ async def test_recall_relevant_mode_collection_skips_temporal_expansion(
     are returned without neighbor expansion even if entries are nearby in time."""
     async with running_penny(test_config) as penny:
         penny.db.memories.create_collection("prefs-test", "user prefs", RecallMode.RELEVANT)
-        _write_embedded(penny.db, "prefs-test", "coffee", "loves dark roast coffee")
-        _write_embedded(penny.db, "prefs-test", "noise", "hates loud construction")
+        _write_embedded(
+            penny.db, "prefs-test", "coffee", "really loves dark roast coffee in the morning"
+        )
+        _write_embedded(
+            penny.db, "prefs-test", "noise", "really hates loud construction at sunrise"
+        )
         _install_hash_embedding(penny.chat_agent)
 
         result = await penny.chat_agent._recall_section(current_message="dark roast coffee")
 
         assert result is not None
-        assert "loves dark roast coffee" in result
-        assert "hates loud construction" not in result
+        assert "really loves dark roast coffee in the morning" in result
+        assert "really hates loud construction at sunrise" not in result
 
 
 @pytest.mark.asyncio
@@ -867,14 +896,16 @@ async def test_recall_relevant_mode_without_history_skips_vague_message(
     """Vague current message with no history → absolute floor suppresses everything."""
     async with running_penny(test_config) as penny:
         penny.db.memories.create_collection("prefs-test", "user prefs", RecallMode.RELEVANT)
-        _write_embedded(penny.db, "prefs-test", "coffee", "loves dark roast coffee")
+        _write_embedded(
+            penny.db, "prefs-test", "coffee", "really loves dark roast coffee in the morning"
+        )
         _install_hash_embedding(penny.chat_agent)
 
         result = await penny.chat_agent._recall_section(current_message="yeah")
 
         # The test-only memory contributes nothing; existing system memories
         # are also unlikely to score above the floor for "yeah".
-        assert result is None or "loves dark roast coffee" not in result
+        assert result is None or "really loves dark roast coffee in the morning" not in result
 
 
 @pytest.mark.asyncio

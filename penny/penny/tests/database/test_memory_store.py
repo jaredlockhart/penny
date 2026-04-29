@@ -467,6 +467,39 @@ class TestReads:
         contents = [e.content for e in db.memories.read_similar("events", anchor)]
         assert contents and all(c.startswith("hit-") for c in contents)
 
+    def test_read_similar_hybrid_filters_low_info_entries(self, tmp_path):
+        """Entries with fewer than ``MEMORY_RELEVANT_MIN_WORDS`` words are
+        excluded from the corpus before scoring.
+
+        Regression: short generic content (empty strings, "Hey!", "?")
+        otherwise dominates cosine ranking on short keyword anchors,
+        crowding out the real topical hits.
+        """
+        db = _make_db(tmp_path)
+        db.memories.create_log("events", "x", RecallMode.RELEVANT)
+        anchor = [1.0, 0.0, 0.0]
+
+        # Junk entries that would otherwise dominate (1–4 words, high cosine)
+        for junk in ("", "?", "Hey!", "hi penny"):
+            db.memories.append(
+                "events",
+                [LogEntryInput(content=junk, content_embedding=[0.95, 0.31, 0.0])],
+                author="chat",
+            )
+        # Real topical content (≥ 5 words, slightly lower cosine)
+        real = "a real topical sentence about coffee"
+        db.memories.append(
+            "events",
+            [LogEntryInput(content=real, content_embedding=[0.9, 0.43, 0.0])],
+            author="chat",
+        )
+
+        hits = db.memories.read_similar_hybrid("events", [anchor])
+        contents = [e.content for e in hits]
+        assert real in contents
+        for junk in ("", "?", "Hey!", "hi penny"):
+            assert junk not in contents
+
     def test_keys_returns_unique_in_insertion_order(self, tmp_path):
         db = _make_db(tmp_path)
         db.memories.create_collection("likes", "x", RecallMode.RELEVANT)

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Literal, NamedTuple
@@ -451,12 +452,20 @@ class MemoryStore:
         recall runs, and any conversation-history message similarly lives
         in the corpus, so without exclusion they'd self-match their own
         anchor at cosine ≈ 1.0 and dominate the hit list.
+
+        Low-information rows (fewer than ``MEMORY_RELEVANT_MIN_WORDS``
+        word tokens) are filtered out of the corpus before scoring.
+        Empty strings, lone punctuation, and stock greetings otherwise
+        dominate cosine ranking on short keyword queries — they share a
+        tiny vocabulary that geometrically collides with any short
+        anchor regardless of topic.
         """
         if not conversation_anchors:
             return []
         rows = self._embedded_rows(name)
         if exclude_contents:
             rows = [r for r in rows if r.content not in exclude_contents]
+        rows = [r for r in rows if not _is_low_info(r.content)]
         scored = self._score_hybrid_with_centrality(name, rows, conversation_anchors)
         cutoff = _adaptive_cutoff(scored, floor)
         if cutoff is None:
@@ -730,6 +739,23 @@ def _score_signals(
     if content_cos is not None:
         out.append((content_cos, thresholds.content_sim_strict, thresholds.content_sim_relaxed))
     return out
+
+
+_WORD_TOKEN_RE = re.compile(r"\w+")
+
+
+def _is_low_info(content: str) -> bool:
+    """Return True if ``content`` carries less than the configured minimum
+    word count and should be filtered from similarity scoring.
+
+    The filter targets entries that geometrically dominate cosine
+    rankings on short keyword anchors despite having no topical
+    payload — empty strings, lone punctuation, stock greetings, bare
+    URL fragments.  Entries that pass the filter still appear in
+    other recall paths (recent / all / read_latest tool calls);
+    only the relevant-mode similarity corpus is filtered.
+    """
+    return len(_WORD_TOKEN_RE.findall(content)) < PennyConstants.MEMORY_RELEVANT_MIN_WORDS
 
 
 def _maybe_serialize(vec: list[float] | None) -> bytes | None:

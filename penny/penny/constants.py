@@ -193,7 +193,15 @@ class PennyConstants:
     # Cluster-strength gate: top_head_mean / top_sample_mean must exceed this
     # for any entries to be returned — separates real clusters from flat
     # noise plateaus.  Calibrated in adjusted-score space.
-    MEMORY_RELEVANT_CLUSTER_GATE = 1.15
+    #
+    # Lowered 1.15 → 1.05 alongside the low-info filter (below): once junk
+    # entries (empty strings, "Hey!", "?") are filtered out of the corpus
+    # before scoring, the head/sample ratio rises naturally, but corpora
+    # with broad topical coverage (user-messages around 1.10–1.20) were
+    # previously gated to nothing on bare keyword anchors.  The lower
+    # threshold keeps real clusters visible without re-introducing the
+    # noise plateaus the filter handles.
+    MEMORY_RELEVANT_CLUSTER_GATE = 1.05
     # Cutoff is ``max(top_head_mean * RELATIVE_RATIO, ABSOLUTE_FLOOR)``.
     # The relative band adapts cluster width to cluster height; the
     # absolute floor is the empirical noise ceiling below which adjusted
@@ -213,3 +221,14 @@ class PennyConstants:
     # follow-ups that share no entity overlap with the current message
     # but live in the same conversation as a real hit.
     MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES = 5
+
+    # Low-information filter: entries with fewer than this many word
+    # tokens are excluded from the similarity corpus before scoring.
+    # Empty strings, lone punctuation ("?", "…"), stock greetings
+    # ("hi penny", "Hey! 😄"), and bare-URL fragments otherwise dominate
+    # the cosine ranking on short keyword queries — they don't carry
+    # topical content, but their tiny vocabulary collides geometrically
+    # with any short anchor.  Calibrated against the production corpus:
+    # at 5 words, the user's actual messages and Penny's actual replies
+    # both pass while the noise plateau is removed.
+    MEMORY_RELEVANT_MIN_WORDS = 5
