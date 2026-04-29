@@ -28,10 +28,12 @@ from __future__ import annotations
 import logging
 import random
 import re
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Literal, NamedTuple
 
+import numpy as np
 from pydantic import BaseModel
 from similarity.embeddings import (
     cosine_similarity,
@@ -491,17 +493,7 @@ class MemoryStore:
         self, name: str, rows: list[MemoryEntry], anchor: list[float]
     ) -> list[tuple[float, MemoryEntry]]:
         """Score each candidate as ``cosine - α * centrality``, sorted desc."""
-        centralities = self._centralities_for(name, rows)
-        penalty = PennyConstants.MEMORY_RELEVANT_CENTRALITY_PENALTY
-        scored: list[tuple[float, MemoryEntry]] = []
-        for row in rows:
-            if row.content_embedding is None or row.id is None:
-                continue
-            sim = cosine_similarity(anchor, deserialize_embedding(row.content_embedding))
-            adjusted = sim - penalty * centralities.get(row.id, 0.0)
-            scored.append((adjusted, row))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return scored
+        return self._score_hybrid_with_centrality(name, rows, [anchor])
 
     def _score_hybrid_with_centrality(
         self,
@@ -509,22 +501,36 @@ class MemoryStore:
         rows: list[MemoryEntry],
         anchors: list[list[float]],
     ) -> list[tuple[float, MemoryEntry]]:
-        """Score each candidate as ``max(weighted, current_cos) - α * centrality``."""
-        centralities = self._centralities_for(name, rows)
-        penalty = PennyConstants.MEMORY_RELEVANT_CENTRALITY_PENALTY
-        current = anchors[-1]
-        scored: list[tuple[float, MemoryEntry]] = []
-        for row in rows:
-            if row.content_embedding is None or row.id is None:
-                continue
-            candidate = deserialize_embedding(row.content_embedding)
-            weighted = _weighted_similarity(anchors, candidate)
-            current_cos = cosine_similarity(current, candidate)
-            hybrid = max(weighted, current_cos)
-            adjusted = hybrid - penalty * centralities.get(row.id, 0.0)
-            scored.append((adjusted, row))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return scored
+        """Score each candidate as ``max(weighted, current_cos) - α * centrality``.
+
+        Vectorized: stacks all candidate embeddings into an (N, D) matrix and
+        all anchors into an (M, D) matrix, then a single matmul produces the
+        full (N, M) cosine table.  Per-turn matrix construction (~1 ms for
+        ~1500 rows × 768 dims via ``np.frombuffer``) is small enough that no
+        persistent in-memory cache is needed.
+
+        Single-anchor reduces cleanly: with M=1 the weighted-decay branch is
+        the lone cosine, so ``max()`` picks it.
+        """
+        valid: list[tuple[int, bytes, MemoryEntry]] = [
+            (row.id, row.content_embedding, row)
+            for row in rows
+            if row.id is not None and row.content_embedding is not None
+        ]
+        if not valid or not anchors:
+            return []
+        valid_rows = [row for _, _, row in valid]
+        centralities = self._centralities_for(name, valid_rows)
+        matrix = _stack_normalized(blob for _, blob, _ in valid)
+        anchor_matrix = _stack_normalized_anchors(anchors)
+        cos_matrix = matrix @ anchor_matrix.T  # (N, M)
+        hybrid = _hybrid_scores(cos_matrix)
+        centrality_vec = np.array(
+            [centralities.get(entry_id, 0.0) for entry_id, _, _ in valid], dtype=np.float32
+        )
+        adjusted = hybrid - PennyConstants.MEMORY_RELEVANT_CENTRALITY_PENALTY * centrality_vec
+        order = np.argsort(-adjusted)
+        return [(float(adjusted[i]), valid_rows[i]) for i in order]
 
     def precompute_centrality(self) -> None:
         """Warm the centrality cache for every relevant-mode memory.
@@ -803,27 +809,46 @@ def _compute_centralities(vecs: dict[int, list[float]]) -> dict[int, float]:
     return {entry_id: total / divisor for entry_id, total in sums.items()}
 
 
-def _weighted_similarity(
-    anchors: list[list[float]],
-    candidate: list[float],
-    decay: float = 0.5,
-) -> float:
-    """Exponentially-decayed weighted average of cos(anchor, candidate).
+def _stack_normalized(blobs: Iterable[bytes]) -> np.ndarray:
+    """Stack serialized embeddings into an L2-normalized (N, D) float32 matrix.
 
-    Anchors are ordered oldest→newest; the most recent gets weight ``1.0``,
-    the previous gets ``decay``, before that ``decay**2``, and so on.
+    Uses ``np.frombuffer`` so each blob materializes via a zero-copy view
+    that's then assigned into the matrix — ~1 ms for 1500×768 in practice.
     """
-    count = len(anchors)
-    if count == 0:
-        return 0.0
-    total = 0.0
-    weight_sum = 0.0
-    for index, anchor in enumerate(anchors):
-        age = count - 1 - index
-        weight = decay**age
-        total += cosine_similarity(anchor, candidate) * weight
-        weight_sum += weight
-    return total / weight_sum
+    blob_list = list(blobs)
+    if not blob_list:
+        return np.zeros((0, 0), dtype=np.float32)
+    dim = len(blob_list[0]) // 4
+    matrix = np.empty((len(blob_list), dim), dtype=np.float32)
+    for index, blob in enumerate(blob_list):
+        matrix[index] = np.frombuffer(blob, dtype=np.float32)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    return matrix / np.where(norms == 0, 1, norms)
+
+
+def _stack_normalized_anchors(anchors: list[list[float]]) -> np.ndarray:
+    """Stack anchor vectors into an L2-normalized (M, D) float32 matrix."""
+    matrix = np.asarray(anchors, dtype=np.float32)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    return matrix / np.where(norms == 0, 1, norms)
+
+
+def _hybrid_scores(cos_matrix: np.ndarray, decay: float = 0.5) -> np.ndarray:
+    """Combine a (N, M) cosine matrix into a per-row hybrid score.
+
+    Hybrid = max(weighted_decay_over_history, cosine_to_current).  Anchors
+    are oldest→newest, so weights go ``decay**(M-1) … decay**0`` and the
+    last column is the current message.  With M=1 the weighted branch
+    equals the current branch and ``maximum`` returns that single cosine.
+    """
+    anchor_count = cos_matrix.shape[1]
+    weights = np.array(
+        [decay ** (anchor_count - 1 - i) for i in range(anchor_count)],
+        dtype=np.float32,
+    )
+    weighted = (cos_matrix * weights).sum(axis=1) / weights.sum()
+    current = cos_matrix[:, -1]
+    return np.maximum(weighted, current)
 
 
 def _adaptive_cutoff(scored: list[tuple[float, MemoryEntry]], floor: float) -> float | None:

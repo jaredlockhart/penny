@@ -19,6 +19,7 @@ dependencies = [
     "pytz>=2024.1",
     "croniter>=5.0.0",
     "PyJWT[crypto]>=2.8.0",
+    "numpy>=2.0.0",
 
 ]
 
