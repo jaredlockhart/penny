@@ -426,7 +426,7 @@ class MemoryStore:
         conversation_anchors: list[list[float]],
         k: int | None = None,
         floor: float = 0.0,
-        not_after: datetime | None = None,
+        exclude_contents: set[str] | None = None,
     ) -> list[MemoryEntry]:
         """Hybrid relevance over a conversation window.
 
@@ -444,19 +444,19 @@ class MemoryStore:
         ranking as ``read_similar`` — the weighted-decay branch is just the
         lone cosine, so ``max()`` picks it.
 
-        ``not_after`` (optional) excludes entries with ``created_at`` ≥ the
-        given timestamp from the corpus before scoring.  The chat path
+        ``exclude_contents`` (optional) drops corpus rows whose content
+        matches any string in the set.  Use this to keep the conversation
+        anchors themselves out of their own retrieval: the chat path
         writes the user's incoming message to ``user-messages`` before
-        recall runs, and that entry would otherwise self-match the
-        current-message anchor at cosine ≈ 1.0; passing the message's
-        receive time keeps the current turn out of its own retrieval.
+        recall runs, and any conversation-history message similarly lives
+        in the corpus, so without exclusion they'd self-match their own
+        anchor at cosine ≈ 1.0 and dominate the hit list.
         """
         if not conversation_anchors:
             return []
         rows = self._embedded_rows(name)
-        if not_after is not None:
-            cutoff = _to_naive(not_after)
-            rows = [r for r in rows if _to_naive(r.created_at) < cutoff]
+        if exclude_contents:
+            rows = [r for r in rows if r.content not in exclude_contents]
         scored = self._score_hybrid_with_centrality(name, rows, conversation_anchors)
         cutoff = _adaptive_cutoff(scored, floor)
         if cutoff is None:
@@ -730,18 +730,6 @@ def _score_signals(
     if content_cos is not None:
         out.append((content_cos, thresholds.content_sim_strict, thresholds.content_sim_relaxed))
     return out
-
-
-def _to_naive(value: datetime) -> datetime:
-    """Strip tzinfo so naive/aware mixes don't crash arithmetic.
-
-    ``MemoryEntry.created_at`` round-trips through SQLite as tz-naive
-    UTC; callers may pass aware datetimes (``datetime.now(UTC)``).
-    Normalize both to naive UTC for comparisons.
-    """
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def _maybe_serialize(vec: list[float] | None) -> bytes | None:

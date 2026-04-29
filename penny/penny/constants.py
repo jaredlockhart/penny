@@ -213,13 +213,3 @@ class PennyConstants:
     # follow-ups that share no entity overlap with the current message
     # but live in the same conversation as a real hit.
     MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES = 5
-
-    # Self-match cutoff for ``relevant``-mode log reads: exclude entries
-    # newer than ``now - cutoff`` from the similarity corpus.  The chat
-    # path writes the user's incoming message to ``user-messages`` before
-    # recall runs, so the current message lives in the corpus and matches
-    # itself at cosine ≈ 1.0; temporal expansion then anchors on that
-    # self-match and pulls in the recent conversation, drowning out
-    # historical hits.  Excluding the most recent ``N`` seconds keeps
-    # the current turn out of its own retrieval.
-    MEMORY_RELEVANT_SELF_MATCH_CUTOFF_SECONDS = 60
