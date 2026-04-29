@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
-from penny.agents.recall import build_memory_inventory
 from penny.config import Config
 from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
@@ -958,8 +957,24 @@ class Agent:
         return f"### User Profile\nThe user's name is {user_info.name}."
 
     def _memory_inventory_section(self) -> str | None:
-        """### Memory Inventory — every non-archived memory by name + type."""
-        return build_memory_inventory(self.db)
+        """### Memory Inventory — every non-archived memory by name, type, description.
+
+        Includes memories with ``recall=off`` so the model knows what
+        tool calls are possible for on-demand reads.  Sorted
+        alphabetically by name for stable prompt structure.  Goes in
+        every agent's system prompt — chat and background alike — so
+        the model never needs to call ``list_memories``.
+        """
+        memories = sorted(
+            (m for m in self.db.memories.list_all() if not m.archived),
+            key=lambda m: m.name,
+        )
+        if not memories:
+            return None
+        lines = ["### Memory Inventory"]
+        for memory in memories:
+            lines.append(f"- {memory.name} ({memory.type}) — {memory.description}")
+        return "\n".join(lines)
 
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
         """Build conversation history as strict user/assistant alternation.
