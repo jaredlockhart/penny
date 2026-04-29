@@ -4,15 +4,19 @@ Test organization:
 1. Full integration (happy path) — comprehensive end-to-end message flow
 2. Special success cases — no tool call, anti-refusal
 3. Error / edge cases — XML leak regression, short response warning, delivery failure
+4. Memory inventory (rendered for every agent's prompt)
+5. Ambient recall (chat-only — each recall mode + self-match exclusion)
 """
 
+import hashlib
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
-from penny.database.models import MessageLog
+from penny.database.models import MemoryEntry, MessageLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 # ── 1. Full integration (happy path) ─────────────────────────────────────
@@ -587,3 +591,340 @@ async def test_delivery_failure_sends_notice(
         notice = await signal_server.wait_for_message_containing("trouble")
         assert notice["recipients"] == [TEST_SENDER]
         assert len(mock_llm.requests) == 2
+
+
+# ── 4. Memory inventory ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_inventory_lists_non_archived_memories(
+    signal_server, mock_llm, test_config, running_penny
+):
+    """Inventory names every non-archived memory regardless of recall mode."""
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("likes-test", "positive prefs", RecallMode.RELEVANT)
+        penny.db.memories.create_collection("dislikes-test", "negative prefs", RecallMode.OFF)
+        penny.db.memories.create_log("messages-test", "convo log", RecallMode.RECENT)
+
+        result = penny.chat_agent._memory_inventory_section()
+
+        assert result is not None
+        assert "### Memory Inventory" in result
+        assert "likes-test (collection) — positive prefs" in result
+        assert "dislikes-test (collection) — negative prefs" in result  # off still listed
+        assert "messages-test (log) — convo log" in result
+
+
+@pytest.mark.asyncio
+async def test_inventory_excludes_archived(signal_server, mock_llm, test_config, running_penny):
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("retired-test", "archived", RecallMode.RELEVANT)
+        penny.db.memories.archive("retired-test")
+
+        result = penny.chat_agent._memory_inventory_section()
+
+        assert result is not None
+        assert "retired-test" not in result
+
+
+# ── 5. Ambient recall ─────────────────────────────────────────────────────
+
+
+def _hash_embed_vec(text: str, dim: int = 4096) -> list[float]:
+    """Bag-of-words deterministic embedding for similarity tests.
+
+    Each word picks an axis via SHA-256; the vector is L2-normalised so
+    cosine is comparable across strings.  Identical strings map to
+    identical vectors; strings sharing words have meaningful cosine > 0;
+    fully-distinct strings map to cosine = 0.
+    """
+    vec = [0.0] * dim
+    words = text.lower().split() or [text]
+    for word in words:
+        digest = hashlib.sha256(word.encode("utf-8")).digest()
+        axis = int.from_bytes(digest[:8], "big") % dim
+        vec[axis] += 1.0
+    norm = sum(v * v for v in vec) ** 0.5
+    if norm > 0:
+        vec = [v / norm for v in vec]
+    return vec
+
+
+def _install_hash_embedding(agent) -> None:
+    """Replace the agent's embedding client with a deterministic hash embedder."""
+    mock_client = AsyncMock()
+    mock_client.embed = AsyncMock(side_effect=lambda texts: [_hash_embed_vec(t) for t in texts])
+    agent._embedding_model_client = mock_client
+
+
+def _write_embedded(db, name: str, key: str | None, content: str) -> None:
+    """Write an entry with a deterministic content embedding."""
+    vec = _hash_embed_vec(content)
+    if key is None:
+        db.memories.append(
+            name, [LogEntryInput(content=content, content_embedding=vec)], author="test"
+        )
+    else:
+        db.memories.write(
+            name, [EntryInput(key=key, content=content, content_embedding=vec)], author="test"
+        )
+
+
+def _backfill_created_at(db, name: str, content: str, when: datetime) -> None:
+    """Override an entry's created_at timestamp for temporal-window tests."""
+    with Session(db.engine) as session:
+        rows = session.exec(
+            select(MemoryEntry).where(
+                MemoryEntry.memory_name == name, MemoryEntry.content == content
+            )
+        ).all()
+        for row in rows:
+            row.created_at = when
+            session.add(row)
+        session.commit()
+
+
+@pytest.mark.asyncio
+async def test_recall_recent_mode_renders_latest_entries(
+    signal_server, mock_llm, test_config, running_penny
+):
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_log("conversation-test", "shared chat log", RecallMode.RECENT)
+        penny.db.memories.append(
+            "conversation-test", [LogEntryInput(content="first message")], author="test"
+        )
+        penny.db.memories.append(
+            "conversation-test", [LogEntryInput(content="second message")], author="test"
+        )
+
+        result = await penny.chat_agent._recall_section(current_message="anything")
+
+        assert result is not None
+        assert "first message" in result
+        assert "second message" in result
+
+
+@pytest.mark.asyncio
+async def test_recall_all_mode_renders_all_entries(
+    signal_server, mock_llm, test_config, running_penny
+):
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("playlists-test", "saved playlists", RecallMode.ALL)
+        penny.db.memories.write(
+            "playlists-test",
+            [EntryInput(key="morning", content="prog rock")],
+            author="test",
+        )
+        penny.db.memories.write(
+            "playlists-test",
+            [EntryInput(key="evening", content="lo-fi")],
+            author="test",
+        )
+
+        result = await penny.chat_agent._recall_section(current_message=None)
+
+        assert result is not None
+        assert "[morning] prog rock" in result
+        assert "[evening] lo-fi" in result
+
+
+@pytest.mark.asyncio
+async def test_recall_relevant_mode_uses_embedding(
+    signal_server, mock_llm, test_config, running_penny
+):
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("prefs-test", "user prefs", RecallMode.RELEVANT)
+        _write_embedded(penny.db, "prefs-test", "coffee", "loves dark roast coffee")
+        _write_embedded(penny.db, "prefs-test", "noise", "hates loud construction")
+        _install_hash_embedding(penny.chat_agent)
+
+        result = await penny.chat_agent._recall_section(current_message="dark roast coffee")
+
+        assert result is not None
+        assert "loves dark roast coffee" in result
+        assert "hates loud construction" not in result
+
+
+@pytest.mark.asyncio
+async def test_recall_relevant_mode_hybrid_lifts_via_history(
+    signal_server, mock_llm, test_config, running_penny
+):
+    """A vague current message ('yeah') alone wouldn't surface the entry —
+    the prior turn shares the entry's keywords, so weighted-decay scoring
+    pulls the entry above the absolute floor."""
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("prefs-test", "user prefs", RecallMode.RELEVANT)
+        _write_embedded(penny.db, "prefs-test", "coffee", "loves dark roast coffee")
+        _install_hash_embedding(penny.chat_agent)
+
+        result = await penny.chat_agent._recall_section(
+            current_message="yeah",
+            conversation_history=["dark roast coffee"],
+        )
+
+        assert result is not None
+        assert "loves dark roast coffee" in result
+
+
+@pytest.mark.asyncio
+async def test_recall_relevant_mode_log_expands_with_temporal_neighbors(
+    signal_server, mock_llm, test_config, running_penny
+):
+    """A single keyword match in a log pulls in neighboring entries via the
+    temporal expansion window (±MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES)."""
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_log("conversation-test", "shared chat log", RecallMode.RELEVANT)
+        _write_embedded(penny.db, "conversation-test", None, "dark roast coffee notes")
+        _write_embedded(penny.db, "conversation-test", None, "follow up question one")
+        _write_embedded(penny.db, "conversation-test", None, "follow up question two")
+        _write_embedded(penny.db, "conversation-test", None, "stale earlier comment")
+
+        base = datetime.now(UTC)
+        _backfill_created_at(
+            penny.db, "conversation-test", "stale earlier comment", base - timedelta(hours=1)
+        )
+        _backfill_created_at(
+            penny.db, "conversation-test", "dark roast coffee notes", base - timedelta(minutes=2)
+        )
+        _backfill_created_at(
+            penny.db, "conversation-test", "follow up question one", base - timedelta(minutes=1)
+        )
+        _backfill_created_at(penny.db, "conversation-test", "follow up question two", base)
+        _install_hash_embedding(penny.chat_agent)
+
+        result = await penny.chat_agent._recall_section(current_message="dark roast coffee")
+
+        assert result is not None
+        assert "dark roast coffee notes" in result
+        assert "follow up question one" in result
+        assert "follow up question two" in result
+        assert "stale earlier comment" not in result
+
+
+@pytest.mark.asyncio
+async def test_recall_relevant_mode_log_excludes_self_match(
+    signal_server, mock_llm, test_config, running_penny
+):
+    """The current turn (and conversation-history turns) live in log corpora
+    before recall runs.  Without filtering, those entries self-match their
+    own anchor at cosine ≈ 1.0 and dominate the hit list.  ``anchor_contents``
+    excludes them so historical content surfaces."""
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_log("user-messages-test", "incoming", RecallMode.RELEVANT)
+
+        # Historical entry (30 days old) — contains the topic.
+        _write_embedded(
+            penny.db,
+            "user-messages-test",
+            None,
+            "what video games should i try",
+        )
+        historical = datetime.now(UTC) - timedelta(days=30)
+        _backfill_created_at(
+            penny.db,
+            "user-messages-test",
+            "what video games should i try",
+            historical,
+        )
+
+        # Current turn — same content as the anchor.
+        current_text = "do you remember any conversations about video games"
+        _write_embedded(penny.db, "user-messages-test", None, current_text)
+        _install_hash_embedding(penny.chat_agent)
+
+        result = await penny.chat_agent._recall_section(current_message=current_text)
+
+        assert result is not None
+        # Historical hit surfaces (not drowned out by the self-match)
+        assert "what video games should i try" in result
+        # Current-turn entry must NOT appear via the relevant path — it's the anchor.
+        assert current_text not in result
+
+
+@pytest.mark.asyncio
+async def test_recall_relevant_mode_collection_skips_temporal_expansion(
+    signal_server, mock_llm, test_config, running_penny
+):
+    """Collections don't have a temporal-stream meaning, so similarity hits
+    are returned without neighbor expansion even if entries are nearby in time."""
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("prefs-test", "user prefs", RecallMode.RELEVANT)
+        _write_embedded(penny.db, "prefs-test", "coffee", "loves dark roast coffee")
+        _write_embedded(penny.db, "prefs-test", "noise", "hates loud construction")
+        _install_hash_embedding(penny.chat_agent)
+
+        result = await penny.chat_agent._recall_section(current_message="dark roast coffee")
+
+        assert result is not None
+        assert "loves dark roast coffee" in result
+        assert "hates loud construction" not in result
+
+
+@pytest.mark.asyncio
+async def test_recall_relevant_mode_without_history_skips_vague_message(
+    signal_server, mock_llm, test_config, running_penny
+):
+    """Vague current message with no history → absolute floor suppresses everything."""
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("prefs-test", "user prefs", RecallMode.RELEVANT)
+        _write_embedded(penny.db, "prefs-test", "coffee", "loves dark roast coffee")
+        _install_hash_embedding(penny.chat_agent)
+
+        result = await penny.chat_agent._recall_section(current_message="yeah")
+
+        # The test-only memory contributes nothing; existing system memories
+        # are also unlikely to score above the floor for "yeah".
+        assert result is None or "loves dark roast coffee" not in result
+
+
+@pytest.mark.asyncio
+async def test_recall_relevant_mode_without_embedding_client_returns_none(
+    signal_server, mock_llm, test_config, running_penny
+):
+    """No embedding client → relevant memories contribute nothing."""
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("prefs-test", "user prefs", RecallMode.RELEVANT)
+        penny.db.memories.write(
+            "prefs-test",
+            [EntryInput(key="coffee", content="loves coffee")],
+            author="test",
+        )
+        penny.chat_agent._embedding_model_client = None
+
+        result = await penny.chat_agent._recall_section(current_message="coffee")
+
+        # The test-only relevant memory can't render without embeddings;
+        # any pre-existing system memory in non-relevant mode might still
+        # render, so just assert the test-only entry is absent.
+        assert result is None or "loves coffee" not in result
+
+
+@pytest.mark.asyncio
+async def test_recall_off_mode_skipped(signal_server, mock_llm, test_config, running_penny):
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("hidden-test", "not shown", RecallMode.OFF)
+        penny.db.memories.write(
+            "hidden-test",
+            [EntryInput(key="k", content="classified content")],
+            author="test",
+        )
+
+        result = await penny.chat_agent._recall_section(current_message=None)
+
+        assert result is None or "classified content" not in result
+
+
+@pytest.mark.asyncio
+async def test_recall_archived_memory_skipped(signal_server, mock_llm, test_config, running_penny):
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_collection("old-test", "archived", RecallMode.RECENT)
+        penny.db.memories.write(
+            "old-test",
+            [EntryInput(key="k", content="stale content")],
+            author="test",
+        )
+        penny.db.memories.archive("old-test")
+
+        result = await penny.chat_agent._recall_section(current_message=None)
+
+        assert result is None or "stale content" not in result

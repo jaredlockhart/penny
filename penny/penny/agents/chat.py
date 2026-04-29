@@ -13,9 +13,11 @@ from typing import Any
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
-from penny.agents.recall import build_recall_block
 from penny.channels.base import PageContext
 from penny.constants import ChatPromptType, PennyConstants
+from penny.database.memory_store import MemoryType, RecallMode
+from penny.database.models import Memory, MemoryEntry
+from penny.llm.models import LlmError
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools.browse import BrowseTool
@@ -178,12 +180,10 @@ class ChatAgent(Agent):
         their task and never operate on a browser context.
         """
         history_texts = [text for _, text in self._build_conversation(user)] if user else []
-        recall = await build_recall_block(
-            self.db,
-            self._embedding_model_client,
-            content,
-            limit=int(self.config.runtime.RECALL_LIMIT),
+        recall = await self._recall_section(
+            current_message=content,
             conversation_history=history_texts,
+            limit=int(self.config.runtime.RECALL_LIMIT),
         )
         return "\n\n".join(
             s
@@ -210,6 +210,154 @@ class ChatAgent(Agent):
     def get_history(self, user: str) -> list[tuple[str, str]] | None:
         """Recent conversation messages for chat continuity."""
         return self._build_conversation(user)
+
+    # ── Ambient recall ────────────────────────────────────────────────────
+
+    async def _recall_section(
+        self,
+        current_message: str | None,
+        conversation_history: list[str] | None = None,
+        limit: int = 99,
+        similarity_floor: float = 0.0,
+    ) -> str | None:
+        """Ambient recall content for all active memories.
+
+        Renders verbatim entries from each non-archived memory whose
+        ``recall`` mode is not ``'off'``.  Each memory is rendered by mode:
+
+          off      — skipped
+          recent   — newest-first slice (``read_latest``)
+          relevant — hybrid similarity over the conversation window
+                     (``read_similar_hybrid``; skipped without embedding)
+          all      — full set in insertion order (``read_all``)
+
+        Relevant-mode recall scores each candidate as
+        ``max(weighted_decay_over_history, cosine_to_current) - α * centrality``.
+        Strong direct hits on the current message stand alone; vague
+        follow-ups still benefit from earlier conversation drift.
+        """
+        anchors = await self._embed_conversation_anchors(current_message, conversation_history)
+        anchor_contents = self._anchor_contents(current_message, conversation_history)
+        sections: list[str] = []
+        for memory in self._active_memories():
+            section = self._render_recall_memory(
+                memory, anchors, similarity_floor, limit, anchor_contents
+            )
+            if section:
+                sections.append(section)
+        return "\n\n".join(sections) if sections else None
+
+    def _active_memories(self) -> list[Memory]:
+        """Non-archived memories with recall != 'off'."""
+        return [
+            m for m in self.db.memories.list_all() if not m.archived and m.recall != RecallMode.OFF
+        ]
+
+    async def _embed_conversation_anchors(
+        self, current_message: str | None, history: list[str] | None
+    ) -> list[list[float]] | None:
+        """Embed history + current_message as ordered anchors (oldest→newest).
+
+        Returns ``None`` when no current message is available, when no
+        embedding client is configured, or when the embed call fails.
+        Empty history is fine — the result is just ``[current_embedding]``.
+        """
+        if not current_message or self._embedding_model_client is None:
+            return None
+        texts = [*(history or []), current_message]
+        try:
+            return await self._embedding_model_client.embed(texts)
+        except LlmError:
+            logger.warning("Skipping relevant recall — conversation embedding failed")
+            return None
+
+    @staticmethod
+    def _anchor_contents(current_message: str | None, history: list[str] | None) -> set[str]:
+        """Texts being used as anchors — filtered out of the corpus before scoring.
+
+        Channel ingress writes both the current incoming message and prior
+        user/assistant turns into log memories before recall runs, so any
+        of those would otherwise self-match its own anchor at cosine ≈ 1.0
+        and dominate scoring.  Anchors stay anchors, never retrievals.
+        """
+        contents: set[str] = set()
+        if current_message:
+            contents.add(current_message)
+        if history:
+            contents.update(t for t in history if t)
+        return contents
+
+    def _render_recall_memory(
+        self,
+        memory: Memory,
+        anchors: list[list[float]] | None,
+        similarity_floor: float,
+        limit: int,
+        anchor_contents: set[str],
+    ) -> str | None:
+        """Dispatch to the correct renderer for a single memory's recall mode."""
+        mode = RecallMode(memory.recall)
+        if mode == RecallMode.RECENT:
+            entries = self.db.memories.read_latest(memory.name, k=limit)
+        elif mode == RecallMode.RELEVANT:
+            entries = self._relevant_entries(
+                memory, anchors, similarity_floor, limit, anchor_contents
+            )
+        elif mode == RecallMode.ALL:
+            entries = self.db.memories.read_all(memory.name)[:limit]
+        else:
+            return None
+        if not entries:
+            return None
+        return self._format_recall_section(memory, entries)
+
+    def _relevant_entries(
+        self,
+        memory: Memory,
+        anchors: list[list[float]] | None,
+        floor: float,
+        limit: int,
+        anchor_contents: set[str],
+    ) -> list[MemoryEntry]:
+        """Run hybrid similarity, expanding logs with their temporal neighbors.
+
+        For log-shaped memories the similarity hits are augmented with every
+        entry within ±``MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES`` of any hit's
+        timestamp, so a single keyword match pulls in the surrounding
+        conversation rather than a single line stripped of context.
+
+        ``anchor_contents`` (the texts being used as anchors) are filtered
+        out of the corpus before scoring — channel ingress writes user/penny
+        messages into log memories, so without exclusion any anchor that
+        matches an existing entry would self-match at cosine ≈ 1.0 and
+        dominate the hit list.  Collections aren't written to from channel
+        ingress, so the filter is a no-op for them.
+        """
+        if not anchors:
+            return []
+        hits = self.db.memories.read_similar_hybrid(
+            memory.name,
+            anchors,
+            k=limit,
+            floor=floor,
+            exclude_contents=anchor_contents or None,
+        )
+        if not hits or memory.type != MemoryType.LOG.value:
+            return hits
+        return self.db.memories.expand_with_temporal_neighbors(
+            memory.name,
+            hits,
+            PennyConstants.MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES,
+        )
+
+    @staticmethod
+    def _format_recall_section(memory: Memory, entries: list[MemoryEntry]) -> str:
+        """Render a single memory's header + entries as a context subsection."""
+        lines = [f"### {memory.name}", memory.description, ""]
+        for entry in entries:
+            prefix = f"[{entry.key}] " if entry.key else ""
+            lines.append(f"- {prefix}{entry.content}")
+        return "\n".join(lines)
 
     # ── Vision ────────────────────────────────────────────────────────────
 
