@@ -381,8 +381,8 @@ class TestReads:
         assert db.memories.read_similar("likes", anchor, k=5, floor=0.5) == []
 
     def test_read_similar_demotes_centroid_magnet(self, tmp_path):
-        """Centrality penalty: an entry with high cosine to the anchor AND
-        high mean cosine to the rest of the corpus is demoted below a less
+        """Centroid-proxy penalty: an entry with high cosine to the anchor
+        AND high projection on the corpus centroid is demoted below a less
         central entry whose cosine to the anchor is slightly lower."""
         db = _make_db(tmp_path)
         db.memories.create_collection("notes", "x", RecallMode.RELEVANT)
@@ -418,7 +418,7 @@ class TestReads:
 
         similar = db.memories.read_similar("notes", anchor)
         keys = [e.key for e in similar]
-        # Without the centrality penalty 'magnet' (raw cos 0.9) would lead.
+        # Without the centroid-proxy penalty 'magnet' (raw cos 0.9) would lead.
         # With the penalty, 'specific' (raw cos 0.85, far from the crowd) wins.
         assert "specific" in keys and "magnet" in keys
         assert keys.index("specific") < keys.index("magnet")

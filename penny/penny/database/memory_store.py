@@ -152,13 +152,6 @@ class MemoryStore:
         # back to ``ConfigParam.default`` values; production wires the
         # live runtime so dedup respects /config tweaks.
         self._runtime = runtime if runtime is not None else RuntimeParams()
-        # Per-memory centrality cache, lazy on first read.  Each entry is a
-        # dict ``{entry_id: centrality_score}`` for the named memory.
-        # Drifts as new entries arrive — acceptable for the MVP; revisit
-        # (incremental update, background refresh) if precision degrades or
-        # corpora grow past a few thousand entries where O(N²)
-        # recomputation becomes painful.
-        self._centrality_cache: dict[str, dict[int, float]] = {}
 
     def _default_thresholds(self) -> DedupThresholds:
         """Resolve dedup thresholds from the wired runtime accessor."""
@@ -402,10 +395,8 @@ class MemoryStore:
         k: int | None = None,
         floor: float = 0.0,
     ) -> list[MemoryEntry]:
-        """Return entries similar to ``anchor`` with centrality + adaptive cutoff.
+        """Return entries similar to ``anchor`` ordered by cosine.
 
-        Each candidate is scored as ``cosine_to_anchor - α * centrality``
-        (centrality = mean cosine to every other entry in the same memory).
         After scoring + sort, an adaptive cluster-strength gate suppresses
         flat noise plateaus entirely; the cutoff combines a relative band
         against the cluster center with an absolute floor.
@@ -416,7 +407,7 @@ class MemoryStore:
         entry is returned.
         """
         rows = self._embedded_rows(name)
-        scored = self._score_with_centrality(name, rows, anchor)
+        scored = self._score(rows, [anchor])
         cutoff = _adaptive_cutoff(scored, floor)
         if cutoff is None:
             return []
@@ -437,11 +428,11 @@ class MemoryStore:
         is the *current* message, the rest are prior turns providing topic
         context.  Each candidate is scored as
 
-            max(weighted_decay_over_history, cosine_to_current) - α * centrality
+            max(weighted_decay_over_history, cosine_to_current)
 
         so a strong direct hit on the current message stands alone, while
-        vague follow-ups still benefit from conversation drift.  Centrality
-        and adaptive cutoff are applied identically to ``read_similar``.
+        vague follow-ups still benefit from conversation drift.  The
+        adaptive cutoff is applied identically to ``read_similar``.
 
         Single-element ``conversation_anchors`` reduces cleanly to the same
         ranking as ``read_similar`` — the weighted-decay branch is just the
@@ -471,7 +462,7 @@ class MemoryStore:
             rows = [r for r in rows if r.content not in exclude_contents]
         if self._memory_type(name) == MemoryType.LOG.value:
             rows = [r for r in rows if not _is_low_info(r.content)]
-        scored = self._score_hybrid_with_centrality(name, rows, conversation_anchors)
+        scored = self._score(rows, conversation_anchors)
         cutoff = _adaptive_cutoff(scored, floor)
         if cutoff is None:
             return []
@@ -489,84 +480,42 @@ class MemoryStore:
                 ).all()
             )
 
-    def _score_with_centrality(
-        self, name: str, rows: list[MemoryEntry], anchor: list[float]
-    ) -> list[tuple[float, MemoryEntry]]:
-        """Score each candidate as ``cosine - α * centrality``, sorted desc."""
-        return self._score_hybrid_with_centrality(name, rows, [anchor])
-
-    def _score_hybrid_with_centrality(
+    def _score(
         self,
-        name: str,
         rows: list[MemoryEntry],
         anchors: list[list[float]],
     ) -> list[tuple[float, MemoryEntry]]:
-        """Score each candidate as ``max(weighted, current_cos) - α * centrality``.
+        """Score each candidate as ``max(weighted_decay, current_cos) - α·proxy``.
 
         Vectorized: stacks all candidate embeddings into an (N, D) matrix and
         all anchors into an (M, D) matrix, then a single matmul produces the
-        full (N, M) cosine table.  Per-turn matrix construction (~1 ms for
-        ~1500 rows × 768 dims via ``np.frombuffer``) is small enough that no
-        persistent in-memory cache is needed.
+        full (N, M) cosine table.  The centrality-magnet penalty is the dot
+        of each row with the corpus centroid (one mean + one matvec); in
+        normalized space this is rank-equivalent to mean cosine to every
+        other entry, which keeps generic boilerplate from leaking into
+        unrelated queries.  Per-query work stays O(N·D); no precompute, no
+        cache.
 
         Single-anchor reduces cleanly: with M=1 the weighted-decay branch is
         the lone cosine, so ``max()`` picks it.
         """
-        valid: list[tuple[int, bytes, MemoryEntry]] = [
-            (row.id, row.content_embedding, row)
+        valid: list[tuple[bytes, MemoryEntry]] = [
+            (row.content_embedding, row)
             for row in rows
             if row.id is not None and row.content_embedding is not None
         ]
         if not valid or not anchors:
             return []
-        valid_rows = [row for _, _, row in valid]
-        centralities = self._centralities_for(name, valid_rows)
-        matrix = _stack_normalized(blob for _, blob, _ in valid)
+        valid_rows = [row for _, row in valid]
+        matrix = _stack_normalized(blob for blob, _ in valid)
         anchor_matrix = _stack_normalized_anchors(anchors)
         cos_matrix = matrix @ anchor_matrix.T  # (N, M)
         hybrid = _hybrid_scores(cos_matrix)
-        centrality_vec = np.array(
-            [centralities.get(entry_id, 0.0) for entry_id, _, _ in valid], dtype=np.float32
+        adjusted = hybrid - (
+            PennyConstants.MEMORY_RELEVANT_CENTRALITY_PENALTY * _centrality_via_centroid(matrix)
         )
-        adjusted = hybrid - PennyConstants.MEMORY_RELEVANT_CENTRALITY_PENALTY * centrality_vec
         order = np.argsort(-adjusted)
         return [(float(adjusted[i]), valid_rows[i]) for i in order]
-
-    def precompute_centrality(self) -> None:
-        """Warm the centrality cache for every relevant-mode memory.
-
-        Centrality is O(N²) over the corpus and only needs to run once per
-        memory per process — call this at startup so the first chat message
-        doesn't pay the compute tax mid-request.  Skips archived memories,
-        non-relevant modes, and memories with no embedded entries (where
-        the lazy path would also have nothing to do).
-        """
-        for memory in self.list_all():
-            if memory.archived or memory.recall != RecallMode.RELEVANT.value:
-                continue
-            rows = self._embedded_rows(memory.name)
-            if not rows:
-                continue
-            logger.info(
-                "Precomputing centrality for memory %s (%d entries)",
-                memory.name,
-                len(rows),
-            )
-            self._centralities_for(memory.name, rows)
-
-    def _centralities_for(self, name: str, rows: list[MemoryEntry]) -> dict[int, float]:
-        """Lazily compute and cache mean-cosine centrality per entry id."""
-        cached = self._centrality_cache.get(name)
-        if cached is not None:
-            return cached
-        vecs: dict[int, list[float]] = {}
-        for row in rows:
-            if row.id is None or row.content_embedding is None:
-                continue
-            vecs[row.id] = deserialize_embedding(row.content_embedding)
-        result = _compute_centralities(vecs)
-        self._centrality_cache[name] = result
-        return result
 
     def expand_with_temporal_neighbors(
         self,
@@ -786,29 +735,6 @@ def _safe_cosine(a: list[float] | None, b: list[float] | None) -> float | None:
     return cosine_similarity(a, b)
 
 
-def _compute_centralities(vecs: dict[int, list[float]]) -> dict[int, float]:
-    """Mean cosine to every other vector in the corpus, per id.
-
-    O(N²) over the corpus.  Cosine is symmetric, so the upper triangle is
-    computed once and mirrored.  Empty / single-vector corpora return zero
-    centralities (no other entries to compare against).
-    """
-    if not vecs:
-        return {}
-    ids = list(vecs.keys())
-    if len(ids) < 2:
-        return {ids[0]: 0.0}
-    sums = dict.fromkeys(ids, 0.0)
-    for i in range(len(ids)):
-        vec_i = vecs[ids[i]]
-        for j in range(i + 1, len(ids)):
-            sim = cosine_similarity(vec_i, vecs[ids[j]])
-            sums[ids[i]] += sim
-            sums[ids[j]] += sim
-    divisor = len(ids) - 1
-    return {entry_id: total / divisor for entry_id, total in sums.items()}
-
-
 def _stack_normalized(blobs: Iterable[bytes]) -> np.ndarray:
     """Stack serialized embeddings into an L2-normalized (N, D) float32 matrix.
 
@@ -849,6 +775,26 @@ def _hybrid_scores(cos_matrix: np.ndarray, decay: float = 0.5) -> np.ndarray:
     weighted = (cos_matrix * weights).sum(axis=1) / weights.sum()
     current = cos_matrix[:, -1]
     return np.maximum(weighted, current)
+
+
+def _centrality_via_centroid(matrix: np.ndarray) -> np.ndarray:
+    """Per-row mean cosine to all OTHER rows, computed via the corpus centroid.
+
+    Algebraically identical to the O(N²) loop ``mean_{j≠i}(cos(v_i, v_j))``:
+
+        mean_{j≠i}(cos) = (N · v_i · centroid − 1) / (N − 1)
+
+    where ``centroid = matrix.mean(axis=0)`` and rows are L2-normalized so
+    ``v_i · v_i = 1``.  Cost is one ``mean`` and one matrix-vector product —
+    O(N · D) per query, no precompute, no cache.
+
+    Returns zeros for corpora of fewer than 2 rows (no neighbors to average).
+    """
+    n = matrix.shape[0]
+    if n < 2:
+        return np.zeros(n, dtype=np.float32)
+    centroid = matrix.mean(axis=0)
+    return (n * (matrix @ centroid) - 1) / (n - 1)
 
 
 def _adaptive_cutoff(scored: list[tuple[float, MemoryEntry]], floor: float) -> float | None:

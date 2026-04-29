@@ -182,25 +182,16 @@ class PennyConstants:
     MEMORY_UNNOTIFIED_THOUGHTS = "unnotified-thoughts"
     MEMORY_NOTIFIED_THOUGHTS = "notified-thoughts"
 
-    # Similarity-ranked retrieval scoring (applied by ``MemoryStore.read_similar``
-    # to every ``relevant``-mode read).  Each candidate is scored as
-    # ``adjusted = cosine_to_anchor - α * centrality``, where centrality is
-    # the candidate's mean cosine to every other entry in the same memory —
-    # the centroid-magnet penalty that suppresses generic boilerplate which
-    # would otherwise leak into every unrelated query.  Calibrated empirically
-    # against the embeddinggemma corpus on user-messages.
+    # Centroid-proxy penalty applied during similarity-ranked retrieval:
+    # ``adjusted = max(weighted, current_cos) - α * cos(entry, corpus_centroid)``.
+    # The proxy is rank-equivalent to mean cosine to every other entry in the
+    # same corpus (true centrality) up to an O(1/N) constant, so it acts as
+    # the same centroid-magnet penalty without the O(N²) precompute — one
+    # mean and one matrix-vector product per query, folded into ``_score``.
     MEMORY_RELEVANT_CENTRALITY_PENALTY = 0.5
     # Cluster-strength gate: top_head_mean / top_sample_mean must exceed this
     # for any entries to be returned — separates real clusters from flat
-    # noise plateaus.  Calibrated in adjusted-score space.
-    #
-    # Lowered 1.15 → 1.05 alongside the low-info filter (below): once junk
-    # entries (empty strings, "Hey!", "?") are filtered out of the corpus
-    # before scoring, the head/sample ratio rises naturally, but corpora
-    # with broad topical coverage (user-messages around 1.10–1.20) were
-    # previously gated to nothing on bare keyword anchors.  The lower
-    # threshold keeps real clusters visible without re-introducing the
-    # noise plateaus the filter handles.
+    # noise plateaus.
     MEMORY_RELEVANT_CLUSTER_GATE = 1.05
     # Cutoff is ``max(top_head_mean * RELATIVE_RATIO, ABSOLUTE_FLOOR)``.
     # The relative band adapts cluster width to cluster height; the
