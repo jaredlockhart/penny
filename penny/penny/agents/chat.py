@@ -157,7 +157,7 @@ class ChatAgent(Agent):
 
     async def _build_system_prompt(
         self,
-        user: str,
+        user: str | None,
         content: str | None = None,
         instructions: str | None = None,
     ) -> str:
@@ -177,7 +177,7 @@ class ChatAgent(Agent):
         Background agents skip both — they read memory explicitly per
         their task and never operate on a browser context.
         """
-        history_texts = [text for _, text in self._build_conversation(user)]
+        history_texts = [text for _, text in self._build_conversation(user)] if user else []
         recall = await build_recall_block(
             self.db,
             self._embedding_model_client,

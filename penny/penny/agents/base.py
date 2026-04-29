@@ -277,7 +277,7 @@ class Agent:
         log_read_next = next((t for t in tools if isinstance(t, LogReadNextTool)), None)
         self._install_tools(tools)
 
-        primary_user = self.db.users.get_primary_sender() or ""
+        primary_user = self.db.users.get_primary_sender()
         system_prompt = await self._build_system_prompt(primary_user)
 
         run_id = uuid.uuid4().hex
@@ -896,7 +896,7 @@ class Agent:
 
     # ── System prompt building (template method pattern) ─────────────────
 
-    async def _build_system_prompt(self, user: str) -> str:
+    async def _build_system_prompt(self, user: str | None) -> str:
         """Build the full system prompt body — used by background agents.
 
         Envelope: identity + (profile + memory inventory) + task instructions.
@@ -908,8 +908,10 @@ class Agent:
         the inventory so the model can discover memories without calling
         ``list_memories``.
 
-        The timestamp is prepended by ``_build_messages`` — don't include
-        it here.
+        ``user`` is ``None`` on a fresh install where no primary sender
+        is configured yet — the profile section is just omitted in that
+        case.  The timestamp is prepended by ``_build_messages`` — don't
+        include it here.
         """
         sections = [
             self._identity_section(),
@@ -941,17 +943,19 @@ class Agent:
         joined = "\n\n".join(parts)
         return f"## Context\n{joined}"
 
-    def _profile_section(self, sender: str) -> str | None:
-        """### User Profile — user name."""
-        try:
-            user_info = self.db.users.get_info(sender)
-            if not user_info:
-                return None
+    def _profile_section(self, sender: str | None) -> str | None:
+        """### User Profile — user name.
 
-            logger.debug("Built profile context for %s", sender)
-            return f"### User Profile\nThe user's name is {user_info.name}."
-        except Exception:
+        Returns ``None`` when no primary user is configured (fresh install)
+        or when the sender has no recorded ``UserInfo`` row yet.
+        """
+        if sender is None:
             return None
+        user_info = self.db.users.get_info(sender)
+        if user_info is None:
+            return None
+        logger.debug("Built profile context for %s", sender)
+        return f"### User Profile\nThe user's name is {user_info.name}."
 
     def _memory_inventory_section(self) -> str | None:
         """### Memory Inventory — every non-archived memory by name + type."""
