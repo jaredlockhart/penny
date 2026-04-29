@@ -27,6 +27,7 @@ is omitted the behaviour collapses cleanly to single-anchor cosine ranking.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from penny.constants import PennyConstants
@@ -156,16 +157,41 @@ def _relevant_entries(
     entry within ±``MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES`` of any hit's
     timestamp, so a single keyword match pulls in the surrounding
     conversation rather than a single line stripped of context.
+
+    Logs also exclude entries newer than ``now -
+    MEMORY_RELEVANT_SELF_MATCH_CUTOFF_SECONDS`` from the corpus before
+    scoring.  Channel ingress writes the user's incoming message to
+    ``user-messages`` immediately, and that entry would otherwise self-
+    match the current-message anchor at cosine ≈ 1.0; temporal
+    expansion would then anchor on that self-match and pull in the
+    recent conversation, drowning out historical hits.
     """
     if not anchors:
         return []
-    hits = db.memories.read_similar_hybrid(memory.name, anchors, k=limit, floor=floor)
+    not_after = _self_match_cutoff_for(memory)
+    hits = db.memories.read_similar_hybrid(
+        memory.name, anchors, k=limit, floor=floor, not_after=not_after
+    )
     if not hits or memory.type != MemoryType.LOG.value:
         return hits
     return db.memories.expand_with_temporal_neighbors(
         memory.name,
         hits,
         PennyConstants.MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES,
+    )
+
+
+def _self_match_cutoff_for(memory: Memory) -> datetime | None:
+    """Self-match exclusion timestamp for log-shaped memories, ``None`` for collections.
+
+    Collections are keyed sets — the current message isn't an entry in
+    them, so there's nothing to exclude.  Logs receive the current turn
+    via channel ingress and need the cutoff.
+    """
+    if memory.type != MemoryType.LOG.value:
+        return None
+    return datetime.now(UTC) - timedelta(
+        seconds=PennyConstants.MEMORY_RELEVANT_SELF_MATCH_CUTOFF_SECONDS
     )
 
 
