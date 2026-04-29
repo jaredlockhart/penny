@@ -352,11 +352,24 @@ class ChatAgent(Agent):
 
     @staticmethod
     def _format_recall_section(memory: Memory, entries: list[MemoryEntry]) -> str:
-        """Render a single memory's header + entries as a context subsection."""
-        lines = [f"### {memory.name}", memory.description, ""]
+        """Render a single memory's header + entries as a context subsection.
+
+        Each entry gets its own ``####`` sub-header carrying the entry's key
+        (when keyed) and the ``created_at`` timestamp, followed by the
+        verbatim content on the next line.  This isolates entries
+        visually in the prompt — without per-entry headers, multi-line
+        contents (especially long Penny replies) blob together as one
+        unbroken paragraph.  The timestamp also lets the model reason
+        about temporal context ("we talked about this last week" vs
+        "earlier today") without needing an extra tool call.
+        """
+        lines = [f"### {memory.name}", memory.description]
         for entry in entries:
-            prefix = f"[{entry.key}] " if entry.key else ""
-            lines.append(f"- {prefix}{entry.content}")
+            timestamp = entry.created_at.strftime("%Y-%m-%d %H:%M")
+            header = f"#### [{entry.key}] · {timestamp}" if entry.key else f"#### {timestamp}"
+            lines.append("")
+            lines.append(header)
+            lines.append(entry.content)
         return "\n".join(lines)
 
     # ── Vision ────────────────────────────────────────────────────────────

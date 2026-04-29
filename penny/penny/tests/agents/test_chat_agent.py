@@ -9,6 +9,7 @@ Test organization:
 """
 
 import hashlib
+import re
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -122,13 +123,16 @@ async def test_basic_message_flow(
         tool_messages = [m for m in messages if m.get("role") == "tool"]
         assert len(tool_messages) >= 1, "Second request should include tool result"
 
-        # Full system prompt structure assertion
+        # Full system prompt structure assertion.  Per-entry timestamps are
+        # normalised to a placeholder so the verbatim assertion stays stable
+        # across runs without freezing the clock.
         system_text = [
             m.get("content", "") for m in first_request["messages"] if m.get("role") == "system"
         ][0]
         lines = system_text.split("\n")
         assert lines[0].startswith("Current date and time: ")
         rest = "\n".join(lines[1:])
+        rest = re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", "YYYY-MM-DD HH:MM", rest)
         expected = """\
 
 ## Identity
@@ -165,12 +169,14 @@ The user's name is Test User.
 ### playlists
 favorite playlists
 
-- [morning] prog rock
+#### [morning] · YYYY-MM-DD HH:MM
+prog rock
 
 ### tips
 useful tips
 
-- tune before playing
+#### YYYY-MM-DD HH:MM
+tune before playing
 
 ## Instructions
 The user is talking to you — no greetings, no sign-offs, just pick up \
@@ -306,7 +312,8 @@ async def test_chat_prompt_renders_relevant_mode_via_embedding(
 
     assert "### trivia" in prompt
     assert "facts" in prompt
-    assert "- [espresso] espresso uses 9 bars of pressure" in prompt
+    assert "[espresso]" in prompt
+    assert "espresso uses 9 bars of pressure" in prompt
 
 
 # ── 2. Special success cases ──────────────────────────────────────────────
@@ -724,8 +731,8 @@ async def test_recall_all_mode_renders_all_entries(
         result = await penny.chat_agent._recall_section(current_message=None)
 
         assert result is not None
-        assert "[morning] prog rock" in result
-        assert "[evening] lo-fi" in result
+        assert "[morning]" in result and "prog rock" in result
+        assert "[evening]" in result and "lo-fi" in result
 
 
 @pytest.mark.asyncio

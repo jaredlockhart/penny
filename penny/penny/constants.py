@@ -222,13 +222,16 @@ class PennyConstants:
     # but live in the same conversation as a real hit.
     MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES = 5
 
-    # Low-information filter: entries with fewer than this many word
-    # tokens are excluded from the similarity corpus before scoring.
-    # Empty strings, lone punctuation ("?", "…"), stock greetings
-    # ("hi penny", "Hey! 😄"), and bare-URL fragments otherwise dominate
-    # the cosine ranking on short keyword queries — they don't carry
-    # topical content, but their tiny vocabulary collides geometrically
-    # with any short anchor.  Calibrated against the production corpus:
-    # at 5 words, the user's actual messages and Penny's actual replies
-    # both pass while the noise plateau is removed.
+    # Low-information filter: entries in **log-shaped memories** with
+    # fewer than this many word tokens are excluded from the similarity
+    # corpus before scoring.  Empty strings, lone punctuation ("?", "…"),
+    # stock greetings ("hi penny", "Hey! 😄"), and bare-URL fragments
+    # otherwise dominate the cosine ranking on short keyword queries —
+    # they don't carry topical content, but their tiny vocabulary
+    # collides geometrically with any short anchor.
+    #
+    # Collections are NOT filtered: they have keyed entries where short
+    # content is deliberate (the user's `likes` collection includes
+    # entries like "anime", "cyberpunk", "video games").  Filtering them
+    # would wipe out 75%+ of the user's actual stated preferences.
     MEMORY_RELEVANT_MIN_WORDS = 5

@@ -454,18 +454,21 @@ class MemoryStore:
         anchor at cosine ≈ 1.0 and dominate the hit list.
 
         Low-information rows (fewer than ``MEMORY_RELEVANT_MIN_WORDS``
-        word tokens) are filtered out of the corpus before scoring.
-        Empty strings, lone punctuation, and stock greetings otherwise
-        dominate cosine ranking on short keyword queries — they share a
-        tiny vocabulary that geometrically collides with any short
-        anchor regardless of topic.
+        word tokens) are filtered out of the corpus before scoring **for
+        log-shaped memories only**.  Empty strings, lone punctuation,
+        and stock greetings otherwise dominate cosine ranking on short
+        keyword queries.  Collections have keyed entries where short
+        content is deliberate (``"anime"``, ``"cyberpunk"`` are valid
+        like preferences); filtering them would wipe out 75%+ of the
+        user's actual stated topics.
         """
         if not conversation_anchors:
             return []
         rows = self._embedded_rows(name)
         if exclude_contents:
             rows = [r for r in rows if r.content not in exclude_contents]
-        rows = [r for r in rows if not _is_low_info(r.content)]
+        if self._memory_type(name) == MemoryType.LOG.value:
+            rows = [r for r in rows if not _is_low_info(r.content)]
         scored = self._score_hybrid_with_centrality(name, rows, conversation_anchors)
         cutoff = _adaptive_cutoff(scored, floor)
         if cutoff is None:
@@ -664,6 +667,11 @@ class MemoryStore:
             raise MemoryNotFoundError(name)
         if memory.type != expected.value:
             raise MemoryTypeError(f"memory '{name}' is a {memory.type}, not a {expected.value}")
+
+    def _memory_type(self, name: str) -> str:
+        """Return ``memory.type`` ("collection" or "log") or empty string."""
+        memory = self.get(name)
+        return memory.type if memory else ""
 
     def _entries_by_key(self, session: Session, name: str, key: str) -> list[MemoryEntry]:
         return list(
