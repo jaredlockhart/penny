@@ -16,15 +16,21 @@ before dispatching:
   the same agent.  Counts entries in ``penny-messages`` authored by
   this agent since the recipient's last entry in ``user-messages``;
   cooldown doubles per backoff step, capped at the configured max.
+- **Truncation**: if the content tail looks like a model self-
+  truncation (ending in ``…`` or three-or-more dots, mid-thought),
+  return a failure string with the ``Error:`` prefix so the agent
+  loop marks the call as failed.  The model sees the rejection on
+  its next step and re-emits with the complete body.
 
-All three gates apply to all callers — chat agents that reply via
-the final-answer mechanism never invoke this tool, so the gates
-are effectively notify-only in practice.
+The first three are graceful-exit signals (model is told to call
+``done``); truncation is a retry signal (model is told to redo
+``send_message`` with the complete body).
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -77,6 +83,16 @@ class SendMessageTool(Tool):
         "Message NOT sent: cooldown has not elapsed since the last "
         f"autonomous send.  Call ``{DoneTool.name}`` to exit — do not retry."
     )
+    # ``Error:`` prefix triggers ``record.failed=True`` in the agent loop,
+    # which counts toward the abort threshold so we don't infinite-loop
+    # if the model keeps producing truncated content.
+    _TRUNCATION_REJECTION = (
+        "Error: Message NOT sent: the content ended with an ellipsis "
+        "('…' or '...'), which means it was cut off mid-thought.  "
+        "Call send_message again with the COMPLETE message body — "
+        "finish every sentence and bullet you start, no ellipses, "
+        "no 'etc.', no 'and more', no teaser phrasing."
+    )
 
     def __init__(
         self,
@@ -95,6 +111,9 @@ class SendMessageTool(Tool):
         if is_refusal(args.content):
             logger.info("send_message refused (refusal content): %s", self._agent_name)
             return self._REFUSAL_RESPONSE
+        if _appears_truncated(args.content):
+            logger.info("send_message rejected (truncation): %s", self._agent_name)
+            return self._TRUNCATION_REJECTION
         recipient = self._db.users.get_primary_sender()
         if recipient is None:
             logger.info("send_message refused (no primary user): %s", self._agent_name)
@@ -168,6 +187,22 @@ class SendMessageTool(Tool):
         """Created-at of the most recent ``user-messages`` entry."""
         entries = self._db.memories.read_latest(PennyConstants.MEMORY_USER_MESSAGES_LOG, k=1)
         return entries[0].created_at if entries else None
+
+
+_TRUNCATION_TAIL_PATTERN = re.compile(r"(?:…+|\.{3,})\s*[?!.]?\s*$")
+
+
+def _appears_truncated(content: str) -> bool:
+    """Return True if ``content`` looks like a model self-truncation.
+
+    Matches a tail of one-or-more ``…`` characters or three-or-more ASCII
+    dots, optionally followed by a single ``?``/``!``/``.`` and trailing
+    whitespace.  Production failures look like ``"...the original …"`` or
+    ``"all-time-best ‑ …?"``.  Conversational mid-sentence ellipsis
+    (``"Anyway… 🤓"``) doesn't match because the message ends with text
+    after the ellipsis.
+    """
+    return bool(_TRUNCATION_TAIL_PATTERN.search(content))
 
 
 def _naive_utc_now() -> datetime:
