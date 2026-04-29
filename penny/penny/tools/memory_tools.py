@@ -311,28 +311,6 @@ class ReadSimilarTool(Tool):
         return _format_entries(entries)
 
 
-class ReadAllTool(Tool):
-    """Return every entry in a memory, oldest first (collections or logs)."""
-
-    name = "read_all"
-    description = (
-        "Return every entry in a memory, oldest first. Works for both collections and logs."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {"memory": {"type": "string"}},
-        "required": ["memory"],
-    }
-
-    def __init__(self, db: Database) -> None:
-        self._db = db
-
-    async def execute(self, **kwargs: Any) -> str:
-        args = MemoryNameArgs(**kwargs)
-        entries = self._db.memories.read_all(args.memory)
-        return _format_entries(entries)
-
-
 class CollectionKeysTool(Tool):
     """List the unique keys currently in a collection."""
 
@@ -695,11 +673,16 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
     replies via final text and must not have ``done`` available, or the
     model may call it instead of producing a reply.
 
-    ``read_latest``, ``read_similar``, and ``read_all`` are shape-agnostic
-    — they work for both collections and logs.  Earlier this surface had
-    parallel ``collection_*`` / ``log_*`` versions of each, but they
-    shared the same underlying ``MemoryStore`` calls and forced the
-    model to disambiguate by memory shape with no functional benefit.
+    ``read_latest`` and ``read_similar`` are shape-agnostic — they work
+    for both collections and logs.  Earlier this surface had parallel
+    ``collection_*`` / ``log_*`` versions of each, but they shared the
+    same underlying ``MemoryStore`` calls and forced the model to
+    disambiguate by memory shape with no functional benefit.
+
+    ``read_all`` was removed because returning every entry of a memory
+    can dump thousands of rows into the model's context (e.g. the
+    ``knowledge`` collection has 1,000+ entries) — pagination via
+    ``read_latest(memory, k=N)`` is always safer.
     """
     return [
         # Metadata
@@ -710,7 +693,6 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
         # Reads (shape-agnostic)
         ReadLatestTool(db),
         ReadSimilarTool(db, llm_client),
-        ReadAllTool(db),
         # Collection-specific reads
         CollectionGetTool(db),
         CollectionReadRandomTool(db),

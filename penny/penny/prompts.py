@@ -28,7 +28,7 @@ class Prompt:
         "and what you'll do with the result.\n\n"
         "Search memory first. The recall block above shows the most relevant "
         "entries verbatim, and your memory tools (`read_latest`, "
-        "`read_similar`, `read_all`, etc.) cover everything else stored. "
+        "`read_similar`, etc.) cover everything else stored. "
         "Only browse if memory "
         "doesn't have what the user needs, or for current/external info "
         "(news, products, prices, fresh facts).\n\n"
@@ -150,7 +150,7 @@ Examples:
         "Sequence:\n"
         '1. collection_read_random("likes", 1) — pick one seed topic from '
         "the user's likes.\n"
-        '2. read_all("dislikes") — see what the user doesn\'t like.\n'
+        '2. read_latest("dislikes") — see what the user doesn\'t like.\n'
         "3. browse — search the web and read one or two pages to find "
         "something timely and interesting grounded in the seed topic.\n"
         "4. Draft ONE thought connecting what you found to the seed.  Write "

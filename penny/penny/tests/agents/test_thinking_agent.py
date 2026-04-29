@@ -49,7 +49,7 @@ async def test_thinking_cycle_happy_path(
                 {"memory": "likes", "k": 1},
             )
         if count == 2:
-            return mock_llm._make_tool_call_response(request, "read_all", {"memory": "dislikes"})
+            return mock_llm._make_tool_call_response(request, "read_latest", {"memory": "dislikes"})
         if count == 3:
             return mock_llm._make_tool_call_response(
                 request,
@@ -120,7 +120,7 @@ hearing — and store it as a thought.
 Sequence:
 1. collection_read_random("likes", 1) — pick one seed topic from the \
 user's likes.
-2. read_all("dislikes") — see what the user doesn't like.
+2. read_latest("dislikes") — see what the user doesn't like.
 3. browse — search the web and read one or two pages to find something \
 timely and interesting grounded in the seed topic.
 4. Draft ONE thought connecting what you found to the seed.  Write it \
@@ -161,10 +161,10 @@ async def test_returns_false_when_model_does_not_call_done(
     """No done() call → run is treated as failed; result is False."""
     config = make_config(max_steps=2)
 
-    # Always return read_all — never done.  Loop hits max_steps.
+    # Always return read_latest — never done.  Loop hits max_steps.
     mock_llm.set_response_handler(
         lambda request, _count: mock_llm._make_tool_call_response(
-            request, "read_all", {"memory": "likes"}
+            request, "read_latest", {"memory": "likes"}
         )
     )
 
