@@ -1,8 +1,9 @@
-"""Tests for build_recall_block — the ambient recall assembler.
+"""Tests for the recall module — memory inventory + ambient recall.
 
 Test organisation:
 1. Happy paths — each recall mode renders correctly
 2. Edge/skip cases — off mode, archived, empty, no embedding
+3. Memory inventory — present for every non-archived memory
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlmodel import Session, select
 
-from penny.agents.recall import build_recall_block
+from penny.agents.recall import build_memory_inventory, build_recall_block
 from penny.database import Database
 from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
 from penny.database.models import MemoryEntry
@@ -220,9 +221,7 @@ async def test_relevant_mode_collection_skips_temporal_expansion(tmp_path, mock_
 
 @pytest.mark.asyncio
 async def test_relevant_mode_without_history_skips_vague_current_message(tmp_path, mock_llm):
-    """Same vague current message with no conversation history scores zero —
-    the absolute floor suppresses content rendering, but the inventory header
-    still names the memory."""
+    """Vague current message with no history → absolute floor suppresses everything."""
     db = _make_db(tmp_path)
     db.memories.create_collection("prefs", "user prefs", RecallMode.RELEVANT)
     client = _make_llm_client(mock_llm)
@@ -230,53 +229,44 @@ async def test_relevant_mode_without_history_skips_vague_current_message(tmp_pat
 
     result = await build_recall_block(db, client, "yeah")
 
-    assert result is not None
-    assert "### Memory Inventory" in result
-    assert "prefs (collection)" in result
-    assert "coffee" not in result  # content not rendered
+    assert result is None  # nothing scores above the floor → no recall content
 
 
 @pytest.mark.asyncio
-async def test_relevant_mode_without_client_returns_only_inventory(tmp_path):
+async def test_relevant_mode_without_client_returns_none(tmp_path):
     db = _make_db(tmp_path)
     db.memories.create_collection("prefs", "user prefs", RecallMode.RELEVANT)
     _write_entry(db, "prefs", "coffee", "loves coffee")
 
     result = await build_recall_block(db, None, "coffee")
 
-    assert result is not None
-    assert "### Memory Inventory" in result
-    assert "loves coffee" not in result  # similarity unavailable, content skipped
+    assert result is None  # similarity unavailable → no recall content
 
 
 @pytest.mark.asyncio
-async def test_relevant_mode_without_message_returns_only_inventory(tmp_path, mock_llm):
+async def test_relevant_mode_without_message_returns_none(tmp_path, mock_llm):
     db = _make_db(tmp_path)
     db.memories.create_collection("prefs", "user prefs", RecallMode.RELEVANT)
     _write_entry(db, "prefs", "coffee", "loves coffee")
 
     result = await build_recall_block(db, _make_llm_client(mock_llm), None)
 
-    assert result is not None
-    assert "### Memory Inventory" in result
-    assert "loves coffee" not in result  # no anchor, content skipped
+    assert result is None  # no anchor → no recall content
 
 
 # ── 2. Edge / skip cases ──────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_off_mode_inventoried_but_content_skipped(tmp_path):
+async def test_off_mode_skipped(tmp_path):
+    """off-mode memories never contribute recall content."""
     db = _make_db(tmp_path)
     db.memories.create_collection("hidden", "not shown", RecallMode.OFF)
     _write_entry(db, "hidden", "k", "content")
 
     result = await build_recall_block(db, None, None)
 
-    # off-mode memories appear in the inventory but contribute no content section.
-    assert result is not None
-    assert "hidden (collection) — not shown" in result
-    assert "### hidden" not in result  # no content section, just inventory line
+    assert result is None
 
 
 @pytest.mark.asyncio
@@ -288,7 +278,6 @@ async def test_archived_memory_skipped(tmp_path):
 
     result = await build_recall_block(db, None, None)
 
-    # archived memories don't appear in the inventory or content sections.
     assert result is None
 
 
@@ -300,13 +289,48 @@ async def test_empty_database_returns_none(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_memory_with_no_entries_inventoried_but_content_skipped(tmp_path):
+async def test_memory_with_no_entries_omitted(tmp_path):
+    """A memory with no entries contributes nothing to recall content."""
     db = _make_db(tmp_path)
     db.memories.create_collection("empty", "no entries yet", RecallMode.ALL)
 
     result = await build_recall_block(db, None, None)
 
-    # memory exists → appears in inventory; no entries → no content section.
+    assert result is None
+
+
+# ── 3. Memory inventory ───────────────────────────────────────────────────
+
+
+def test_inventory_lists_all_non_archived_memories(tmp_path):
+    """Inventory names every non-archived memory regardless of recall mode."""
+    db = _make_db(tmp_path)
+    db.memories.create_collection("likes", "positive prefs", RecallMode.RELEVANT)
+    db.memories.create_collection("dislikes", "negative prefs", RecallMode.OFF)
+    db.memories.create_log("messages", "convo log", RecallMode.RECENT)
+
+    result = build_memory_inventory(db)
+
     assert result is not None
-    assert "empty (collection) — no entries yet" in result
-    assert "### empty" not in result
+    assert "### Memory Inventory" in result
+    assert "likes (collection) — positive prefs" in result
+    assert "dislikes (collection) — negative prefs" in result  # off-mode still listed
+    assert "messages (log) — convo log" in result
+
+
+def test_inventory_excludes_archived(tmp_path):
+    db = _make_db(tmp_path)
+    db.memories.create_collection("active", "live", RecallMode.RELEVANT)
+    db.memories.create_collection("retired", "archived", RecallMode.RELEVANT)
+    db.memories.archive("retired")
+
+    result = build_memory_inventory(db)
+
+    assert result is not None
+    assert "active (collection)" in result
+    assert "retired" not in result
+
+
+def test_inventory_returns_none_when_no_memories(tmp_path):
+    db = _make_db(tmp_path)
+    assert build_memory_inventory(db) is None

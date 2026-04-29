@@ -29,7 +29,7 @@ from penny.database.memory_store import (
     RecallMode,
     WriteResult,
 )
-from penny.database.models import Memory, MemoryEntry
+from penny.database.models import MemoryEntry
 from penny.llm.similarity import embed_text
 from penny.tools.base import Tool
 from penny.tools.memory_args import (
@@ -76,13 +76,6 @@ def _format_entries(entries: list[MemoryEntry]) -> str:
         prefix = f"[{entry.key}] " if entry.key else ""
         lines.append(f"- {prefix}{entry.content}")
     return "\n".join(lines)
-
-
-def _format_memory_row(memory: Memory) -> str:
-    archived = " [archived]" if memory.archived else ""
-    return (
-        f"- {memory.name} ({memory.type}, recall={memory.recall}){archived}: {memory.description}"
-    )
 
 
 # ── Metadata ────────────────────────────────────────────────────────────────
@@ -196,26 +189,6 @@ class CollectionUnarchiveTool(Tool):
         args = MemoryNameArgs(**kwargs)
         self._db.memories.unarchive(args.memory)
         return f"Unarchived '{args.memory}'."
-
-
-class ListMemoriesTool(Tool):
-    """List every memory's name, type, recall mode, and description."""
-
-    name = "list_memories"
-    description = (
-        "List every memory (collection or log) with its type, recall mode, "
-        "archived state, and description. Use this to discover what's available."
-    )
-    parameters = {"type": "object", "properties": {}}
-
-    def __init__(self, db: Database) -> None:
-        self._db = db
-
-    async def execute(self, **kwargs: Any) -> str:
-        memories = self._db.memories.list_all()
-        if not memories:
-            return "(no memories)"
-        return "\n".join(_format_memory_row(m) for m in memories)
 
 
 # ── Collection reads ────────────────────────────────────────────────────────
@@ -713,8 +686,10 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
     every tool that maintains per-agent state (LogReadNext's cursor).
 
     The factory centralizes dependency wiring so individual agents don't
-    have to juggle ``db`` / ``llm_client`` / ``agent_name`` across 18
-    constructors.  ``DoneTool`` is intentionally not in this surface —
+    have to juggle ``db`` / ``llm_client`` / ``agent_name`` across 17
+    constructors.  The Memory Inventory section in every agent's system
+    prompt covers what ``list_memories`` used to surface, so that tool
+    is no longer registered.  ``DoneTool`` is intentionally not in this surface —
     it's a background-agent terminator and gets added in
     ``BackgroundAgent.get_tools()`` alongside ``send_message``.  Chat
     replies via final text and must not have ``done`` available, or the
@@ -732,7 +707,6 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
         LogCreateTool(db),
         CollectionArchiveTool(db),
         CollectionUnarchiveTool(db),
-        ListMemoriesTool(db),
         # Reads (shape-agnostic)
         ReadLatestTool(db),
         ReadSimilarTool(db, llm_client),

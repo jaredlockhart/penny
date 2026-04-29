@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
+from penny.agents.recall import build_memory_inventory
 from penny.config import Config
 from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
@@ -262,21 +263,28 @@ class Agent:
     async def _run_cycle(self) -> bool:
         """Generic agentic shell: install tools, run the loop, commit cursor.
 
-        Reads ``self.system_prompt`` (class attr), ``self.name`` (class
-        attr — also used as the prompt type identifier in promptlog), and
-        ``self.terminator_tool`` (class attr) to drive the cycle.  If a
-        ``LogReadNextTool`` is in the surface, its pending cursor is
-        committed on success and discarded on failure.
+        Builds the system prompt via ``_build_system_prompt(user)`` so
+        background agents get the full envelope (identity + profile +
+        memory inventory + task instructions).  ``user`` is the primary
+        Penny user so notify can address them by name and the profile
+        section reads correctly.  Reads ``self.name`` (class attr — also
+        the prompt type identifier in promptlog) and ``self.terminator_tool``
+        (class attr) to drive the cycle.  If a ``LogReadNextTool`` is in
+        the surface, its pending cursor is committed on success and
+        discarded on failure.
         """
         tools = self.get_tools()
         log_read_next = next((t for t in tools if isinstance(t, LogReadNextTool)), None)
         self._install_tools(tools)
 
+        primary_user = self.db.users.get_primary_sender()
+        system_prompt = await self._build_system_prompt(primary_user)
+
         run_id = uuid.uuid4().hex
         response = await self.run(
             prompt="",
             max_steps=self.get_max_steps(),
-            system_prompt=self.system_prompt,
+            system_prompt=system_prompt,
             run_id=run_id,
             prompt_type=self.name,
         )
@@ -888,15 +896,29 @@ class Agent:
 
     # ── System prompt building (template method pattern) ─────────────────
 
-    async def _build_system_prompt(self, user: str) -> str:
-        """Build the full system prompt body. Override per agent.
+    async def _build_system_prompt(self, user: str | None) -> str:
+        """Build the full system prompt body — used by background agents.
 
-        Each agent composes its prompt from building blocks below.
-        The timestamp is prepended by _build_messages — don't include it here.
+        Envelope: identity + (profile + memory inventory) + task instructions.
+        ChatAgent overrides this to add ambient recall and a browser page
+        hint between profile and inventory.
+
+        Both chat and background include identity + profile because both
+        types of agent can dispatch messages to the user; both include
+        the inventory so the model can discover memories without calling
+        ``list_memories``.
+
+        ``user`` is ``None`` on a fresh install where no primary sender
+        is configured yet — the profile section is just omitted in that
+        case.  The timestamp is prepended by ``_build_messages`` — don't
+        include it here.
         """
         sections = [
             self._identity_section(),
-            self._context_block(self._profile_section(user)),
+            self._context_block(
+                self._profile_section(user),
+                self._memory_inventory_section(),
+            ),
             self._instructions_section(),
         ]
         return "\n\n".join(s for s in sections if s)
@@ -921,17 +943,23 @@ class Agent:
         joined = "\n\n".join(parts)
         return f"## Context\n{joined}"
 
-    def _profile_section(self, sender: str) -> str | None:
-        """### User Profile — user name."""
-        try:
-            user_info = self.db.users.get_info(sender)
-            if not user_info:
-                return None
+    def _profile_section(self, sender: str | None) -> str | None:
+        """### User Profile — user name.
 
-            logger.debug("Built profile context for %s", sender)
-            return f"### User Profile\nThe user's name is {user_info.name}."
-        except Exception:
+        Returns ``None`` when no primary user is configured (fresh install)
+        or when the sender has no recorded ``UserInfo`` row yet.
+        """
+        if sender is None:
             return None
+        user_info = self.db.users.get_info(sender)
+        if user_info is None:
+            return None
+        logger.debug("Built profile context for %s", sender)
+        return f"### User Profile\nThe user's name is {user_info.name}."
+
+    def _memory_inventory_section(self) -> str | None:
+        """### Memory Inventory — every non-archived memory by name + type."""
+        return build_memory_inventory(self.db)
 
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
         """Build conversation history as strict user/assistant alternation.

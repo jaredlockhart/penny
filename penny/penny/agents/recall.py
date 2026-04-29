@@ -1,7 +1,15 @@
-"""Ambient recall assembly for the chat agent system prompt.
+"""Memory inventory and ambient recall assembly for agent system prompts.
 
-``build_recall_block`` assembles recall context from all non-archived memories
-whose ``recall`` mode is not ``'off'``.  Each memory is rendered by mode:
+Two helpers, used together in chat and individually in background.
+
+``build_memory_inventory`` lists every non-archived memory's name, type,
+and description.  Goes in EVERY agent's system prompt so the model can
+discover what's available without calling ``list_memories``.
+
+``build_recall_block`` assembles ambient recall content from the active
+memories — only chat needs this, since background agents read memory
+state explicitly per their task.  Each memory is rendered by its recall
+mode:
 
   off      — skipped
   recent   — newest-first slice (``read_latest``)
@@ -33,50 +41,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def build_recall_block(
-    db: Database,
-    llm_client: LlmClient | None,
-    current_message: str | None,
-    similarity_floor: float = 0.0,
-    conversation_history: list[str] | None = None,
-    limit: int = 99,
-) -> str | None:
-    """Assemble recall context for all active memories — summary method.
-
-    Always emits a Memory Inventory header listing every non-archived
-    memory (name, type, description) so the model knows what's
-    available to read on demand without calling ``list_memories`` —
-    including memories whose ``recall`` is ``off`` and therefore have
-    no content section below.
-
-    ``limit`` caps how many entries each memory contributes, applied to all
-    three modes (recent, relevant, all).  Without it a large log/collection
-    would dump every entry into the prompt.  Production callers (ChatAgent)
-    pass ``RECALL_LIMIT`` from runtime config; the in-test default of 99
-    is high enough that existing assertions on small fixture sets still
-    cover the same entries they did before the cap.
-    """
-    anchors = await _embed_conversation_anchors(llm_client, current_message, conversation_history)
-    sections: list[str] = []
-    inventory = _memory_inventory_section(db)
-    if inventory:
-        sections.append(inventory)
-    for memory in _active_memories(db):
-        section = _render_memory(db, memory, anchors, similarity_floor, limit)
-        if section:
-            sections.append(section)
-    return "\n\n".join(sections) if sections else None
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _memory_inventory_section(db: Database) -> str | None:
+def build_memory_inventory(db: Database) -> str | None:
     """Inventory of every non-archived memory: name, type, description.
 
     Includes memories with ``recall=off`` so the model knows what tool
     calls are possible for on-demand reads.  Sorted alphabetically by
-    name for stable prompt structure.
+    name for stable prompt structure.  Goes in every agent's system
+    prompt — chat and background alike — so the model never needs to
+    call ``list_memories``.
     """
     memories = sorted(
         (m for m in db.memories.list_all() if not m.archived),
@@ -88,6 +60,39 @@ def _memory_inventory_section(db: Database) -> str | None:
     for memory in memories:
         lines.append(f"- {memory.name} ({memory.type}) — {memory.description}")
     return "\n".join(lines)
+
+
+async def build_recall_block(
+    db: Database,
+    llm_client: LlmClient | None,
+    current_message: str | None,
+    similarity_floor: float = 0.0,
+    conversation_history: list[str] | None = None,
+    limit: int = 99,
+) -> str | None:
+    """Assemble ambient recall content for all active memories.
+
+    Renders verbatim entries from each non-archived memory whose
+    ``recall`` mode is not ``'off'``.  Chat-only — background agents
+    stay focused and read memory explicitly per their task.
+
+    ``limit`` caps how many entries each memory contributes, applied to all
+    three modes (recent, relevant, all).  Without it a large log/collection
+    would dump every entry into the prompt.  Production callers (ChatAgent)
+    pass ``RECALL_LIMIT`` from runtime config; the in-test default of 99
+    is high enough that existing assertions on small fixture sets still
+    cover the same entries they did before the cap.
+    """
+    anchors = await _embed_conversation_anchors(llm_client, current_message, conversation_history)
+    sections: list[str] = []
+    for memory in _active_memories(db):
+        section = _render_memory(db, memory, anchors, similarity_floor, limit)
+        if section:
+            sections.append(section)
+    return "\n\n".join(sections) if sections else None
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def _active_memories(db: Database) -> list[Memory]:
