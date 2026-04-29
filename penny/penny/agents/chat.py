@@ -161,16 +161,21 @@ class ChatAgent(Agent):
         content: str | None = None,
         instructions: str | None = None,
     ) -> str:
-        """Identity + (profile + recall + page hint) + instructions.
+        """Identity + (profile + inventory + recall + page hint) + instructions.
 
-        Memory context is brokered entirely by the recall block: each
-        active memory is rendered into the system prompt according to
-        its own ``recall`` flag (off / recent / relevant / all).  No
-        bespoke per-section retrieval lives here.
+        Chat extends the base envelope with two chat-only sections:
 
-        Relevant-mode recall scores against the conversation window with
-        hybrid (weighted-decay-over-history vs. cosine-to-current) similarity,
-        so vague follow-ups still pull in topic-relevant memory.
+        - **Ambient recall**: each active memory rendered into the prompt
+          per its ``recall`` flag (off / recent / relevant / all).
+          Relevant-mode scores against the conversation window with
+          hybrid (weighted-decay-over-history vs. cosine-to-current)
+          similarity so vague follow-ups still pull in topic-relevant
+          memory.
+        - **Browser page hint**: when the user is on a page with the
+          extension active.
+
+        Background agents skip both — they read memory explicitly per
+        their task and never operate on a browser context.
         """
         history_texts = [text for _, text in self._build_conversation(user)]
         recall = await build_recall_block(
@@ -186,6 +191,7 @@ class ChatAgent(Agent):
                 self._identity_section(),
                 self._context_block(
                     self._profile_section(user),
+                    self._memory_inventory_section(),
                     recall,
                     self._page_hint_section(),
                 ),

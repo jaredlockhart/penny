@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
+from penny.agents.recall import build_memory_inventory
 from penny.config import Config
 from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
@@ -262,21 +263,28 @@ class Agent:
     async def _run_cycle(self) -> bool:
         """Generic agentic shell: install tools, run the loop, commit cursor.
 
-        Reads ``self.system_prompt`` (class attr), ``self.name`` (class
-        attr — also used as the prompt type identifier in promptlog), and
-        ``self.terminator_tool`` (class attr) to drive the cycle.  If a
-        ``LogReadNextTool`` is in the surface, its pending cursor is
-        committed on success and discarded on failure.
+        Builds the system prompt via ``_build_system_prompt(user)`` so
+        background agents get the full envelope (identity + profile +
+        memory inventory + task instructions).  ``user`` is the primary
+        Penny user so notify can address them by name and the profile
+        section reads correctly.  Reads ``self.name`` (class attr — also
+        the prompt type identifier in promptlog) and ``self.terminator_tool``
+        (class attr) to drive the cycle.  If a ``LogReadNextTool`` is in
+        the surface, its pending cursor is committed on success and
+        discarded on failure.
         """
         tools = self.get_tools()
         log_read_next = next((t for t in tools if isinstance(t, LogReadNextTool)), None)
         self._install_tools(tools)
 
+        primary_user = self.db.users.get_primary_sender() or ""
+        system_prompt = await self._build_system_prompt(primary_user)
+
         run_id = uuid.uuid4().hex
         response = await self.run(
             prompt="",
             max_steps=self.get_max_steps(),
-            system_prompt=self.system_prompt,
+            system_prompt=system_prompt,
             run_id=run_id,
             prompt_type=self.name,
         )
@@ -889,14 +897,26 @@ class Agent:
     # ── System prompt building (template method pattern) ─────────────────
 
     async def _build_system_prompt(self, user: str) -> str:
-        """Build the full system prompt body. Override per agent.
+        """Build the full system prompt body — used by background agents.
 
-        Each agent composes its prompt from building blocks below.
-        The timestamp is prepended by _build_messages — don't include it here.
+        Envelope: identity + (profile + memory inventory) + task instructions.
+        ChatAgent overrides this to add ambient recall and a browser page
+        hint between profile and inventory.
+
+        Both chat and background include identity + profile because both
+        types of agent can dispatch messages to the user; both include
+        the inventory so the model can discover memories without calling
+        ``list_memories``.
+
+        The timestamp is prepended by ``_build_messages`` — don't include
+        it here.
         """
         sections = [
             self._identity_section(),
-            self._context_block(self._profile_section(user)),
+            self._context_block(
+                self._profile_section(user),
+                self._memory_inventory_section(),
+            ),
             self._instructions_section(),
         ]
         return "\n\n".join(s for s in sections if s)
@@ -932,6 +952,10 @@ class Agent:
             return f"### User Profile\nThe user's name is {user_info.name}."
         except Exception:
             return None
+
+    def _memory_inventory_section(self) -> str | None:
+        """### Memory Inventory — every non-archived memory by name + type."""
+        return build_memory_inventory(self.db)
 
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:
         """Build conversation history as strict user/assistant alternation.

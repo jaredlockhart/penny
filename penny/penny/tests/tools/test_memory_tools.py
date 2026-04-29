@@ -25,7 +25,6 @@ from penny.tools.memory_tools import (
     CollectionWriteTool,
     DoneTool,
     ExistsTool,
-    ListMemoriesTool,
     LogAppendTool,
     LogCreateTool,
     LogReadNextTool,
@@ -93,29 +92,26 @@ def _single_hash_vec(text: str, dim: int = 4096) -> list[float]:
 
 class TestCreateAndList:
     @pytest.mark.asyncio
-    async def test_create_collection_then_list(self, tmp_path):
+    async def test_create_collection_persists(self, tmp_path):
         db = _make_db(tmp_path)
         result = await CollectionCreateTool(db).execute(
             name="likes", description="positive prefs", recall="relevant"
         )
         assert "Created collection 'likes'" in result
-        listed = await ListMemoriesTool(db).execute()
-        assert "likes (collection, recall=relevant)" in listed
-        assert "positive prefs" in listed
+        memories = {m.name: m for m in db.memories.list_all()}
+        assert memories["likes"].type == "collection"
+        assert memories["likes"].recall == "relevant"
+        assert memories["likes"].description == "positive prefs"
 
     @pytest.mark.asyncio
-    async def test_create_log_then_list(self, tmp_path):
+    async def test_create_log_persists(self, tmp_path):
         db = _make_db(tmp_path)
         await LogCreateTool(db).execute(
             name="user-messages", description="inbound", recall="recent"
         )
-        listed = await ListMemoriesTool(db).execute()
-        assert "user-messages (log, recall=recent)" in listed
-
-    @pytest.mark.asyncio
-    async def test_list_empty_returns_sentinel(self, tmp_path):
-        db = _make_db(tmp_path)
-        assert await ListMemoriesTool(db).execute() == "(no memories)"
+        memories = {m.name: m for m in db.memories.list_all()}
+        assert memories["user-messages"].type == "log"
+        assert memories["user-messages"].recall == "recent"
 
 
 class TestCollectionWritesAndReads:
@@ -447,7 +443,6 @@ class TestFactory:
             "read_latest",
             "read_similar",
             "read_all",
-            "list_memories",
             "exists",
         }
         assert names == expected
