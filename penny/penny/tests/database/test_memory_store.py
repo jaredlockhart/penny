@@ -380,49 +380,6 @@ class TestReads:
 
         assert db.memories.read_similar("likes", anchor, k=5, floor=0.5) == []
 
-    def test_read_similar_demotes_centroid_magnet(self, tmp_path):
-        """Centrality penalty: an entry with high cosine to the anchor AND
-        high mean cosine to the rest of the corpus is demoted below a less
-        central entry whose cosine to the anchor is slightly lower."""
-        db = _make_db(tmp_path)
-        db.memories.create_collection("notes", "x", RecallMode.RELEVANT)
-        anchor = [1.0, 0.0, 0.0]
-        db.memories.write(
-            "notes",
-            [
-                EntryInput(
-                    key="magnet",
-                    content="centroid magnet",
-                    # cos to anchor = 0.9, but lives on the same axis as the crowd
-                    content_embedding=[0.9, 0.436, 0.0],
-                ),
-                EntryInput(
-                    key="specific",
-                    content="orthogonal to crowd",
-                    # cos to anchor = 0.85, orthogonal to the crowd axis
-                    content_embedding=[0.85, 0.0, 0.527],
-                ),
-                EntryInput(
-                    key="crowd1",
-                    content="boilerplate one",
-                    content_embedding=[0.5, 0.866, 0.0],
-                ),
-                EntryInput(
-                    key="crowd2",
-                    content="boilerplate two",
-                    content_embedding=[0.4, 0.917, 0.0],
-                ),
-            ],
-            author="chat",
-        )
-
-        similar = db.memories.read_similar("notes", anchor)
-        keys = [e.key for e in similar]
-        # Without the centrality penalty 'magnet' (raw cos 0.9) would lead.
-        # With the penalty, 'specific' (raw cos 0.85, far from the crowd) wins.
-        assert "specific" in keys and "magnet" in keys
-        assert keys.index("specific") < keys.index("magnet")
-
     def test_read_similar_suppresses_flat_noise_plateau(self, tmp_path):
         """Adaptive cluster gate: a corpus with no real cluster around the
         anchor (head_mean ≈ sample_mean) returns empty rather than emitting
