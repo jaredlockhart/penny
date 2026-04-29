@@ -439,6 +439,7 @@ Notable migrations:
 - 0026: Seed system log memories — `user-messages`, `penny-messages`, `browse-results` (Stage 9)
 - 0027: Backfill memory framework from existing tables — `messagelog` → user/penny logs, `preference` → likes/dislikes, `thought` → notified/unnotified-thoughts, `knowledge` → knowledge collection (Stage 10)
 - 0028: Disable ambient recall for `penny-messages` — duplicates the conversation turns array
+- 0029: Re-enable ambient recall for `penny-messages` — chat-turn duplication is now handled by the self-match exclusion (#1006) and short-anchor noise by the low-info filter, so historical Penny replies should surface again
 
 ## Extending
 
