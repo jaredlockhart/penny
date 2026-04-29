@@ -65,6 +65,10 @@ async def test_notify_cycle_happy_path(
             )
         if count == 3:
             return mock_llm._make_tool_call_response(
+                request, "send_message", {"content": notification_text}
+            )
+        if count == 4:
+            return mock_llm._make_tool_call_response(
                 request,
                 "collection_move",
                 {
@@ -72,10 +76,6 @@ async def test_notify_cycle_happy_path(
                     "from_memory": "unnotified-thoughts",
                     "to_memory": "notified-thoughts",
                 },
-            )
-        if count == 4:
-            return mock_llm._make_tool_call_response(
-                request, "send_message", {"content": notification_text}
             )
         return mock_llm._make_tool_call_response(request, "done", {})
 
@@ -111,9 +111,7 @@ fresh thought you have to share.
 see what you've already said today; don't repeat yourself.
 3. Pick ONE unnotified thought you haven't already shared and \
 still find interesting.
-4. collection_move("unnotified-thoughts", "notified-thoughts", \
-key=<chosen key>) — mark it as shared.
-5. send_message(content=<your message>) — deliver the thought to \
+4. send_message(content=<your message>) — deliver the thought to \
 the user.  Write it conversationally, like you're texting a \
 friend; open with a casual greeting, then write out every \
 detail in full.  No ellipses ('...', '…'), no 'etc.', no 'and \
@@ -122,6 +120,11 @@ you start.  The user only sees what you put in `content`; \
 nothing else is attached.  Include the specific details from \
 the thought (names, specs, dates), at least one source URL \
 from the thought, and finish with an emoji.
+5. ONLY IF send_message returned "Message sent.": \
+collection_move("unnotified-thoughts", "notified-thoughts", \
+key=<chosen key>) — mark it as shared.  If send_message returned \
+an error or refusal, DO NOT move the thought — leave it in \
+unnotified-thoughts so a later cycle can retry.
 6. done().
 
 Every fact and URL in your message must come from the thought \

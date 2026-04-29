@@ -226,9 +226,7 @@ Examples:
         "see what you've already said today; don't repeat yourself.\n"
         "3. Pick ONE unnotified thought you haven't already shared and "
         "still find interesting.\n"
-        '4. collection_move("unnotified-thoughts", "notified-thoughts", '
-        "key=<chosen key>) — mark it as shared.\n"
-        "5. send_message(content=<your message>) — deliver the thought to "
+        "4. send_message(content=<your message>) — deliver the thought to "
         "the user.  Write it conversationally, like you're texting a "
         "friend; open with a casual greeting, then write out every "
         "detail in full.  No ellipses ('...', '…'), no 'etc.', no 'and "
@@ -237,6 +235,11 @@ Examples:
         "nothing else is attached.  Include the specific details from "
         "the thought (names, specs, dates), at least one source URL "
         "from the thought, and finish with an emoji.\n"
+        '5. ONLY IF send_message returned "Message sent.": '
+        'collection_move("unnotified-thoughts", "notified-thoughts", '
+        "key=<chosen key>) — mark it as shared.  If send_message returned "
+        "an error or refusal, DO NOT move the thought — leave it in "
+        "unnotified-thoughts so a later cycle can retry.\n"
         "6. done().\n\n"
         "Every fact and URL in your message must come from the thought "
         "you read — do not invent information.  If no unnotified thought "
