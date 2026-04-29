@@ -269,6 +269,13 @@ async def test_schedule_executor_fires_through_chat_agent(
             )
             session.commit()
 
+        # Trigger the executor directly — the regression we're guarding
+        # against is the ChatAgent crash path, not the scheduler's polling
+        # timing. Calling ``execute()`` exercises the same path the
+        # production ``AlwaysRunSchedule`` eventually triggers, without
+        # waiting on the 60s background poll interval.
+        await penny.schedule_executor.execute()
+
         await wait_until(
             lambda: _has_message(signal_server, "morning! here's the news."),
             timeout=5.0,

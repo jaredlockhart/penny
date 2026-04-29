@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 
 from penny.scheduler.base import BackgroundScheduler, Schedule
-from penny.scheduler.schedules import PeriodicSchedule
 from penny.tests.conftest import TEST_SENDER, wait_until
 
 
@@ -199,8 +198,13 @@ async def test_scheduler_skips_agents_with_no_work():
 
 
 @pytest.mark.asyncio
-async def test_scheduler_mark_complete_only_on_work():
-    """mark_complete is only called when agent does work, not on no-ops."""
+async def test_scheduler_mark_complete_always_called():
+    """mark_complete is called after every execution, even when agent has no work.
+
+    Regression guard for the hot-loop bug: if mark_complete only runs on
+    True returns, no-work agents stay perpetually eligible and burn a
+    model call on every tick to rediscover the queue is empty.
+    """
     agent_no_work = _SimpleAgent("no_work", return_value=False)
     agent_has_work = _SimpleAgent("has_work", return_value=True)
 
@@ -217,38 +221,11 @@ async def test_scheduler_mark_complete_only_on_work():
     try:
         await wait_until(lambda: schedule_has_work.mark_complete_count > 0, timeout=2.0)
 
-        assert schedule_no_work.mark_complete_count == 0, (
-            "mark_complete should NOT be called when agent returns False"
+        assert schedule_no_work.mark_complete_count > 0, (
+            "mark_complete should be called even when agent returns False"
         )
         assert schedule_has_work.mark_complete_count > 0, (
             "mark_complete should be called when agent returns True"
-        )
-    finally:
-        scheduler.stop()
-        scheduler_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await scheduler_task
-
-
-@pytest.mark.asyncio
-async def test_no_work_agent_stays_eligible_without_interval_wait():
-    """An agent that returns False stays eligible on the next tick (no interval penalty)."""
-    agent = _SimpleAgent("idle_agent", return_value=False)
-    schedule = PeriodicSchedule(agent=agent, interval=lambda: 0.5)  # ty: ignore[invalid-argument-type]
-
-    scheduler = BackgroundScheduler(
-        schedules=[schedule],
-        idle_threshold=lambda: 0.0,
-        tick_interval=0.01,
-    )
-
-    scheduler_task = asyncio.create_task(scheduler.run())
-    try:
-        # Agent returns False every tick — should be re-checked each tick
-        # without waiting for the 0.5s interval. Wait for 2 ticks to confirm.
-        await wait_until(lambda: agent.execute_count >= 2, timeout=2.0)
-        assert agent.execute_count >= 2, (
-            f"No-work agent should be rechecked each tick, got {agent.execute_count}"
         )
     finally:
         scheduler.stop()

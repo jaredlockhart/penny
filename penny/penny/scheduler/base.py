@@ -148,13 +148,17 @@ class BackgroundScheduler:
                             self._active_task = asyncio.create_task(agent.execute())
                             did_work = await self._active_task
                             self._last_run_times[agent.name] = time.monotonic()
+                            # Always reset the schedule's timer.  Skipping the
+                            # reset on no-work would leave the schedule eligible
+                            # on every tick, hot-looping a model call to discover
+                            # the queue is empty.  Lower-priority schedules
+                            # still get a turn this tick because the for-loop
+                            # only ``break``s when work was actually done.
+                            schedule.mark_complete()
 
                             if did_work:
-                                schedule.mark_complete()
                                 logger.info("Background task completed: %s", agent.name)
                                 break
-                            # No work — skip to next eligible schedule
-                            # Don't mark_complete so the schedule stays eligible
                         except asyncio.CancelledError:
                             logger.info("Background task cancelled: %s", agent.name)
                             break
