@@ -485,13 +485,16 @@ class MemoryStore:
         rows: list[MemoryEntry],
         anchors: list[list[float]],
     ) -> list[tuple[float, MemoryEntry]]:
-        """Score each candidate as ``max(weighted_decay, current_cos)``, sorted desc.
+        """Score each candidate as ``max(weighted_decay, current_cos) - α·proxy``.
 
         Vectorized: stacks all candidate embeddings into an (N, D) matrix and
         all anchors into an (M, D) matrix, then a single matmul produces the
-        full (N, M) cosine table.  Per-turn matrix construction (~1 ms for
-        ~1500 rows × 768 dims via ``np.frombuffer``) is small enough that no
-        persistent in-memory cache is needed.
+        full (N, M) cosine table.  The centrality-magnet penalty is the dot
+        of each row with the corpus centroid (one mean + one matvec); in
+        normalized space this is rank-equivalent to mean cosine to every
+        other entry, which keeps generic boilerplate from leaking into
+        unrelated queries.  Per-query work stays O(N·D); no precompute, no
+        cache.
 
         Single-anchor reduces cleanly: with M=1 the weighted-decay branch is
         the lone cosine, so ``max()`` picks it.
@@ -508,8 +511,11 @@ class MemoryStore:
         anchor_matrix = _stack_normalized_anchors(anchors)
         cos_matrix = matrix @ anchor_matrix.T  # (N, M)
         hybrid = _hybrid_scores(cos_matrix)
-        order = np.argsort(-hybrid)
-        return [(float(hybrid[i]), valid_rows[i]) for i in order]
+        adjusted = hybrid - (
+            PennyConstants.MEMORY_RELEVANT_CENTRALITY_PENALTY * _centrality_via_centroid(matrix)
+        )
+        order = np.argsort(-adjusted)
+        return [(float(adjusted[i]), valid_rows[i]) for i in order]
 
     def expand_with_temporal_neighbors(
         self,
@@ -769,6 +775,26 @@ def _hybrid_scores(cos_matrix: np.ndarray, decay: float = 0.5) -> np.ndarray:
     weighted = (cos_matrix * weights).sum(axis=1) / weights.sum()
     current = cos_matrix[:, -1]
     return np.maximum(weighted, current)
+
+
+def _centrality_via_centroid(matrix: np.ndarray) -> np.ndarray:
+    """Per-row mean cosine to all OTHER rows, computed via the corpus centroid.
+
+    Algebraically identical to the O(N²) loop ``mean_{j≠i}(cos(v_i, v_j))``:
+
+        mean_{j≠i}(cos) = (N · v_i · centroid − 1) / (N − 1)
+
+    where ``centroid = matrix.mean(axis=0)`` and rows are L2-normalized so
+    ``v_i · v_i = 1``.  Cost is one ``mean`` and one matrix-vector product —
+    O(N · D) per query, no precompute, no cache.
+
+    Returns zeros for corpora of fewer than 2 rows (no neighbors to average).
+    """
+    n = matrix.shape[0]
+    if n < 2:
+        return np.zeros(n, dtype=np.float32)
+    centroid = matrix.mean(axis=0)
+    return (n * (matrix @ centroid) - 1) / (n - 1)
 
 
 def _adaptive_cutoff(scored: list[tuple[float, MemoryEntry]], floor: float) -> float | None:

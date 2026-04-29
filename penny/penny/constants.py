@@ -182,6 +182,13 @@ class PennyConstants:
     MEMORY_UNNOTIFIED_THOUGHTS = "unnotified-thoughts"
     MEMORY_NOTIFIED_THOUGHTS = "notified-thoughts"
 
+    # Centroid-proxy penalty applied during similarity-ranked retrieval:
+    # ``adjusted = max(weighted, current_cos) - α * cos(entry, corpus_centroid)``.
+    # The proxy is rank-equivalent to mean cosine to every other entry in the
+    # same corpus (true centrality) up to an O(1/N) constant, so it acts as
+    # the same centroid-magnet penalty without the O(N²) precompute — one
+    # mean and one matrix-vector product per query, folded into ``_score``.
+    MEMORY_RELEVANT_CENTRALITY_PENALTY = 0.5
     # Cluster-strength gate: top_head_mean / top_sample_mean must exceed this
     # for any entries to be returned — separates real clusters from flat
     # noise plateaus.

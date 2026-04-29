@@ -232,7 +232,7 @@ class ChatAgent(Agent):
           all      — full set in insertion order (``read_all``)
 
         Relevant-mode recall scores each candidate as
-        ``max(weighted_decay_over_history, cosine_to_current)``.
+        ``max(weighted_decay_over_history, cosine_to_current) - α · centroid_proxy``.
         Strong direct hits on the current message stand alone; vague
         follow-ups still benefit from earlier conversation drift.
         """
