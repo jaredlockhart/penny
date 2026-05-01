@@ -85,16 +85,109 @@ def _format_entries(entries: list[MemoryEntry]) -> str:
 
 
 class CollectionCreateTool(Tool):
-    """Create a new keyed collection."""
+    """Create a new keyed collection.
+
+    Description doubles as the chat-agent's guide to writing good
+    extraction_prompts for new collections.  Dry-run-tuned against
+    gpt-oss:20b to land the structural elements the per-collection
+    Collector subagent needs (numbered tool calls, quiet-cycle escape,
+    correction step, opt-in send_message for notify-on-new) consistently
+    across both extract-and-notify and pure-extract user requests.
+    """
 
     name = "collection_create"
     description = (
-        "Create a new keyed collection. Collections store entries by key with "
-        "similarity-based dedup on write. Provide a short description and a "
-        f"recall mode ({_RECALL_MODES}). Always provide an ``extraction_prompt`` "
-        "describing what the per-collection collector subagent should pull into "
-        "this collection from the conversation, browse logs, and other inputs — "
-        "the new collection won't auto-populate without it."
+        "Create a new keyed collection.  Provide ``description``, "
+        f"``recall`` mode ({_RECALL_MODES}), and an ``extraction_prompt``.  "
+        "Without the extraction_prompt the collection stays empty — it is "
+        "the system prompt the per-collection Collector subagent runs each "
+        "cycle.\n"
+        "\n"
+        "# Writing extraction_prompts\n"
+        "\n"
+        "Every extraction_prompt is a numbered list of explicit tool calls "
+        "plus a short tail.  The collector executes the steps in order — "
+        "flowing prose loses the model.\n"
+        "\n"
+        "## The standard shape\n"
+        "\n"
+        "```\n"
+        "[One-sentence statement of what this collector does.]\n"
+        "\n"
+        "1. [Read source — explicit tool call.]\n"
+        "2. [Identify what counts; list what to skip.]\n"
+        "3. [Optionally: browse for current info.]\n"
+        "4. [Write — explicit collection_write tool call.]\n"
+        "5. [Optionally: send_message, gated on successful write.]\n"
+        "6. [Handle corrections.]\n"
+        "7. done().\n"
+        "\n"
+        '[Tail: edge-case rules, "if nothing matches, just done()".]\n'
+        "```\n"
+        "\n"
+        "## Worked examples — clone the closest, customise\n"
+        "\n"
+        "Match the user's request to a shape: \"find me X and tell me when "
+        'there\'s something new" → **Research + notify**.  "Track topics I '
+        'mention" → **Pure extraction**.\n'
+        "\n"
+        '### Research + notify on new finds (for "find me X, track them, tell '
+        "me when there's something new\")\n"
+        "\n"
+        "> Collect [topic] — [scope].\n"
+        ">\n"
+        '> 1. log_read_next("user-messages") and log_read_next("browse-results") '
+        "for recent context and any pages fetched since last cycle.\n"
+        "> 2. browse the web for new [topic] items when there's a topical "
+        "opening.  Read actual pages — never cite from search snippets alone.\n"
+        "> 3. Each entry: key is the item's name (3-10 words); content is name "
+        "+ description + a real source URL pulled from a page browsed THIS "
+        "cycle.\n"
+        '> 4. collection_write("[bound collection]", entries=[...]) batching '
+        "all new items.\n"
+        "> 5. ONLY IF the write succeeded (not duplicate-rejected): "
+        'send_message with a one-or-two-sentence "found something new for '
+        '[topic]" note, conversational, finish with an emoji.\n'
+        "> 6. If a recent message indicates an existing entry is wrong "
+        "(closed, link dead, plans changed), update_entry or "
+        "collection_delete_entry.\n"
+        "> 7. done().  If nothing new, just done().\n"
+        ">\n"
+        "> Cite only sources you actually browsed this cycle.  Never invent URLs.\n"
+        "\n"
+        "### Pure extraction (the ``likes`` shape, for tracking topics the "
+        "user mentions in chat)\n"
+        "\n"
+        "> Extract the user's positive preferences from their recent messages.\n"
+        ">\n"
+        '> 1. log_read_next("user-messages") — fetch new messages.\n'
+        "> 2. Identify every LIKE — a thing the user wants, enjoys, or "
+        "expresses positive sentiment about.  Skip questions, troubleshooting, "
+        'meta-instructions ("remember this", "track that").\n'
+        "> 3. Each entry: key is the topic fully-qualified (3-10 words: "
+        '"Talk (album) by Yes" not "the album"); content is the user\'s raw '
+        "message.\n"
+        '> 4. collection_write("likes", entries=[...]) batching all extracted '
+        "likes.\n"
+        "> 5. If a recent message indicates an existing like is no longer "
+        "accurate, update_entry or collection_delete_entry.\n"
+        "> 6. done().  If nothing matches, just done() without writing.\n"
+        "\n"
+        "## Hard rules\n"
+        "\n"
+        '- Name every tool explicitly: ``log_read_next("X")``, '
+        '``collection_write("X", entries=[...])``, '
+        "``send_message(content=...)``, ``done()``.  The collector won't "
+        "call a tool the prompt doesn't name.\n"
+        "- Single batched ``collection_write`` (not one call per entry).\n"
+        "- ``send_message`` for notify-on-new is gated on a successful write.\n"
+        '- Always end with ``done()`` plus a quiet-cycle escape ("if nothing '
+        'matches, just done()").\n'
+        '- For user-facing collections, include a correction step ("if a '
+        "recent message indicates an existing entry is wrong/stale, "
+        '``update_entry`` or ``collection_delete_entry``").\n'
+        "- Cite only what was actually browsed this cycle.  Never invent URLs.\n"
+        "- Don't dedup manually — the store handles it on write."
     )
     parameters = {
         "type": "object",
