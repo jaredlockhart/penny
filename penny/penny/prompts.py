@@ -155,17 +155,6 @@ Examples:
         "The user sent an image. Respond naturally to the image description provided."
     )
 
-    # Inner monologue + notify outreach prompts moved to memory rows
-    # (extraction_prompt) under the unified Collector pattern — see
-    # migration 0033.  THINKING_SEED + THINKING_FREE are kept for the
-    # /seed slash command if it still injects them; otherwise they're
-    # unused and can be removed.
-    THINKING_SEED = (
-        "Find out about {seed} — ONE specific, concrete thing worth knowing about. "
-        "Not a broad overview — one interesting detail, development, or discovery. "
-        "Then dig deeper into that one thing: who, what, where, when, and why it matters."
-    )
-
     # Nudge prompts (injected when model returns empty content)
     FINAL_STEP_NUDGE = (
         "STOP. You cannot search anymore. Tools are no longer available. "

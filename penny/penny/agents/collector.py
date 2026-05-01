@@ -8,7 +8,7 @@ to that target, runs the agent loop with the target's extraction prompt
 as instructions and a tool surface scoped to writes against that
 collection only, then stamps ``last_collected_at = now``.
 
-Dispatcher pattern (vs. one stateful ``CollectorAgent`` per collection):
+Dispatcher pattern (vs. one stateful agent per collection):
   - No agent registry to keep in sync with the DB; reading the DB each
     cycle IS the source of truth.
   - Hot-add for free — chat creates a new collection mid-session, the
@@ -24,10 +24,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from penny.agents.base import BackgroundAgent
+from penny.config import Config
 from penny.constants import PennyConstants
+from penny.database import Database
 from penny.database.models import Memory
-from penny.tools.base import Tool
-from penny.tools.memory_tools import DoneTool, build_memory_tools
+from penny.llm.client import LlmClient
 
 
 class Collector(BackgroundAgent):
@@ -35,8 +36,22 @@ class Collector(BackgroundAgent):
 
     name = "collector"
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        model_client: LlmClient,
+        db: Database,
+        config: Config,
+        *,
+        embedding_model_client: LlmClient | None = None,
+        vision_model_client: LlmClient | None = None,
+    ) -> None:
+        super().__init__(
+            model_client=model_client,
+            db=db,
+            config=config,
+            embedding_model_client=embedding_model_client,
+            vision_model_client=vision_model_client,
+        )
         # Set per-cycle inside ``execute``.  The cycle is single-threaded
         # by the scheduler, so transient instance state is safe.
         self._current_target: Memory | None = None
@@ -56,7 +71,7 @@ class Collector(BackgroundAgent):
             self._current_target = None
         return success
 
-    # ── Per-cycle prompt + tool surface ───────────────────────────────────
+    # ── Per-cycle prompt + tool scope ─────────────────────────────────────
 
     async def _build_system_prompt(self, user: str | None) -> str:
         """System prompt for the bound target — re-fetched each cycle.
@@ -77,34 +92,9 @@ class Collector(BackgroundAgent):
             f"{target.extraction_prompt}"
         )
 
-    def get_tools(self) -> list[Tool]:
-        """Scoped surface — entry mutations pinned to the bound target.
-
-        Includes ``send_message`` from ``BackgroundAgent.get_tools`` when
-        a channel is wired (notify-shaped collectors deliver via this).
-        Excludes lifecycle tools entirely — those are chat-only.
-        """
-        target = self._require_target()
-        tools: list[Tool] = build_memory_tools(
-            self.db,
-            self._embedding_model_client,
-            agent_name=self.name,
-            scope=target.name,
-        )
-        tools.append(self._build_browse_tool(author=self.name))
-        tools.append(DoneTool())
-        if self._channel is not None:
-            from penny.tools.send_message import SendMessageTool
-
-            tools.append(
-                SendMessageTool(
-                    channel=self._channel,
-                    agent_name=self.name,
-                    db=self.db,
-                    config=self.config,
-                )
-            )
-        return tools
+    def _memory_scope(self) -> str:
+        """Pin entry mutations to the bound target collection."""
+        return self._require_target().name
 
     def _require_target(self) -> Memory:
         if self._current_target is None:
