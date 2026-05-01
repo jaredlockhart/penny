@@ -156,6 +156,7 @@ The user's name is Test User.
 
 ### Memory Inventory
 - browse-results (log) — Every browse-tool fetch result
+- collector-runs (log) — One entry per Collector cycle: target + success marker + done() summary
 - dislikes (collection) — Topics the user has expressed negative sentiment about
 - knowledge (collection) — Summarized facts from web pages Penny has read
 - likes (collection) — Topics the user has expressed positive sentiment about

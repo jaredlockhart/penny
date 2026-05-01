@@ -387,8 +387,21 @@ class TestExistsAndDone:
         assert result == "no"
 
     @pytest.mark.asyncio
-    async def test_done_returns_done(self):
-        assert await DoneTool().execute() == "done"
+    async def test_done_returns_structured_summary(self):
+        result = await DoneTool().execute(success=True, summary="wrote 3 entries")
+        assert "wrote 3 entries" in result
+        assert "success" in result
+
+    @pytest.mark.asyncio
+    async def test_done_no_op_marker(self):
+        result = await DoneTool().execute(success=False, summary="no new matches")
+        assert "no new matches" in result
+        assert "no-op" in result
+
+    @pytest.mark.asyncio
+    async def test_done_requires_success_and_summary(self):
+        with pytest.raises(Exception):  # noqa: B017,PT011 — Pydantic ValidationError
+            await DoneTool().execute()
 
 
 class TestAuthorAttribution:

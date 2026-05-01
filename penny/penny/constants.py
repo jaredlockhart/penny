@@ -180,6 +180,7 @@ class PennyConstants:
     # System log memories (created by migration 0026) that the channel
     # adapter and browse tool side-effect-write to on every turn.
     MEMORY_USER_MESSAGES_LOG = "user-messages"
+    MEMORY_COLLECTOR_RUNS_LOG = "collector-runs"
     MEMORY_PENNY_MESSAGES_LOG = "penny-messages"
     MEMORY_BROWSE_RESULTS_LOG = "browse-results"
 

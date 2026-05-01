@@ -13,9 +13,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from penny.agents.collector import Collector
+from penny.agents.models import ControllerResponse, ToolCallRecord
 from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.memory_store import RecallMode
+from penny.database.models import Memory
 from penny.llm.client import LlmClient
 
 
@@ -148,3 +150,92 @@ async def test_get_tools_raises_outside_cycle(test_config, tmp_path):
     collector, _ = _make_collector(test_config, tmp_path)
     with pytest.raises(RuntimeError, match="outside an execute"):
         collector.get_tools()
+
+
+# ── Collector-runs audit log ─────────────────────────────────────────────
+
+
+def _seed_collector_runs_log(db: Database) -> None:
+    """Migration 0034 creates the log in production; tests using create_tables
+    directly need to declare it themselves."""
+    db.memories.create_log("collector-runs", "audit log", RecallMode.OFF)
+
+
+def test_log_run_writes_done_summary_on_success(test_config, tmp_path):
+    collector, db = _make_collector(test_config, tmp_path)
+    _seed_collector_runs_log(db)
+    target = Memory(
+        name="prague-trip",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+    response = ControllerResponse(
+        answer="",
+        tool_calls=[
+            ToolCallRecord(tool="collection_write", arguments={}),
+            ToolCallRecord(
+                tool="done",
+                arguments={"success": True, "summary": "wrote 2 new spots"},
+            ),
+        ],
+    )
+    collector._log_run(target, response)
+    entries = db.memories.read_latest("collector-runs")
+    assert len(entries) == 1
+    assert "[prague-trip]" in entries[0].content
+    assert "✅" in entries[0].content
+    assert "wrote 2 new spots" in entries[0].content
+
+
+def test_log_run_marks_failure_when_done_says_so(test_config, tmp_path):
+    collector, db = _make_collector(test_config, tmp_path)
+    _seed_collector_runs_log(db)
+    target = Memory(
+        name="prague-trip",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+    response = ControllerResponse(
+        answer="",
+        tool_calls=[
+            ToolCallRecord(
+                tool="done",
+                arguments={"success": False, "summary": "no source URL found"},
+            ),
+        ],
+    )
+    collector._log_run(target, response)
+    content = db.memories.read_latest("collector-runs")[0].content
+    assert "❌" in content
+    assert "no source URL found" in content
+
+
+def test_log_run_handles_no_done_call(test_config, tmp_path):
+    """If the cycle hits max_steps without ever calling done(), the audit
+    log still gets a row — with success=false and a sentinel summary."""
+    collector, db = _make_collector(test_config, tmp_path)
+    _seed_collector_runs_log(db)
+    target = Memory(
+        name="prague-trip",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+    response = ControllerResponse(
+        answer="",
+        tool_calls=[
+            ToolCallRecord(tool="browse", arguments={"queries": ["x"]}),
+        ],
+    )
+    collector._log_run(target, response)
+    content = db.memories.read_latest("collector-runs")[0].content
+    assert "❌" in content
+    assert "max steps" in content.lower() or "no done" in content.lower()

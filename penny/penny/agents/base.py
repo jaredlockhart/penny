@@ -211,6 +211,10 @@ class Agent:
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
         self._tool_result_images: list[str] = []
+        # Last ControllerResponse from ``_run_cycle`` — exposed so subclasses
+        # can inspect post-cycle state (e.g. Collector reads done()'s args
+        # to log the cycle outcome).  None until the first cycle runs.
+        self._last_run_response: ControllerResponse | None = None
 
         if system_prompt is not None:
             self.system_prompt = system_prompt
@@ -287,6 +291,7 @@ class Agent:
             run_id=run_id,
             prompt_type=self.name,
         )
+        self._last_run_response = response
         success = any(record.tool == self.terminator_tool for record in response.tool_calls)
 
         if log_read_next is not None:

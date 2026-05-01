@@ -168,4 +168,14 @@ class ExistsArgs(BaseModel):
 
 
 class DoneArgs(BaseModel):
-    """Empty body — signals the orchestration loop to exit."""
+    """Cycle terminator — pair the exit with a success flag and a summary.
+
+    ``success`` is true if the cycle accomplished what the prompt asked,
+    false on no-op or partial failure.  ``summary`` is a one-sentence
+    prose description of what the cycle actually did (entries written,
+    messages sent, why no-op).  Both are logged to ``collector-runs`` so
+    Penny can audit collector behaviour from chat.
+    """
+
+    success: bool
+    summary: str

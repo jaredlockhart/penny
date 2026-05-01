@@ -173,21 +173,21 @@ class CollectionCreateTool(Tool):
         "accurate, update_entry or collection_delete_entry.\n"
         "> 6. done().  If nothing matches, just done() without writing.\n"
         "\n"
-        "## Hard rules\n"
+        "## Authoring rules\n"
         "\n"
-        '- Name every tool explicitly: ``log_read_next("X")``, '
-        '``collection_write("X", entries=[...])``, '
+        "- Name every tool explicitly in the steps: "
+        '``log_read_next("X")``, ``collection_write("X", entries=[...])``, '
         "``send_message(content=...)``, ``done()``.  The collector won't "
         "call a tool the prompt doesn't name.\n"
-        "- Single batched ``collection_write`` (not one call per entry).\n"
-        "- ``send_message`` for notify-on-new is gated on a successful write.\n"
-        '- Always end with ``done()`` plus a quiet-cycle escape ("if nothing '
-        'matches, just done()").\n'
-        '- For user-facing collections, include a correction step ("if a '
-        "recent message indicates an existing entry is wrong/stale, "
-        '``update_entry`` or ``collection_delete_entry``").\n'
-        "- Cite only what was actually browsed this cycle.  Never invent URLs.\n"
-        "- Don't dedup manually — the store handles it on write."
+        "- Only include ``send_message`` if the user explicitly asked for "
+        'notification-on-new ("tell me when there\'s something new").  '
+        "Pure-tracking requests should NOT include send_message — the user "
+        "doesn't want a chat ping for every entry.\n"
+        "\n"
+        "(Runtime invariants — quiet-cycle escape, batched writes, "
+        "send_message gating, source-provenance, correction handling, "
+        "structured ``done(success, summary)`` reporting — are appended "
+        "automatically; you don't need to include them.)"
     )
     parameters = {
         "type": "object",
@@ -860,18 +860,35 @@ class ExistsTool(Tool):
 
 
 class DoneTool(Tool):
-    """Signal the orchestration loop that the agent has finished its work."""
+    """Signal the cycle is finished, with a structured success + summary report."""
 
     name = "done"
     description = (
-        "Call this when you have completed the task and have no more tool calls "
-        "to make. Takes no arguments."
+        "Call this when the cycle is finished.  Pass ``success`` (true if "
+        "you did what the prompt asked, false on no-op or failure) and "
+        "``summary`` (one-sentence prose describing what the cycle actually "
+        "did — entries written, messages sent, why no-op).  Both are logged "
+        "to ``collector-runs`` for auditing."
     )
-    parameters = {"type": "object", "properties": {}}
+    parameters = {
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "True if the cycle did what the prompt asked.",
+            },
+            "summary": {
+                "type": "string",
+                "description": "One-sentence description of what was done.",
+            },
+        },
+        "required": ["success", "summary"],
+    }
 
     async def execute(self, **kwargs: Any) -> str:
-        DoneArgs(**kwargs)
-        return "done"
+        args = DoneArgs(**kwargs)
+        marker = "success" if args.success else "no-op/fail"
+        return f"Cycle complete ({marker}): {args.summary}"
 
 
 # ── Factory ─────────────────────────────────────────────────────────────────
