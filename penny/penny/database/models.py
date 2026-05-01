@@ -22,7 +22,11 @@ class PromptLog(SQLModel, table=True):
         None  # Which flow within the agent (user_message, free, daily_summary, etc.)
     )
     run_id: str | None = None  # Groups all prompts from one agentic loop invocation
-    run_outcome: str | None = None  # Outcome of the run (set on last prompt of thinking runs)
+    # Run outcome is set on the last prompt of a collector cycle.  All three
+    # are NULL for non-collector agents (chat, schedule executor).
+    run_success: bool | None = None
+    run_reason: str | None = None  # Free-text reason from done(summary=...)
+    run_target: str | None = None  # Collection name the cycle was bound to
 
     def get_messages(self) -> list[dict]:
         return json.loads(self.messages)

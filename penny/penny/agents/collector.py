@@ -107,6 +107,7 @@ class Collector(BackgroundAgent):
             # otherwise gets re-attempted every tick.
             self.db.memories.mark_collected(target.name)
             self._log_run(target, self._last_run_response)
+            self._tag_promptlog_run(target)
             self._current_target = None
         return success
 
@@ -127,6 +128,17 @@ class Collector(BackgroundAgent):
             [LogEntryInput(content=f"[{target.name}] {marker} {summary}")],
             author=self.name,
         )
+
+    def _tag_promptlog_run(self, target: Memory) -> None:
+        """Stamp the cycle outcome onto the matching promptlog run.
+
+        Drives the green/red tag in the addon's prompts tab — same
+        ``(success, summary)`` the audit log gets, plus the target name
+        so the addon can attribute the run to a collection."""
+        if self._last_run_id is None:
+            return
+        success, summary = self._extract_done_args(self._last_run_response)
+        self.db.messages.set_run_outcome(self._last_run_id, success, summary, target.name)
 
     @staticmethod
     def _extract_done_args(response: ControllerResponse | None) -> tuple[bool, str]:
