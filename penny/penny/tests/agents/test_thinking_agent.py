@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-from penny.agents.preference_extractor import PreferenceExtractorAgent
 from penny.database.memory_store import EntryInput
 
 
@@ -21,7 +20,7 @@ def _seed_likes(penny, *topics: str) -> None:
         penny.db.memories.write(
             "likes",
             [EntryInput(key=topic, content=topic)],
-            author=PreferenceExtractorAgent.name,
+            author="collector:likes",
         )
 
 

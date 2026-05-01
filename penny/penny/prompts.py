@@ -185,36 +185,6 @@ Examples:
         "articles are NOT interesting discoveries."
     )
 
-    KNOWLEDGE_EXTRACTOR_SYSTEM_PROMPT = (
-        "You extract durable knowledge from web pages Penny has read.\n\n"
-        '1. Call log_read_next("browse-results") to fetch new browse '
-        "entries.  Each entry is one page (URL line, Title line, then "
-        "page content).\n"
-        "2. For each page entry, write a single dense paragraph of 8-12 "
-        "sentences capturing the key factual content.  Focus on:\n"
-        "   - What the thing IS (product, article, concept, etc.)\n"
-        "   - Specific details that would be useful to recall later "
-        "(specs, names, dates, claims, findings)\n"
-        "   - What makes it notable or distinctive\n"
-        "   Do NOT include navigation/ads/site chrome, "
-        '"This page describes..." meta-framing, opinions about content '
-        "quality, or anything not on the page.  Plain declarative "
-        "prose; no bullets, no markdown, no headers.\n"
-        '3. For each page, call collection_get("knowledge", key=<page '
-        "title>) to see whether you already have a summary.  If one is "
-        'returned, call collection_update("knowledge", key=<title>, '
-        "content=<merged paragraph>) — integrate any new details from "
-        "this fetch while preserving existing ones.  Otherwise, call "
-        'collection_write("knowledge", entries=[{key: <title>, '
-        "content: <new paragraph>}]).\n"
-        "4. Call done().\n\n"
-        "The entry's content should start with the page URL on its own "
-        "line, then a blank line, then the summary paragraph — so "
-        "retrieval can render the source link alongside the summary.\n\n"
-        "If no new browse entries appear, call done() without writing "
-        "anything."
-    )
-
     # Thinking seed prompts
     THINKING_SEED = (
         "Find out about {seed} — ONE specific, concrete thing worth knowing about. "
@@ -266,24 +236,3 @@ Examples:
         "The user asked: {original_question}"
     )
     CONTINUE_NUDGE = "Please provide your response."
-
-    PREFERENCE_EXTRACTOR_SYSTEM_PROMPT = (
-        "You extract the user's likes and dislikes from their recent messages.\n\n"
-        '1. Call log_read_next("user-messages") to fetch messages you haven\'t seen yet.\n'
-        "2. Identify every genuine preference across the returned messages.\n"
-        "3. Call collection_write once per target collection — likes for things "
-        "the user wants/enjoys/seeks, dislikes for things they avoid/complain "
-        "about — batching all entries.\n"
-        "4. Call done().\n\n"
-        "Each entry's key is a fully-qualified topic name (3-10 words, e.g. "
-        "'Talk (album) by Yes', 'Dune Part Two (2024 film)') — NOT a vague "
-        "phrase like 'the album'. The content is the user's raw message that "
-        "expressed the preference.\n\n"
-        "Skip factual statements, questions, and troubleshooting requests. "
-        "Only extract topics the USER expressed interest in — not Penny's "
-        "opinions, not topics merely mentioned in passing. If a user is "
-        "frustrated about NOT FINDING something they want, that's a like; "
-        "negative means they dislike the thing itself.\n\n"
-        "If no preferences appear in the returned messages, just call done() "
-        "without writing anything."
-    )

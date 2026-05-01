@@ -12,9 +12,8 @@ from typing import Any
 from penny.agents import (
     Agent,
     ChatAgent,
-    KnowledgeExtractorAgent,
+    CollectorAgent,
     NotifyAgent,
-    PreferenceExtractorAgent,
     ThinkingAgent,
 )
 from penny.channels import MessageChannel, create_channel_manager
@@ -155,30 +154,38 @@ class Penny:
         self._init_background_agents(config)
 
     def _init_background_agents(self, config: Config) -> None:
-        """Create monologue + extractor + schedule agents."""
+        """Create monologue + collector + schedule agents."""
         self.thinking_agent = ThinkingAgent(
             model_client=self.model_client,
             db=self.db,
             config=config,
             embedding_model_client=self.embedding_model_client,
         )
-        self.preference_extractor_agent = PreferenceExtractorAgent(
-            model_client=self.model_client,
-            db=self.db,
-            config=config,
-            embedding_model_client=self.embedding_model_client,
-        )
-        self.knowledge_extractor_agent = KnowledgeExtractorAgent(
-            model_client=self.model_client,
-            db=self.db,
-            config=config,
-            embedding_model_client=self.embedding_model_client,
-        )
+        self.collector_agents = self._build_collector_agents(config)
         self.schedule_executor = ScheduleExecutor(
             model_client=self.model_client,
             db=self.db,
             config=config,
         )
+
+    def _build_collector_agents(self, config: Config) -> list[CollectorAgent]:
+        """One CollectorAgent per non-archived collection with extraction_prompt.
+
+        Built once at startup.  New collections created mid-session via
+        ``collection_create`` won't get a collector until the next
+        process restart — hot-add is left for a follow-up.
+        """
+        return [
+            CollectorAgent(
+                target=memory,
+                model_client=self.model_client,
+                db=self.db,
+                config=config,
+                embedding_model_client=self.embedding_model_client,
+            )
+            for memory in self.db.memories.list_all()
+            if not memory.archived and memory.extraction_prompt is not None
+        ]
 
     def _init_github_client(self, config: Config) -> Any:
         """Initialize GitHub API client if configured. Returns GitHubAPI or None."""
@@ -247,8 +254,7 @@ class Penny:
         self.chat_agent.set_channel(self.channel)
         self.notify_agent.set_channel(self.channel)
         self.thinking_agent.set_channel(self.channel)
-        self.preference_extractor_agent.set_channel(self.channel)
-        self.knowledge_extractor_agent.set_channel(self.channel)
+        # Collectors don't deliver to users — no channel wiring.
         self._wire_browser_tools(config)
 
     def _wire_browser_tools(self, config: Config) -> None:
@@ -280,26 +286,31 @@ class Penny:
         """Create background scheduler with prioritized schedules."""
         schedules: list[Schedule] = [
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
-            PeriodicSchedule(
-                agent=self.preference_extractor_agent,
-                interval=lambda: config.runtime.PREFERENCE_EXTRACTOR_INTERVAL,
-                requires_idle=False,
-            ),
-            PeriodicSchedule(
-                agent=self.knowledge_extractor_agent,
-                interval=lambda: config.runtime.KNOWLEDGE_EXTRACTOR_INTERVAL,
-                requires_idle=False,
-            ),
-            PeriodicSchedule(
-                agent=self.notify_agent,
-                interval=lambda: config.runtime.NOTIFY_INTERVAL,
-            ),
-            PeriodicSchedule(
-                agent=self.thinking_agent,
-                interval=lambda: config.runtime.THINKING_INTERVAL,
-                requires_idle=False,
-            ),
         ]
+        # One idle-gated schedule per collector — collectors run during
+        # conversation lulls, not during active chat, so the store fills
+        # up "between conversations" rather than competing with the user.
+        for collector in self.collector_agents:
+            schedules.append(
+                PeriodicSchedule(
+                    agent=collector,
+                    interval=lambda: config.runtime.COLLECTOR_INTERVAL,
+                    requires_idle=True,
+                )
+            )
+        schedules.extend(
+            [
+                PeriodicSchedule(
+                    agent=self.notify_agent,
+                    interval=lambda: config.runtime.NOTIFY_INTERVAL,
+                ),
+                PeriodicSchedule(
+                    agent=self.thinking_agent,
+                    interval=lambda: config.runtime.THINKING_INTERVAL,
+                    requires_idle=False,
+                ),
+            ]
+        )
         self.scheduler = BackgroundScheduler(
             schedules=schedules,
             idle_threshold=lambda: config.runtime.IDLE_SECONDS,

@@ -174,19 +174,14 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="PREFERENCE_EXTRACTOR_INTERVAL",
-    description="Seconds between preference-extractor cycles (likes/dislikes from messages)",
+    key="COLLECTOR_INTERVAL",
+    description=(
+        "Seconds between collector cycles.  One collector runs per collection "
+        "whose Memory.extraction_prompt is non-null; this interval controls "
+        "the cadence for every collector instance.  Idle-gated."
+    ),
     type=float,
-    default=900.0,
-    validator=_validate_positive_float,
-    group=GROUP_BACKGROUND,
-)
-
-ConfigParam(
-    key="KNOWLEDGE_EXTRACTOR_INTERVAL",
-    description="Seconds between knowledge-extractor cycles (summaries from browse results)",
-    type=float,
-    default=900.0,
+    default=300.0,
     validator=_validate_positive_float,
     group=GROUP_BACKGROUND,
 )
