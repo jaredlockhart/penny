@@ -29,6 +29,8 @@ BROWSER_MSG_TYPE_SCHEDULE_UPDATE = "schedule_update"
 BROWSER_MSG_TYPE_SCHEDULE_DELETE = "schedule_delete"
 BROWSER_MSG_TYPE_PREFERENCE_THOUGHTS_REQUEST = "preference_thoughts_request"
 BROWSER_MSG_TYPE_PROMPT_LOGS_REQUEST = "prompt_logs_request"
+BROWSER_MSG_TYPE_MEMORIES_REQUEST = "memories_request"
+BROWSER_MSG_TYPE_MEMORY_DETAIL_REQUEST = "memory_detail_request"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -46,6 +48,9 @@ BROWSER_RESP_TYPE_PROMPT_LOGS = "prompt_logs_response"
 BROWSER_RESP_TYPE_PREFERENCE_THOUGHTS = "preference_thoughts_response"
 BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE = "prompt_log_update"
 BROWSER_RESP_TYPE_RUN_OUTCOME = "run_outcome_update"
+BROWSER_RESP_TYPE_MEMORIES = "memories_response"
+BROWSER_RESP_TYPE_MEMORY_DETAIL = "memory_detail_response"
+BROWSER_RESP_TYPE_MEMORY_CHANGED = "memory_changed"
 
 
 class BrowserIncoming(BaseModel):
@@ -269,3 +274,57 @@ class BrowserRunOutcomeUpdate(BaseModel):
     success: bool
     reason: str
     target: str | None = None
+
+
+class BrowserMemoryDetailRequest(BaseModel):
+    """A request to load entries + metadata for a single memory."""
+
+    type: str
+    name: str
+
+
+class MemoryRecord(BaseModel):
+    """One memory's metadata for the addon's Memories tab list view."""
+
+    name: str
+    type: str  # "collection" | "log"
+    description: str
+    recall: str  # "off" | "recent" | "relevant" | "all"
+    archived: bool
+    extraction_prompt: str | None
+    collector_interval_seconds: int | None
+    last_collected_at: str | None
+    entry_count: int
+
+
+class MemoryEntryRecord(BaseModel):
+    """One memory entry as serialized for the drill-in view."""
+
+    id: int
+    key: str | None
+    content: str
+    author: str
+    created_at: str
+
+
+class BrowserMemoriesResponse(BaseModel):
+    """Full list of memories sent to the addon for the Memories tab."""
+
+    type: str = BROWSER_RESP_TYPE_MEMORIES
+    memories: list[MemoryRecord]
+
+
+class BrowserMemoryDetailResponse(BaseModel):
+    """One memory's metadata + entries (newest-first)."""
+
+    type: str = BROWSER_RESP_TYPE_MEMORY_DETAIL
+    memory: MemoryRecord
+    entries: list[MemoryEntryRecord]
+
+
+class BrowserMemoryChanged(BaseModel):
+    """Push notification: a memory was mutated.  ``name`` is the affected
+    memory, or ``None`` for fan-out events not scoped to one memory."""
+
+    type: str = BROWSER_RESP_TYPE_MEMORY_CHANGED
+    name: str | None = None

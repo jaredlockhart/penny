@@ -27,6 +27,8 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_DOMAIN_DELETE,
     BROWSER_MSG_TYPE_DOMAIN_UPDATE,
     BROWSER_MSG_TYPE_HEARTBEAT,
+    BROWSER_MSG_TYPE_MEMORIES_REQUEST,
+    BROWSER_MSG_TYPE_MEMORY_DETAIL_REQUEST,
     BROWSER_MSG_TYPE_MESSAGE,
     BROWSER_MSG_TYPE_PERMISSION_DECISION,
     BROWSER_MSG_TYPE_PREFERENCE_ADD,
@@ -58,6 +60,10 @@ from penny.channels.browser.models import (
     BrowserDomainPermissionsSync,
     BrowserDomainUpdate,
     BrowserIncoming,
+    BrowserMemoriesResponse,
+    BrowserMemoryChanged,
+    BrowserMemoryDetailRequest,
+    BrowserMemoryDetailResponse,
     BrowserOutgoing,
     BrowserPermissionDecision,
     BrowserPermissionDismiss,
@@ -76,6 +82,8 @@ from penny.channels.browser.models import (
     BrowserToolRequest,
     BrowserToolResponse,
     DomainPermissionRecord,
+    MemoryEntryRecord,
+    MemoryRecord,
     ScheduleRecord,
     ThoughtCard,
 )
@@ -137,6 +145,7 @@ class BrowserChannel(MessageChannel):
         self._permission_manager: PermissionManager | None = None
         db.messages._on_prompt_logged = self._on_prompt_logged
         db.messages._on_run_outcome_set = self._on_run_outcome_set
+        db.memories._on_memory_changed = self._on_memory_changed
 
     def _on_prompt_logged(self, prompt_data: dict) -> None:
         """Callback fired after each prompt is logged — broadcast to browsers."""
@@ -152,6 +161,15 @@ class BrowserChannel(MessageChannel):
             run_id=run_id, success=success, reason=reason, target=target
         )
         message = payload.model_dump_json()
+        for conn in self._connections.values():
+            asyncio.ensure_future(conn.ws.send(message))
+
+    def _on_memory_changed(self, name: str | None) -> None:
+        """Callback fired after any memory mutation — broadcast to browsers
+        so the Memories tab can refresh.  ``name`` is the affected memory
+        when the change is scoped to one (writes, archives, metadata edits);
+        ``None`` for fan-out events."""
+        message = BrowserMemoryChanged(name=name).model_dump_json()
         for conn in self._connections.values():
             asyncio.ensure_future(conn.ws.send(message))
 
@@ -303,6 +321,14 @@ class BrowserChannel(MessageChannel):
 
         if msg_type == BROWSER_MSG_TYPE_PROMPT_LOGS_REQUEST:
             await self._handle_prompt_logs_request(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_MEMORIES_REQUEST:
+            await self._handle_memories_request(ws)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_MEMORY_DETAIL_REQUEST:
+            await self._handle_memory_detail_request(ws, data)
             return device_label
 
         return device_label
@@ -494,6 +520,67 @@ class BrowserChannel(MessageChannel):
         }
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(json.dumps(response))
+
+    # Cap drill-in entries to keep payloads small.  Logs like
+    # ``user-messages`` and ``collector-runs`` accumulate quickly; full
+    # pagination can land later when edits / search arrive.
+    _MEMORY_DETAIL_PAGE_SIZE = 200
+
+    async def _handle_memories_request(self, ws: ServerConnection) -> None:
+        """List every memory (collections + logs, archived included) with
+        metadata + entry counts for the addon's Memories tab list view."""
+        memories = self._db.memories.list_all()
+        counts = self._db.memories.entry_counts()
+        records = [self._memory_to_record(m, counts.get(m.name, 0)) for m in memories]
+        payload = BrowserMemoriesResponse(memories=records)
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await ws.send(payload.model_dump_json())
+
+    async def _handle_memory_detail_request(self, ws: ServerConnection, data: dict) -> None:
+        """Send one memory's metadata + newest-first entries (capped) for
+        the drill-in view."""
+        try:
+            req = BrowserMemoryDetailRequest(**data)
+        except ValidationError:
+            logger.warning("Invalid memory_detail_request: %s", str(data)[:200])
+            return
+        memory = self._db.memories.get(req.name)
+        if memory is None:
+            logger.warning("memory_detail_request for unknown memory: %s", req.name)
+            return
+        rows = self._db.memories.read_latest(req.name, k=self._MEMORY_DETAIL_PAGE_SIZE)
+        counts = self._db.memories.entry_counts()
+        record = self._memory_to_record(memory, counts.get(memory.name, 0))
+        entries = [self._entry_to_record(row) for row in rows]
+        payload = BrowserMemoryDetailResponse(memory=record, entries=entries)
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await ws.send(payload.model_dump_json())
+
+    @staticmethod
+    def _memory_to_record(memory, entry_count: int) -> MemoryRecord:
+        return MemoryRecord(
+            name=memory.name,
+            type=memory.type,
+            description=memory.description,
+            recall=memory.recall,
+            archived=memory.archived,
+            extraction_prompt=memory.extraction_prompt,
+            collector_interval_seconds=memory.collector_interval_seconds,
+            last_collected_at=(
+                memory.last_collected_at.isoformat() if memory.last_collected_at else None
+            ),
+            entry_count=entry_count,
+        )
+
+    @staticmethod
+    def _entry_to_record(entry) -> MemoryEntryRecord:
+        return MemoryEntryRecord(
+            id=entry.id,
+            key=entry.key,
+            content=entry.content,
+            author=entry.author,
+            created_at=entry.created_at.isoformat(),
+        )
 
     async def _handle_preferences_request(self, ws: ServerConnection, data: dict) -> None:
         """Query preferences by valence and send them to the browser."""

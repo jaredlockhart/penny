@@ -43,7 +43,9 @@ export type WsOutgoingType =
   | "schedule_add"
   | "schedule_update"
   | "schedule_delete"
-  | "prompt_logs_request";
+  | "prompt_logs_request"
+  | "memories_request"
+  | "memory_detail_request";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -66,6 +68,8 @@ export const WsOutgoingType = {
   ScheduleUpdate: "schedule_update",
   ScheduleDelete: "schedule_delete",
   PromptLogsRequest: "prompt_logs_request",
+  MemoriesRequest: "memories_request",
+  MemoryDetailRequest: "memory_detail_request",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingThoughtReaction {
@@ -169,7 +173,10 @@ export type WsIncomingType =
   | "schedules_response"
   | "prompt_logs_response"
   | "prompt_log_update"
-  | "run_outcome_update";
+  | "run_outcome_update"
+  | "memories_response"
+  | "memory_detail_response"
+  | "memory_changed";
 export const WsIncomingType = {
   Message: "message",
   Typing: "typing",
@@ -186,6 +193,9 @@ export const WsIncomingType = {
   PromptLogsResponse: "prompt_logs_response",
   PromptLogUpdate: "prompt_log_update",
   RunOutcomeUpdate: "run_outcome_update",
+  MemoriesResponse: "memories_response",
+  MemoryDetailResponse: "memory_detail_response",
+  MemoryChanged: "memory_changed",
 } as const satisfies Record<string, WsIncomingType>;
 
 export interface WsIncomingMessagePayload {
@@ -355,6 +365,42 @@ export interface WsIncomingRunOutcomePayload {
   target: string | null;
 }
 
+export interface MemoryRecord {
+  name: string;
+  type: "collection" | "log";
+  description: string;
+  recall: "off" | "recent" | "relevant" | "all";
+  archived: boolean;
+  extraction_prompt: string | null;
+  collector_interval_seconds: number | null;
+  last_collected_at: string | null;
+  entry_count: number;
+}
+
+export interface MemoryEntryRecord {
+  id: number;
+  key: string | null;
+  content: string;
+  author: string;
+  created_at: string;
+}
+
+export interface WsIncomingMemoriesPayload {
+  type: typeof WsIncomingType.MemoriesResponse;
+  memories: MemoryRecord[];
+}
+
+export interface WsIncomingMemoryDetailPayload {
+  type: typeof WsIncomingType.MemoryDetailResponse;
+  memory: MemoryRecord;
+  entries: MemoryEntryRecord[];
+}
+
+export interface WsIncomingMemoryChangedPayload {
+  type: typeof WsIncomingType.MemoryChanged;
+  name: string | null;
+}
+
 export type WsIncomingPayload =
   | WsIncomingMessagePayload
   | WsIncomingTypingPayload
@@ -370,7 +416,10 @@ export type WsIncomingPayload =
   | WsIncomingSchedulesPayload
   | WsIncomingPromptLogsPayload
   | WsIncomingPromptLogUpdatePayload
-  | WsIncomingRunOutcomePayload;
+  | WsIncomingRunOutcomePayload
+  | WsIncomingMemoriesPayload
+  | WsIncomingMemoryDetailPayload
+  | WsIncomingMemoryChangedPayload;
 
 // --- Runtime messages (sidebar ↔ background) ---
 
@@ -409,7 +458,12 @@ export type RuntimeMessageType =
   | "prompt_logs_request"
   | "prompt_logs_response"
   | "prompt_log_update"
-  | "run_outcome_update";
+  | "run_outcome_update"
+  | "memories_request"
+  | "memories_response"
+  | "memory_detail_request"
+  | "memory_detail_response"
+  | "memory_changed";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -447,6 +501,11 @@ export const RuntimeMessageType = {
   PromptLogsResponse: "prompt_logs_response",
   PromptLogUpdate: "prompt_log_update",
   RunOutcomeUpdate: "run_outcome_update",
+  MemoriesRequest: "memories_request",
+  MemoriesResponse: "memories_response",
+  MemoryDetailRequest: "memory_detail_request",
+  MemoryDetailResponse: "memory_detail_response",
+  MemoryChanged: "memory_changed",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -684,6 +743,36 @@ export interface RuntimeRunOutcomeUpdate {
   target: string | null;
 }
 
+/** Memories tab → background: request the memories list */
+export interface RuntimeMemoriesRequest {
+  type: typeof RuntimeMessageType.MemoriesRequest;
+}
+
+/** Background → memories tab: memories list */
+export interface RuntimeMemoriesResponse {
+  type: typeof RuntimeMessageType.MemoriesResponse;
+  memories: MemoryRecord[];
+}
+
+/** Memories tab → background: drill into one memory */
+export interface RuntimeMemoryDetailRequest {
+  type: typeof RuntimeMessageType.MemoryDetailRequest;
+  name: string;
+}
+
+/** Background → memories tab: drill-in payload (metadata + entries) */
+export interface RuntimeMemoryDetailResponse {
+  type: typeof RuntimeMessageType.MemoryDetailResponse;
+  memory: MemoryRecord;
+  entries: MemoryEntryRecord[];
+}
+
+/** Background → memories tab: a memory was mutated, refresh */
+export interface RuntimeMemoryChanged {
+  type: typeof RuntimeMessageType.MemoryChanged;
+  name: string | null;
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -719,7 +808,12 @@ export type RuntimeMessage =
   | RuntimePromptLogsRequest
   | RuntimePromptLogsResponse
   | RuntimePromptLogUpdate
-  | RuntimeRunOutcomeUpdate;
+  | RuntimeRunOutcomeUpdate
+  | RuntimeMemoriesRequest
+  | RuntimeMemoriesResponse
+  | RuntimeMemoryDetailRequest
+  | RuntimeMemoryDetailResponse
+  | RuntimeMemoryChanged;
 
 // --- Domain permissions ---
 

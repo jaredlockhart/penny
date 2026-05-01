@@ -1283,6 +1283,190 @@ h1 {
   border-color: var(--accent);
 }
 
+/* --- Memories tab --- */
+
+#memories-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.memory-row:hover {
+  background: var(--bg-tertiary);
+}
+
+.memory-row-archived {
+  opacity: 0.55;
+}
+
+.memory-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.memory-type-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.memory-type-badge.collection {
+  background: rgba(74, 144, 226, 0.18);
+  color: var(--accent);
+}
+
+.memory-type-badge.log {
+  background: rgba(255, 200, 80, 0.18);
+  color: #c08c00;
+}
+
+.memory-description {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-meta {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.memory-meta i {
+  width: 12px;
+  margin-right: 4px;
+}
+
+.memory-back-btn {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 0;
+  margin-bottom: 8px;
+}
+
+.memory-back-btn:hover {
+  color: var(--text-primary);
+}
+
+#memory-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.memory-detail-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.memory-detail-header h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.memory-detail-section {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.memory-detail-section h3 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.memory-detail-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  font-size: 13px;
+}
+
+.memory-detail-grid dt {
+  color: var(--text-muted);
+}
+
+.memory-detail-grid dd {
+  margin: 0;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.memory-detail-grid dd pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.memory-entries-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 13px;
+}
+
+.memory-entry {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0;
+}
+
+.memory-entry:last-child {
+  border-bottom: none;
+}
+
+.memory-entry-header {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.memory-entry-key {
+  font-weight: 600;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.memory-entry-content {
+  color: var(--text-primary);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* --- Toast --- */
 
 #toast {
