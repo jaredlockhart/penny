@@ -211,6 +211,10 @@ class Agent:
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
         self._tool_result_images: list[str] = []
+        # Last ControllerResponse from ``_run_cycle`` — exposed so subclasses
+        # can inspect post-cycle state (e.g. Collector reads done()'s args
+        # to log the cycle outcome).  None until the first cycle runs.
+        self._last_run_response: ControllerResponse | None = None
 
         if system_prompt is not None:
             self.system_prompt = system_prompt
@@ -287,6 +291,7 @@ class Agent:
             run_id=run_id,
             prompt_type=self.name,
         )
+        self._last_run_response = response
         success = any(record.tool == self.terminator_tool for record in response.tool_calls)
 
         if log_read_next is not None:
@@ -640,20 +645,33 @@ class Agent:
         """Bind a channel so this agent can send messages via SendMessageTool."""
         self._channel = channel
 
-    def get_tools(self) -> list[Tool]:
-        """Tool surface for chat-style agents — memory tools + browse.
+    def _memory_scope(self) -> str | None:
+        """Bind this agent's entry-mutation tools to a single collection.
 
-        Chat replies via the final-text path (``response.answer`` →
-        ``channel.send_response``), so it doesn't need ``send_message``;
-        background agents (notify, thinking, extractors) extend this
-        surface in ``BackgroundAgent.get_tools()`` to add it.
+        Default: no scope — chat-style agents see the full chat surface
+        (lifecycle + reads, no entry mutations).  ``Collector`` overrides
+        to return its current target's name, so ``build_memory_tools``
+        returns the collector surface (entry mutations pinned to that
+        target + log_append + reads).
+        """
+        return None
+
+    def get_tools(self) -> list[Tool]:
+        """Tool surface — memory + browse, dispatched by ``_memory_scope``.
+
+        ``BackgroundAgent.get_tools`` extends this with ``done`` and
+        (optionally) ``send_message`` for agents that terminate via a
+        terminator tool or deliver outbound to the user.
 
         Builds fresh each cycle so runtime config changes take effect
         immediately and the underlying ``BrowseTool``'s author + cursor
         identity match the agent's current ``name``.
         """
         tools: list[Tool] = build_memory_tools(
-            self.db, self._embedding_model_client, agent_name=self.name
+            self.db,
+            self._embedding_model_client,
+            agent_name=self.name,
+            scope=self._memory_scope(),
         )
         tools.append(self._build_browse_tool(author=self.name))
         return tools

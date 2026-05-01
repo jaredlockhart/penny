@@ -12,10 +12,7 @@ from typing import Any
 from penny.agents import (
     Agent,
     ChatAgent,
-    KnowledgeExtractorAgent,
-    NotifyAgent,
-    PreferenceExtractorAgent,
-    ThinkingAgent,
+    Collector,
 )
 from penny.channels import MessageChannel, create_channel_manager
 from penny.channels.browser import BrowserChannel
@@ -138,7 +135,14 @@ class Penny:
         )
 
     def _init_agents(self, config: Config) -> None:
-        """Create message agent and background processing agents."""
+        """Create chat agent + collector dispatcher + schedule executor.
+
+        The single ``Collector`` covers everything previously handled by
+        the per-collection extractor agents AND the bespoke thinking +
+        notify agents.  Each tick the dispatcher reads the memory table,
+        picks the most-overdue collection with an extraction_prompt, and
+        runs the agent loop bound to that target.
+        """
         self.chat_agent = ChatAgent(
             model_client=self.model_client,
             db=self.db,
@@ -146,29 +150,7 @@ class Penny:
             vision_model_client=self.vision_model_client,
             embedding_model_client=self.embedding_model_client,
         )
-        self.notify_agent = NotifyAgent(
-            model_client=self.model_client,
-            db=self.db,
-            config=config,
-            embedding_model_client=self.embedding_model_client,
-        )
-        self._init_background_agents(config)
-
-    def _init_background_agents(self, config: Config) -> None:
-        """Create monologue + extractor + schedule agents."""
-        self.thinking_agent = ThinkingAgent(
-            model_client=self.model_client,
-            db=self.db,
-            config=config,
-            embedding_model_client=self.embedding_model_client,
-        )
-        self.preference_extractor_agent = PreferenceExtractorAgent(
-            model_client=self.model_client,
-            db=self.db,
-            config=config,
-            embedding_model_client=self.embedding_model_client,
-        )
-        self.knowledge_extractor_agent = KnowledgeExtractorAgent(
+        self.collector = Collector(
             model_client=self.model_client,
             db=self.db,
             config=config,
@@ -245,10 +227,9 @@ class Penny:
         )
         self.schedule_executor.set_channel(self.channel)
         self.chat_agent.set_channel(self.channel)
-        self.notify_agent.set_channel(self.channel)
-        self.thinking_agent.set_channel(self.channel)
-        self.preference_extractor_agent.set_channel(self.channel)
-        self.knowledge_extractor_agent.set_channel(self.channel)
+        # Collector needs the channel so notify-style cycles (the collector
+        # bound to ``notified-thoughts``) can call send_message.
+        self.collector.set_channel(self.channel)
         self._wire_browser_tools(config)
 
     def _wire_browser_tools(self, config: Config) -> None:
@@ -273,31 +254,25 @@ class Penny:
             return browser_ch.send_tool_request, perm_mgr
 
         self.chat_agent._browse_provider = browse_provider
-        self.thinking_agent._browse_provider = browse_provider
-        self.thinking_agent._on_tool_start_factory = browser_ch.make_background_tool_callback
+        self.collector._browse_provider = browse_provider
+        self.collector._on_tool_start_factory = browser_ch.make_background_tool_callback
 
     def _init_scheduler(self, config: Config) -> None:
-        """Create background scheduler with prioritized schedules."""
+        """Create background scheduler — schedule_executor + collector dispatcher.
+
+        The Collector is a single idle-gated schedule that ticks fast
+        (COLLECTOR_TICK_INTERVAL).  Each tick it picks the most-overdue
+        collection from ``memory`` (per-row ``collector_interval_seconds``)
+        and runs that collection's extraction prompt.  Idle gating keeps
+        collector work out of the way during active conversation; the
+        store fills up "between conversations".
+        """
         schedules: list[Schedule] = [
             AlwaysRunSchedule(agent=self.schedule_executor, interval=60.0),
             PeriodicSchedule(
-                agent=self.preference_extractor_agent,
-                interval=lambda: config.runtime.PREFERENCE_EXTRACTOR_INTERVAL,
-                requires_idle=False,
-            ),
-            PeriodicSchedule(
-                agent=self.knowledge_extractor_agent,
-                interval=lambda: config.runtime.KNOWLEDGE_EXTRACTOR_INTERVAL,
-                requires_idle=False,
-            ),
-            PeriodicSchedule(
-                agent=self.notify_agent,
-                interval=lambda: config.runtime.NOTIFY_INTERVAL,
-            ),
-            PeriodicSchedule(
-                agent=self.thinking_agent,
-                interval=lambda: config.runtime.THINKING_INTERVAL,
-                requires_idle=False,
+                agent=self.collector,
+                interval=lambda: config.runtime.COLLECTOR_TICK_INTERVAL,
+                requires_idle=True,
             ),
         ]
         self.scheduler = BackgroundScheduler(

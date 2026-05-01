@@ -24,16 +24,12 @@ flowchart TD
 
         SE[ScheduleExecutor] -->|"cron tasks"| FG_Ollama2["LLM<br>(OpenAI SDK)"]
 
-        Think[ThinkingAgent] -->|"inner monologue<br>+ tools"| FG_Ollama3["LLM<br>(OpenAI SDK)"]
-        Think -.->|"stored thoughts"| DB
-
-        History[HistoryAgent] -->|"summarize + extract<br>preferences"| FG_Ollama4["LLM<br>(OpenAI SDK)"]
-        History -.->|"topic summaries<br>+ preferences"| DB
-
-        Notify[NotifyAgent] -->|"thoughts,<br>check-ins"| FG_Ollama5["LLM<br>(OpenAI SDK)"]
+        Coll[Collector dispatcher] -->|"per-collection prompt<br>+ scoped tools"| FG_Ollama3["LLM<br>(OpenAI SDK)"]
+        Coll -.->|"reads memory rows<br>(extraction_prompt, interval,<br>last_collected_at)"| DB
+        Coll -.->|"writes entries<br>scoped to one collection"| DB
+        Coll -->|"send_message<br>(notify-shaped cycles)"| Channel
     end
 
-    Notify -->|proactive message| Channel
     User -.->|"resets idle<br>cancels background"| Scheduler
 ```
 
@@ -53,7 +49,7 @@ penny/
   config.py           — Config dataclass loaded from .env, channel auto-detection
   config_params.py    — ConfigParam + RuntimeParams: runtime-configurable settings with 3-tier lookup
   constants.py        — Enums (SearchTrigger, PreferenceValence), reaction emojis, browse constants
-  prompts.py          — LLM prompt templates (thinking, history, preference extraction)
+  prompts.py          — LLM prompt templates (chat conversation, vision, email/zoho).  Collector prompts live on memory rows (extraction_prompt) instead
   responses.py        — All user-facing response strings (PennyResponse class)
   startup.py          — Startup announcement message generation (git commit info)
   datetime_utils.py   — Timezone derivation from location (geopy + timezonefinder)
@@ -62,9 +58,7 @@ penny/
     models.py         — ChatMessage, ControllerResponse, MessageRole, ToolCallRecord, GeneratedQuery
     chat.py           — ChatAgent: conversation-mode agent (handles user messages with tools)
     recall.py         — build_recall_block: assembles ambient recall context from active memories
-    notify.py         — NotifyAgent: notification outreach (thoughts, check-ins)
-    thinking.py       — ThinkingAgent: continuous inner monologue loop
-    history.py        — HistoryAgent: daily/weekly summarization + preference extraction
+    collector.py      — Collector: single dispatcher agent driving every per-collection extractor
   scheduler/
     base.py           — BackgroundScheduler + Schedule ABC
     schedules.py      — PeriodicSchedule, AlwaysRunSchedule, DelayedSchedule implementations
@@ -149,8 +143,8 @@ penny/
       signal_server.py  — Mock Signal WebSocket + REST server (aiohttp)
       llm_patches.py    — MockLlmClient: patches openai.AsyncOpenAI for chat + embed
     agents/           — Per-agent integration tests
-      test_message.py, test_thinking.py, test_agentic_loop.py,
-      test_context.py, test_history.py, test_notify.py
+      test_chat_agent.py, test_collector.py, test_agentic_loop.py,
+      test_context.py
     channels/         — Channel integration tests
       test_signal_channel.py, test_signal_reactions.py, test_signal_vision.py,
       test_signal_formatting.py, test_startup_announcement.py
@@ -201,33 +195,17 @@ All `LlmClient` instances are created centrally in `Penny.__init__()` and shared
 - Conversation history flows independently as alternating user/assistant turns passed via `history=`
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the text LLM
 
-**NotifyAgent** (`agents/notify.py`)
-- Notification outreach — sends thoughts and check-ins when users are idle
-- Runs on a PeriodicSchedule, separate from ChatAgent
-- Two modes, each a `NotificationMode` subclass (`CheckinMode`, `ThoughtMode`):
-  - Each mode declares its tools, system prompt composition, user prompt, and image extraction
-  - `_execute_mode()` orchestrates the shared pipeline: prepare → tools → prompt → run → validate → send
-  - Thought candidates: identity + profile + pending thought + instructions
-  - Check-in: identity + profile + history + notified thought + instructions
-- Candidate scoring: novelty (avoid repeating recent messages) + sentiment (preference alignment)
-- Exponential backoff cooldown between autonomous messages
-
-**ThinkingAgent** (`agents/thinking.py`)
-- Autonomous research loop — Penny searches for information on topics she's interested in
-- No identity or profile — thinking never communicates with the user
-- Runs on a PeriodicSchedule
-- Each cycle picks a random seed topic from positive user preferences to focus on
-- Seeded cycles get scoped thought context; free cycles get NO thought context (prevents fixation — the model reads its own previous thoughts and re-searches them)
-- Tools stay available on final step (`_keep_tools_on_final_step = True`) — no forced text synthesis
-- At the end of each cycle, the raw search results (from `_tool_result_text`) are summarized into a detailed briefing and stored as a thought via ThoughtStore (single summarization step)
-- Stored thought summaries bleed into chat context, giving Penny continuity of inner reasoning
-
-**HistoryAgent** (`agents/history.py`)
-- Background worker that extracts knowledge from browse results and user preferences from messages
-- Runs on a PeriodicSchedule (highest priority among idle tasks — before notify and thinking)
-- Each cycle: (0) extract knowledge from browse results (user-independent), then per user: (1) extract preferences from unprocessed messages
-- Knowledge extraction: scans prompt logs incrementally (watermark in RuntimeConfig), extracts browse tool results, summarizes page content into prose paragraphs via LLM, embeds summaries, upserts by URL
-- Preference extraction: two-pass LLM pipeline — (1) identify new topics from user messages + reactions, (2) classify valence (positive/negative). Topics are deduped against existing preferences via TCR + embedding similarity before storage
+**Collector** (`agents/collector.py`)
+- One dispatcher agent for every kind of background extraction.  Each tick it picks the most-overdue ready collection from the `memory` table (where `extraction_prompt IS NOT NULL` and `now - last_collected_at >= collector_interval_seconds`), binds itself to that target via `self._current_target`, runs the agent loop with the target's extraction prompt as instructions and a tool surface scoped to writes against that single collection, then stamps `last_collected_at = now`.
+- Replaces what used to be four bespoke agents: preference-extractor, knowledge-extractor, thinking, notify.  Each is now just a row in the `memory` table with its own `extraction_prompt`, `collector_interval_seconds`, and (for notify-shaped cycles) a system prompt that calls `send_message`.
+- System collections currently driven by collectors:
+  - `likes` / `dislikes` — extract user preferences from `user-messages` (300s)
+  - `knowledge` — summarize web pages from `browse-results` (300s)
+  - `unnotified-thoughts` — inner monologue, picks a random like and drafts a thought (1200s)
+  - `notified-thoughts` — picks an unnotified thought, calls `send_message`, moves the entry into its own collection (300s)
+- User-defined collections created via chat (`/collection_create` with an `extraction_prompt`) are picked up automatically on the next tick — no restart required.
+- Tool surface: reads (unrestricted) + entry mutations (`collection_write`, `update_entry`, `collection_delete_entry`, `collection_move`) pinned to the bound target via the `_memory_scope()` hook + `log_append` + `send_message` (when channel wired) + browse + done.
+- Cadence: `COLLECTOR_TICK_INTERVAL` (default 30s, idle-gated) drives the dispatcher; per-collection `collector_interval_seconds` controls each collection's pacing within that.
 
 **ScheduleExecutor** (`scheduler/schedule_runner.py`)
 - Background task: runs user-created cron-based scheduled tasks
@@ -240,7 +218,7 @@ All `LlmClient` instances are created centrally in `Penny.__init__()` and shared
 The `scheduler/` module manages background tasks:
 
 ### BackgroundScheduler (`scheduler/base.py`)
-- Runs tasks in priority order (schedule executor → history → notify → thinking)
+- Runs tasks in priority order (schedule executor → collector dispatcher)
 - **Skips agents with no work**: when an agent returns False, continues to the next eligible schedule in the same tick. Only breaks when an agent does real work.
 - Tracks global idle threshold (default: 60s)
 - Notifies schedules when messages arrive (resets timers)
@@ -257,7 +235,7 @@ The `scheduler/` module manages background tasks:
 
 **PeriodicSchedule**
 - Runs periodically while system is idle at a configurable interval
-- Used for history (3600s), notify (300s), and thinking (1200s) agents
+- Used for the Collector dispatcher (idle-gated, COLLECTOR_TICK_INTERVAL default 30s); per-collection cadence lives on `memory.collector_interval_seconds`
 - Tracks last run time and fires again after interval elapses
 - Resets when a message arrives
 
@@ -327,7 +305,7 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - `RuntimeParams` class provides attribute access: `config.runtime.IDLE_SECONDS`
 - Three-tier lookup chain: DB override → env override → ConfigParam.default
 - Config values are read on each use (not cached), so changes take effect immediately
-- Groups: Chat (max steps, search URL, context limits, retrieval thresholds, domain permission mode), Thinking (interval, max steps, dedup thresholds, free-thinking probability), History (interval, preference dedup, mention threshold, knowledge/embedding batch limits), Notify (idle threshold, check interval, cooldowns, candidates), Email (body max length, search/list limits, request timeout)
+- Groups: Chat (max steps, search URL, context limits, retrieval thresholds, domain permission mode), Background (idle threshold, COLLECTOR_TICK_INTERVAL, BACKGROUND_MAX_STEPS, dedup thresholds), Email (body max length, search/list limits, request timeout)
 
 ## Data Model
 
@@ -377,9 +355,9 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
-- **Specialized agents**: Each task type (chat, thinking, history) has its own agent subclass
-- **Priority scheduling**: Schedule executor → history → notify → thinking (agents with no work are skipped each tick)
-- **Always-run schedules**: User-created schedules run regardless of idle state; thinking/history wait for idle
+- **Two agent shapes**: ChatAgent (turn-driven, user-facing, lifecycle tools only) and Collector (single dispatcher across all collections, scoped entry-mutation tools).  Plus ScheduleExecutor for user-defined cron tasks
+- **Priority scheduling**: Schedule executor → Collector dispatcher (Collector returns False when no collection is ready, so the scheduler skips it)
+- **Always-run schedules**: User-created schedules run regardless of idle state; the Collector waits for idle
 - **Global idle threshold**: Single configurable idle time (default: 60s) controls when idle-dependent tasks become eligible
 - **Background cancellation**: Foreground message processing cancels active background tasks (`task.cancel()`) to free the LLM immediately; cancelled work is idempotent and retried next cycle
 - **Commands don't interrupt background**: Slash commands run cooperatively without cancelling the active background task

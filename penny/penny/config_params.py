@@ -156,37 +156,16 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="NOTIFY_INTERVAL",
-    description="Seconds between notify-agent cycles (proactive outreach)",
+    key="COLLECTOR_TICK_INTERVAL",
+    description=(
+        "Seconds between Collector dispatcher ticks (idle-gated).  Each tick "
+        "the dispatcher checks which collection is most overdue based on its "
+        "per-row collector_interval_seconds and runs that one.  Should be "
+        "smaller than the smallest per-collection interval — otherwise that "
+        "collection waits up to TICK_INTERVAL past its readiness."
+    ),
     type=float,
-    default=300.0,
-    validator=_validate_positive_float,
-    group=GROUP_BACKGROUND,
-)
-
-ConfigParam(
-    key="THINKING_INTERVAL",
-    description="Seconds between thinking-agent cycles (autonomous inner monologue)",
-    type=float,
-    default=1200.0,
-    validator=_validate_positive_float,
-    group=GROUP_BACKGROUND,
-)
-
-ConfigParam(
-    key="PREFERENCE_EXTRACTOR_INTERVAL",
-    description="Seconds between preference-extractor cycles (likes/dislikes from messages)",
-    type=float,
-    default=900.0,
-    validator=_validate_positive_float,
-    group=GROUP_BACKGROUND,
-)
-
-ConfigParam(
-    key="KNOWLEDGE_EXTRACTOR_INTERVAL",
-    description="Seconds between knowledge-extractor cycles (summaries from browse results)",
-    type=float,
-    default=900.0,
+    default=30.0,
     validator=_validate_positive_float,
     group=GROUP_BACKGROUND,
 )
@@ -320,19 +299,14 @@ ConfigParam(
 # ── Send tool — outbound message rate limiting ───────────────────────────────
 
 ConfigParam(
-    key="SEND_COOLDOWN_MIN",
-    description="Initial cooldown in seconds between autonomous sends",
+    key="SEND_COOLDOWN_SECONDS",
+    description=(
+        "Flat cooldown in seconds between autonomous ``send_message`` calls. "
+        "Bypassed when the user has replied since the agent's last send (the "
+        "next send is conversational, not autonomous)."
+    ),
     type=float,
     default=600.0,
-    validator=_validate_positive_float,
-    group=GROUP_SEND,
-)
-
-ConfigParam(
-    key="SEND_COOLDOWN_MAX",
-    description="Max cooldown in seconds (ceiling for exponential backoff)",
-    type=float,
-    default=5400.0,
     validator=_validate_positive_float,
     group=GROUP_SEND,
 )

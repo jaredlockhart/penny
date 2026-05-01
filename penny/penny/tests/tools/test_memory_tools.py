@@ -16,12 +16,12 @@ from penny.llm.client import LlmClient
 from penny.tools.memory_tools import (
     CollectionArchiveTool,
     CollectionCreateTool,
+    CollectionDeleteEntryTool,
     CollectionGetTool,
     CollectionKeysTool,
     CollectionMoveTool,
     CollectionReadRandomTool,
     CollectionUnarchiveTool,
-    CollectionUpdateTool,
     CollectionWriteTool,
     DoneTool,
     ExistsTool,
@@ -31,6 +31,7 @@ from penny.tools.memory_tools import (
     LogReadRecentTool,
     ReadLatestTool,
     ReadSimilarTool,
+    UpdateEntryTool,
     build_memory_tools,
 )
 
@@ -206,7 +207,7 @@ class TestCollectionMutations:
         await CollectionWriteTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="likes", entries=[{"key": "k", "content": "old"}]
         )
-        result = await CollectionUpdateTool(db, author="test").execute(
+        result = await UpdateEntryTool(db, author="test").execute(
             memory="likes", key="k", content="new"
         )
         assert "Updated 'k' in 'likes'" in result
@@ -217,7 +218,7 @@ class TestCollectionMutations:
     async def test_update_missing_reports_not_found(self, tmp_path):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        result = await CollectionUpdateTool(db, author="test").execute(
+        result = await UpdateEntryTool(db, author="test").execute(
             memory="likes", key="k", content="new"
         )
         assert "not found" in result
@@ -344,6 +345,62 @@ class TestLogTools:
         assert "first" in rendered
 
     @pytest.mark.asyncio
+    async def test_first_cycle_bounded_to_latest_n_entries(self, tmp_path, mock_llm):
+        """A brand-new collector (no cursor yet) reading a busy log gets the
+        most-recent N entries, not every entry since the dawn of time.
+
+        Without this bound, a fresh collector reading ``user-messages`` (which
+        has months of chat history in production) would dump the entire log
+        into the first cycle's context.
+        """
+        from penny.constants import PennyConstants
+
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        # Append more entries than the bound to confirm trimming
+        n_entries = PennyConstants.LOG_READ_NEXT_INITIAL_LIMIT + 5
+        for i in range(n_entries):
+            await append.execute(memory="events", content=f"entry-{i:02d}")
+
+        read_next = LogReadNextTool(db, agent_name="brand-new-collector")
+        rendered = await read_next.execute(memory="events")
+
+        # Exactly the latest N entries — entry-(n-N) through entry-(n-1)
+        # should appear; older entries should not.
+        for i in range(n_entries - PennyConstants.LOG_READ_NEXT_INITIAL_LIMIT, n_entries):
+            assert f"entry-{i:02d}" in rendered
+        # The first 5 entries must be excluded
+        assert "entry-00" not in rendered
+        assert "entry-04" not in rendered
+
+    @pytest.mark.asyncio
+    async def test_first_cycle_advances_cursor_so_next_cycle_sees_only_new(
+        self, tmp_path, mock_llm
+    ):
+        """After a bounded first cycle commits, the next cycle picks up
+        incrementally — even entries that the first cycle's bound excluded
+        stay excluded (since they're older than the cursor)."""
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        for i in range(15):
+            await append.execute(memory="events", content=f"old-{i:02d}")
+
+        read_next = LogReadNextTool(db, agent_name="extractor")
+        await read_next.execute(memory="events")
+        read_next.commit_pending()
+
+        # New entries arrive
+        await append.execute(memory="events", content="new-after-cursor")
+
+        fresh = LogReadNextTool(db, agent_name="extractor")
+        rendered = await fresh.execute(memory="events")
+        assert "new-after-cursor" in rendered
+        # Old entries excluded by the bound stay excluded
+        assert "old-00" not in rendered
+
+    @pytest.mark.asyncio
     async def test_per_agent_cursors_are_independent(self, tmp_path, mock_llm):
         """Two agents reading the same log have independent cursor state."""
         db = _make_db(tmp_path)
@@ -386,8 +443,21 @@ class TestExistsAndDone:
         assert result == "no"
 
     @pytest.mark.asyncio
-    async def test_done_returns_done(self):
-        assert await DoneTool().execute() == "done"
+    async def test_done_returns_structured_summary(self):
+        result = await DoneTool().execute(success=True, summary="wrote 3 entries")
+        assert "wrote 3 entries" in result
+        assert "success" in result
+
+    @pytest.mark.asyncio
+    async def test_done_no_op_marker(self):
+        result = await DoneTool().execute(success=False, summary="no new matches")
+        assert "no new matches" in result
+        assert "no-op" in result
+
+    @pytest.mark.asyncio
+    async def test_done_requires_success_and_summary(self):
+        with pytest.raises(Exception):  # noqa: B017,PT011 — Pydantic ValidationError
+            await DoneTool().execute()
 
 
 class TestAuthorAttribution:
@@ -405,26 +475,126 @@ class TestAuthorAttribution:
 
 
 class TestFactory:
-    def test_build_memory_tools_registers_every_tool(self, tmp_path, mock_llm):
+    """Two distinct surfaces, mutually exclusive: chat (lifecycle + reads, no
+    entry mutations) vs collector (reads + entry mutations pinned to scope).
+    """
+
+    def test_chat_surface_has_lifecycle_and_reads_only(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        tools = build_memory_tools(db, _make_llm_client(mock_llm), agent_name="test")
+        tools = build_memory_tools(db, _make_llm_client(mock_llm), agent_name="chat")
         names = {tool.name for tool in tools}
-        expected = {
+        assert names == {
+            # Lifecycle (chat owns the shape of memory)
             "collection_create",
-            "collection_get",
-            "collection_read_random",
-            "collection_keys",
-            "collection_write",
             "collection_update",
-            "collection_move",
             "collection_archive",
             "collection_unarchive",
             "log_create",
+            # Reads
+            "collection_get",
+            "collection_read_random",
+            "collection_keys",
             "log_read_recent",
             "log_read_next",
-            "log_append",
             "read_latest",
             "read_similar",
             "exists",
         }
-        assert names == expected
+
+    def test_collector_surface_has_scoped_writes_and_reads(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        tools = build_memory_tools(
+            db, _make_llm_client(mock_llm), agent_name="collector", scope="likes"
+        )
+        names = {tool.name for tool in tools}
+        # Reads + entry mutations (pinned to scope) + log_append; no lifecycle
+        assert names == {
+            "collection_get",
+            "collection_read_random",
+            "collection_keys",
+            "log_read_recent",
+            "log_read_next",
+            "read_latest",
+            "read_similar",
+            "exists",
+            "collection_write",
+            "update_entry",
+            "collection_delete_entry",
+            "collection_move",
+            "log_append",
+        }
+
+
+class TestScopedFactory:
+    """Scope binds a collector to one collection.  Writes to other collections
+    get a clean refusal at the tool layer, so a confused or jailbroken
+    collector can't trash unrelated memories.
+    """
+
+    @pytest.mark.asyncio
+    async def test_scoped_write_rejects_other_collection(self, tmp_path, mock_llm):
+        """A scoped collector that tries to write to a different collection
+        gets a clean refusal rather than silently corrupting unrelated data."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
+        await CollectionCreateTool(db).execute(name="dislikes", description="x", recall="off")
+
+        write = CollectionWriteTool(
+            db, _make_llm_client(mock_llm), author="collector:likes", scope="likes"
+        )
+        result = await write.execute(memory="dislikes", entries=[{"key": "k", "content": "v"}])
+
+        assert "Refused" in result and "likes" in result and "dislikes" in result
+        # And nothing was actually written
+        assert db.memories.get_entry("dislikes", "k") == []
+
+    @pytest.mark.asyncio
+    async def test_scoped_write_allows_target_collection(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
+
+        write = CollectionWriteTool(
+            db, _make_llm_client(mock_llm), author="collector:likes", scope="likes"
+        )
+        result = await write.execute(memory="likes", entries=[{"key": "k", "content": "v"}])
+
+        assert "Wrote 1 entry" in result
+        assert db.memories.get_entry("likes", "k")[0].content == "v"
+
+    @pytest.mark.asyncio
+    async def test_scoped_update_entry_rejects_other_collection(self, tmp_path):
+        db = _make_db(tmp_path)
+        update = UpdateEntryTool(db, author="collector:likes", scope="likes")
+        result = await update.execute(memory="dislikes", key="k", content="v")
+        assert "Refused" in result
+
+    @pytest.mark.asyncio
+    async def test_scoped_move_allows_into_target(self, tmp_path, mock_llm):
+        """Move's destination is the entry write — if to_memory == scope,
+        the move is in-bounds even though from_memory is a different memory.
+        """
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="src", description="x", recall="off")
+        await CollectionCreateTool(db).execute(name="dst", description="x", recall="off")
+        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="t").execute(
+            memory="src", entries=[{"key": "k", "content": "v"}]
+        )
+
+        move = CollectionMoveTool(db, author="collector:dst", scope="dst")
+        result = await move.execute(key="k", from_memory="src", to_memory="dst")
+        assert "Moved 'k'" in result
+        assert db.memories.get_entry("dst", "k")[0].content == "v"
+
+    @pytest.mark.asyncio
+    async def test_scoped_move_rejects_outbound(self, tmp_path):
+        db = _make_db(tmp_path)
+        move = CollectionMoveTool(db, author="collector:src", scope="src")
+        result = await move.execute(key="k", from_memory="src", to_memory="dst")
+        assert "Refused" in result and "src" in result and "dst" in result
+
+    @pytest.mark.asyncio
+    async def test_scoped_delete_rejects_other_collection(self, tmp_path):
+        db = _make_db(tmp_path)
+        delete = CollectionDeleteEntryTool(db, scope="likes")
+        result = await delete.execute(memory="dislikes", key="k")
+        assert "Refused" in result

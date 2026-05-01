@@ -14,17 +14,41 @@ from pydantic import BaseModel, Field
 
 
 class CreateMemoryArgs(BaseModel):
-    """Shared shape for ``collection_create`` and ``log_create``."""
+    """Shared shape for ``collection_create`` and ``log_create``.
+
+    ``extraction_prompt`` only applies to collections — it's the body of
+    instructions the per-collection collector subagent will run with on
+    each cycle (read recent log entries, extract structured records,
+    write/update/delete).  Logs ignore it.  Optional at the schema level
+    so migrations and tests can create collections without one; the chat
+    agent's prompt instructs it to always supply one for user-created
+    collections so the new collection gets a collector immediately.
+    """
 
     name: str
     description: str
     recall: str  # "off" | "recent" | "relevant" | "all" — validated in the store layer
+    extraction_prompt: str | None = None
 
 
 class MemoryNameArgs(BaseModel):
     """One-field args for ``archive`` / ``unarchive`` / read-all / keys."""
 
     memory: str
+
+
+class CollectionUpdateArgs(BaseModel):
+    """Update a collection's metadata.
+
+    All fields after ``name`` are optional — only the ones explicitly set
+    are applied.  ``recall`` is validated in the store layer.
+    """
+
+    name: str
+    description: str | None = None
+    recall: str | None = None
+    extraction_prompt: str | None = None
+    collector_interval_seconds: int | None = None
 
 
 # ── Collection reads ────────────────────────────────────────────────────────
@@ -99,7 +123,7 @@ class CollectionWriteArgs(BaseModel):
     entries: list[CollectionEntrySpec] = Field(min_length=1)
 
 
-class CollectionUpdateArgs(BaseModel):
+class UpdateEntryArgs(BaseModel):
     """Replace content for an existing key in a collection."""
 
     memory: str
@@ -113,6 +137,13 @@ class CollectionMoveArgs(BaseModel):
     key: str
     from_memory: str
     to_memory: str
+
+
+class CollectionDeleteEntryArgs(BaseModel):
+    """Delete an entry from a collection by key."""
+
+    memory: str
+    key: str
 
 
 # ── Log writes ──────────────────────────────────────────────────────────────
@@ -137,4 +168,14 @@ class ExistsArgs(BaseModel):
 
 
 class DoneArgs(BaseModel):
-    """Empty body — signals the orchestration loop to exit."""
+    """Cycle terminator — pair the exit with a success flag and a summary.
+
+    ``success`` is true if the cycle accomplished what the prompt asked,
+    false on no-op or partial failure.  ``summary`` is a one-sentence
+    prose description of what the cycle actually did (entries written,
+    messages sent, why no-op).  Both are logged to ``collector-runs`` so
+    Penny can audit collector behaviour from chat.
+    """
+
+    success: bool
+    summary: str

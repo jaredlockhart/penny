@@ -208,6 +208,9 @@ class Memory(SQLModel, table=True):
     description: str  # Human-authored summary shown to the model in the memory registry
     recall: str  # RecallMode enum value: "off" | "recent" | "relevant" | "all"
     archived: bool = Field(default=False, index=True)
+    extraction_prompt: str | None = Field(default=None)
+    collector_interval_seconds: int | None = Field(default=None)
+    last_collected_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

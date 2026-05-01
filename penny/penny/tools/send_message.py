@@ -12,10 +12,10 @@ before dispatching:
   the model to call ``done`` instead.
 - **Mute**: if the recipient has muted notifications, the tool
   refuses with a string that tells the model to call ``done``.
-- **Cooldown**: exponential backoff between autonomous sends from
-  the same agent.  Counts entries in ``penny-messages`` authored by
-  this agent since the recipient's last entry in ``user-messages``;
-  cooldown doubles per backoff step, capped at the configured max.
+- **Cooldown**: flat interval between autonomous sends from the same
+  agent.  Bypassed when the user has replied since the agent's last
+  send — the next send is then conversational, not autonomous.
+  Otherwise the cooldown is ``SEND_COOLDOWN_SECONDS`` (runtime-tunable).
 - **Truncation**: if the content tail looks like a model self-
   truncation (ending in ``…`` or three-or-more dots, mid-thought),
   return a failure string with the ``Error:`` prefix so the agent
@@ -56,8 +56,9 @@ class SendMessageTool(Tool):
         "Send a message to the user.  Use this once you have decided "
         "what to say — the ``content`` is the exact text the user will "
         "see.  The send is gated on refusal detection, mute state, and "
-        "an exponential backoff cooldown; if any refuses, the response "
-        f"will say so and you should call ``{DoneTool.name}`` to exit."
+        "a flat-interval cooldown between autonomous sends; if any "
+        f"refuses, the response will say so and you should call "
+        f"``{DoneTool.name}`` to exit."
     )
     parameters = {
         "type": "object",
@@ -137,18 +138,15 @@ class SendMessageTool(Tool):
     # ── Gating helpers ──────────────────────────────────────────────────
 
     def _cooldown_elapsed(self) -> bool:
-        """Exponential backoff between *autonomous* sends.
+        """Flat-interval cooldown between *autonomous* sends.
 
-        The gate's purpose is to stop a background agent from spamming the
-        user with multiple messages in a row when there's been no reply.
-        When ``count == 0`` the user has spoken since this agent's last
-        send, so any new message is conversational, not autonomous —
-        no cooldown applies.
+        The gate stops a background agent from spamming the user when
+        there's been no reply.  When ``count == 0`` the user has spoken
+        since this agent's last send, so the next message is
+        conversational, not autonomous — no cooldown applies.
 
-        Once the agent sends without a user reply between, ``count``
-        climbs and the cooldown doubles each step (capped at
-        ``SEND_COOLDOWN_MAX``); the next send must wait that long since
-        the previous one.
+        Otherwise the next send must wait ``SEND_COOLDOWN_SECONDS``
+        since the previous one.
         """
         count = self._count_sends_since_user_message()
         if count == 0:
@@ -157,11 +155,7 @@ class SendMessageTool(Tool):
         if latest is None:
             return True
         elapsed = (_naive_utc_now() - _to_naive(latest)).total_seconds()
-        cooldown = min(
-            self._config.runtime.SEND_COOLDOWN_MIN * (2 ** (count - 1)),
-            self._config.runtime.SEND_COOLDOWN_MAX,
-        )
-        return elapsed >= cooldown
+        return elapsed >= self._config.runtime.SEND_COOLDOWN_SECONDS
 
     def _latest_send_time(self) -> datetime | None:
         """Created-at of this agent's most recent ``penny-messages`` entry."""

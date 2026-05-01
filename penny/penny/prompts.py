@@ -32,6 +32,19 @@ class Prompt:
         "Only browse if memory "
         "doesn't have what the user needs, or for current/external info "
         "(news, products, prices, fresh facts).\n\n"
+        "When the user wants to start tracking a new topic — a trip, project, "
+        "list of recipes, anything — call ``collection_create`` with a clear "
+        "``extraction_prompt``. The extraction_prompt is the brain of a "
+        "background agent that fills the collection from chat and browse "
+        "activity automatically; without it the collection stays empty. "
+        "You do NOT curate entries yourself — there's no write tool on your "
+        "surface. Just create the collection, mention it in your reply "
+        '("I\'ll keep a list of Prague spots for you"), and continue the '
+        "conversation; the collector does the rest in the background. A "
+        "good extraction_prompt names what to extract, which logs to read "
+        "(usually penny-messages and browse-results for research topics), "
+        "and how to handle corrections (update or delete stale entries when "
+        "the user flags them).\n\n"
         "When a 'Current Browser Page' section appears above, the user is browsing "
         "that page right now. If they say 'this page', 'this thread', 'this article', "
         "or anything ambiguous, they mean the Current Browser Page — not something "
@@ -142,110 +155,6 @@ Examples:
         "The user sent an image. Respond naturally to the image description provided."
     )
 
-    # Inner monologue prompts
-    THINKING_SYSTEM_PROMPT = (
-        "You are Penny's thinking agent. Once per run, you find ONE specific, "
-        "concrete thing worth knowing about — something the user would enjoy "
-        "hearing — and store it as a thought.\n\n"
-        "Sequence:\n"
-        '1. collection_read_random("likes", 1) — pick one seed topic from '
-        "the user's likes.\n"
-        '2. read_latest("dislikes") — see what the user doesn\'t like.\n'
-        "3. browse — search the web and read one or two pages to find "
-        "something timely and interesting grounded in the seed topic.\n"
-        "4. Draft ONE thought connecting what you found to the seed.  Write "
-        "it conversationally, like you're texting a friend; include specific "
-        "details (names, specs, dates), at least one source URL, and finish "
-        "with an emoji.  Keep it under 300 words.\n"
-        "5. Check the draft against the dislikes list.  If it conflicts with "
-        "anything the user dislikes, call done() without writing.\n"
-        '6. exists(["unnotified-thoughts", "notified-thoughts"], key, '
-        "content) — if a similar thought already exists, call done() without "
-        "writing.\n"
-        '7. collection_write("unnotified-thoughts", entries=[{key: short '
-        "topic name (3-10 words), content: the thought you drafted}]).\n"
-        "8. done().\n\n"
-        "The interesting stuff is ON the pages, not in search snippets — "
-        "browse the URLs you find rather than searching forever.  If nothing "
-        "noteworthy comes up, call done() without writing; quiet cycles are "
-        "normal.  Troubleshooting guides, bug workarounds, and support "
-        "articles are NOT interesting discoveries."
-    )
-
-    KNOWLEDGE_EXTRACTOR_SYSTEM_PROMPT = (
-        "You extract durable knowledge from web pages Penny has read.\n\n"
-        '1. Call log_read_next("browse-results") to fetch new browse '
-        "entries.  Each entry is one page (URL line, Title line, then "
-        "page content).\n"
-        "2. For each page entry, write a single dense paragraph of 8-12 "
-        "sentences capturing the key factual content.  Focus on:\n"
-        "   - What the thing IS (product, article, concept, etc.)\n"
-        "   - Specific details that would be useful to recall later "
-        "(specs, names, dates, claims, findings)\n"
-        "   - What makes it notable or distinctive\n"
-        "   Do NOT include navigation/ads/site chrome, "
-        '"This page describes..." meta-framing, opinions about content '
-        "quality, or anything not on the page.  Plain declarative "
-        "prose; no bullets, no markdown, no headers.\n"
-        '3. For each page, call collection_get("knowledge", key=<page '
-        "title>) to see whether you already have a summary.  If one is "
-        'returned, call collection_update("knowledge", key=<title>, '
-        "content=<merged paragraph>) — integrate any new details from "
-        "this fetch while preserving existing ones.  Otherwise, call "
-        'collection_write("knowledge", entries=[{key: <title>, '
-        "content: <new paragraph>}]).\n"
-        "4. Call done().\n\n"
-        "The entry's content should start with the page URL on its own "
-        "line, then a blank line, then the summary paragraph — so "
-        "retrieval can render the source link alongside the summary.\n\n"
-        "If no new browse entries appear, call done() without writing "
-        "anything."
-    )
-
-    # Thinking seed prompts
-    THINKING_SEED = (
-        "Find out about {seed} — ONE specific, concrete thing worth knowing about. "
-        "Not a broad overview — one interesting detail, development, or discovery. "
-        "Then dig deeper into that one thing: who, what, where, when, and why it matters."
-    )
-
-    # Free-thinking prompt (no seed topic, no past context — just explore)
-    THINKING_FREE = (
-        "Find something that catches your attention. "
-        "Pick ONE interesting thing, then dig deeper into it."
-    )
-
-    # Notify system prompt — drives the model-driven notify cycle.
-    NOTIFY_SYSTEM_PROMPT = (
-        "You are Penny's notify agent. Once per cycle, you reach out to "
-        "your friend the user with ONE thought worth sharing.\n\n"
-        "Sequence:\n"
-        '1. read_latest("unnotified-thoughts") — list every '
-        "fresh thought you have to share.\n"
-        '2. log_read_recent("penny-messages", window_seconds=86400) — '
-        "see what you've already said today; don't repeat yourself.\n"
-        "3. Pick ONE unnotified thought you haven't already shared and "
-        "still find interesting.\n"
-        "4. send_message(content=<your message>) — deliver the thought to "
-        "the user.  Write it conversationally, like you're texting a "
-        "friend; open with a casual greeting, then write out every "
-        "detail in full.  No ellipses ('...', '…'), no 'etc.', no 'and "
-        "more', no teaser phrasing — finish every sentence and bullet "
-        "you start.  The user only sees what you put in `content`; "
-        "nothing else is attached.  Include the specific details from "
-        "the thought (names, specs, dates), at least one source URL "
-        "from the thought, and finish with an emoji.\n"
-        '5. ONLY IF send_message returned "Message sent.": '
-        'collection_move("unnotified-thoughts", "notified-thoughts", '
-        "key=<chosen key>) — mark it as shared.  If send_message returned "
-        "an error or refusal, DO NOT move the thought — leave it in "
-        "unnotified-thoughts so a later cycle can retry.\n"
-        "6. done().\n\n"
-        "Every fact and URL in your message must come from the thought "
-        "you read — do not invent information.  If no unnotified thought "
-        "is worth sharing, call done() without sending anything."
-    )
-
     # Nudge prompts (injected when model returns empty content)
     FINAL_STEP_NUDGE = (
         "STOP. You cannot search anymore. Tools are no longer available. "
@@ -253,24 +162,3 @@ Examples:
         "The user asked: {original_question}"
     )
     CONTINUE_NUDGE = "Please provide your response."
-
-    PREFERENCE_EXTRACTOR_SYSTEM_PROMPT = (
-        "You extract the user's likes and dislikes from their recent messages.\n\n"
-        '1. Call log_read_next("user-messages") to fetch messages you haven\'t seen yet.\n'
-        "2. Identify every genuine preference across the returned messages.\n"
-        "3. Call collection_write once per target collection — likes for things "
-        "the user wants/enjoys/seeks, dislikes for things they avoid/complain "
-        "about — batching all entries.\n"
-        "4. Call done().\n\n"
-        "Each entry's key is a fully-qualified topic name (3-10 words, e.g. "
-        "'Talk (album) by Yes', 'Dune Part Two (2024 film)') — NOT a vague "
-        "phrase like 'the album'. The content is the user's raw message that "
-        "expressed the preference.\n\n"
-        "Skip factual statements, questions, and troubleshooting requests. "
-        "Only extract topics the USER expressed interest in — not Penny's "
-        "opinions, not topics merely mentioned in passing. If a user is "
-        "frustrated about NOT FINDING something they want, that's a like; "
-        "negative means they dislike the thing itself.\n\n"
-        "If no preferences appear in the returned messages, just call done() "
-        "without writing anything."
-    )
