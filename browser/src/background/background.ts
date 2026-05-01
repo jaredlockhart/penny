@@ -187,6 +187,10 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     sendScheduleDelete(message.schedule_id);
   } else if (message.type === RuntimeMessageType.PromptLogsRequest) {
     requestPromptLogs(message.agent_name, message.offset);
+  } else if (message.type === RuntimeMessageType.MemoriesRequest) {
+    requestMemories();
+  } else if (message.type === RuntimeMessageType.MemoryDetailRequest) {
+    requestMemoryDetail(message.name);
   }
 }
 
@@ -294,6 +298,22 @@ function connect(): void {
         type: RuntimeMessageType.RunOutcomeUpdate,
         run_id: data.run_id,
         outcome: data.outcome,
+      });
+    } else if (data.type === WsIn.MemoriesResponse) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.MemoriesResponse,
+        memories: data.memories,
+      });
+    } else if (data.type === WsIn.MemoryDetailResponse) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.MemoryDetailResponse,
+        memory: data.memory,
+        entries: data.entries,
+      });
+    } else if (data.type === WsIn.MemoryChanged) {
+      broadcastToSidebar({
+        type: RuntimeMessageType.MemoryChanged,
+        name: data.name,
       });
     }
   });
@@ -427,6 +447,16 @@ function requestPromptLogs(agentName?: string, offset?: number): void {
   if (agentName) payload.agent_name = agentName;
   if (offset) payload.offset = offset;
   ws.send(JSON.stringify(payload));
+}
+
+function requestMemories(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.MemoriesRequest }));
+}
+
+function requestMemoryDetail(name: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.MemoryDetailRequest, name }));
 }
 
 function syncDomainPermissionsToLocal(permissions: DomainPermissionEntry[]): void {

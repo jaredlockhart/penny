@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import random
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Literal, NamedTuple
@@ -152,6 +152,11 @@ class MemoryStore:
         # back to ``ConfigParam.default`` values; production wires the
         # live runtime so dedup respects /config tweaks.
         self._runtime = runtime if runtime is not None else RuntimeParams()
+        # Optional change callback — fired after any write/update/delete or
+        # metadata mutation so external observers (e.g. the browser channel)
+        # can broadcast a refresh.  Argument is the affected memory name, or
+        # ``None`` for fan-outs that aren't scoped to one memory.
+        self._on_memory_changed: Callable[[str | None], None] | None = None
 
     def _default_thresholds(self) -> DedupThresholds:
         """Resolve dedup thresholds from the wired runtime accessor."""
@@ -213,7 +218,8 @@ class MemoryStore:
             session.commit()
             session.refresh(memory)
             logger.debug("Created %s memory %s", type_.value, name)
-            return memory
+        self._notify_changed(name)
+        return memory
 
     def get(self, name: str) -> Memory | None:
         with self._session() as session:
@@ -222,6 +228,31 @@ class MemoryStore:
     def list_all(self) -> list[Memory]:
         with self._session() as session:
             return list(session.exec(select(Memory).order_by(Memory.name)).all())
+
+    def entry_counts(self) -> dict[str, int]:
+        """Return ``{memory_name: entry_count}`` for every memory in one query.
+
+        Used by the addon's Memories tab to show counts in the list view
+        without N+1 round-trips.  Memories with zero entries are absent —
+        callers should default to 0 when looking up a missing key.
+        """
+        from sqlalchemy import func
+
+        with self._session() as session:
+            rows = session.exec(
+                select(MemoryEntry.memory_name, func.count(MemoryEntry.id)).group_by(  # ty: ignore[invalid-argument-type]
+                    MemoryEntry.memory_name
+                )  # ty: ignore[invalid-argument-type]
+            ).all()
+        return dict(rows)
+
+    def _notify_changed(self, name: str | None) -> None:
+        """Fire the change callback if registered.  Safe to call without a hook."""
+        if self._on_memory_changed is not None:
+            try:
+                self._on_memory_changed(name)
+            except Exception as exc:
+                logger.error("memory_changed callback failed: %s", exc)
 
     def archive(self, name: str) -> None:
         self._set_archived(name, True)
@@ -237,6 +268,7 @@ class MemoryStore:
             memory.archived = archived
             session.add(memory)
             session.commit()
+        self._notify_changed(name)
 
     def update_collection_metadata(
         self,
@@ -264,7 +296,8 @@ class MemoryStore:
             session.add(memory)
             session.commit()
             session.refresh(memory)
-            return memory
+        self._notify_changed(name)
+        return memory
 
     def mark_collected(self, name: str) -> None:
         """Stamp ``last_collected_at = now`` after a dispatcher cycle.
@@ -279,6 +312,7 @@ class MemoryStore:
             memory.last_collected_at = datetime.now(UTC)
             session.add(memory)
             session.commit()
+        self._notify_changed(name)
 
     # ── Collection writes ───────────────────────────────────────────────────
 
@@ -303,6 +337,8 @@ class MemoryStore:
             for entry in entries:
                 results.append(self._write_one(session, name, entry, author, existing, thresholds))
             session.commit()
+        if any(r.outcome == "written" for r in results):
+            self._notify_changed(name)
         return results
 
     def _write_one(
@@ -347,7 +383,8 @@ class MemoryStore:
                 row.author = author
                 session.add(row)
             session.commit()
-            return "ok"
+        self._notify_changed(name)
+        return "ok"
 
     def move(self, key: str, from_name: str, to_name: str, author: str) -> MoveOutcome:
         """Move every entry with `key` from one collection to another.
@@ -368,7 +405,9 @@ class MemoryStore:
                 row.author = author
                 session.add(row)
             session.commit()
-            return "ok"
+        self._notify_changed(from_name)
+        self._notify_changed(to_name)
+        return "ok"
 
     def delete(self, name: str, key: str) -> int:
         """Delete every entry with `key` in a collection. Returns rows removed."""
@@ -378,7 +417,9 @@ class MemoryStore:
             for row in rows:
                 session.delete(row)
             session.commit()
-            return len(rows)
+        if rows:
+            self._notify_changed(name)
+        return len(rows)
 
     # ── Log writes ──────────────────────────────────────────────────────────
 
@@ -402,6 +443,8 @@ class MemoryStore:
             session.commit()
             for row in created:
                 session.refresh(row)
+        if created:
+            self._notify_changed(name)
         return created
 
     # ── Reads ───────────────────────────────────────────────────────────────

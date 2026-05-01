@@ -1576,3 +1576,130 @@ class TestBrowserPromptLogHandlers:
         assert received[0]["run_id"] == "run1"
         assert received[0]["input_tokens"] == 50
         assert received[0]["output_tokens"] == 20
+
+
+class TestBrowserMemoryHandlers:
+    """memories_request / memory_detail_request / memory_changed handlers."""
+
+    def _channel(self, tmp_path) -> tuple[BrowserChannel, Database]:
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        return channel, db
+
+    def _seed_memories(self, db) -> None:
+        from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
+
+        # ``collector-runs`` already exists from migration 0034 — just append.
+        db.memories.create_collection(
+            "prague-trip",
+            "Prague spots",
+            RecallMode.RELEVANT,
+            extraction_prompt="extract spots",
+            collector_interval_seconds=300,
+        )
+        db.memories.write(
+            "prague-trip",
+            [EntryInput(key="petrin-hill", content="Hill with a tower")],
+            author="user",
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="[prague-trip] ✅ wrote 2 new spots")],
+            author="collector",
+        )
+
+    @pytest.mark.asyncio
+    async def test_memories_request_returns_collections_and_logs(self, tmp_path):
+        """The list view receives every memory (collections + logs) with metadata
+        and entry counts in one response."""
+        channel, db = self._channel(tmp_path)
+        self._seed_memories(db)
+
+        ws = _MockWs()
+        await channel._handle_memories_request(ws)  # ty: ignore[invalid-argument-type]
+
+        assert len(ws.sent) == 1
+        resp = ws.sent[0]
+        assert resp["type"] == "memories_response"
+        by_name = {m["name"]: m for m in resp["memories"]}
+        assert "prague-trip" in by_name and "collector-runs" in by_name
+        assert by_name["prague-trip"]["type"] == "collection"
+        assert by_name["prague-trip"]["entry_count"] == 1
+        assert by_name["prague-trip"]["extraction_prompt"] == "extract spots"
+        assert by_name["prague-trip"]["collector_interval_seconds"] == 300
+        assert by_name["collector-runs"]["type"] == "log"
+        assert by_name["collector-runs"]["entry_count"] == 1
+        assert by_name["collector-runs"]["extraction_prompt"] is None
+
+    @pytest.mark.asyncio
+    async def test_memory_detail_request_returns_entries_newest_first(self, tmp_path):
+        """The drill-in view returns metadata + entries (newest first, capped)."""
+        from penny.database.memory_store import LogEntryInput
+
+        channel, db = self._channel(tmp_path)
+        # ``collector-runs`` is created by migration 0034 — append only.
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="first")],
+            author="collector",
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="second")],
+            author="collector",
+        )
+
+        ws = _MockWs()
+        await channel._handle_memory_detail_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "memory_detail_request", "name": "collector-runs"},
+        )
+
+        resp = ws.sent[0]
+        assert resp["type"] == "memory_detail_response"
+        assert resp["memory"]["name"] == "collector-runs"
+        assert resp["memory"]["entry_count"] == 2
+        assert [e["content"] for e in resp["entries"]] == ["second", "first"]
+        assert all(e["author"] == "collector" for e in resp["entries"])
+
+    @pytest.mark.asyncio
+    async def test_memory_detail_request_unknown_memory_silently_drops(self, tmp_path):
+        """An unknown memory name produces no response (logged warning)."""
+        channel, _ = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._handle_memory_detail_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "memory_detail_request", "name": "not-a-real-memory"},
+        )
+        assert ws.sent == []
+
+    def test_memory_changed_callback_fires_on_collection_write(self, tmp_path):
+        """A collection write triggers the change callback so the addon can refresh."""
+        from penny.database.memory_store import EntryInput, RecallMode
+
+        _, db = self._channel(tmp_path)
+        db.memories.create_collection("prague-trip", "spots", RecallMode.OFF)
+
+        received: list[str | None] = []
+        db.memories._on_memory_changed = lambda name: received.append(name)
+
+        db.memories.write(
+            "prague-trip",
+            [EntryInput(key="petrin-hill", content="Hill")],
+            author="user",
+        )
+
+        assert "prague-trip" in received
+
+    def test_memory_changed_callback_fires_on_log_append(self, tmp_path):
+        """Log appends fire the callback too — the audit log lives behind it."""
+        from penny.database.memory_store import LogEntryInput
+
+        _, db = self._channel(tmp_path)
+        # ``collector-runs`` is created by migration 0034.
+        received: list[str | None] = []
+        db.memories._on_memory_changed = lambda name: received.append(name)
+
+        db.memories.append("collector-runs", [LogEntryInput(content="cycle x")], author="collector")
+
+        assert "collector-runs" in received

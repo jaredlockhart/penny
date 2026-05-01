@@ -15,6 +15,7 @@
     <div id="tabs">
       <button class="tab active" data-tab="thoughts"><i class="fa-regular fa-lightbulb"></i> Thoughts</button>
       <button class="tab" data-tab="prompts"><i class="fa-solid fa-scroll"></i> Prompts</button>
+      <button class="tab" data-tab="memories"><i class="fa-solid fa-database"></i> Memories</button>
       <button class="tab" data-tab="schedules"><i class="fa-solid fa-clock"></i> Schedules</button>
       <button class="tab" data-tab="likes"><i class="fa-solid fa-heart"></i> Likes</button>
       <button class="tab" data-tab="dislikes"><i class="fa-solid fa-heart-crack"></i> Dislikes</button>
@@ -49,6 +50,16 @@
     <div id="runs"></div>
     <div id="prompts-load-more" class="hidden">
       <button id="prompts-load-more-btn" class="load-more-btn"><i class="fa-solid fa-chevron-down"></i> Load more</button>
+    </div>
+  </div>
+
+  <!-- Memories panel -->
+  <div id="panel-memories" class="panel hidden">
+    <div id="memories-loading" class="panel-loading">Loading memories...</div>
+    <div id="memories-list"></div>
+    <div id="memory-detail" class="hidden">
+      <button id="memory-detail-back" class="memory-back-btn"><i class="fa-solid fa-chevron-left"></i> Back</button>
+      <div id="memory-detail-content"></div>
     </div>
   </div>
 

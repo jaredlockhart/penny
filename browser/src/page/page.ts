@@ -7,6 +7,8 @@ import {
   type DomainAllowlist,
   DomainPermission as DP,
   type DomainPermissionEntry,
+  type MemoryEntryRecord,
+  type MemoryRecord,
   type PreferenceItem,
   type PreferenceThoughtItem,
   type PromptLogEntry,
@@ -22,7 +24,15 @@ import {
 
 // --- Top-level state ---
 
-type Tab = "thoughts" | "prompts" | "schedules" | "likes" | "dislikes" | "domains" | "config";
+type Tab =
+  | "thoughts"
+  | "prompts"
+  | "memories"
+  | "schedules"
+  | "likes"
+  | "dislikes"
+  | "domains"
+  | "config";
 
 // --- Toast ---
 
@@ -80,6 +90,17 @@ let activeRunId: string | null = null;
 let activeTimer: ReturnType<typeof setTimeout> | null = null;
 let promptsLoaded = false;
 
+// --- Memories state ---
+
+const memoriesLoading = document.getElementById("memories-loading")!;
+const memoriesList = document.getElementById("memories-list")!;
+const memoryDetail = document.getElementById("memory-detail")!;
+const memoryDetailContent = document.getElementById("memory-detail-content")!;
+const memoryDetailBack = document.getElementById("memory-detail-back")!;
+
+let allMemories: MemoryRecord[] = [];
+let activeMemoryName: string | null = null;
+
 // --- Config state ---
 
 let pendingConfigSave = false;
@@ -102,6 +123,7 @@ function init(): void {
   // Set up all panel interactions
   setupThoughts();
   setupPrompts();
+  setupMemories();
   setupSchedules();
   setupPreferences("positive", "likes");
   setupPreferences("negative", "dislikes");
@@ -122,6 +144,8 @@ function switchTab(tab: Tab): void {
     browser.runtime.sendMessage({ type: RuntimeMessageType.ThoughtsRequest });
   } else if (tab === "prompts" && !promptsLoaded) {
     requestPromptLogs(0);
+  } else if (tab === "memories") {
+    requestMemories();
   } else if (tab === "schedules") {
     browser.runtime.sendMessage({ type: RuntimeMessageType.SchedulesRequest });
   } else if (tab === "likes") {
@@ -177,6 +201,12 @@ function handleMessage(message: RuntimeMessage): void {
     if (toggle) toggle.checked = message.enabled;
   } else if (message.type === RuntimeMessageType.DomainPermissionsSync) {
     renderDomains(message.permissions);
+  } else if (message.type === RuntimeMessageType.MemoriesResponse) {
+    handleMemoriesResponse(message.memories);
+  } else if (message.type === RuntimeMessageType.MemoryDetailResponse) {
+    handleMemoryDetailResponse(message.memory, message.entries);
+  } else if (message.type === RuntimeMessageType.MemoryChanged) {
+    handleMemoryChanged(message.name);
   }
 }
 
@@ -1352,6 +1382,247 @@ function createConfigItem(param: RuntimeConfigParam): HTMLElement {
   item.appendChild(header);
   item.appendChild(input);
   return item;
+}
+
+// ============================================================
+// Memories
+// ============================================================
+
+function setupMemories(): void {
+  memoryDetailBack.addEventListener("click", showMemoriesList);
+}
+
+function requestMemories(): void {
+  memoriesLoading.classList.remove("hidden");
+  browser.runtime.sendMessage({ type: RuntimeMessageType.MemoriesRequest });
+}
+
+function handleMemoriesResponse(memories: MemoryRecord[]): void {
+  allMemories = memories;
+  memoriesLoading.classList.add("hidden");
+  renderMemoriesList();
+}
+
+function handleMemoryDetailResponse(
+  memory: MemoryRecord,
+  entries: MemoryEntryRecord[],
+): void {
+  activeMemoryName = memory.name;
+  showMemoryDetail();
+  renderMemoryDetail(memory, entries);
+}
+
+function handleMemoryChanged(name: string | null): void {
+  // The memories tab might not be visible — refresh data only if it is.
+  const memoriesPanel = document.getElementById("panel-memories");
+  if (!memoriesPanel || memoriesPanel.classList.contains("hidden")) return;
+  if (activeMemoryName && (name === null || name === activeMemoryName)) {
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.MemoryDetailRequest,
+      name: activeMemoryName,
+    });
+  } else if (!activeMemoryName) {
+    requestMemories();
+  }
+}
+
+function showMemoriesList(): void {
+  activeMemoryName = null;
+  memoryDetail.classList.add("hidden");
+  memoriesList.classList.remove("hidden");
+  requestMemories();
+}
+
+function showMemoryDetail(): void {
+  memoriesList.classList.add("hidden");
+  memoryDetail.classList.remove("hidden");
+}
+
+function renderMemoriesList(): void {
+  memoriesList.innerHTML = "";
+  if (allMemories.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "panel-loading";
+    empty.textContent = "No memories yet.";
+    memoriesList.appendChild(empty);
+    return;
+  }
+  for (const memory of allMemories) {
+    memoriesList.appendChild(createMemoryRow(memory));
+  }
+}
+
+function createMemoryRow(memory: MemoryRecord): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "memory-row";
+  if (memory.archived) row.classList.add("memory-row-archived");
+
+  const name = document.createElement("span");
+  name.className = "memory-name";
+  name.textContent = memory.name;
+
+  const badge = document.createElement("span");
+  badge.className = `memory-type-badge ${memory.type}`;
+  badge.textContent = memory.type;
+
+  const description = document.createElement("span");
+  description.className = "memory-description";
+  description.textContent = memory.description;
+
+  const meta = document.createElement("span");
+  meta.className = "memory-meta";
+  meta.appendChild(metaItem("fa-list", `${memory.entry_count} entries`));
+  if (memory.last_collected_at) {
+    meta.appendChild(metaItem("fa-clock-rotate-left", formatRelativeDate(memory.last_collected_at)));
+  } else if (memory.extraction_prompt) {
+    meta.appendChild(metaItem("fa-clock-rotate-left", "never"));
+  }
+
+  row.appendChild(name);
+  row.appendChild(badge);
+  row.appendChild(description);
+  row.appendChild(meta);
+
+  row.addEventListener("click", () => {
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.MemoryDetailRequest,
+      name: memory.name,
+    });
+  });
+
+  return row;
+}
+
+function metaItem(iconClass: string, text: string): HTMLSpanElement {
+  const span = document.createElement("span");
+  span.innerHTML = `<i class="fa-solid ${iconClass}"></i>${text}`;
+  return span;
+}
+
+function renderMemoryDetail(memory: MemoryRecord, entries: MemoryEntryRecord[]): void {
+  memoryDetailContent.innerHTML = "";
+
+  memoryDetailContent.appendChild(createMemoryHeader(memory));
+  memoryDetailContent.appendChild(createMemoryMetadataSection(memory));
+  memoryDetailContent.appendChild(createMemoryEntriesSection(memory, entries));
+}
+
+function createMemoryHeader(memory: MemoryRecord): HTMLElement {
+  const header = document.createElement("div");
+  header.className = "memory-detail-header";
+
+  const title = document.createElement("h2");
+  title.textContent = memory.name;
+
+  const badge = document.createElement("span");
+  badge.className = `memory-type-badge ${memory.type}`;
+  badge.textContent = memory.type;
+
+  header.appendChild(title);
+  header.appendChild(badge);
+  if (memory.archived) {
+    const archived = document.createElement("span");
+    archived.className = "memory-type-badge";
+    archived.textContent = "archived";
+    header.appendChild(archived);
+  }
+  return header;
+}
+
+function createMemoryMetadataSection(memory: MemoryRecord): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "memory-detail-section";
+
+  const title = document.createElement("h3");
+  title.textContent = "Metadata";
+  section.appendChild(title);
+
+  const grid = document.createElement("dl");
+  grid.className = "memory-detail-grid";
+
+  appendDef(grid, "Description", memory.description || "—");
+  appendDef(grid, "Recall", memory.recall);
+  appendDef(grid, "Entries", String(memory.entry_count));
+  if (memory.collector_interval_seconds !== null) {
+    appendDef(grid, "Collector interval", `${memory.collector_interval_seconds}s`);
+  }
+  if (memory.last_collected_at) {
+    appendDef(grid, "Last collected", formatDateTime(memory.last_collected_at));
+  }
+  if (memory.extraction_prompt) {
+    appendDef(grid, "Extraction prompt", memory.extraction_prompt, true);
+  }
+
+  section.appendChild(grid);
+  return section;
+}
+
+function appendDef(grid: HTMLElement, label: string, value: string, monospace = false): void {
+  const dt = document.createElement("dt");
+  dt.textContent = label;
+  const dd = document.createElement("dd");
+  if (monospace) {
+    const pre = document.createElement("pre");
+    pre.textContent = value;
+    dd.appendChild(pre);
+  } else {
+    dd.textContent = value;
+  }
+  grid.appendChild(dt);
+  grid.appendChild(dd);
+}
+
+function createMemoryEntriesSection(memory: MemoryRecord, entries: MemoryEntryRecord[]): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "memory-detail-section";
+
+  const title = document.createElement("h3");
+  const shown = entries.length;
+  const total = memory.entry_count;
+  title.textContent =
+    total > shown ? `Entries (showing ${shown} of ${total}, newest first)` : `Entries (${total})`;
+  section.appendChild(title);
+
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "memory-entries-empty";
+    empty.textContent = "No entries yet.";
+    section.appendChild(empty);
+    return section;
+  }
+
+  for (const entry of entries) {
+    section.appendChild(createMemoryEntry(entry));
+  }
+  return section;
+}
+
+function createMemoryEntry(entry: MemoryEntryRecord): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "memory-entry";
+
+  const header = document.createElement("div");
+  header.className = "memory-entry-header";
+  if (entry.key) {
+    const key = document.createElement("span");
+    key.className = "memory-entry-key";
+    key.textContent = entry.key;
+    header.appendChild(key);
+  }
+  const author = document.createElement("span");
+  author.textContent = entry.author;
+  header.appendChild(author);
+  const time = document.createElement("span");
+  time.textContent = formatDateTime(entry.created_at);
+  header.appendChild(time);
+
+  const content = document.createElement("div");
+  content.className = "memory-entry-content";
+  content.textContent = entry.content;
+
+  row.appendChild(header);
+  row.appendChild(content);
+  return row;
 }
 
 // ============================================================
