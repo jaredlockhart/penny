@@ -345,6 +345,62 @@ class TestLogTools:
         assert "first" in rendered
 
     @pytest.mark.asyncio
+    async def test_first_cycle_bounded_to_latest_n_entries(self, tmp_path, mock_llm):
+        """A brand-new collector (no cursor yet) reading a busy log gets the
+        most-recent N entries, not every entry since the dawn of time.
+
+        Without this bound, a fresh collector reading ``user-messages`` (which
+        has months of chat history in production) would dump the entire log
+        into the first cycle's context.
+        """
+        from penny.constants import PennyConstants
+
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        # Append more entries than the bound to confirm trimming
+        n_entries = PennyConstants.LOG_READ_NEXT_INITIAL_LIMIT + 5
+        for i in range(n_entries):
+            await append.execute(memory="events", content=f"entry-{i:02d}")
+
+        read_next = LogReadNextTool(db, agent_name="brand-new-collector")
+        rendered = await read_next.execute(memory="events")
+
+        # Exactly the latest N entries — entry-(n-N) through entry-(n-1)
+        # should appear; older entries should not.
+        for i in range(n_entries - PennyConstants.LOG_READ_NEXT_INITIAL_LIMIT, n_entries):
+            assert f"entry-{i:02d}" in rendered
+        # The first 5 entries must be excluded
+        assert "entry-00" not in rendered
+        assert "entry-04" not in rendered
+
+    @pytest.mark.asyncio
+    async def test_first_cycle_advances_cursor_so_next_cycle_sees_only_new(
+        self, tmp_path, mock_llm
+    ):
+        """After a bounded first cycle commits, the next cycle picks up
+        incrementally — even entries that the first cycle's bound excluded
+        stay excluded (since they're older than the cursor)."""
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        for i in range(15):
+            await append.execute(memory="events", content=f"old-{i:02d}")
+
+        read_next = LogReadNextTool(db, agent_name="extractor")
+        await read_next.execute(memory="events")
+        read_next.commit_pending()
+
+        # New entries arrive
+        await append.execute(memory="events", content="new-after-cursor")
+
+        fresh = LogReadNextTool(db, agent_name="extractor")
+        rendered = await fresh.execute(memory="events")
+        assert "new-after-cursor" in rendered
+        # Old entries excluded by the bound stay excluded
+        assert "old-00" not in rendered
+
+    @pytest.mark.asyncio
     async def test_per_agent_cursors_are_independent(self, tmp_path, mock_llm):
         """Two agents reading the same log have independent cursor state."""
         db = _make_db(tmp_path)

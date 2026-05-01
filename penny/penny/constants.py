@@ -181,6 +181,14 @@ class PennyConstants:
     # adapter and browse tool side-effect-write to on every turn.
     MEMORY_USER_MESSAGES_LOG = "user-messages"
     MEMORY_COLLECTOR_RUNS_LOG = "collector-runs"
+
+    # ``log_read_next`` first-cycle bound: when an agent has no cursor yet on a
+    # log, fall back to the most recent N entries instead of every entry since
+    # the beginning of time.  Keeps brand-new collectors from dumping the
+    # entire user-messages history (months of chat) into the first cycle's
+    # context.  Subsequent cycles use the established cursor and pick up
+    # incrementally.
+    LOG_READ_NEXT_INITIAL_LIMIT = 10
     MEMORY_PENNY_MESSAGES_LOG = "penny-messages"
     MEMORY_BROWSE_RESULTS_LOG = "browse-results"
 

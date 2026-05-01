@@ -18,9 +18,10 @@ reads return empty.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.memory_store import (
     DedupThresholds,
@@ -748,10 +749,23 @@ class LogReadNextTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadNextArgs(**kwargs)
-        cursor = self._db.cursors.get(self._agent_name, args.memory) or datetime.min.replace(
-            tzinfo=UTC
-        )
-        entries = self._db.memories.read_since(args.memory, cursor, args.cap)
+        cursor = self._db.cursors.get(self._agent_name, args.memory)
+        if cursor is None:
+            # First cycle on this log — bound the fetch to the most-recent N
+            # entries instead of every entry since the beginning of time.
+            # Otherwise a brand-new collector would dump the full log history
+            # (months of user messages) into the first cycle's context.
+            # Newest-first from read_latest, reversed so cursor advance
+            # tracks the latest entry's timestamp.
+            entries = list(
+                reversed(
+                    self._db.memories.read_latest(
+                        args.memory, k=PennyConstants.LOG_READ_NEXT_INITIAL_LIMIT
+                    )
+                )
+            )
+        else:
+            entries = self._db.memories.read_since(args.memory, cursor, args.cap)
         if entries:
             max_seen = max(e.created_at for e in entries)
             prev = self._pending.get(args.memory)
