@@ -39,6 +39,41 @@ class Collector(BackgroundAgent):
 
     name = "collector"
 
+    # Per-cycle audit-log markers — printable success/failure in the
+    # ``collector-runs`` entry.  Class-scoped: tied to this agent's
+    # behaviour, not used elsewhere in the project.
+    _RUN_SUCCESS_MARKER = "✅"
+    _RUN_FAILURE_MARKER = "❌"
+
+    # Runtime rules every collector cycle gets, appended to whatever
+    # extraction_prompt the chat agent (or migration) wrote on the
+    # ``memory`` row.  These are *behaviour* invariants — not authoring
+    # guidance — so they're attached structurally rather than relied on
+    # the prompt-writer to include.  Penny dropped the provenance line
+    # in the first prague-highlights prompt she wrote even though the
+    # chat-facing guide called for it; structural enforcement is the
+    # fix.  Class-scoped so subclasses (none yet) could override if a
+    # different runtime contract emerged.
+    _RUNTIME_RULES = (
+        "## Runtime rules (always apply)\n"
+        "\n"
+        "- Single batched ``collection_write`` per cycle — not one call per entry.\n"
+        "- ``send_message`` (when the prompt above asks for notify-on-new) is gated on a "
+        "successful write: only call it after ``collection_write`` returns without "
+        "duplicate-rejection.\n"
+        "- Always end the cycle with ``done(success=<bool>, summary=<one-sentence prose>)``. "
+        "``success`` is true if the cycle did what the prompt asked, false on no-op or failure. "
+        "``summary`` describes what actually happened (entries written, messages sent, why no-op). "
+        'If nothing matches the prompt, call ``done(success=true, summary="no new matches this '
+        'cycle")`` — quiet cycles are normal.\n'
+        "- For corrections: if a recent message indicates an existing entry is wrong, stale, "
+        "closed, or otherwise no longer accurate, ``update_entry`` or ``collection_delete_entry`` "
+        "rather than appending alongside.\n"
+        "- Cite only what you actually browsed this cycle.  Never invent a URL to populate a "
+        '"Source:" field — if no real source was fetched, omit the field.\n'
+        "- Don't dedup manually — the store rejects duplicates on write automatically."
+    )
+
     def __init__(
         self,
         model_client: LlmClient,
@@ -86,7 +121,7 @@ class Collector(BackgroundAgent):
         summary) so the log still has a row per cycle.
         """
         success, summary = self._extract_done_args(response)
-        marker = "✅" if success else "❌"
+        marker = self._RUN_SUCCESS_MARKER if success else self._RUN_FAILURE_MARKER
         self.db.memories.append(
             PennyConstants.MEMORY_COLLECTOR_RUNS_LOG,
             [LogEntryInput(content=f"[{target.name}] {marker} {summary}")],
@@ -118,8 +153,8 @@ class Collector(BackgroundAgent):
         fresh = self.db.memories.get(target.name) or target
         return self._compose_prompt(fresh)
 
-    @staticmethod
-    def _compose_prompt(target: Memory) -> str:
+    @classmethod
+    def _compose_prompt(cls, target: Memory) -> str:
         """Frame the user-authored extraction_prompt with target identity + runtime rules.
 
         The runtime-rules tail is appended structurally — not relayed through
@@ -133,7 +168,7 @@ class Collector(BackgroundAgent):
             f"You are the collector for the `{target.name}` collection.\n"
             f"Description: {target.description}\n\n"
             f"{target.extraction_prompt}\n\n"
-            f"{_RUNTIME_RULES}"
+            f"{cls._RUNTIME_RULES}"
         )
 
     def _memory_scope(self) -> str:
@@ -181,31 +216,3 @@ class Collector(BackgroundAgent):
 def _aware(dt: datetime) -> datetime:
     """SQLite returns naive datetimes; assume UTC and attach tzinfo."""
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
-
-
-# Runtime rules every collector cycle gets, regardless of what the
-# extraction_prompt says.  These are *behaviour* invariants — not authoring
-# guidance — so they're appended structurally rather than relied on Penny to
-# include when she writes the extraction_prompt.  Penny dropped the
-# provenance line in the first prague-highlights prompt she wrote even
-# though the chat-facing guide called for it; structural enforcement is the
-# fix.
-_RUNTIME_RULES = (
-    "## Runtime rules (always apply)\n"
-    "\n"
-    "- Single batched ``collection_write`` per cycle — not one call per entry.\n"
-    "- ``send_message`` (when the prompt above asks for notify-on-new) is gated on a "
-    "successful write: only call it after ``collection_write`` returns without "
-    "duplicate-rejection.\n"
-    "- Always end the cycle with ``done(success=<bool>, summary=<one-sentence prose>)``. "
-    "``success`` is true if the cycle did what the prompt asked, false on no-op or failure. "
-    "``summary`` describes what actually happened (entries written, messages sent, why no-op). "
-    'If nothing matches the prompt, call ``done(success=true, summary="no new matches this '
-    'cycle")`` — quiet cycles are normal.\n'
-    "- For corrections: if a recent message indicates an existing entry is wrong, stale, "
-    "closed, or otherwise no longer accurate, ``update_entry`` or ``collection_delete_entry`` "
-    "rather than appending alongside.\n"
-    "- Cite only what you actually browsed this cycle.  Never invent a URL to populate a "
-    '"Source:" field — if no real source was fetched, omit the field.\n'
-    "- Don't dedup manually — the store rejects duplicates on write automatically."
-)

@@ -5,9 +5,9 @@ are enforced before the channel dispatch:
 
 1. ``users.is_muted(recipient)`` — refuses with a string that
    instructs the model to call ``done``.
-2. Exponential backoff cooldown based on prior sends from this
-   agent in ``penny-messages`` since the user's last entry in
-   ``user-messages``.
+2. Flat-interval cooldown (``SEND_COOLDOWN_SECONDS``) bypassed when
+   the user has replied since the agent's last send in
+   ``penny-messages``.
 """
 
 from __future__ import annotations
@@ -172,7 +172,8 @@ def test_appears_truncated_detects_production_failure_tails():
 async def test_send_message_refuses_when_cooldown_not_elapsed(tmp_path):
     """A recent send from the same agent (no user reply since) → cooldown gate fires."""
     db = _make_db(tmp_path)
-    # Seed a prior send authored by this agent — count = 1, cooldown = MIN.
+    # Seed a prior send authored by this agent — count = 1 (no user reply since),
+    # so the cooldown applies and the new send is refused.
     db.memories.append(_PENNY_LOG, [LogEntryInput(content="prior")], author=_AGENT)
     channel = _make_channel()
     tool = _make_tool(db, channel=channel, config=_make_config(cooldown_seconds=3600.0))
@@ -209,9 +210,9 @@ async def test_cooldown_skipped_when_user_replied_since_last_send(tmp_path):
 
 
 def test_user_reply_resets_cooldown_count(tmp_path):
-    """A user-messages entry newer than prior sends resets the backoff count to zero."""
+    """A user-messages entry newer than prior sends resets the autonomous-send count to zero."""
     db = _make_db(tmp_path)
-    # Old send → would normally count toward backoff.
+    # Old send → would otherwise be counted as autonomous outreach.
     db.memories.append(_PENNY_LOG, [LogEntryInput(content="old")], author=_AGENT)
     # User replied since — entries are timestamped at write time, so this
     # user-messages entry's created_at is newer than the old send.

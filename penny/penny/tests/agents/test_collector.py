@@ -152,6 +152,66 @@ async def test_get_tools_raises_outside_cycle(test_config, tmp_path):
         collector.get_tools()
 
 
+# ── Composed system prompt (target identity + extraction_prompt + runtime tail) ──
+
+
+def test_compose_prompt_wraps_extraction_with_target_and_runtime_rules():
+    """Snapshot the full composed system prompt — exact-string assertion catches
+    structural drift in the framing OR the runtime-rules tail.  The runtime
+    rules are load-bearing (provenance, batched writes, gated send_message,
+    structured done) — chat doesn't relay them, the collector base attaches
+    them on every cycle."""
+    target = Memory(
+        name="prague-trip",
+        type="collection",
+        description="Prague attractions, restaurants, and bars worth visiting",
+        recall=RecallMode.RELEVANT.value,
+        archived=False,
+        extraction_prompt=(
+            "Collect Prague spots from chat and browse logs.\n"
+            '1. log_read_next("user-messages")\n'
+            "2. browse for new spots\n"
+            '3. collection_write("prague-trip", entries=[...])\n'
+            "4. done()."
+        ),
+    )
+
+    composed = Collector._compose_prompt(target)
+
+    expected = (
+        "You are the collector for the `prague-trip` collection.\n"
+        "Description: Prague attractions, restaurants, and bars worth visiting\n"
+        "\n"
+        "Collect Prague spots from chat and browse logs.\n"
+        '1. log_read_next("user-messages")\n'
+        "2. browse for new spots\n"
+        '3. collection_write("prague-trip", entries=[...])\n'
+        "4. done().\n"
+        "\n"
+        "## Runtime rules (always apply)\n"
+        "\n"
+        "- Single batched ``collection_write`` per cycle — not one call per entry.\n"
+        "- ``send_message`` (when the prompt above asks for notify-on-new) is gated on a "
+        "successful write: only call it after ``collection_write`` returns without "
+        "duplicate-rejection.\n"
+        "- Always end the cycle with ``done(success=<bool>, summary=<one-sentence prose>)``. "
+        "``success`` is true if the cycle did what the prompt asked, false on no-op or failure. "
+        "``summary`` describes what actually happened (entries written, messages sent, why no-op). "
+        'If nothing matches the prompt, call ``done(success=true, summary="no new matches this '
+        'cycle")`` — quiet cycles are normal.\n'
+        "- For corrections: if a recent message indicates an existing entry is wrong, stale, "
+        "closed, or otherwise no longer accurate, ``update_entry`` or ``collection_delete_entry`` "
+        "rather than appending alongside.\n"
+        "- Cite only what you actually browsed this cycle.  Never invent a URL to populate a "
+        '"Source:" field — if no real source was fetched, omit the field.\n'
+        "- Don't dedup manually — the store rejects duplicates on write automatically."
+    )
+
+    assert composed == expected, (
+        f"Composed prompt mismatch:\n{composed!r}\n\nvs expected:\n{expected!r}"
+    )
+
+
 # ── Collector-runs audit log ─────────────────────────────────────────────
 
 
