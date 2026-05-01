@@ -26,6 +26,7 @@ from penny.database.memory_store import (
     DedupThresholds,
     EntryInput,
     LogEntryInput,
+    MemoryNotFoundError,
     RecallMode,
     WriteResult,
 )
@@ -49,6 +50,7 @@ from penny.tools.memory_args import (
     ReadRandomArgs,
     ReadRecentArgs,
     ReadSimilarArgs,
+    UpdateEntryArgs,
 )
 
 if TYPE_CHECKING:
@@ -430,10 +432,10 @@ class CollectionWriteTool(Tool):
         return " ".join(parts) if parts else "(no entries written)"
 
 
-class CollectionUpdateTool(Tool):
-    """Replace the content of an existing entry."""
+class UpdateEntryTool(Tool):
+    """Replace the content of an existing entry in a collection."""
 
-    name = "collection_update"
+    name = "update_entry"
     description = (
         "Replace the content of an existing entry in a collection, identified "
         "by key. Returns an error if the key doesn't exist."
@@ -454,7 +456,7 @@ class CollectionUpdateTool(Tool):
         self._scope = scope
 
     async def execute(self, **kwargs: Any) -> str:
-        args = CollectionUpdateArgs(**kwargs)
+        args = UpdateEntryArgs(**kwargs)
         if self._scope is not None and args.memory != self._scope:
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
@@ -463,6 +465,57 @@ class CollectionUpdateTool(Tool):
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.memory}'."
         return f"Updated '{args.key}' in '{args.memory}'."
+
+
+class CollectionUpdateTool(Tool):
+    """Update collection metadata: description, recall, extraction_prompt, interval.
+
+    Chat-facing.  Lets the user evolve a collection mid-conversation —
+    refining its extraction_prompt as the collector's quality becomes
+    clearer, swapping recall mode, retiring stale descriptions.  All
+    fields except ``name`` are optional; only the ones supplied are
+    applied.
+    """
+
+    name = "collection_update"
+    description = (
+        "Update an existing collection's metadata.  Provide the collection "
+        "``name`` plus any of: ``description``, ``recall`` "
+        f"({_RECALL_MODES}), ``extraction_prompt``, ``collector_interval_seconds``. "
+        "Only the fields you supply are changed."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Collection name to update"},
+            "description": {"type": "string"},
+            "recall": {
+                "type": "string",
+                "enum": [m.value for m in RecallMode],
+            },
+            "extraction_prompt": {"type": "string"},
+            "collector_interval_seconds": {"type": "integer"},
+        },
+        "required": ["name"],
+    }
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def execute(self, **kwargs: Any) -> str:
+        args = CollectionUpdateArgs(**kwargs)
+        recall = RecallMode(args.recall) if args.recall is not None else None
+        try:
+            self._db.memories.update_collection_metadata(
+                args.name,
+                description=args.description,
+                recall=recall,
+                extraction_prompt=args.extraction_prompt,
+                collector_interval_seconds=args.collector_interval_seconds,
+            )
+        except MemoryNotFoundError:
+            return f"Collection '{args.name}' not found."
+        return f"Updated '{args.name}'."
 
 
 class CollectionMoveTool(Tool):
@@ -483,12 +536,22 @@ class CollectionMoveTool(Tool):
         "required": ["key", "from_memory", "to_memory"],
     }
 
-    def __init__(self, db: Database, author: str) -> None:
+    def __init__(self, db: Database, author: str, scope: str | None = None) -> None:
         self._db = db
         self._author = author
+        self._scope = scope
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionMoveArgs(**kwargs)
+        # Scope constrains the destination side of the move (the write).
+        # Source-side ``from_memory`` is unrestricted — moving an entry
+        # OUT of another collection into the bound scope is allowed,
+        # since the only entry that ends up written is in scope.
+        if self._scope is not None and args.to_memory != self._scope:
+            return (
+                f"Refused: this collector can only write to '{self._scope}', "
+                f"not '{args.to_memory}'."
+            )
         outcome = self._db.memories.move(
             args.key, args.from_memory, args.to_memory, author=self._author
         )
@@ -729,65 +792,62 @@ def build_memory_tools(
 ) -> list[Tool]:
     """Construct the memory tool surface for an agent.
 
-    Each agent calls this with its own identity as ``agent_name``; that
-    value is baked into every tool that needs to attribute writes
-    (CollectionWrite, CollectionUpdate, CollectionMove, LogAppend) and
-    every tool that maintains per-agent state (LogReadNext's cursor).
+    Two distinct surfaces, mutually exclusive:
 
-    When ``scope`` is set (collector subagents), the surface narrows
-    to the writes that make sense for an agent bound to a single target
-    collection: metadata tools (create / archive), ``collection_move``
-    (multi-collection), and ``log_append`` (logs aren't collections)
-    are excluded entirely, and the remaining write tools
-    (``collection_write`` / ``collection_update`` /
-    ``collection_delete_entry``) reject calls whose ``memory`` argument
-    isn't the scope.  Reads stay unconstrained — a collector may need
-    to read other memories for context.
+    * ``scope=None`` — **chat surface**.  Reads + lifecycle tools
+      (``collection_create``, ``collection_update`` for metadata,
+      ``collection_archive`` / ``collection_unarchive``, ``log_create``).
+      Chat owns the *shape* of memory.  No entry-mutation tools at all
+      (writes / updates / deletes / moves of entries, log appends) —
+      those belong to collectors.
 
-    ``read_latest`` and ``read_similar`` are shape-agnostic — they work
-    for both collections and logs.  ``read_all`` was removed because
-    returning every entry of a memory can dump thousands of rows into
-    the model's context (e.g. the ``knowledge`` collection has 1,000+
-    entries) — pagination via ``read_latest(memory, k=N)`` is safer.
+    * ``scope=X`` — **collector surface** for a collector bound to
+      collection ``X``.  Reads (unrestricted — a collector may pull
+      context from other memories) + entry mutations pinned to ``X``
+      (``collection_write`` / ``update_entry`` /
+      ``collection_delete_entry``, plus ``collection_move`` when
+      ``to_memory == X``) + ``log_append`` (logs are append-only inputs;
+      not the scope constraint) + ``send_message`` (added by
+      ``BackgroundAgent.get_tools`` when channel is wired).  Collectors
+      own the *contents* of their bound collection.
+
+    Reads are shape-agnostic (``read_latest`` / ``read_similar``); the
+    parallel ``collection_*`` / ``log_*`` versions were merged earlier
+    since they share the same access-layer call.  ``read_all`` was
+    removed — pagination via ``read_latest(memory, k=N)`` is always
+    safer than dumping a 1,000-entry collection into the prompt.
 
     ``DoneTool`` is intentionally not in this surface — it's a
-    background-agent terminator and gets added in
-    ``BackgroundAgent.get_tools()`` alongside ``send_message``.  Chat
-    replies via final text and must not have ``done`` available, or the
-    model may call it instead of producing a reply.
+    background-agent terminator added in ``BackgroundAgent.get_tools``
+    alongside ``send_message``.  Chat replies via final text and must
+    not have ``done`` available, or the model may call it instead of
+    producing a reply.
     """
     reads: list[Tool] = [
-        # Reads (shape-agnostic)
         ReadLatestTool(db),
         ReadSimilarTool(db, llm_client),
-        # Collection-specific reads
         CollectionGetTool(db),
         CollectionReadRandomTool(db),
         CollectionKeysTool(db),
-        # Log-specific reads
         LogReadRecentTool(db),
         LogReadNextTool(db, agent_name),
-        # Introspection
         ExistsTool(db, llm_client),
     ]
     if scope is not None:
+        # Collector: reads + entry mutations on `scope` + log_append
         return reads + [
             CollectionWriteTool(db, llm_client, agent_name, scope=scope),
-            CollectionUpdateTool(db, agent_name, scope=scope),
+            UpdateEntryTool(db, agent_name, scope=scope),
             CollectionDeleteEntryTool(db, scope=scope),
+            CollectionMoveTool(db, agent_name, scope=scope),
+            LogAppendTool(db, llm_client, agent_name),
         ]
+    # Chat: reads + lifecycle, no entry mutations
     return [
-        # Metadata
         CollectionCreateTool(db),
-        LogCreateTool(db),
+        CollectionUpdateTool(db),
         CollectionArchiveTool(db),
         CollectionUnarchiveTool(db),
+        LogCreateTool(db),
         *reads,
-        # Collection writes
-        CollectionWriteTool(db, llm_client, agent_name),
-        CollectionUpdateTool(db, agent_name),
-        CollectionMoveTool(db, agent_name),
-        CollectionDeleteEntryTool(db),
-        # Log writes
-        LogAppendTool(db, llm_client, agent_name),
     ]

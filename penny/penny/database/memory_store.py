@@ -169,6 +169,7 @@ class MemoryStore:
         recall: RecallMode,
         archived: bool = False,
         extraction_prompt: str | None = None,
+        collector_interval_seconds: int | None = None,
     ) -> Memory:
         return self._create_memory(
             name,
@@ -177,6 +178,7 @@ class MemoryStore:
             recall,
             archived,
             extraction_prompt=extraction_prompt,
+            collector_interval_seconds=collector_interval_seconds,
         )
 
     def create_log(
@@ -194,6 +196,7 @@ class MemoryStore:
         archived: bool,
         *,
         extraction_prompt: str | None = None,
+        collector_interval_seconds: int | None = None,
     ) -> Memory:
         with self._session() as session:
             memory = Memory(
@@ -203,6 +206,7 @@ class MemoryStore:
                 recall=recall.value,
                 archived=archived,
                 extraction_prompt=extraction_prompt,
+                collector_interval_seconds=collector_interval_seconds,
                 created_at=datetime.now(UTC),
             )
             session.add(memory)
@@ -231,6 +235,48 @@ class MemoryStore:
             if memory is None:
                 raise MemoryNotFoundError(name)
             memory.archived = archived
+            session.add(memory)
+            session.commit()
+
+    def update_collection_metadata(
+        self,
+        name: str,
+        *,
+        description: str | None = None,
+        recall: RecallMode | None = None,
+        extraction_prompt: str | None = None,
+        collector_interval_seconds: int | None = None,
+    ) -> Memory:
+        """Update fields on an existing collection.  Only set fields are applied."""
+        self._require_type(name, MemoryType.COLLECTION)
+        with self._session() as session:
+            memory = session.get(Memory, name)
+            if memory is None:
+                raise MemoryNotFoundError(name)
+            if description is not None:
+                memory.description = description
+            if recall is not None:
+                memory.recall = recall.value
+            if extraction_prompt is not None:
+                memory.extraction_prompt = extraction_prompt
+            if collector_interval_seconds is not None:
+                memory.collector_interval_seconds = collector_interval_seconds
+            session.add(memory)
+            session.commit()
+            session.refresh(memory)
+            return memory
+
+    def mark_collected(self, name: str) -> None:
+        """Stamp ``last_collected_at = now`` after a dispatcher cycle.
+
+        Called whether the collector did real work or just exited via
+        ``done()`` — what matters for cadence is that the *check* happened.
+        """
+        with self._session() as session:
+            memory = session.get(Memory, name)
+            if memory is None:
+                raise MemoryNotFoundError(name)
+            memory.last_collected_at = datetime.now(UTC)
             session.add(memory)
             session.commit()
 

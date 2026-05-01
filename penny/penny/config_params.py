@@ -156,32 +156,16 @@ ConfigParam(
 )
 
 ConfigParam(
-    key="NOTIFY_INTERVAL",
-    description="Seconds between notify-agent cycles (proactive outreach)",
-    type=float,
-    default=300.0,
-    validator=_validate_positive_float,
-    group=GROUP_BACKGROUND,
-)
-
-ConfigParam(
-    key="THINKING_INTERVAL",
-    description="Seconds between thinking-agent cycles (autonomous inner monologue)",
-    type=float,
-    default=1200.0,
-    validator=_validate_positive_float,
-    group=GROUP_BACKGROUND,
-)
-
-ConfigParam(
-    key="COLLECTOR_INTERVAL",
+    key="COLLECTOR_TICK_INTERVAL",
     description=(
-        "Seconds between collector cycles.  One collector runs per collection "
-        "whose Memory.extraction_prompt is non-null; this interval controls "
-        "the cadence for every collector instance.  Idle-gated."
+        "Seconds between Collector dispatcher ticks (idle-gated).  Each tick "
+        "the dispatcher checks which collection is most overdue based on its "
+        "per-row collector_interval_seconds and runs that one.  Should be "
+        "smaller than the smallest per-collection interval — otherwise that "
+        "collection waits up to TICK_INTERVAL past its readiness."
     ),
     type=float,
-    default=300.0,
+    default=30.0,
     validator=_validate_positive_float,
     group=GROUP_BACKGROUND,
 )

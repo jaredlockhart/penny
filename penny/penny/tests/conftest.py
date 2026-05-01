@@ -45,9 +45,7 @@ DEFAULT_TEST_RUNTIME_OVERRIDES: dict[str, int | float] = {
     "IDLE_SECONDS": 99999.0,
     # Bump every background-agent interval past any test timeout so the
     # scheduler never fires them mid-test.
-    "NOTIFY_INTERVAL": 99999.0,
-    "THINKING_INTERVAL": 99999.0,
-    "COLLECTOR_INTERVAL": 99999.0,
+    "COLLECTOR_TICK_INTERVAL": 99999.0,
 }
 
 
@@ -197,7 +195,7 @@ def running_penny(signal_server) -> Callable[[Config], AbstractAsyncContextManag
                 )
 
             penny.chat_agent._browse_provider = mock_browse
-            penny.thinking_agent._browse_provider = mock_browse
+            penny.collector._browse_provider = mock_browse
 
             # Wrap the chat agent factory so /test command agents also
             # get the mock browse provider

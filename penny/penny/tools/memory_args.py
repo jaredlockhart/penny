@@ -37,6 +37,20 @@ class MemoryNameArgs(BaseModel):
     memory: str
 
 
+class CollectionUpdateArgs(BaseModel):
+    """Update a collection's metadata.
+
+    All fields after ``name`` are optional — only the ones explicitly set
+    are applied.  ``recall`` is validated in the store layer.
+    """
+
+    name: str
+    description: str | None = None
+    recall: str | None = None
+    extraction_prompt: str | None = None
+    collector_interval_seconds: int | None = None
+
+
 # ── Collection reads ────────────────────────────────────────────────────────
 
 
@@ -109,7 +123,7 @@ class CollectionWriteArgs(BaseModel):
     entries: list[CollectionEntrySpec] = Field(min_length=1)
 
 
-class CollectionUpdateArgs(BaseModel):
+class UpdateEntryArgs(BaseModel):
     """Replace content for an existing key in a collection."""
 
     memory: str

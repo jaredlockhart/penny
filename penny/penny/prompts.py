@@ -155,78 +155,15 @@ Examples:
         "The user sent an image. Respond naturally to the image description provided."
     )
 
-    # Inner monologue prompts
-    THINKING_SYSTEM_PROMPT = (
-        "You are Penny's thinking agent. Once per run, you find ONE specific, "
-        "concrete thing worth knowing about — something the user would enjoy "
-        "hearing — and store it as a thought.\n\n"
-        "Sequence:\n"
-        '1. collection_read_random("likes", 1) — pick one seed topic from '
-        "the user's likes.\n"
-        '2. read_latest("dislikes") — see what the user doesn\'t like.\n'
-        "3. browse — search the web and read one or two pages to find "
-        "something timely and interesting grounded in the seed topic.\n"
-        "4. Draft ONE thought connecting what you found to the seed.  Write "
-        "it conversationally, like you're texting a friend; include specific "
-        "details (names, specs, dates), at least one source URL, and finish "
-        "with an emoji.  Keep it under 300 words.\n"
-        "5. Check the draft against the dislikes list.  If it conflicts with "
-        "anything the user dislikes, call done() without writing.\n"
-        '6. exists(["unnotified-thoughts", "notified-thoughts"], key, '
-        "content) — if a similar thought already exists, call done() without "
-        "writing.\n"
-        '7. collection_write("unnotified-thoughts", entries=[{key: short '
-        "topic name (3-10 words), content: the thought you drafted}]).\n"
-        "8. done().\n\n"
-        "The interesting stuff is ON the pages, not in search snippets — "
-        "browse the URLs you find rather than searching forever.  If nothing "
-        "noteworthy comes up, call done() without writing; quiet cycles are "
-        "normal.  Troubleshooting guides, bug workarounds, and support "
-        "articles are NOT interesting discoveries."
-    )
-
-    # Thinking seed prompts
+    # Inner monologue + notify outreach prompts moved to memory rows
+    # (extraction_prompt) under the unified Collector pattern — see
+    # migration 0033.  THINKING_SEED + THINKING_FREE are kept for the
+    # /seed slash command if it still injects them; otherwise they're
+    # unused and can be removed.
     THINKING_SEED = (
         "Find out about {seed} — ONE specific, concrete thing worth knowing about. "
         "Not a broad overview — one interesting detail, development, or discovery. "
         "Then dig deeper into that one thing: who, what, where, when, and why it matters."
-    )
-
-    # Free-thinking prompt (no seed topic, no past context — just explore)
-    THINKING_FREE = (
-        "Find something that catches your attention. "
-        "Pick ONE interesting thing, then dig deeper into it."
-    )
-
-    # Notify system prompt — drives the model-driven notify cycle.
-    NOTIFY_SYSTEM_PROMPT = (
-        "You are Penny's notify agent. Once per cycle, you reach out to "
-        "your friend the user with ONE thought worth sharing.\n\n"
-        "Sequence:\n"
-        '1. read_latest("unnotified-thoughts") — list every '
-        "fresh thought you have to share.\n"
-        '2. log_read_recent("penny-messages", window_seconds=86400) — '
-        "see what you've already said today; don't repeat yourself.\n"
-        "3. Pick ONE unnotified thought you haven't already shared and "
-        "still find interesting.\n"
-        "4. send_message(content=<your message>) — deliver the thought to "
-        "the user.  Write it conversationally, like you're texting a "
-        "friend; open with a casual greeting, then write out every "
-        "detail in full.  No ellipses ('...', '…'), no 'etc.', no 'and "
-        "more', no teaser phrasing — finish every sentence and bullet "
-        "you start.  The user only sees what you put in `content`; "
-        "nothing else is attached.  Include the specific details from "
-        "the thought (names, specs, dates), at least one source URL "
-        "from the thought, and finish with an emoji.\n"
-        '5. ONLY IF send_message returned "Message sent.": '
-        'collection_move("unnotified-thoughts", "notified-thoughts", '
-        "key=<chosen key>) — mark it as shared.  If send_message returned "
-        "an error or refusal, DO NOT move the thought — leave it in "
-        "unnotified-thoughts so a later cycle can retry.\n"
-        "6. done().\n\n"
-        "Every fact and URL in your message must come from the thought "
-        "you read — do not invent information.  If no unnotified thought "
-        "is worth sharing, call done() without sending anything."
     )
 
     # Nudge prompts (injected when model returns empty content)

@@ -22,7 +22,6 @@ from penny.tools.memory_tools import (
     CollectionMoveTool,
     CollectionReadRandomTool,
     CollectionUnarchiveTool,
-    CollectionUpdateTool,
     CollectionWriteTool,
     DoneTool,
     ExistsTool,
@@ -32,6 +31,7 @@ from penny.tools.memory_tools import (
     LogReadRecentTool,
     ReadLatestTool,
     ReadSimilarTool,
+    UpdateEntryTool,
     build_memory_tools,
 )
 
@@ -207,7 +207,7 @@ class TestCollectionMutations:
         await CollectionWriteTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="likes", entries=[{"key": "k", "content": "old"}]
         )
-        result = await CollectionUpdateTool(db, author="test").execute(
+        result = await UpdateEntryTool(db, author="test").execute(
             memory="likes", key="k", content="new"
         )
         assert "Updated 'k' in 'likes'" in result
@@ -218,7 +218,7 @@ class TestCollectionMutations:
     async def test_update_missing_reports_not_found(self, tmp_path):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
-        result = await CollectionUpdateTool(db, author="test").execute(
+        result = await UpdateEntryTool(db, author="test").execute(
             memory="likes", key="k", content="new"
         )
         assert "not found" in result
@@ -406,45 +406,39 @@ class TestAuthorAttribution:
 
 
 class TestFactory:
-    def test_build_memory_tools_registers_every_tool(self, tmp_path, mock_llm):
+    """Two distinct surfaces, mutually exclusive: chat (lifecycle + reads, no
+    entry mutations) vs collector (reads + entry mutations pinned to scope).
+    """
+
+    def test_chat_surface_has_lifecycle_and_reads_only(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        tools = build_memory_tools(db, _make_llm_client(mock_llm), agent_name="test")
+        tools = build_memory_tools(db, _make_llm_client(mock_llm), agent_name="chat")
         names = {tool.name for tool in tools}
-        expected = {
+        assert names == {
+            # Lifecycle (chat owns the shape of memory)
             "collection_create",
-            "collection_get",
-            "collection_read_random",
-            "collection_keys",
-            "collection_write",
             "collection_update",
-            "collection_move",
-            "collection_delete_entry",
             "collection_archive",
             "collection_unarchive",
             "log_create",
+            # Reads
+            "collection_get",
+            "collection_read_random",
+            "collection_keys",
             "log_read_recent",
             "log_read_next",
-            "log_append",
             "read_latest",
             "read_similar",
             "exists",
         }
-        assert names == expected
 
-
-class TestScopedFactory:
-    """When ``scope`` is set the surface narrows to a collector's needs:
-    metadata creation/archive, ``collection_move`` (multi-collection), and
-    ``log_append`` (logs are inputs, not outputs) are excluded entirely.
-    """
-
-    def test_scoped_factory_drops_metadata_and_unscoped_writes(self, tmp_path, mock_llm):
+    def test_collector_surface_has_scoped_writes_and_reads(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         tools = build_memory_tools(
-            db, _make_llm_client(mock_llm), agent_name="collector:likes", scope="likes"
+            db, _make_llm_client(mock_llm), agent_name="collector", scope="likes"
         )
         names = {tool.name for tool in tools}
-        # Reads + the three scoped writes — nothing else
+        # Reads + entry mutations (pinned to scope) + log_append; no lifecycle
         assert names == {
             "collection_get",
             "collection_read_random",
@@ -455,9 +449,18 @@ class TestScopedFactory:
             "read_similar",
             "exists",
             "collection_write",
-            "collection_update",
+            "update_entry",
             "collection_delete_entry",
+            "collection_move",
+            "log_append",
         }
+
+
+class TestScopedFactory:
+    """Scope binds a collector to one collection.  Writes to other collections
+    get a clean refusal at the tool layer, so a confused or jailbroken
+    collector can't trash unrelated memories.
+    """
 
     @pytest.mark.asyncio
     async def test_scoped_write_rejects_other_collection(self, tmp_path, mock_llm):
@@ -490,11 +493,35 @@ class TestScopedFactory:
         assert db.memories.get_entry("likes", "k")[0].content == "v"
 
     @pytest.mark.asyncio
-    async def test_scoped_update_rejects_other_collection(self, tmp_path):
+    async def test_scoped_update_entry_rejects_other_collection(self, tmp_path):
         db = _make_db(tmp_path)
-        update = CollectionUpdateTool(db, author="collector:likes", scope="likes")
+        update = UpdateEntryTool(db, author="collector:likes", scope="likes")
         result = await update.execute(memory="dislikes", key="k", content="v")
         assert "Refused" in result
+
+    @pytest.mark.asyncio
+    async def test_scoped_move_allows_into_target(self, tmp_path, mock_llm):
+        """Move's destination is the entry write — if to_memory == scope,
+        the move is in-bounds even though from_memory is a different memory.
+        """
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="src", description="x", recall="off")
+        await CollectionCreateTool(db).execute(name="dst", description="x", recall="off")
+        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="t").execute(
+            memory="src", entries=[{"key": "k", "content": "v"}]
+        )
+
+        move = CollectionMoveTool(db, author="collector:dst", scope="dst")
+        result = await move.execute(key="k", from_memory="src", to_memory="dst")
+        assert "Moved 'k'" in result
+        assert db.memories.get_entry("dst", "k")[0].content == "v"
+
+    @pytest.mark.asyncio
+    async def test_scoped_move_rejects_outbound(self, tmp_path):
+        db = _make_db(tmp_path)
+        move = CollectionMoveTool(db, author="collector:src", scope="src")
+        result = await move.execute(key="k", from_memory="src", to_memory="dst")
+        assert "Refused" in result and "src" in result and "dst" in result
 
     @pytest.mark.asyncio
     async def test_scoped_delete_rejects_other_collection(self, tmp_path):

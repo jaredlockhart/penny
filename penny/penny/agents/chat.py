@@ -20,29 +20,9 @@ from penny.database.models import Memory, MemoryEntry
 from penny.llm.models import LlmError
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
-from penny.tools.base import Tool
 from penny.tools.browse import BrowseTool
 
 logger = logging.getLogger(__name__)
-
-
-# Entry-mutation tools removed from chat's surface.  Curating entries
-# (write / update / delete / move / log_append) is owned by the
-# per-collection collector subagents — chat literally can't fabricate
-# an entry write because it has no write tool.  This kills the
-# "I added that to your memory" failure mode where chat narrates a
-# write that never happened.  ``collection_create``, ``log_create``,
-# and the archive tools stay — chat manages collection lifecycle so
-# the user can intend a new memory in conversation.
-_CHAT_DISALLOWED_TOOLS = frozenset(
-    {
-        "collection_write",
-        "collection_update",
-        "collection_move",
-        "collection_delete_entry",
-        "log_append",
-    }
-)
 
 
 class ChatAgent(Agent):
@@ -71,19 +51,6 @@ class ChatAgent(Agent):
         # agents inherit the True default to keep tools available so they
         # can call ``done`` / ``send_message`` on the final step.
         self._keep_tools_on_final_step = False
-
-    def get_tools(self) -> list[Tool]:
-        """Chat tool surface — reads + collection lifecycle, no entry mutations.
-
-        Filters the base ``Agent.get_tools()`` surface to remove entry
-        writes.  Entry curation (insert / update / delete / move) is
-        owned by per-collection collector subagents that read the
-        conversation logs and write back asynchronously.  Chat keeps
-        collection-lifecycle tools (``collection_create``,
-        ``log_create``, archive / unarchive) so the user can express
-        intent for a new memory mid-conversation.
-        """
-        return [t for t in super().get_tools() if t.name not in _CHAT_DISALLOWED_TOOLS]
 
     # ── Message handling ───────────────────────────────────────────────
 

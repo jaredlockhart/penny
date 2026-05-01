@@ -1001,15 +1001,18 @@ async def test_chat_tool_surface_excludes_entry_mutations(
     async with running_penny(test_config) as penny:
         names = {tool.name for tool in penny.chat_agent.get_tools()}
 
-        # Forbidden writes
+        # Forbidden entry mutations — those are collector-only
         assert "collection_write" not in names
-        assert "collection_update" not in names
+        assert "update_entry" not in names
         assert "collection_move" not in names
         assert "collection_delete_entry" not in names
         assert "log_append" not in names
 
-        # Lifecycle stays so the user can intend new memories mid-conversation
+        # Lifecycle stays so the user can create / modify / archive collections
+        # mid-conversation.  ``collection_update`` here is the metadata tool,
+        # not the entry-content tool (that was renamed to ``update_entry``).
         assert "collection_create" in names
+        assert "collection_update" in names
         assert "log_create" in names
         assert "collection_archive" in names
         assert "collection_unarchive" in names
