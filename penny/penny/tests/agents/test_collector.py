@@ -299,3 +299,63 @@ def test_log_run_handles_no_done_call(test_config, tmp_path):
     content = db.memories.read_latest("collector-runs")[0].content
     assert "❌" in content
     assert "max steps" in content.lower() or "no done" in content.lower()
+
+
+# ── Promptlog run-outcome tagging ────────────────────────────────────────
+
+
+def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
+    """The cycle's done(success, summary) and the bound target name land on
+    the matching promptlog row so the addon's prompts tab can render the
+    green/red collector-result tag."""
+    collector, db = _make_collector(test_config, tmp_path)
+    target = Memory(
+        name="prague-trip",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+    db.messages.log_prompt(
+        model="test",
+        messages=[],
+        response={},
+        agent_name="collector",
+        run_id="run-xyz",
+    )
+    collector._last_run_id = "run-xyz"
+    collector._last_run_response = ControllerResponse(
+        answer="",
+        tool_calls=[
+            ToolCallRecord(
+                tool="done",
+                arguments={"success": True, "summary": "wrote 2 new spots"},
+            ),
+        ],
+    )
+
+    collector._tag_promptlog_run(target)
+
+    runs = db.messages.get_prompt_log_runs()
+    assert runs[0]["run_success"] is True
+    assert runs[0]["run_reason"] == "wrote 2 new spots"
+    assert runs[0]["run_target"] == "prague-trip"
+
+
+def test_tag_promptlog_run_skips_when_no_run_id(test_config, tmp_path):
+    """No-op if the cycle never produced a run_id (e.g. _next_ready_collection
+    returned None and super().execute() was never reached)."""
+    collector, db = _make_collector(test_config, tmp_path)
+    target = Memory(
+        name="prague-trip",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+    collector._last_run_id = None
+    collector._last_run_response = None
+
+    collector._tag_promptlog_run(target)  # should not raise

@@ -28,7 +28,7 @@ class MessageStore:
     def __init__(self, engine):
         self.engine = engine
         self._on_prompt_logged: Callable[[dict], None] | None = None
-        self._on_run_outcome_set: Callable[[str, str], None] | None = None
+        self._on_run_outcome_set: Callable[[str, bool, str, str | None], None] | None = None
 
     def _session(self) -> Session:
         return Session(self.engine)
@@ -449,8 +449,17 @@ class MessageStore:
                 select(func.count()).select_from(MessageLog).where(MessageLog.id.notin_(has_child))
             ).one()
 
-    def set_run_outcome(self, run_id: str, outcome: str) -> None:
-        """Set the run_outcome on the last prompt log for a given run_id."""
+    def set_run_outcome(
+        self,
+        run_id: str,
+        success: bool,
+        reason: str,
+        target: str | None = None,
+    ) -> None:
+        """Set the run outcome (success / reason / target) on the last prompt
+        log row for ``run_id``.  Drives the green/red tag on the prompts
+        tab.  ``target`` is the collection name for collector cycles, None
+        for other agents."""
         try:
             with self._session() as session:
                 last_prompt = session.exec(
@@ -460,13 +469,15 @@ class MessageStore:
                     .limit(1)
                 ).first()
                 if last_prompt:
-                    last_prompt.run_outcome = outcome
+                    last_prompt.run_success = success
+                    last_prompt.run_reason = reason
+                    last_prompt.run_target = target
                     session.add(last_prompt)
                     session.commit()
                     if self._on_run_outcome_set:
-                        self._on_run_outcome_set(run_id, outcome)
+                        self._on_run_outcome_set(run_id, success, reason, target)
         except Exception as e:
-            logger.error("Failed to set run_outcome for %s: %s", run_id, e)
+            logger.error("Failed to set run outcome for %s: %s", run_id, e)
 
     def get_prompt_log_agent_names(self) -> list[str]:
         """Get distinct agent names from prompt logs."""
@@ -554,11 +565,15 @@ class MessageStore:
                 }
             )
 
-        # run_outcome is set on the last prompt that has one
-        run_outcome = None
+        # Run outcome is set on the last prompt that has one
+        run_success: bool | None = None
+        run_reason: str | None = None
+        run_target: str | None = None
         for p in reversed(prompts):
-            if p.run_outcome:
-                run_outcome = p.run_outcome
+            if p.run_success is not None or p.run_reason:
+                run_success = p.run_success
+                run_reason = p.run_reason
+                run_target = p.run_target
                 break
 
         return {
@@ -570,6 +585,8 @@ class MessageStore:
             "total_duration_ms": total_duration_ms,
             "total_input_tokens": total_input_tokens,
             "total_output_tokens": total_output_tokens,
-            "run_outcome": run_outcome,
+            "run_success": run_success,
+            "run_reason": run_reason,
+            "run_target": run_target,
             "prompts": serialized_prompts,
         }

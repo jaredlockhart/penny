@@ -215,6 +215,9 @@ class Agent:
         # can inspect post-cycle state (e.g. Collector reads done()'s args
         # to log the cycle outcome).  None until the first cycle runs.
         self._last_run_response: ControllerResponse | None = None
+        # Last run_id from ``_run_cycle`` — Collector uses it to attach the
+        # cycle's success/reason/target onto the matching promptlog row.
+        self._last_run_id: str | None = None
 
         if system_prompt is not None:
             self.system_prompt = system_prompt
@@ -292,6 +295,7 @@ class Agent:
             prompt_type=self.name,
         )
         self._last_run_response = response
+        self._last_run_id = run_id
         success = any(record.tool == self.terminator_tool for record in response.tool_calls)
 
         if log_read_next is not None:

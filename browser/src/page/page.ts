@@ -159,7 +159,12 @@ function handleMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.PromptLogUpdate) {
     handlePromptUpdate(message.prompt);
   } else if (message.type === RuntimeMessageType.RunOutcomeUpdate) {
-    handleRunOutcome(message.run_id, message.outcome);
+    handleRunOutcome(
+      message.run_id,
+      message.success,
+      message.reason,
+      message.target,
+    );
   } else if (message.type === RuntimeMessageType.SchedulesResponse) {
     renderSchedules(message.schedules, message.error);
   } else if (message.type === RuntimeMessageType.PreferencesResponse) {
@@ -452,7 +457,9 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
     total_duration_ms: prompt.duration_ms,
     total_input_tokens: prompt.input_tokens,
     total_output_tokens: prompt.output_tokens,
-    run_outcome: null,
+    run_success: null,
+    run_reason: null,
+    run_target: null,
     prompts: [prompt],
   };
   allRuns.unshift(run);
@@ -463,17 +470,24 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
   markRunActive(run.run_id, row);
 }
 
-function handleRunOutcome(runId: string, outcome: string): void {
+function handleRunOutcome(
+  runId: string,
+  success: boolean,
+  reason: string,
+  target: string | null,
+): void {
   const run = allRuns.find((r) => r.run_id === runId);
   if (!run) return;
-  run.run_outcome = outcome;
+  run.run_success = success;
+  run.run_reason = reason;
+  run.run_target = target;
 
   const row = runElements.get(runId);
   if (!row) return;
 
   const summary = row.querySelector(".run-summary");
   if (summary) {
-    summary.appendChild(createRunOutcome(outcome));
+    summary.appendChild(createRunOutcome(success, reason, target));
   }
 
   // Dismiss spinner — run is complete
@@ -538,8 +552,10 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   const header = createRunHeader(run);
   summary.appendChild(header);
 
-  if (run.run_outcome) {
-    summary.appendChild(createRunOutcome(run.run_outcome));
+  if (run.run_success !== null || run.run_reason) {
+    summary.appendChild(
+      createRunOutcome(run.run_success, run.run_reason ?? "", run.run_target),
+    );
   }
 
   row.appendChild(summary);
@@ -558,12 +574,16 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   return row;
 }
 
-function createRunOutcome(outcome: string): HTMLElement {
+function createRunOutcome(
+  success: boolean | null,
+  reason: string,
+  target: string | null,
+): HTMLElement {
   const el = document.createElement("div");
-  el.className = outcome.startsWith("Stored")
+  el.className = success
     ? "run-outcome run-outcome-stored"
     : "run-outcome run-outcome-discarded";
-  el.textContent = outcome;
+  el.textContent = target ? `[${target}] ${reason}` : reason;
   return el;
 }
 

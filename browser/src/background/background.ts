@@ -293,7 +293,9 @@ function connect(): void {
       broadcastToSidebar({
         type: RuntimeMessageType.RunOutcomeUpdate,
         run_id: data.run_id,
-        outcome: data.outcome,
+        success: data.success,
+        reason: data.reason,
+        target: data.target,
       });
     }
   });

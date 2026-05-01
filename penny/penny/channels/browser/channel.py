@@ -48,7 +48,6 @@ from penny.channels.browser.models import (
     BROWSER_RESP_TYPE_PREFERENCES,
     BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE,
     BROWSER_RESP_TYPE_PROMPT_LOGS,
-    BROWSER_RESP_TYPE_RUN_OUTCOME,
     BROWSER_RESP_TYPE_SCHEDULES,
     BROWSER_RESP_TYPE_STATUS,
     BROWSER_RESP_TYPE_THOUGHTS,
@@ -68,6 +67,7 @@ from penny.channels.browser.models import (
     BrowserPreferencesRequest,
     BrowserPreferenceThoughtsRequest,
     BrowserRegister,
+    BrowserRunOutcomeUpdate,
     BrowserScheduleAdd,
     BrowserScheduleDelete,
     BrowserScheduleUpdate,
@@ -144,11 +144,14 @@ class BrowserChannel(MessageChannel):
         for conn in self._connections.values():
             asyncio.ensure_future(conn.ws.send(message))
 
-    def _on_run_outcome_set(self, run_id: str, outcome: str) -> None:
+    def _on_run_outcome_set(
+        self, run_id: str, success: bool, reason: str, target: str | None
+    ) -> None:
         """Callback fired when a run outcome is set — broadcast to browsers."""
-        message = json.dumps(
-            {"type": BROWSER_RESP_TYPE_RUN_OUTCOME, "run_id": run_id, "outcome": outcome}
+        payload = BrowserRunOutcomeUpdate(
+            run_id=run_id, success=success, reason=reason, target=target
         )
+        message = payload.model_dump_json()
         for conn in self._connections.values():
             asyncio.ensure_future(conn.ws.send(message))
 

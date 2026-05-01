@@ -259,3 +259,13 @@ class BrowserPreferenceThoughtsRequest(BaseModel):
 
     type: str
     preference_id: int
+
+
+class BrowserRunOutcomeUpdate(BaseModel):
+    """Push notification: a promptlog run's outcome (success/reason/target) was set."""
+
+    type: str = BROWSER_RESP_TYPE_RUN_OUTCOME
+    run_id: str
+    success: bool
+    reason: str
+    target: str | None = None
