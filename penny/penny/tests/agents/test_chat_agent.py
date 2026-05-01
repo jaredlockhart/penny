@@ -6,6 +6,7 @@ Test organization:
 3. Error / edge cases — XML leak regression, short response warning, delivery failure
 4. Memory inventory (rendered for every agent's prompt)
 5. Ambient recall (chat-only — each recall mode + self-match exclusion)
+6. Tool surface (chat-only — entry-mutation tools removed)
 """
 
 import hashlib
@@ -192,6 +193,20 @@ entries verbatim, and your memory tools (`read_latest`, \
 Only browse if memory \
 doesn't have what the user needs, or for current/external info \
 (news, products, prices, fresh facts).
+
+When the user wants to start tracking a new topic — a trip, project, \
+list of recipes, anything — call ``collection_create`` with a clear \
+``extraction_prompt``. The extraction_prompt is the brain of a \
+background agent that fills the collection from chat and browse \
+activity automatically; without it the collection stays empty. \
+You do NOT curate entries yourself — there's no write tool on your \
+surface. Just create the collection, mention it in your reply \
+("I'll keep a list of Prague spots for you"), and continue the \
+conversation; the collector does the rest in the background. A \
+good extraction_prompt names what to extract, which logs to read \
+(usually penny-messages and browse-results for research topics), \
+and how to handle corrections (update or delete stale entries when \
+the user flags them).
 
 When a 'Current Browser Page' section appears above, the user is browsing \
 that page right now. If they say 'this page', 'this thread', 'this article', \
@@ -966,3 +981,41 @@ async def test_recall_archived_memory_skipped(signal_server, mock_llm, test_conf
         result = await penny.chat_agent._recall_section(current_message=None)
 
         assert result is None or "stale content" not in result
+
+
+# ── 6. Tool surface ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chat_tool_surface_excludes_entry_mutations(
+    signal_server, mock_llm, test_config, running_penny
+):
+    """Chat must not have any tool that mutates collection entries.
+
+    Entry curation (insert / update / delete / move) is owned by the
+    per-collection collector subagents.  Stripping these from chat
+    structurally prevents the "I added that to your memory" failure
+    mode where chat narrates a write that never happened — chat
+    literally has no write tool to fabricate a write with.
+    """
+    async with running_penny(test_config) as penny:
+        names = {tool.name for tool in penny.chat_agent.get_tools()}
+
+        # Forbidden writes
+        assert "collection_write" not in names
+        assert "collection_update" not in names
+        assert "collection_move" not in names
+        assert "collection_delete_entry" not in names
+        assert "log_append" not in names
+
+        # Lifecycle stays so the user can intend new memories mid-conversation
+        assert "collection_create" in names
+        assert "log_create" in names
+        assert "collection_archive" in names
+        assert "collection_unarchive" in names
+
+        # Reads stay — chat needs them for "tell me what's saved" style queries
+        assert "read_latest" in names
+        assert "read_similar" in names
+        assert "collection_get" in names
+        assert "collection_keys" in names

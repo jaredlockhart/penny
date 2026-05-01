@@ -89,7 +89,10 @@ class CollectionCreateTool(Tool):
     description = (
         "Create a new keyed collection. Collections store entries by key with "
         "similarity-based dedup on write. Provide a short description and a "
-        f"recall mode ({_RECALL_MODES})."
+        f"recall mode ({_RECALL_MODES}). Always provide an ``extraction_prompt`` "
+        "describing what the per-collection collector subagent should pull into "
+        "this collection from the conversation, browse logs, and other inputs — "
+        "the new collection won't auto-populate without it."
     )
     parameters = {
         "type": "object",
@@ -104,6 +107,14 @@ class CollectionCreateTool(Tool):
                 "enum": [m.value for m in RecallMode],
                 "description": "How the chat agent surfaces this collection in ambient context",
             },
+            "extraction_prompt": {
+                "type": "string",
+                "description": (
+                    "Instructions for the per-collection collector subagent. "
+                    "Should describe what to extract, from which logs, and how "
+                    "to handle corrections/removals."
+                ),
+            },
         },
         "required": ["name", "description", "recall"],
     }
@@ -113,7 +124,12 @@ class CollectionCreateTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = CreateMemoryArgs(**kwargs)
-        self._db.memories.create_collection(args.name, args.description, RecallMode(args.recall))
+        self._db.memories.create_collection(
+            args.name,
+            args.description,
+            RecallMode(args.recall),
+            extraction_prompt=args.extraction_prompt,
+        )
         return f"Created collection '{args.name}'."
 
 

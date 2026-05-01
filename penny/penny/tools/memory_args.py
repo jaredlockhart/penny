@@ -14,11 +14,21 @@ from pydantic import BaseModel, Field
 
 
 class CreateMemoryArgs(BaseModel):
-    """Shared shape for ``collection_create`` and ``log_create``."""
+    """Shared shape for ``collection_create`` and ``log_create``.
+
+    ``extraction_prompt`` only applies to collections — it's the body of
+    instructions the per-collection collector subagent will run with on
+    each cycle (read recent log entries, extract structured records,
+    write/update/delete).  Logs ignore it.  Optional at the schema level
+    so migrations and tests can create collections without one; the chat
+    agent's prompt instructs it to always supply one for user-created
+    collections so the new collection gets a collector immediately.
+    """
 
     name: str
     description: str
     recall: str  # "off" | "recent" | "relevant" | "all" — validated in the store layer
+    extraction_prompt: str | None = None
 
 
 class MemoryNameArgs(BaseModel):

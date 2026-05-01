@@ -163,13 +163,26 @@ class MemoryStore:
     # ── Metadata ────────────────────────────────────────────────────────────
 
     def create_collection(
-        self, name: str, description: str, recall: RecallMode, archived: bool = False
+        self,
+        name: str,
+        description: str,
+        recall: RecallMode,
+        archived: bool = False,
+        extraction_prompt: str | None = None,
     ) -> Memory:
-        return self._create_memory(name, MemoryType.COLLECTION, description, recall, archived)
+        return self._create_memory(
+            name,
+            MemoryType.COLLECTION,
+            description,
+            recall,
+            archived,
+            extraction_prompt=extraction_prompt,
+        )
 
     def create_log(
         self, name: str, description: str, recall: RecallMode, archived: bool = False
     ) -> Memory:
+        # Logs are inputs, not curated outputs — no extraction_prompt by design.
         return self._create_memory(name, MemoryType.LOG, description, recall, archived)
 
     def _create_memory(
@@ -179,6 +192,8 @@ class MemoryStore:
         description: str,
         recall: RecallMode,
         archived: bool,
+        *,
+        extraction_prompt: str | None = None,
     ) -> Memory:
         with self._session() as session:
             memory = Memory(
@@ -187,6 +202,7 @@ class MemoryStore:
                 description=description,
                 recall=recall.value,
                 archived=archived,
+                extraction_prompt=extraction_prompt,
                 created_at=datetime.now(UTC),
             )
             session.add(memory)
