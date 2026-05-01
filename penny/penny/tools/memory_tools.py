@@ -365,13 +365,24 @@ class CollectionWriteTool(Tool):
         "required": ["memory", "entries"],
     }
 
-    def __init__(self, db: Database, llm_client: LlmClient | None, author: str) -> None:
+    def __init__(
+        self,
+        db: Database,
+        llm_client: LlmClient | None,
+        author: str,
+        scope: str | None = None,
+    ) -> None:
         self._db = db
         self._llm = llm_client
         self._author = author
+        self._scope = scope
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionWriteArgs(**kwargs)
+        if self._scope is not None and args.memory != self._scope:
+            return (
+                f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
+            )
         entries = [await self._build_entry(spec) for spec in args.entries]
         results = self._db.memories.write(args.memory, entries, author=self._author)
         return self._format_results(args.memory, results)
@@ -421,12 +432,17 @@ class CollectionUpdateTool(Tool):
         "required": ["memory", "key", "content"],
     }
 
-    def __init__(self, db: Database, author: str) -> None:
+    def __init__(self, db: Database, author: str, scope: str | None = None) -> None:
         self._db = db
         self._author = author
+        self._scope = scope
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionUpdateArgs(**kwargs)
+        if self._scope is not None and args.memory != self._scope:
+            return (
+                f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
+            )
         outcome = self._db.memories.update(args.memory, args.key, args.content, self._author)
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.memory}'."
@@ -484,11 +500,16 @@ class CollectionDeleteEntryTool(Tool):
         "required": ["memory", "key"],
     }
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, scope: str | None = None) -> None:
         self._db = db
+        self._scope = scope
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionDeleteEntryArgs(**kwargs)
+        if self._scope is not None and args.memory != self._scope:
+            return (
+                f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
+            )
         removed = self._db.memories.delete(args.memory, args.key)
         if removed == 0:
             return f"No entry with key '{args.key}' in '{args.memory}'."
@@ -684,41 +705,42 @@ class DoneTool(Tool):
 # ── Factory ─────────────────────────────────────────────────────────────────
 
 
-def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: str) -> list[Tool]:
-    """Construct the full memory tool surface for an agent.
+def build_memory_tools(
+    db: Database,
+    llm_client: LlmClient | None,
+    agent_name: str,
+    scope: str | None = None,
+) -> list[Tool]:
+    """Construct the memory tool surface for an agent.
 
     Each agent calls this with its own identity as ``agent_name``; that
     value is baked into every tool that needs to attribute writes
     (CollectionWrite, CollectionUpdate, CollectionMove, LogAppend) and
     every tool that maintains per-agent state (LogReadNext's cursor).
 
-    The factory centralizes dependency wiring so individual agents don't
-    have to juggle ``db`` / ``llm_client`` / ``agent_name`` across 17
-    constructors.  The Memory Inventory section in every agent's system
-    prompt covers what ``list_memories`` used to surface, so that tool
-    is no longer registered.  ``DoneTool`` is intentionally not in this surface —
-    it's a background-agent terminator and gets added in
+    When ``scope`` is set (collector subagents), the surface narrows
+    to the writes that make sense for an agent bound to a single target
+    collection: metadata tools (create / archive), ``collection_move``
+    (multi-collection), and ``log_append`` (logs aren't collections)
+    are excluded entirely, and the remaining write tools
+    (``collection_write`` / ``collection_update`` /
+    ``collection_delete_entry``) reject calls whose ``memory`` argument
+    isn't the scope.  Reads stay unconstrained — a collector may need
+    to read other memories for context.
+
+    ``read_latest`` and ``read_similar`` are shape-agnostic — they work
+    for both collections and logs.  ``read_all`` was removed because
+    returning every entry of a memory can dump thousands of rows into
+    the model's context (e.g. the ``knowledge`` collection has 1,000+
+    entries) — pagination via ``read_latest(memory, k=N)`` is safer.
+
+    ``DoneTool`` is intentionally not in this surface — it's a
+    background-agent terminator and gets added in
     ``BackgroundAgent.get_tools()`` alongside ``send_message``.  Chat
     replies via final text and must not have ``done`` available, or the
     model may call it instead of producing a reply.
-
-    ``read_latest`` and ``read_similar`` are shape-agnostic — they work
-    for both collections and logs.  Earlier this surface had parallel
-    ``collection_*`` / ``log_*`` versions of each, but they shared the
-    same underlying ``MemoryStore`` calls and forced the model to
-    disambiguate by memory shape with no functional benefit.
-
-    ``read_all`` was removed because returning every entry of a memory
-    can dump thousands of rows into the model's context (e.g. the
-    ``knowledge`` collection has 1,000+ entries) — pagination via
-    ``read_latest(memory, k=N)`` is always safer.
     """
-    return [
-        # Metadata
-        CollectionCreateTool(db),
-        LogCreateTool(db),
-        CollectionArchiveTool(db),
-        CollectionUnarchiveTool(db),
+    reads: list[Tool] = [
         # Reads (shape-agnostic)
         ReadLatestTool(db),
         ReadSimilarTool(db, llm_client),
@@ -726,16 +748,30 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
         CollectionGetTool(db),
         CollectionReadRandomTool(db),
         CollectionKeysTool(db),
+        # Log-specific reads
+        LogReadRecentTool(db),
+        LogReadNextTool(db, agent_name),
+        # Introspection
+        ExistsTool(db, llm_client),
+    ]
+    if scope is not None:
+        return reads + [
+            CollectionWriteTool(db, llm_client, agent_name, scope=scope),
+            CollectionUpdateTool(db, agent_name, scope=scope),
+            CollectionDeleteEntryTool(db, scope=scope),
+        ]
+    return [
+        # Metadata
+        CollectionCreateTool(db),
+        LogCreateTool(db),
+        CollectionArchiveTool(db),
+        CollectionUnarchiveTool(db),
+        *reads,
         # Collection writes
         CollectionWriteTool(db, llm_client, agent_name),
         CollectionUpdateTool(db, agent_name),
         CollectionMoveTool(db, agent_name),
         CollectionDeleteEntryTool(db),
-        # Log-specific reads
-        LogReadRecentTool(db),
-        LogReadNextTool(db, agent_name),
         # Log writes
         LogAppendTool(db, llm_client, agent_name),
-        # Introspection
-        ExistsTool(db, llm_client),
     ]

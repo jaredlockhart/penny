@@ -2,6 +2,7 @@
 
 from penny.agents.base import Agent
 from penny.agents.chat import ChatAgent
+from penny.agents.collector import CollectorAgent
 from penny.agents.knowledge_extractor import KnowledgeExtractorAgent
 from penny.agents.models import (
     ChatMessage,
@@ -16,6 +17,7 @@ __all__ = [
     "Agent",
     "ChatAgent",
     "ChatMessage",
+    "CollectorAgent",
     "ControllerResponse",
     "KnowledgeExtractorAgent",
     "MessageRole",

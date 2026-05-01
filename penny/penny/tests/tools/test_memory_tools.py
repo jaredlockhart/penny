@@ -16,6 +16,7 @@ from penny.llm.client import LlmClient
 from penny.tools.memory_tools import (
     CollectionArchiveTool,
     CollectionCreateTool,
+    CollectionDeleteEntryTool,
     CollectionGetTool,
     CollectionKeysTool,
     CollectionMoveTool,
@@ -429,3 +430,75 @@ class TestFactory:
             "exists",
         }
         assert names == expected
+
+
+class TestScopedFactory:
+    """When ``scope`` is set the surface narrows to a collector's needs:
+    metadata creation/archive, ``collection_move`` (multi-collection), and
+    ``log_append`` (logs are inputs, not outputs) are excluded entirely.
+    """
+
+    def test_scoped_factory_drops_metadata_and_unscoped_writes(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        tools = build_memory_tools(
+            db, _make_llm_client(mock_llm), agent_name="collector:likes", scope="likes"
+        )
+        names = {tool.name for tool in tools}
+        # Reads + the three scoped writes — nothing else
+        assert names == {
+            "collection_get",
+            "collection_read_random",
+            "collection_keys",
+            "log_read_recent",
+            "log_read_next",
+            "read_latest",
+            "read_similar",
+            "exists",
+            "collection_write",
+            "collection_update",
+            "collection_delete_entry",
+        }
+
+    @pytest.mark.asyncio
+    async def test_scoped_write_rejects_other_collection(self, tmp_path, mock_llm):
+        """A scoped collector that tries to write to a different collection
+        gets a clean refusal rather than silently corrupting unrelated data."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
+        await CollectionCreateTool(db).execute(name="dislikes", description="x", recall="off")
+
+        write = CollectionWriteTool(
+            db, _make_llm_client(mock_llm), author="collector:likes", scope="likes"
+        )
+        result = await write.execute(memory="dislikes", entries=[{"key": "k", "content": "v"}])
+
+        assert "Refused" in result and "likes" in result and "dislikes" in result
+        # And nothing was actually written
+        assert db.memories.get_entry("dislikes", "k") == []
+
+    @pytest.mark.asyncio
+    async def test_scoped_write_allows_target_collection(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
+
+        write = CollectionWriteTool(
+            db, _make_llm_client(mock_llm), author="collector:likes", scope="likes"
+        )
+        result = await write.execute(memory="likes", entries=[{"key": "k", "content": "v"}])
+
+        assert "Wrote 1 entry" in result
+        assert db.memories.get_entry("likes", "k")[0].content == "v"
+
+    @pytest.mark.asyncio
+    async def test_scoped_update_rejects_other_collection(self, tmp_path):
+        db = _make_db(tmp_path)
+        update = CollectionUpdateTool(db, author="collector:likes", scope="likes")
+        result = await update.execute(memory="dislikes", key="k", content="v")
+        assert "Refused" in result
+
+    @pytest.mark.asyncio
+    async def test_scoped_delete_rejects_other_collection(self, tmp_path):
+        db = _make_db(tmp_path)
+        delete = CollectionDeleteEntryTool(db, scope="likes")
+        result = await delete.execute(memory="dislikes", key="k")
+        assert "Refused" in result
