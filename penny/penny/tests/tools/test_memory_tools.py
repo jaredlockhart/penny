@@ -417,6 +417,7 @@ class TestFactory:
             "collection_write",
             "collection_update",
             "collection_move",
+            "collection_delete_entry",
             "collection_archive",
             "collection_unarchive",
             "log_create",

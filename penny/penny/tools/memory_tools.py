@@ -33,6 +33,7 @@ from penny.database.models import MemoryEntry
 from penny.llm.similarity import embed_text
 from penny.tools.base import Tool
 from penny.tools.memory_args import (
+    CollectionDeleteEntryArgs,
     CollectionEntrySpec,
     CollectionGetArgs,
     CollectionMoveArgs,
@@ -466,6 +467,34 @@ class CollectionMoveTool(Tool):
         return f"Moved '{args.key}' from '{args.from_memory}' to '{args.to_memory}'."
 
 
+class CollectionDeleteEntryTool(Tool):
+    """Delete an entry from a collection by key."""
+
+    name = "collection_delete_entry"
+    description = (
+        "Delete the entry with the given key from a collection. Returns the "
+        "number of entries removed (zero if the key did not exist)."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string"},
+            "key": {"type": "string"},
+        },
+        "required": ["memory", "key"],
+    }
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def execute(self, **kwargs: Any) -> str:
+        args = CollectionDeleteEntryArgs(**kwargs)
+        removed = self._db.memories.delete(args.memory, args.key)
+        if removed == 0:
+            return f"No entry with key '{args.key}' in '{args.memory}'."
+        return f"Deleted '{args.key}' from '{args.memory}'."
+
+
 # ── Log reads ───────────────────────────────────────────────────────────────
 
 
@@ -701,6 +730,7 @@ def build_memory_tools(db: Database, llm_client: LlmClient | None, agent_name: s
         CollectionWriteTool(db, llm_client, agent_name),
         CollectionUpdateTool(db, agent_name),
         CollectionMoveTool(db, agent_name),
+        CollectionDeleteEntryTool(db),
         # Log-specific reads
         LogReadRecentTool(db),
         LogReadNextTool(db, agent_name),

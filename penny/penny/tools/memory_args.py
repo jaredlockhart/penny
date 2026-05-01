@@ -115,6 +115,13 @@ class CollectionMoveArgs(BaseModel):
     to_memory: str
 
 
+class CollectionDeleteEntryArgs(BaseModel):
+    """Delete an entry from a collection by key."""
+
+    memory: str
+    key: str
+
+
 # ── Log writes ──────────────────────────────────────────────────────────────
 
 
