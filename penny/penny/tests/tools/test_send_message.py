@@ -38,13 +38,9 @@ def _make_db(tmp_path) -> Database:
     return db
 
 
-def _make_config(min_cooldown: float = 60.0, max_cooldown: float = 3600.0):
+def _make_config(cooldown_seconds: float = 600.0):
     """Stand-in config exposing the runtime knobs the tool reads."""
-    runtime = type(
-        "Runtime",
-        (),
-        {"SEND_COOLDOWN_MIN": min_cooldown, "SEND_COOLDOWN_MAX": max_cooldown},
-    )()
+    runtime = type("Runtime", (), {"SEND_COOLDOWN_SECONDS": cooldown_seconds})()
     return type("Config", (), {"runtime": runtime})()
 
 
@@ -179,7 +175,7 @@ async def test_send_message_refuses_when_cooldown_not_elapsed(tmp_path):
     # Seed a prior send authored by this agent — count = 1, cooldown = MIN.
     db.memories.append(_PENNY_LOG, [LogEntryInput(content="prior")], author=_AGENT)
     channel = _make_channel()
-    tool = _make_tool(db, channel=channel, config=_make_config(min_cooldown=3600.0))
+    tool = _make_tool(db, channel=channel, config=_make_config(cooldown_seconds=3600.0))
 
     result = await tool.execute(content="hey again!")
 
@@ -192,7 +188,7 @@ async def test_send_message_refuses_when_cooldown_not_elapsed(tmp_path):
 async def test_cooldown_skipped_when_user_replied_since_last_send(tmp_path):
     """User has spoken since the agent's last send → count=0 → cooldown bypassed.
 
-    The exponential backoff is meant to throttle *autonomous* outreach
+    The cooldown is meant to throttle *autonomous* outreach
     (background agent spamming the user when ignored).  When a new user
     message has arrived between sends the conversation is alive, so the
     next send is conversational, not autonomous — no cooldown applies.
@@ -204,7 +200,7 @@ async def test_cooldown_skipped_when_user_replied_since_last_send(tmp_path):
         _USER_LOG, [LogEntryInput(content="actually here's a follow-up")], author="user"
     )
     channel = _make_channel()
-    tool = _make_tool(db, channel=channel, config=_make_config(min_cooldown=3600.0))
+    tool = _make_tool(db, channel=channel, config=_make_config(cooldown_seconds=3600.0))
 
     result = await tool.execute(content="responding to your follow-up")
 

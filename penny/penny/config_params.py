@@ -299,19 +299,14 @@ ConfigParam(
 # ── Send tool — outbound message rate limiting ───────────────────────────────
 
 ConfigParam(
-    key="SEND_COOLDOWN_MIN",
-    description="Initial cooldown in seconds between autonomous sends",
+    key="SEND_COOLDOWN_SECONDS",
+    description=(
+        "Flat cooldown in seconds between autonomous ``send_message`` calls. "
+        "Bypassed when the user has replied since the agent's last send (the "
+        "next send is conversational, not autonomous)."
+    ),
     type=float,
     default=600.0,
-    validator=_validate_positive_float,
-    group=GROUP_SEND,
-)
-
-ConfigParam(
-    key="SEND_COOLDOWN_MAX",
-    description="Max cooldown in seconds (ceiling for exponential backoff)",
-    type=float,
-    default=5400.0,
     validator=_validate_positive_float,
     group=GROUP_SEND,
 )
