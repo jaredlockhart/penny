@@ -73,8 +73,11 @@ const memoryDetail = document.getElementById("memory-detail")!;
 const memoryDetailContent = document.getElementById("memory-detail-content")!;
 const memoryDetailBack = document.getElementById("memory-detail-back")!;
 
+type MemoryTab = "collections" | "logs" | "archived";
+
 let allMemories: MemoryRecord[] = [];
 let activeMemoryName: string | null = null;
+let activeMemoryTab: MemoryTab = "collections";
 
 // --- Config state ---
 
@@ -1009,6 +1012,21 @@ function createConfigItem(param: RuntimeConfigParam): HTMLElement {
 
 function setupMemories(): void {
   memoryDetailBack.addEventListener("click", showMemoriesList);
+  for (const btn of Array.from(document.querySelectorAll("#memory-tabs .sub-tab"))) {
+    btn.addEventListener("click", () => {
+      const tab = btn.getAttribute("data-mtab") as MemoryTab | null;
+      if (!tab) return;
+      activeMemoryTab = tab;
+      for (const b of Array.from(document.querySelectorAll("#memory-tabs .sub-tab"))) {
+        b.classList.toggle("active", b === btn);
+      }
+      // Sub-tab switch returns to the list view.
+      activeMemoryName = null;
+      memoryDetail.classList.add("hidden");
+      memoriesList.classList.remove("hidden");
+      renderMemoriesList();
+    });
+  }
 }
 
 function requestMemories(): void {
@@ -1059,17 +1077,34 @@ function showMemoryDetail(): void {
 
 function renderMemoriesList(): void {
   memoriesList.innerHTML = "";
-  memoriesList.appendChild(createNewMemoryControl());
-  if (allMemories.length === 0) {
+  // The "+" affordance only makes sense on the collections tab — that's
+  // the only shape users can create from the addon.
+  if (activeMemoryTab === "collections") {
+    memoriesList.appendChild(createNewMemoryControl());
+  }
+  const visible = allMemories.filter(memoryMatchesTab);
+  if (visible.length === 0) {
     const empty = document.createElement("div");
     empty.className = "panel-loading";
-    empty.textContent = "No memories yet.";
+    empty.textContent = emptyLabel(activeMemoryTab);
     memoriesList.appendChild(empty);
     return;
   }
-  for (const memory of allMemories) {
+  for (const memory of visible) {
     memoriesList.appendChild(createMemoryRow(memory));
   }
+}
+
+function memoryMatchesTab(memory: MemoryRecord): boolean {
+  if (activeMemoryTab === "archived") return memory.archived;
+  if (memory.archived) return false;
+  return activeMemoryTab === "collections" ? memory.type === "collection" : memory.type === "log";
+}
+
+function emptyLabel(tab: MemoryTab): string {
+  if (tab === "collections") return "No collections yet.";
+  if (tab === "logs") return "No logs yet.";
+  return "Nothing archived.";
 }
 
 function createNewMemoryControl(): HTMLElement {

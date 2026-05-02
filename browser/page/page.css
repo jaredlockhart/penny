@@ -128,7 +128,8 @@ h1 {
 /* --- Sub-tabs (thoughts new/archive, prompts agent filter) --- */
 
 #thought-tabs,
-#agent-tabs {
+#agent-tabs,
+#memory-tabs {
   display: flex;
   border-bottom: 1px solid var(--border);
   margin-bottom: 16px;
