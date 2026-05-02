@@ -448,6 +448,25 @@ class TestExistsAndDone:
         assert result == "no"
 
     @pytest.mark.asyncio
+    async def test_unicode_hyphen_in_memory_name_normalized(self, tmp_path, mock_llm):
+        """Regression: gpt-oss occasionally emits Unicode dashes (U+2010,
+        U+2011, …) where ASCII hyphen-minus is expected, breaking string
+        comparison in tool args.  Memory-name fields normalise on the way
+        in so the rest of the stack sees the canonical form."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(
+            name="prague-highlights", description="x", recall="off"
+        )
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        # Non-breaking hyphen U+2011 in the memory name — model output
+        # observed in the wild.
+        result = await write.execute(
+            memory="prague‑highlights",
+            entries=[{"key": "k", "content": "v"}],
+        )
+        assert "Wrote 1 entry to 'prague-highlights'" in result
+
+    @pytest.mark.asyncio
     async def test_exists_content_only_uses_content_as_key_probe(self, tmp_path, mock_llm):
         """Regression: ``exists(content="Kepler Museum")`` must catch an
         existing entry with ``key="Kepler Museum"``, even when the

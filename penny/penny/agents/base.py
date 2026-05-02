@@ -121,6 +121,37 @@ _TOOL_FAILURE_PREFIXES = (
 )
 
 
+def _parse_text_form_done(content: str) -> dict | None:
+    """Recover an intended ``done(...)`` call from text content.
+
+    Models occasionally emit the done args as plain content instead of a
+    structured tool call.  Two observed shapes:
+      * ``done({"success": true, "summary": "..."})``  (wrapped form)
+      * ``{"success": true, "summary": "..."}``        (raw args JSON)
+
+    Returns the parsed args dict if the content matches either shape and
+    contains at least ``success`` or ``summary``, else ``None``.  Used in
+    ``BackgroundAgent._run_cycle`` to synthesise a real ``ToolCallRecord``
+    so the cycle's intent isn't lost when the model flubs the tool call.
+    """
+    import json
+
+    text = content.strip()
+    if text.startswith("done(") and text.endswith(")"):
+        text = text[5:-1].strip()
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    try:
+        args = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(args, dict):
+        return None
+    if "success" not in args and "summary" not in args:
+        return None
+    return args
+
+
 def _is_tool_result_failed(result_str: str) -> bool:
     """Return True if a tool result indicates failure (error, no results, quota exceeded)."""
     return any(result_str.startswith(prefix) for prefix in _TOOL_FAILURE_PREFIXES)
@@ -309,6 +340,21 @@ class Agent:
             run_id=run_id,
             prompt_type=self.name,
         )
+        # Recover from a text-form ``done(...)`` — model occasionally
+        # emits the args as plain content instead of a structured tool
+        # call, especially toward the end of a long cycle.  Synthesising
+        # the missing record means cleanup (audit log, promptlog tag,
+        # success bool) sees the model's intent rather than reporting a
+        # spurious ``"max steps exceeded"``.
+        if (
+            self.terminator_tool == DoneTool.name
+            and response.answer
+            and not any(r.tool == DoneTool.name for r in response.tool_calls)
+        ):
+            args = _parse_text_form_done(response.answer)
+            if args is not None:
+                logger.info("Recovered text-form %s() call for run %s", DoneTool.name, run_id)
+                response.tool_calls.append(ToolCallRecord(tool=DoneTool.name, arguments=args))
         success = any(record.tool == self.terminator_tool for record in response.tool_calls)
 
         if log_read_next is not None:
@@ -473,10 +519,14 @@ class Agent:
     def should_stop_loop(self, step_records: list[ToolCallRecord]) -> bool:
         """Check if the loop should stop early.
 
-        Default: any call to the ``done`` tool is a graceful terminator.
-        Subclasses can override to add their own exit signals.
+        Default: any *successful* call to the ``done`` tool is a graceful
+        terminator.  A done call whose args failed validation (missing
+        required ``success``/``summary`` fields) keeps the loop going so
+        the model sees the validation error and can retry with the full
+        triple — otherwise the cycle would exit with a recorded-but-
+        empty done and produce a misleading audit row.
         """
-        return any(record.tool == DoneTool.name for record in step_records)
+        return any(record.tool == DoneTool.name and not record.failed for record in step_records)
 
     async def _call_model_validated(
         self,

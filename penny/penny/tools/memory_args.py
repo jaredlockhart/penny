@@ -8,7 +8,39 @@ layer's signature.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, BeforeValidator, Field
+
+# Models occasionally substitute Unicode dashes (U+2010–U+2015) for ASCII
+# hyphen-minus (U+002D) when emitting memory names — gpt-oss has been
+# observed writing ``"prague‑highlights"`` for ``"prague-highlights"``.
+# The visual is identical but the string compares unequal, so memory-keyed
+# tools (``collection_write``, ``log_read_next``, etc.) silently failed
+# with refusals or "memory not found" errors.  Normalise on the way in so
+# the rest of the stack sees a single canonical form.
+_UNICODE_DASHES = "‐‑‒–—―−"
+
+
+def _normalize_dashes(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    if not any(ch in value for ch in _UNICODE_DASHES):
+        return value
+    out = value
+    for ch in _UNICODE_DASHES:
+        out = out.replace(ch, "-")
+    return out
+
+
+def _normalize_dash_list(value: object) -> object:
+    if not isinstance(value, list):
+        return value
+    return [_normalize_dashes(item) for item in value]
+
+
+MemoryName = Annotated[str, BeforeValidator(_normalize_dashes)]
+MemoryNameList = Annotated[list[str], BeforeValidator(_normalize_dash_list)]
 
 # ── Metadata ────────────────────────────────────────────────────────────────
 
@@ -25,7 +57,7 @@ class CreateMemoryArgs(BaseModel):
     collections so the new collection gets a collector immediately.
     """
 
-    name: str
+    name: MemoryName
     description: str
     recall: str  # "off" | "recent" | "relevant" | "all" — validated in the store layer
     extraction_prompt: str | None = None
@@ -34,7 +66,7 @@ class CreateMemoryArgs(BaseModel):
 class MemoryNameArgs(BaseModel):
     """One-field args for ``archive`` / ``unarchive`` / read-all / keys."""
 
-    memory: str
+    memory: MemoryName
 
 
 class CollectionUpdateArgs(BaseModel):
@@ -44,7 +76,7 @@ class CollectionUpdateArgs(BaseModel):
     are applied.  ``recall`` is validated in the store layer.
     """
 
-    name: str
+    name: MemoryName
     description: str | None = None
     recall: str | None = None
     extraction_prompt: str | None = None
@@ -57,21 +89,21 @@ class CollectionUpdateArgs(BaseModel):
 class CollectionGetArgs(BaseModel):
     """Exact key lookup in a collection."""
 
-    memory: str
+    memory: MemoryName
     key: str
 
 
 class ReadLatestArgs(BaseModel):
     """Newest-first; ``k=None`` returns all."""
 
-    memory: str
+    memory: MemoryName
     k: int | None = None
 
 
 class ReadRandomArgs(BaseModel):
     """Random sample; ``k=None`` returns all."""
 
-    memory: str
+    memory: MemoryName
     k: int | None = None
 
 
@@ -83,7 +115,7 @@ class ReadSimilarArgs(BaseModel):
     thresholds are opaque values it has no grounding to pick.
     """
 
-    memory: str
+    memory: MemoryName
     anchor: str
     k: int | None = None
 
@@ -94,7 +126,7 @@ class ReadSimilarArgs(BaseModel):
 class ReadRecentArgs(BaseModel):
     """Entries created within the past ``window_seconds`` seconds."""
 
-    memory: str
+    memory: MemoryName
     window_seconds: int
     cap: int | None = None
 
@@ -102,7 +134,7 @@ class ReadRecentArgs(BaseModel):
 class ReadNextArgs(BaseModel):
     """Cursor-based read: entries newer than the agent's last committed cursor."""
 
-    memory: str
+    memory: MemoryName
     cap: int | None = None
 
 
@@ -119,14 +151,14 @@ class CollectionEntrySpec(BaseModel):
 class CollectionWriteArgs(BaseModel):
     """Batched write to a collection with dedup applied per entry."""
 
-    memory: str
+    memory: MemoryName
     entries: list[CollectionEntrySpec] = Field(min_length=1)
 
 
 class UpdateEntryArgs(BaseModel):
     """Replace content for an existing key in a collection."""
 
-    memory: str
+    memory: MemoryName
     key: str
     content: str
 
@@ -135,14 +167,14 @@ class CollectionMoveArgs(BaseModel):
     """Move an entry between collections by key."""
 
     key: str
-    from_memory: str
-    to_memory: str
+    from_memory: MemoryName
+    to_memory: MemoryName
 
 
 class CollectionDeleteEntryArgs(BaseModel):
     """Delete an entry from a collection by key."""
 
-    memory: str
+    memory: MemoryName
     key: str
 
 
@@ -152,7 +184,7 @@ class CollectionDeleteEntryArgs(BaseModel):
 class LogAppendArgs(BaseModel):
     """Append one keyless entry to a log."""
 
-    memory: str
+    memory: MemoryName
     content: str
 
 
@@ -162,7 +194,7 @@ class LogAppendArgs(BaseModel):
 class ExistsArgs(BaseModel):
     """Cross-memory dedup probe used by thinking-class agents before writes."""
 
-    memories: list[str] = Field(min_length=1)
+    memories: MemoryNameList = Field(min_length=1)
     content: str
     key: str | None = None
 

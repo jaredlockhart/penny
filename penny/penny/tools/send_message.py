@@ -78,11 +78,14 @@ class SendMessageTool(Tool):
     )
     _MUTED_RESPONSE = (
         "Message NOT sent: the user has muted autonomous messages.  "
-        f"Call ``{DoneTool.name}`` to exit — do not retry."
+        f'Call ``{DoneTool.name}(success=true, summary="muted — skipped")`` '
+        "to exit — do not retry.  This is normal cycle behaviour, not a failure."
     )
     _COOLDOWN_RESPONSE = (
         "Message NOT sent: cooldown has not elapsed since the last "
-        f"autonomous send.  Call ``{DoneTool.name}`` to exit — do not retry."
+        f'autonomous send.  Call ``{DoneTool.name}(success=true, summary="cooldown — '
+        'skipped this cycle")`` to exit — do not retry.  This is normal '
+        "cycle behaviour, not a failure."
     )
     # ``Error:`` prefix triggers ``record.failed=True`` in the agent loop,
     # which counts toward the abort threshold so we don't infinite-loop

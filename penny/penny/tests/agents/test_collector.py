@@ -362,6 +362,42 @@ def test_tag_promptlog_run_with_unknown_run_id_is_noop(test_config, tmp_path):
     assert db.messages.get_prompt_log_runs() == []
 
 
+def test_should_stop_loop_ignores_failed_done(test_config, tmp_path):
+    """Regression: a malformed ``done(reasoning="x")`` (missing required
+    ``success``/``summary``) used to terminate the cycle anyway because
+    ``should_stop_loop`` only checked the tool name.  Now it also requires
+    the record to not be marked failed, so the loop continues until the
+    model retries with valid args."""
+    collector, _ = _make_collector(test_config, tmp_path)
+    failed_done = ToolCallRecord(tool="done", arguments={"reasoning": "x"})
+    failed_done.failed = True
+    assert collector.should_stop_loop([failed_done]) is False
+
+    valid_done = ToolCallRecord(tool="done", arguments={"success": True, "summary": "wrote 2"})
+    assert collector.should_stop_loop([valid_done]) is True
+
+
+def test_text_form_done_is_recovered(test_config, tmp_path):
+    """Regression: gpt-oss occasionally emits ``done(...)`` as plain text
+    content instead of as a structured tool call.  The agent loop now
+    parses the text-form back into a synthesised ``ToolCallRecord`` so
+    ``_extract_done_args`` sees the model's intent rather than reporting
+    a spurious ``"max steps exceeded"``."""
+    from penny.agents.base import _parse_text_form_done
+
+    raw_args = _parse_text_form_done('{"reasoning":"x","success":true,"summary":"wrote 2 entries"}')
+    assert raw_args == {"reasoning": "x", "success": True, "summary": "wrote 2 entries"}
+
+    wrapped_args = _parse_text_form_done('done({"success": false, "summary": "no-op"})')
+    assert wrapped_args == {"success": False, "summary": "no-op"}
+
+    # Genuinely text content (not a done call) returns None.
+    assert _parse_text_form_done("Hi there!") is None
+    assert _parse_text_form_done("") is None
+    # JSON without success/summary isn't a done call.
+    assert _parse_text_form_done('{"some": "other"}') is None
+
+
 def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
     """Regression: ``run_id`` is now owned per-cycle by ``execute`` instead
     of being smuggled through ``self._last_run_id``.  Cycle B can't smear
