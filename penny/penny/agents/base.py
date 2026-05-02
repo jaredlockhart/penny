@@ -143,6 +143,21 @@ def _build_strong_nudge(messages: list[dict]) -> str:
 
 
 @dataclass
+class CycleResult:
+    """Outcome of a single ``_run_cycle`` invocation.
+
+    Returned to the caller (``execute``) so subclass cleanup can read the
+    cycle's response without fishing it off ``self``.  ``run_id`` is owned
+    by the caller and not part of this struct — every promptlog row from
+    the cycle already carries it, and the caller passes the same UUID
+    back into ``set_run_outcome`` directly.
+    """
+
+    success: bool
+    response: ControllerResponse
+
+
+@dataclass
 class _StepResult:
     """Result of processing all tool calls in one agentic loop step."""
 
@@ -211,13 +226,6 @@ class Agent:
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
         self._tool_result_images: list[str] = []
-        # Last ControllerResponse from ``_run_cycle`` — exposed so subclasses
-        # can inspect post-cycle state (e.g. Collector reads done()'s args
-        # to log the cycle outcome).  None until the first cycle runs.
-        self._last_run_response: ControllerResponse | None = None
-        # Last run_id from ``_run_cycle`` — Collector uses it to attach the
-        # cycle's success/reason/target onto the matching promptlog row.
-        self._last_run_id: str | None = None
 
         if system_prompt is not None:
             self.system_prompt = system_prompt
@@ -264,9 +272,11 @@ class Agent:
         primary recipient itself at execute time.  No per-agent user
         binding is plumbed through here.
         """
-        return await self._run_cycle()
+        run_id = uuid.uuid4().hex
+        result = await self._run_cycle(run_id)
+        return result.success
 
-    async def _run_cycle(self) -> bool:
+    async def _run_cycle(self, run_id: str) -> CycleResult:
         """Generic agentic shell: install tools, run the loop, commit cursor.
 
         Builds the system prompt via ``_build_system_prompt(user)`` so
@@ -278,6 +288,12 @@ class Agent:
         (class attr) to drive the cycle.  If a ``LogReadNextTool`` is in
         the surface, its pending cursor is committed on success and
         discarded on failure.
+
+        ``run_id`` is supplied by the caller — the same UUID stamps every
+        promptlog row this cycle produces and is what subclass cleanup
+        passes back to ``set_run_outcome``.  Returning the response
+        alongside ``success`` keeps the call chain explicit; no
+        per-cycle state lives on ``self``.
         """
         tools = self.get_tools()
         log_read_next = next((t for t in tools if isinstance(t, LogReadNextTool)), None)
@@ -286,7 +302,6 @@ class Agent:
         primary_user = self.db.users.get_primary_sender()
         system_prompt = await self._build_system_prompt(primary_user)
 
-        run_id = uuid.uuid4().hex
         response = await self.run(
             prompt="",
             max_steps=self.get_max_steps(),
@@ -294,8 +309,6 @@ class Agent:
             run_id=run_id,
             prompt_type=self.name,
         )
-        self._last_run_response = response
-        self._last_run_id = run_id
         success = any(record.tool == self.terminator_tool for record in response.tool_calls)
 
         if log_read_next is not None:
@@ -304,7 +317,7 @@ class Agent:
             else:
                 log_read_next.discard_pending()
 
-        return success
+        return CycleResult(success=success, response=response)
 
     # ── Override hooks ───────────────────────────────────────────────────
 

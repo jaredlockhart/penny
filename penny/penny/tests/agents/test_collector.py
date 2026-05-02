@@ -307,7 +307,8 @@ def test_log_run_handles_no_done_call(test_config, tmp_path):
 def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
     """The cycle's done(success, summary) and the bound target name land on
     the matching promptlog row so the addon's prompts tab can render the
-    green/red collector-result tag."""
+    green/red collector-result tag.  ``run_id`` and ``response`` are
+    passed in directly — no instance state."""
     collector, db = _make_collector(test_config, tmp_path)
     target = Memory(
         name="prague-trip",
@@ -324,8 +325,7 @@ def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
         agent_name="collector",
         run_id="run-xyz",
     )
-    collector._last_run_id = "run-xyz"
-    collector._last_run_response = ControllerResponse(
+    response = ControllerResponse(
         answer="",
         tool_calls=[
             ToolCallRecord(
@@ -335,7 +335,7 @@ def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
         ],
     )
 
-    collector._tag_promptlog_run(target)
+    collector._tag_promptlog_run(target, "run-xyz", response)
 
     runs = db.messages.get_prompt_log_runs()
     assert runs[0]["run_success"] is True
@@ -343,9 +343,10 @@ def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
     assert runs[0]["run_target"] == "prague-trip"
 
 
-def test_tag_promptlog_run_skips_when_no_run_id(test_config, tmp_path):
-    """No-op if the cycle never produced a run_id (e.g. _next_ready_collection
-    returned None and super().execute() was never reached)."""
+def test_tag_promptlog_run_with_unknown_run_id_is_noop(test_config, tmp_path):
+    """If no promptlog rows exist for the run_id (cycle raised before the
+    loop logged anything), tagging silently does nothing rather than
+    crashing or smearing onto an unrelated row."""
     collector, db = _make_collector(test_config, tmp_path)
     target = Memory(
         name="prague-trip",
@@ -355,7 +356,56 @@ def test_tag_promptlog_run_skips_when_no_run_id(test_config, tmp_path):
         archived=False,
         extraction_prompt="x",
     )
-    collector._last_run_id = None
-    collector._last_run_response = None
 
-    collector._tag_promptlog_run(target)  # should not raise
+    collector._tag_promptlog_run(target, "never-logged", response=None)
+
+    assert db.messages.get_prompt_log_runs() == []
+
+
+def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
+    """Regression: ``run_id`` is now owned per-cycle by ``execute`` instead
+    of being smuggled through ``self._last_run_id``.  Cycle B can't smear
+    onto cycle A's promptlog row even if A's loop crashed and B's
+    cleanup runs later."""
+    collector, db = _make_collector(test_config, tmp_path)
+    target_a = Memory(
+        name="notified-thoughts",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+    target_b = Memory(
+        name="prague-highlights",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+
+    db.messages.log_prompt(
+        model="test", messages=[], response={}, agent_name="collector", run_id="run-A"
+    )
+    db.messages.log_prompt(
+        model="test", messages=[], response={}, agent_name="collector", run_id="run-B"
+    )
+
+    response_a = ControllerResponse(
+        answer="",
+        tool_calls=[ToolCallRecord(tool="done", arguments={"success": True, "summary": "ok-A"})],
+    )
+    response_b = ControllerResponse(
+        answer="",
+        tool_calls=[ToolCallRecord(tool="done", arguments={"success": True, "summary": "ok-B"})],
+    )
+
+    collector._tag_promptlog_run(target_a, "run-A", response_a)
+    collector._tag_promptlog_run(target_b, "run-B", response_b)
+
+    runs = {r["run_id"]: r for r in db.messages.get_prompt_log_runs()}
+    assert runs["run-A"]["run_target"] == "notified-thoughts"
+    assert runs["run-A"]["run_reason"] == "ok-A"
+    assert runs["run-B"]["run_target"] == "prague-highlights"
+    assert runs["run-B"]["run_reason"] == "ok-B"
