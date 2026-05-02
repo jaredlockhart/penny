@@ -21,6 +21,8 @@ Dispatcher pattern (vs. one stateful agent per collection):
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from datetime import UTC, datetime
 
 from penny.agents.base import BackgroundAgent
@@ -98,15 +100,36 @@ class Collector(BackgroundAgent):
         target = self._next_ready_collection()
         if target is None:
             return False
+
+        # Own ``run_id`` here so cleanup has the correct UUID even if
+        # ``_run_cycle`` raises before any prompts are logged — and so
+        # neighbouring cycles can't smear into each other's promptlog
+        # rows via stale instance state.
+        run_id = uuid.uuid4().hex
+        success = False
+        response: ControllerResponse | None = None
+        cancelled = False
         try:
             self._current_target = target
-            success = await super().execute()
+            result = await self._run_cycle(run_id)
+            success = result.success
+            response = result.response
+        except asyncio.CancelledError:
+            # Foreground activity (an incoming user message) preempted the
+            # cycle.  Tag the row clearly instead of letting it look like
+            # a model crash, then re-raise so the task ends.
+            cancelled = True
+            raise
         finally:
             # Stamp regardless of success — what matters for cadence is
             # that the *check* happened.  A persistently-failing collection
             # otherwise gets re-attempted every tick.
             self.db.memories.mark_collected(target.name)
-            self._log_run(target, self._last_run_response)
+            if cancelled:
+                self._tag_promptlog_run_cancelled(target, run_id)
+            else:
+                self._log_run(target, response)
+                self._tag_promptlog_run(target, run_id, response)
             self._current_target = None
         return success
 
@@ -126,6 +149,36 @@ class Collector(BackgroundAgent):
             PennyConstants.MEMORY_COLLECTOR_RUNS_LOG,
             [LogEntryInput(content=f"[{target.name}] {marker} {summary}")],
             author=self.name,
+        )
+
+    def _tag_promptlog_run(
+        self, target: Memory, run_id: str, response: ControllerResponse | None
+    ) -> None:
+        """Stamp the cycle outcome onto the matching promptlog run.
+
+        Drives the green/red tag in the addon's prompts tab — same
+        ``(success, summary)`` the audit log gets, plus the target name
+        so the addon can attribute the run to a collection.  ``run_id``
+        is the caller's UUID for this cycle; ``set_run_outcome`` is a
+        no-op if no promptlog rows exist for it (the cycle raised before
+        the loop ever logged a prompt).
+        """
+        success, summary = self._extract_done_args(response)
+        self.db.messages.set_run_outcome(run_id, success, summary, target.name)
+
+    def _tag_promptlog_run_cancelled(self, target: Memory, run_id: str) -> None:
+        """Stamp a cycle that was cut off by foreground activity.
+
+        Cancellation isn't a failure of the cycle's logic — it's the
+        scheduler making room for a user message — so the tag uses
+        ``success=True`` with a clear reason.  Keeps these out of the
+        addon's failure-rate budget.
+        """
+        self.db.messages.set_run_outcome(
+            run_id,
+            True,
+            "cancelled by foreground activity",
+            target.name,
         )
 
     @staticmethod

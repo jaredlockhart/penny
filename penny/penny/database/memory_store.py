@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import random
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Literal, NamedTuple
@@ -41,6 +41,7 @@ from similarity.embeddings import (
     serialize_embedding,
     token_containment_ratio,
 )
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from penny.config_params import RuntimeParams
@@ -116,6 +117,10 @@ class WriteResult(BaseModel):
     key: str
     outcome: WriteOutcome
     entry_id: int | None = None
+    # Existing entry's key when ``outcome == "duplicate"`` — surfaces in
+    # the rejection message so the model can pivot to ``update_entry``
+    # when it has fresher info for the existing row.
+    matched_key: str | None = None
 
 
 MoveOutcome = Literal["ok", "not_found", "collision"]
@@ -152,6 +157,11 @@ class MemoryStore:
         # back to ``ConfigParam.default`` values; production wires the
         # live runtime so dedup respects /config tweaks.
         self._runtime = runtime if runtime is not None else RuntimeParams()
+        # Optional change callback — fired after any write/update/delete or
+        # metadata mutation so external observers (e.g. the browser channel)
+        # can broadcast a refresh.  Argument is the affected memory name, or
+        # ``None`` for fan-outs that aren't scoped to one memory.
+        self._on_memory_changed: Callable[[str | None], None] | None = None
 
     def _default_thresholds(self) -> DedupThresholds:
         """Resolve dedup thresholds from the wired runtime accessor."""
@@ -213,7 +223,8 @@ class MemoryStore:
             session.commit()
             session.refresh(memory)
             logger.debug("Created %s memory %s", type_.value, name)
-            return memory
+        self._notify_changed(name)
+        return memory
 
     def get(self, name: str) -> Memory | None:
         with self._session() as session:
@@ -222,6 +233,26 @@ class MemoryStore:
     def list_all(self) -> list[Memory]:
         with self._session() as session:
             return list(session.exec(select(Memory).order_by(Memory.name)).all())
+
+    def entry_counts(self) -> dict[str, int]:
+        """Return ``{memory_name: entry_count}`` for every memory in one query.
+
+        Used by the addon's Memories tab to show counts in the list view
+        without N+1 round-trips.  Memories with zero entries are absent —
+        callers should default to 0 when looking up a missing key.
+        """
+        with self._session() as session:
+            rows = session.exec(
+                select(MemoryEntry.memory_name, func.count(MemoryEntry.id)).group_by(  # ty: ignore[invalid-argument-type]
+                    MemoryEntry.memory_name
+                )  # ty: ignore[invalid-argument-type]
+            ).all()
+        return dict(rows)
+
+    def _notify_changed(self, name: str | None) -> None:
+        """Fire the change callback if registered.  Safe to call without a hook."""
+        if self._on_memory_changed is not None:
+            self._on_memory_changed(name)
 
     def archive(self, name: str) -> None:
         self._set_archived(name, True)
@@ -237,6 +268,7 @@ class MemoryStore:
             memory.archived = archived
             session.add(memory)
             session.commit()
+        self._notify_changed(name)
 
     def update_collection_metadata(
         self,
@@ -264,7 +296,8 @@ class MemoryStore:
             session.add(memory)
             session.commit()
             session.refresh(memory)
-            return memory
+        self._notify_changed(name)
+        return memory
 
     def mark_collected(self, name: str) -> None:
         """Stamp ``last_collected_at = now`` after a dispatcher cycle.
@@ -279,6 +312,7 @@ class MemoryStore:
             memory.last_collected_at = datetime.now(UTC)
             session.add(memory)
             session.commit()
+        self._notify_changed(name)
 
     # ── Collection writes ───────────────────────────────────────────────────
 
@@ -303,6 +337,8 @@ class MemoryStore:
             for entry in entries:
                 results.append(self._write_one(session, name, entry, author, existing, thresholds))
             session.commit()
+        if any(r.outcome == "written" for r in results):
+            self._notify_changed(name)
         return results
 
     def _write_one(
@@ -315,8 +351,13 @@ class MemoryStore:
         thresholds: DedupThresholds,
     ) -> WriteResult:
         candidate = EntrySide(entry.key, entry.key_embedding, entry.content_embedding)
-        if self._is_duplicate(candidate, existing, thresholds):
-            return WriteResult(key=entry.key, outcome="duplicate")
+        matched = self._is_duplicate(candidate, existing, thresholds)
+        if matched is not None:
+            return WriteResult(
+                key=entry.key,
+                outcome="duplicate",
+                matched_key=matched.key,
+            )
         row = MemoryEntry(
             memory_name=name,
             key=entry.key,
@@ -347,7 +388,8 @@ class MemoryStore:
                 row.author = author
                 session.add(row)
             session.commit()
-            return "ok"
+        self._notify_changed(name)
+        return "ok"
 
     def move(self, key: str, from_name: str, to_name: str, author: str) -> MoveOutcome:
         """Move every entry with `key` from one collection to another.
@@ -368,7 +410,9 @@ class MemoryStore:
                 row.author = author
                 session.add(row)
             session.commit()
-            return "ok"
+        self._notify_changed(from_name)
+        self._notify_changed(to_name)
+        return "ok"
 
     def delete(self, name: str, key: str) -> int:
         """Delete every entry with `key` in a collection. Returns rows removed."""
@@ -378,7 +422,9 @@ class MemoryStore:
             for row in rows:
                 session.delete(row)
             session.commit()
-            return len(rows)
+        if rows:
+            self._notify_changed(name)
+        return len(rows)
 
     # ── Log writes ──────────────────────────────────────────────────────────
 
@@ -402,6 +448,8 @@ class MemoryStore:
             session.commit()
             for row in created:
                 session.refresh(row)
+        if created:
+            self._notify_changed(name)
         return created
 
     # ── Reads ───────────────────────────────────────────────────────────────
@@ -416,6 +464,28 @@ class MemoryStore:
             query = (
                 select(MemoryEntry)
                 .where(MemoryEntry.memory_name == name)
+                .order_by(MemoryEntry.created_at.desc())  # type: ignore[union-attr]
+            )
+            if k is not None:
+                query = query.limit(k)
+            return list(session.exec(query).all())
+
+    def read_latest_matching(
+        self, name: str, content_prefix: str, k: int | None = None
+    ) -> list[MemoryEntry]:
+        """Newest-first entries whose ``content`` starts with ``content_prefix``.
+
+        Used to scope a log read to one tag — e.g. ``collector-runs``
+        entries for a specific target collection (the content format is
+        ``[<target>] <marker> <summary>``).
+        """
+        with self._session() as session:
+            query = (
+                select(MemoryEntry)
+                .where(
+                    MemoryEntry.memory_name == name,
+                    MemoryEntry.content.like(f"{content_prefix}%"),  # ty: ignore[unresolved-attribute]
+                )
                 .order_by(MemoryEntry.created_at.desc())  # type: ignore[union-attr]
             )
             if k is not None:
@@ -720,8 +790,21 @@ class MemoryStore:
         candidate: EntrySide,
         existing: list[EntrySide],
         thresholds: DedupThresholds,
-    ) -> bool:
-        return any(self._pair_is_duplicate(candidate, side, thresholds) for side in existing)
+    ) -> EntrySide | None:
+        """Return the first existing entry that ``candidate`` collides with
+        under the dedup rule, or ``None`` if no match.  Returning the
+        matched side (instead of bool) lets callers surface *which*
+        existing entry blocked the write — the rejection message can
+        then say ``"matches existing 'Kepler Museum'"`` so the model
+        can pivot to ``update_entry`` when it has fresher info.
+
+        Truthy/falsy in a bool context is preserved (``None`` is falsy,
+        ``EntrySide`` is truthy), so ``if self._is_duplicate(...)``
+        callsites continue to work."""
+        for side in existing:
+            if self._pair_is_duplicate(candidate, side, thresholds):
+                return side
+        return None
 
     def _pair_is_duplicate(
         self,

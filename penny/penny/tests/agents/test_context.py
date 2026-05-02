@@ -43,8 +43,10 @@ async def test_conversation_merges_consecutive_same_role(
 ):
     """Consecutive messages from the same role are merged with newlines.
 
-    Proactive outgoing messages (no parent_id) are excluded from context —
-    only direct replies (parent_id set) are included alongside user messages.
+    Both threaded replies (parent_id set) and autonomous outgoing sends
+    (parent_id=None — what ``send_message`` from collector cycles
+    produces) flow into the chat-turns array so Penny still sees the
+    prior turn when the user replies to a notification.
     """
     config = make_config()
 
@@ -59,7 +61,7 @@ async def test_conversation_merges_consecutive_same_role(
             TEST_SENDER,
             "second message",
         )
-        # Direct reply (parent_id set) — included in context
+        # Direct reply (parent_id set).
         penny.db.messages.log_message(
             PennyConstants.MessageDirection.OUTGOING,
             penny.config.signal_number,
@@ -67,7 +69,8 @@ async def test_conversation_merges_consecutive_same_role(
             parent_id=2,
             recipient=TEST_SENDER,
         )
-        # Proactive notification (no parent_id) — excluded from context
+        # Autonomous notification (no parent_id) — also part of the
+        # conversation now.
         penny.db.messages.log_message(
             PennyConstants.MessageDirection.OUTGOING,
             penny.config.signal_number,
@@ -77,11 +80,13 @@ async def test_conversation_merges_consecutive_same_role(
 
         conversation = penny.chat_agent._build_conversation(TEST_SENDER)
         contents = " ".join(c for _, c in conversation)
-        assert len(conversation) == 2  # Merged user messages + one assistant reply
+        # Two user messages merged into one turn, then the two outgoing
+        # messages merged into the next turn.
+        assert len(conversation) == 2
         assert "first message" in conversation[0][1]
         assert "second message" in conversation[0][1]
         assert "response" in contents
-        assert "proactive thought" not in contents
+        assert "proactive thought" in contents
 
 
 # ── Profile context ──────────────────────────────────────────────────────

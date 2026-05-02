@@ -162,10 +162,10 @@ The Firefox extension adds a visual, interactive layer on top of Penny's existin
 - **Active tab context** — Penny can see the page you're currently viewing (via [Defuddle](https://github.com/kepano/defuddle) content extraction). Toggle "Include page content" to ask questions about any page
 - **Browser tools** — `browse_url` opens pages in hidden tabs with the full web engine and your session. Per-addon "tool use" toggle controls whether each browser participates in tool dispatch
 - **Domain permissions** — first-time access to a new domain triggers an approve/deny prompt. Approvals persist server-side and sync across all connected addons; prompts can also be answered from Signal so you don't need a browser open. `/config DOMAIN_PERMISSION_MODE allow_all` skips prompting entirely
-- **Thoughts feed** — a browsable card grid of Penny's discoveries, with images, seed-topic bylines, and a modal viewer. Thumbs up/down reactions feed directly into the preference extraction pipeline. Browser tabs receive unread thought counts as a badge
+- **Memory Explorer** — every memory (collections + logs) in one place: list view with type badge / entry count / last-collected timestamp, drill-in view with editable metadata (description, recall mode, extraction prompt, collector interval) and per-entry add/edit/delete on collections. Logs are read-only by design. Each collection's detail page surfaces the matching `collector-runs` entries inline so you can see what the auto-curator has been doing
 - **Schedule manager** — UI for creating, editing, and deleting `/schedule` cron tasks without touching the chat
 - **Settings panel** — domain allowlist, runtime config params (the same 30+ values `/config` exposes), and addon-level toggles
-- **Prompt log viewer** — every LLM call Penny makes is browseable from the extension, grouped by run ID with input messages, response, thinking field, and outcome badge. Useful for debugging "why did Penny say that"
+- **Prompt log viewer** — every LLM call Penny makes is browseable from the extension, grouped by run ID with input messages, response, thinking field, and a green/red collector-result tag (target collection + reason). Useful for debugging "why did Penny say that"
 - **Multi-device** — each browser registers as a device (e.g., "firefox macbook 16"). All devices share the same user identity and conversation history. In-flight progress reactions on Signal also surface on the user's message via emoji morphing (💭 → 🔍 → 📖 → cleared on completion)
 
 ```bash

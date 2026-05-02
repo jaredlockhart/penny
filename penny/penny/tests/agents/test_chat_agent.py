@@ -155,18 +155,19 @@ Just wrap them in conversational text, not a clinical dump.
 The user's name is Test User.
 
 ### Memory Inventory
-- browse-results (log) — Every browse-tool fetch result
-- collector-runs (log) — One entry per Collector cycle: target + success marker + done() summary
-- dislikes (collection) — Topics the user has expressed negative sentiment about
-- knowledge (collection) — Summarized facts from web pages Penny has read
-- likes (collection) — Topics the user has expressed positive sentiment about
-- notified-thoughts (collection) — Thoughts already shared with the user
-- penny-messages (log) — Every outgoing Penny reply
-- playlists (collection) — favorite playlists
-- secrets (collection) — hidden
-- tips (log) — useful tips
-- unnotified-thoughts (collection) — Pending thoughts to share with the user
-- user-messages (log) — Every incoming user message
+- browse-results (log, 0 entries) — Every browse-tool fetch result
+- collector-runs (log, 0 entries) — One entry per Collector cycle: \
+target + success marker + done() summary
+- dislikes (collection, 0 entries) — Topics the user has expressed negative sentiment about
+- knowledge (collection, 0 entries) — Summarized facts from web pages Penny has read
+- likes (collection, 0 entries) — Topics the user has expressed positive sentiment about
+- notified-thoughts (collection, 0 entries) — Thoughts already shared with the user
+- penny-messages (log, 0 entries) — Every outgoing Penny reply
+- playlists (collection, 1 entries) — favorite playlists
+- secrets (collection, 1 entries) — hidden
+- tips (log, 1 entries) — useful tips
+- unnotified-thoughts (collection, 0 entries) — Pending thoughts to share with the user
+- user-messages (log, 1 entries) — Every incoming user message
 
 ### playlists
 favorite playlists
@@ -633,9 +634,10 @@ async def test_inventory_lists_non_archived_memories(
 
         assert result is not None
         assert "### Memory Inventory" in result
-        assert "likes-test (collection) — positive prefs" in result
-        assert "dislikes-test (collection) — negative prefs" in result  # off still listed
-        assert "messages-test (log) — convo log" in result
+        assert "likes-test (collection, 0 entries) — positive prefs" in result
+        # off still listed
+        assert "dislikes-test (collection, 0 entries) — negative prefs" in result
+        assert "messages-test (log, 0 entries) — convo log" in result
 
 
 @pytest.mark.asyncio

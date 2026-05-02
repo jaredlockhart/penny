@@ -1,14 +1,14 @@
 /**
- * Full page — consolidates thoughts, prompt logs, and all settings.
- * Tabs: Thoughts, Prompts, Schedules, Likes, Dislikes, Domains, Config.
+ * Full page — consolidates the prompt log, memory explorer, and settings.
+ * Tabs: Prompts, Memories, Schedules, Domains, Config.
  */
 
 import {
   type DomainAllowlist,
   DomainPermission as DP,
   type DomainPermissionEntry,
-  type PreferenceItem,
-  type PreferenceThoughtItem,
+  type MemoryEntryRecord,
+  type MemoryRecord,
   type PromptLogEntry,
   type PromptLogRun,
   type RuntimeConfigParam,
@@ -17,12 +17,16 @@ import {
   type ScheduleItem,
   STORAGE_KEY_DOMAIN_ALLOWLIST,
   STORAGE_KEY_TOOL_USE,
-  type ThoughtCard,
 } from "../protocol.js";
 
 // --- Top-level state ---
 
-type Tab = "thoughts" | "prompts" | "schedules" | "likes" | "dislikes" | "domains" | "config";
+type Tab =
+  | "prompts"
+  | "memories"
+  | "schedules"
+  | "domains"
+  | "config";
 
 // --- Toast ---
 
@@ -36,25 +40,6 @@ function showToast(text: string): void {
   toastTimer = setTimeout(() => toast.classList.remove("visible"), 2000);
 }
 
-// --- Thoughts state ---
-
-const grid = document.getElementById("grid")!;
-const thoughtsLoading = document.getElementById("loading")!;
-const thoughtsLoadMore = document.getElementById("thoughts-load-more")!;
-const thoughtsLoadMoreBtn = document.getElementById("thoughts-load-more-btn")!;
-const modal = document.getElementById("modal")!;
-const modalImage = document.getElementById("modal-image") as HTMLImageElement;
-const modalTitle = document.getElementById("modal-title")!;
-const modalDate = document.getElementById("modal-date")!;
-const modalText = document.getElementById("modal-text")!;
-
-let unnotifiedThoughts: ThoughtCard[] = [];
-let notifiedThoughts: ThoughtCard[] = [];
-let notifiedHasMore = false;
-let notifiedPages = 1;
-let activeThoughtTab: "new" | "archive" = "new";
-let modalThought: ThoughtCard | null = null;
-
 // --- Prompts state ---
 
 const runsContainer = document.getElementById("runs")!;
@@ -64,10 +49,9 @@ const promptsLoadMoreBtn = document.getElementById("prompts-load-more-btn")!;
 let activeAgentFilter = "";
 
 const AGENT_LABELS: Record<string, string> = {
-  inner_monologue: '<i class="fa-regular fa-lightbulb"></i> Thinking',
+  collector: '<i class="fa-solid fa-database"></i> Collector',
   chat: '<i class="fa-solid fa-comment"></i> Chat',
   history: '<i class="fa-solid fa-clock-rotate-left"></i> History',
-  notify: '<i class="fa-solid fa-bell"></i> Notify',
   startup: '<i class="fa-solid fa-rocket"></i> Startup',
 };
 
@@ -79,6 +63,20 @@ const runElements = new Map<string, HTMLElement>();
 let activeRunId: string | null = null;
 let activeTimer: ReturnType<typeof setTimeout> | null = null;
 let promptsLoaded = false;
+
+// --- Memories state ---
+
+const memoriesLoading = document.getElementById("memories-loading")!;
+const memoriesList = document.getElementById("memories-list")!;
+const memoryDetail = document.getElementById("memory-detail")!;
+const memoryDetailContent = document.getElementById("memory-detail-content")!;
+const memoryDetailBack = document.getElementById("memory-detail-back")!;
+
+type MemoryTab = "collections" | "logs" | "archived";
+
+let allMemories: MemoryRecord[] = [];
+let activeMemoryName: string | null = null;
+let activeMemoryTab: MemoryTab = "collections";
 
 // --- Config state ---
 
@@ -96,15 +94,14 @@ function init(): void {
     btn.addEventListener("click", () => switchTab(btn.getAttribute("data-tab") as Tab));
   }
 
-  // Load initial data for thoughts tab
-  browser.runtime.sendMessage({ type: RuntimeMessageType.ThoughtsRequest });
+  // Load initial data for the prompts tab (default)
+  requestPromptLogs(0);
+  promptsLoaded = true;
 
   // Set up all panel interactions
-  setupThoughts();
   setupPrompts();
+  setupMemories();
   setupSchedules();
-  setupPreferences("positive", "likes");
-  setupPreferences("negative", "dislikes");
   setupDomains();
   setupConfig();
 }
@@ -118,16 +115,13 @@ function switchTab(tab: Tab): void {
   }
 
   // Request data for the activated tab
-  if (tab === "thoughts") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.ThoughtsRequest });
-  } else if (tab === "prompts" && !promptsLoaded) {
+  if (tab === "prompts" && !promptsLoaded) {
     requestPromptLogs(0);
+    promptsLoaded = true;
+  } else if (tab === "memories") {
+    requestMemories();
   } else if (tab === "schedules") {
     browser.runtime.sendMessage({ type: RuntimeMessageType.SchedulesRequest });
-  } else if (tab === "likes") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferencesRequest, valence: "positive" });
-  } else if (tab === "dislikes") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferencesRequest, valence: "negative" });
   } else if (tab === "domains") {
     loadDomainsFromCache();
   } else if (tab === "config") {
@@ -141,12 +135,7 @@ function switchTab(tab: Tab): void {
 // ============================================================
 
 function handleMessage(message: RuntimeMessage): void {
-  if (message.type === RuntimeMessageType.ThoughtsResponse) {
-    unnotifiedThoughts = message.unnotified;
-    notifiedThoughts = message.notified;
-    notifiedHasMore = message.notified_has_more;
-    renderThoughts();
-  } else if (message.type === RuntimeMessageType.PromptLogsResponse) {
+  if (message.type === RuntimeMessageType.PromptLogsResponse) {
     promptsLoaded = true;
     if (message.runs.length > 0 && allRuns.length > 0) {
       appendRuns(message.runs);
@@ -159,13 +148,14 @@ function handleMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.PromptLogUpdate) {
     handlePromptUpdate(message.prompt);
   } else if (message.type === RuntimeMessageType.RunOutcomeUpdate) {
-    handleRunOutcome(message.run_id, message.outcome);
+    handleRunOutcome(
+      message.run_id,
+      message.success,
+      message.reason,
+      message.target,
+    );
   } else if (message.type === RuntimeMessageType.SchedulesResponse) {
     renderSchedules(message.schedules, message.error);
-  } else if (message.type === RuntimeMessageType.PreferencesResponse) {
-    renderPreferences(message.valence, message.preferences);
-  } else if (message.type === RuntimeMessageType.PreferenceThoughtsResponse) {
-    renderPreferenceThoughts(message.preference_id, message.thoughts);
   } else if (message.type === RuntimeMessageType.ConfigResponse) {
     renderConfig(message.params);
     if (pendingConfigSave) {
@@ -177,208 +167,15 @@ function handleMessage(message: RuntimeMessage): void {
     if (toggle) toggle.checked = message.enabled;
   } else if (message.type === RuntimeMessageType.DomainPermissionsSync) {
     renderDomains(message.permissions);
+  } else if (message.type === RuntimeMessageType.MemoriesResponse) {
+    handleMemoriesResponse(message.memories);
+  } else if (message.type === RuntimeMessageType.MemoryDetailResponse) {
+    handleMemoryDetailResponse(message.memory, message.entries, message.collector_runs);
+  } else if (message.type === RuntimeMessageType.MemoryChanged) {
+    handleMemoryChanged(message.name);
   }
 }
 
-// ============================================================
-// Thoughts
-// ============================================================
-
-function setupThoughts(): void {
-  for (const btn of Array.from(document.querySelectorAll(".thought-tab"))) {
-    btn.addEventListener("click", () => switchThoughtTab(btn.getAttribute("data-ttab") as "new" | "archive"));
-  }
-
-  thoughtsLoadMoreBtn.addEventListener("click", loadNextPage);
-
-  document.getElementById("modal-backdrop")!.addEventListener("click", closeModal);
-  document.getElementById("modal-close")!.addEventListener("click", closeModal);
-  document.getElementById("modal-thumbs-up")!.addEventListener("click", () => modalReact("\u{1f44d}"));
-  document.getElementById("modal-thumbs-down")!.addEventListener("click", () => modalReact("\u{1f44e}"));
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeModal();
-  });
-}
-
-function switchThoughtTab(tab: "new" | "archive"): void {
-  activeThoughtTab = tab;
-
-  for (const btn of Array.from(document.querySelectorAll(".thought-tab"))) {
-    btn.classList.toggle("active", btn.getAttribute("data-ttab") === tab);
-  }
-
-  renderThoughts();
-}
-
-function renderThoughts(): void {
-  thoughtsLoading.classList.add("hidden");
-  grid.innerHTML = "";
-
-  const visible = activeThoughtTab === "new" ? unnotifiedThoughts : notifiedThoughts;
-
-  if (visible.length === 0) {
-    thoughtsLoading.textContent = activeThoughtTab === "new"
-      ? "No new thoughts yet. Penny is still thinking..."
-      : "No archived thoughts yet.";
-    thoughtsLoading.classList.remove("hidden");
-    thoughtsLoadMore.classList.add("hidden");
-    return;
-  }
-
-  renderCards(visible);
-  const showLoadMore = activeThoughtTab === "archive" && notifiedHasMore;
-  thoughtsLoadMore.classList.toggle("hidden", !showLoadMore);
-}
-
-function loadNextPage(): void {
-  notifiedPages += 1;
-  browser.runtime.sendMessage({
-    type: RuntimeMessageType.ThoughtsRequest,
-    notified_pages: notifiedPages,
-  });
-}
-
-function renderCards(thoughts: ThoughtCard[]): void {
-  for (const thought of thoughts) {
-    grid.appendChild(createCard(thought));
-  }
-}
-
-function createCard(thought: ThoughtCard): HTMLElement {
-  const card = document.createElement("div");
-  card.className = "card";
-  card.dataset.id = String(thought.id);
-  card.style.cursor = "pointer";
-  card.addEventListener("click", () => openModal(thought));
-
-  if (thought.image) {
-    const img = document.createElement("img");
-    img.className = "card-image";
-    img.src = thought.image;
-    img.alt = thought.title;
-    img.loading = "lazy";
-    img.addEventListener("error", () => {
-      img.replaceWith(createPlaceholder());
-    });
-    card.appendChild(img);
-  } else {
-    card.appendChild(createPlaceholder());
-  }
-
-  const body = document.createElement("div");
-  body.className = "card-body";
-
-  const title = document.createElement("div");
-  title.className = "card-title";
-  title.textContent = thought.title || "Untitled thought";
-  body.appendChild(title);
-
-  const byline = buildByline(thought);
-  if (byline) {
-    const date = document.createElement("div");
-    date.className = "card-date";
-    date.textContent = byline;
-    body.appendChild(date);
-  }
-
-  const content = document.createElement("div");
-  content.className = "card-content";
-  content.innerHTML = thought.content;
-  body.appendChild(content);
-
-  card.appendChild(body);
-
-  if (!thought.notified) {
-    const actions = document.createElement("div");
-    actions.className = "card-actions";
-
-    const thumbsUp = document.createElement("button");
-    thumbsUp.className = "reaction-btn thumbs-up";
-    thumbsUp.innerHTML = '<i class="fa-solid fa-thumbs-up"></i>';
-    thumbsUp.addEventListener("click", (e) => {
-      e.stopPropagation();
-      reactToThought(thought.id, "\u{1f44d}", card);
-    });
-
-    const thumbsDown = document.createElement("button");
-    thumbsDown.className = "reaction-btn thumbs-down";
-    thumbsDown.innerHTML = '<i class="fa-solid fa-thumbs-down"></i>';
-    thumbsDown.addEventListener("click", (e) => {
-      e.stopPropagation();
-      reactToThought(thought.id, "\u{1f44e}", card);
-    });
-
-    actions.appendChild(thumbsUp);
-    actions.appendChild(thumbsDown);
-    card.appendChild(actions);
-  }
-
-  return card;
-}
-
-function reactToThought(thoughtId: number, emoji: string, card: HTMLElement | null): void {
-  browser.runtime.sendMessage({
-    type: RuntimeMessageType.ThoughtReaction,
-    thought_id: thoughtId,
-    emoji,
-  });
-  if (card) {
-    card.style.transition = "opacity 0.3s, transform 0.3s";
-    card.style.opacity = "0";
-    card.style.transform = "scale(0.95)";
-    setTimeout(() => card.remove(), 300);
-  }
-}
-
-function createPlaceholder(): HTMLElement {
-  const div = document.createElement("div");
-  div.className = "card-image-placeholder";
-  div.textContent = "\u{1f4ad}";
-  return div;
-}
-
-function buildByline(thought: ThoughtCard): string {
-  const parts: string[] = [];
-  if (thought.created_at) parts.push(formatDate(thought.created_at));
-  parts.push(thought.seed_topic || "free thought");
-  return parts.join(" \u00b7 ");
-}
-
-function openModal(thought: ThoughtCard): void {
-  modalThought = thought;
-  modalImage.src = thought.image || "";
-  modalTitle.textContent = thought.title || "Untitled thought";
-  modalDate.textContent = buildByline(thought);
-  modalText.innerHTML = thought.content;
-  const actions = document.getElementById("modal-actions")!;
-  actions.classList.toggle("hidden", thought.notified);
-  modal.classList.remove("hidden");
-}
-
-function closeModal(): void {
-  modal.classList.add("hidden");
-  modalThought = null;
-}
-
-function modalReact(emoji: string): void {
-  if (!modalThought) return;
-  const card = document.querySelector(`.card[data-id="${modalThought.id}"]`) as HTMLElement | null;
-  reactToThought(modalThought.id, emoji, card);
-  closeModal();
-}
-
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return "";
-  }
-}
 
 // ============================================================
 // Prompts
@@ -452,7 +249,9 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
     total_duration_ms: prompt.duration_ms,
     total_input_tokens: prompt.input_tokens,
     total_output_tokens: prompt.output_tokens,
-    run_outcome: null,
+    run_success: null,
+    run_reason: null,
+    run_target: null,
     prompts: [prompt],
   };
   allRuns.unshift(run);
@@ -463,17 +262,24 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
   markRunActive(run.run_id, row);
 }
 
-function handleRunOutcome(runId: string, outcome: string): void {
+function handleRunOutcome(
+  runId: string,
+  success: boolean,
+  reason: string,
+  target: string | null,
+): void {
   const run = allRuns.find((r) => r.run_id === runId);
   if (!run) return;
-  run.run_outcome = outcome;
+  run.run_success = success;
+  run.run_reason = reason;
+  run.run_target = target;
 
   const row = runElements.get(runId);
   if (!row) return;
 
   const summary = row.querySelector(".run-summary");
   if (summary) {
-    summary.appendChild(createRunOutcome(outcome));
+    summary.appendChild(createRunOutcome(success, reason, target));
   }
 
   // Dismiss spinner — run is complete
@@ -538,8 +344,10 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   const header = createRunHeader(run);
   summary.appendChild(header);
 
-  if (run.run_outcome) {
-    summary.appendChild(createRunOutcome(run.run_outcome));
+  if (run.run_success !== null || run.run_reason) {
+    summary.appendChild(
+      createRunOutcome(run.run_success, run.run_reason ?? "", run.run_target),
+    );
   }
 
   row.appendChild(summary);
@@ -558,12 +366,16 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   return row;
 }
 
-function createRunOutcome(outcome: string): HTMLElement {
+function createRunOutcome(
+  success: boolean | null,
+  reason: string,
+  target: string | null,
+): HTMLElement {
   const el = document.createElement("div");
-  el.className = outcome.startsWith("Stored")
+  el.className = success
     ? "run-outcome run-outcome-stored"
     : "run-outcome run-outcome-discarded";
-  el.textContent = outcome;
+  el.textContent = target ? `[${target}] ${reason}` : reason;
   return el;
 }
 
@@ -797,6 +609,12 @@ function normalizeSnippet(content: string | null | undefined): string {
 }
 
 function extractPromptType(run: PromptLogRun): string {
+  // For collector cycles, every run has prompt_type="collector" — surface
+  // the bound collection name instead, which is the only thing that
+  // distinguishes one collector run from another.
+  if (run.agent_name === "collector" && run.run_target) {
+    return run.run_target;
+  }
   for (const prompt of run.prompts) {
     if (!prompt.prompt_type) continue;
     if (prompt.prompt_type === "user_message") {
@@ -845,189 +663,36 @@ function formatTokens(count: number): string {
   return String(count);
 }
 
+const MS_PER_DAY = 86_400_000;
+
+function formatRelativeDate(iso: string): string {
+  try {
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then)) return iso;
+    const days = Math.floor((Date.now() - then) / MS_PER_DAY);
+    if (days <= 0) return "today";
+    if (days === 1) return "yesterday";
+    if (days < 7) return `${days}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    return formatDateTime(iso);
+  } catch {
+    return iso;
+  }
+}
+
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const seconds = (ms / 1000).toFixed(1);
   return `${seconds}s`;
 }
 
-// ============================================================
-// Preferences
-// ============================================================
-
-const MS_PER_DAY = 86_400_000;
-
-function renderPreferences(valence: string, prefs: PreferenceItem[]): void {
-  const listEl = document.getElementById(valence === "positive" ? "likes-list" : "dislikes-list")!;
-  listEl.innerHTML = "";
-
-  if (prefs.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "prefs-empty";
-    empty.textContent = valence === "positive" ? "No likes yet." : "No dislikes yet.";
-    listEl.appendChild(empty);
-    return;
-  }
-
-  for (const pref of prefs) {
-    listEl.appendChild(createPreferenceContainer(pref));
-  }
+/** Convert literal ``\n`` escape sequences to real newlines.  Used on
+ * extraction prompts before rendering them in the textarea — chat-side
+ * tool calls (or the model double-escaping) have stored a few prompts
+ * with the two-character escape instead of an actual newline. */
+function unescapeNewlines(text: string): string {
+  return text.replace(/\\n/g, "\n");
 }
-
-function createPreferenceRow(pref: PreferenceItem): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "pref-row";
-
-  const toggle = document.createElement("span");
-  toggle.className = "pref-toggle";
-  toggle.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
-
-  const name = document.createElement("span");
-  name.className = "pref-name";
-  name.textContent = pref.content;
-
-  const meta = createPreferenceMeta(pref);
-
-  const del = document.createElement("button");
-  del.className = "pref-delete";
-  del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-  del.setAttribute("aria-label", `Remove ${pref.content}`);
-  del.addEventListener("click", (event: MouseEvent) => {
-    event.stopPropagation();
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceDelete, preference_id: pref.id });
-  });
-
-  row.appendChild(toggle);
-  row.appendChild(name);
-  row.appendChild(meta);
-  row.appendChild(del);
-  return row;
-}
-
-function createPreferenceMeta(pref: PreferenceItem): HTMLSpanElement {
-  const meta = document.createElement("span");
-  meta.className = "pref-meta";
-  const sourceLabel = pref.source === "manual" ? "manual" : "extracted";
-  const sourceIcon = pref.source === "manual" ? "fa-hand" : "fa-robot";
-  const thoughtLabel = pref.thought_count === 1 ? "thought" : "thoughts";
-  meta.innerHTML =
-    `<span><i class="fa-solid ${sourceIcon}"></i>${sourceLabel}</span>` +
-    `<span><i class="fa-solid fa-comment"></i>${pref.mention_count} mentions</span>` +
-    `<span><i class="fa-solid fa-lightbulb"></i>${pref.thought_count} ${thoughtLabel}</span>`;
-  return meta;
-}
-
-function createPreferenceContainer(pref: PreferenceItem): HTMLDivElement {
-  const container = document.createElement("div");
-  container.className = "pref-container";
-  container.dataset.prefId = String(pref.id);
-
-  const row = createPreferenceRow(pref);
-  const detail = document.createElement("div");
-  detail.className = "pref-detail";
-
-  container.appendChild(row);
-  container.appendChild(detail);
-
-  if (pref.thought_count > 0) {
-    row.classList.add("pref-expandable");
-    row.addEventListener("click", () => {
-      const expanded = container.classList.toggle("expanded");
-      if (expanded && detail.children.length === 0) {
-        detail.innerHTML = '<div class="pref-thoughts-loading">Loading thoughts...</div>';
-        browser.runtime.sendMessage({
-          type: RuntimeMessageType.PreferenceThoughtsRequest,
-          preference_id: pref.id,
-        });
-      }
-    });
-  }
-
-  return container;
-}
-
-function renderPreferenceThoughts(preferenceId: number, thoughts: PreferenceThoughtItem[]): void {
-  const container = document.querySelector(`.pref-container[data-pref-id="${preferenceId}"]`);
-  if (!container) return;
-  const detail = container.querySelector(".pref-detail");
-  if (!detail) return;
-  detail.innerHTML = "";
-
-  if (thoughts.length === 0) {
-    detail.innerHTML = '<div class="pref-thoughts-empty">No thoughts yet.</div>';
-    return;
-  }
-
-  for (const thought of thoughts) {
-    detail.appendChild(createThoughtItem(thought));
-  }
-}
-
-function createThoughtItem(thought: PreferenceThoughtItem): HTMLDivElement {
-  const item = document.createElement("div");
-  item.className = "pref-thought-item";
-
-  if (thought.image) {
-    const image = document.createElement("img");
-    image.className = "pref-thought-image";
-    image.src = thought.image;
-    item.appendChild(image);
-  }
-
-  const body = document.createElement("div");
-  body.className = "pref-thought-body";
-
-  const title = document.createElement("span");
-  title.className = "pref-thought-title";
-  title.textContent = thought.title ?? "Untitled";
-
-  const date = document.createElement("span");
-  date.className = "pref-thought-date";
-  if (thought.created_at !== null) {
-    date.textContent = formatRelativeDate(thought.created_at);
-  }
-
-  const snippet = document.createElement("div");
-  snippet.className = "pref-thought-snippet";
-  snippet.textContent = thought.content;
-
-  body.appendChild(title);
-  body.appendChild(date);
-  body.appendChild(snippet);
-  item.appendChild(body);
-  return item;
-}
-
-function formatRelativeDate(isoDate: string): string {
-  const date = new Date(isoDate);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / MS_PER_DAY);
-  if (diffDays === 0) return "today";
-  if (diffDays === 1) return "yesterday";
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  return date.toLocaleDateString();
-}
-
-function setupPreferences(valence: string, prefix: string): void {
-  const input = document.getElementById(`${prefix}-input`) as HTMLInputElement;
-  const btn = document.getElementById(`${prefix}-add-btn`) as HTMLButtonElement;
-
-  function add(): void {
-    const content = input.value.trim();
-    if (!content) return;
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceAdd, valence, content });
-    input.value = "";
-    showToast(`Added ${valence === "positive" ? "like" : "dislike"}: ${content}`);
-  }
-
-  btn.addEventListener("click", add);
-  input.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter") add();
-  });
-}
-
 // ============================================================
 // Schedules
 // ============================================================
@@ -1352,6 +1017,702 @@ function createConfigItem(param: RuntimeConfigParam): HTMLElement {
   item.appendChild(header);
   item.appendChild(input);
   return item;
+}
+
+// ============================================================
+// Memories
+// ============================================================
+
+function setupMemories(): void {
+  memoryDetailBack.addEventListener("click", showMemoriesList);
+  for (const btn of Array.from(document.querySelectorAll("#memory-tabs .sub-tab"))) {
+    btn.addEventListener("click", () => {
+      const tab = btn.getAttribute("data-mtab") as MemoryTab | null;
+      if (!tab) return;
+      activeMemoryTab = tab;
+      for (const b of Array.from(document.querySelectorAll("#memory-tabs .sub-tab"))) {
+        b.classList.toggle("active", b === btn);
+      }
+      // Sub-tab switch returns to the list view.
+      activeMemoryName = null;
+      memoryDetail.classList.add("hidden");
+      memoriesList.classList.remove("hidden");
+      renderMemoriesList();
+    });
+  }
+}
+
+function requestMemories(): void {
+  memoriesLoading.classList.remove("hidden");
+  browser.runtime.sendMessage({ type: RuntimeMessageType.MemoriesRequest });
+}
+
+function handleMemoriesResponse(memories: MemoryRecord[]): void {
+  allMemories = memories;
+  memoriesLoading.classList.add("hidden");
+  renderMemoriesList();
+}
+
+function handleMemoryDetailResponse(
+  memory: MemoryRecord,
+  entries: MemoryEntryRecord[],
+  collectorRuns: MemoryEntryRecord[],
+): void {
+  activeMemoryName = memory.name;
+  showMemoryDetail();
+  renderMemoryDetail(memory, entries, collectorRuns);
+}
+
+function handleMemoryChanged(name: string | null): void {
+  // The memories tab might not be visible — refresh data only if it is.
+  const memoriesPanel = document.getElementById("panel-memories");
+  if (!memoriesPanel || memoriesPanel.classList.contains("hidden")) return;
+  if (activeMemoryName && (name === null || name === activeMemoryName)) {
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.MemoryDetailRequest,
+      name: activeMemoryName,
+    });
+  } else if (!activeMemoryName) {
+    requestMemories();
+  }
+}
+
+function showMemoriesList(): void {
+  activeMemoryName = null;
+  memoryDetail.classList.add("hidden");
+  memoriesList.classList.remove("hidden");
+  requestMemories();
+}
+
+function showMemoryDetail(): void {
+  memoriesList.classList.add("hidden");
+  memoryDetail.classList.remove("hidden");
+}
+
+function renderMemoriesList(): void {
+  memoriesList.innerHTML = "";
+  // The "+" affordance only makes sense on the collections tab — that's
+  // the only shape users can create from the addon.
+  if (activeMemoryTab === "collections") {
+    memoriesList.appendChild(createNewMemoryControl());
+  }
+  const visible = allMemories.filter(memoryMatchesTab);
+  if (visible.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "panel-loading";
+    empty.textContent = emptyLabel(activeMemoryTab);
+    memoriesList.appendChild(empty);
+    return;
+  }
+  for (const memory of visible) {
+    memoriesList.appendChild(createMemoryRow(memory));
+  }
+}
+
+function memoryMatchesTab(memory: MemoryRecord): boolean {
+  if (activeMemoryTab === "archived") return memory.archived;
+  if (memory.archived) return false;
+  return activeMemoryTab === "collections" ? memory.type === "collection" : memory.type === "log";
+}
+
+function emptyLabel(tab: MemoryTab): string {
+  if (tab === "collections") return "No collections yet.";
+  if (tab === "logs") return "No logs yet.";
+  return "Nothing archived.";
+}
+
+function createNewMemoryControl(): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "memory-new-control";
+
+  const button = document.createElement("button");
+  button.className = "memory-new-btn";
+  button.innerHTML = '<i class="fa-solid fa-plus"></i> New collection';
+  button.addEventListener("click", () => {
+    wrapper.replaceWith(createNewMemoryForm());
+  });
+  wrapper.appendChild(button);
+  return wrapper;
+}
+
+function createNewMemoryForm(): HTMLElement {
+  const form = document.createElement("div");
+  form.className = "memory-new-form";
+
+  const fields = createMemoryFormFields({
+    description: "",
+    recall: "off",
+    extraction_prompt: "",
+    collector_interval_seconds: null,
+  });
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.placeholder = "collection-name";
+  nameInput.className = "memory-form-input";
+
+  form.appendChild(labelled("Name", nameInput));
+  form.appendChild(labelled("Description", fields.description));
+  form.appendChild(labelled("Recall", fields.recall));
+  form.appendChild(labelled("Extraction prompt", fields.extractionPrompt));
+  form.appendChild(labelled("Collector interval (seconds)", fields.intervalInput));
+
+  const actions = document.createElement("div");
+  actions.className = "memory-form-actions";
+
+  const cancel = document.createElement("button");
+  cancel.className = "memory-form-cancel";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => renderMemoriesList());
+
+  const create = document.createElement("button");
+  create.className = "memory-form-save";
+  create.textContent = "Create";
+  create.addEventListener("click", () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      showToast("Name is required");
+      return;
+    }
+    const promptValue = fields.extractionPrompt.value.trim();
+    const intervalValue = fields.intervalInput.value.trim();
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.MemoryCreate,
+      name,
+      description: fields.description.value.trim(),
+      recall: fields.recall.value as "off" | "recent" | "relevant" | "all",
+      extraction_prompt: promptValue || null,
+      collector_interval_seconds: intervalValue ? Number(intervalValue) : null,
+    });
+    showToast("Created");
+  });
+
+  actions.appendChild(cancel);
+  actions.appendChild(create);
+  form.appendChild(actions);
+  return form;
+}
+
+interface MemoryFormFields {
+  description: HTMLTextAreaElement;
+  recall: HTMLSelectElement;
+  extractionPrompt: HTMLTextAreaElement;
+  intervalInput: HTMLInputElement;
+}
+
+function createMemoryFormFields(initial: {
+  description: string;
+  recall: string;
+  extraction_prompt: string;
+  collector_interval_seconds: number | null;
+}): MemoryFormFields {
+  const description = document.createElement("textarea");
+  description.className = "memory-form-input";
+  description.rows = 2;
+  description.value = initial.description;
+
+  const recall = document.createElement("select");
+  recall.className = "memory-form-input";
+  for (const value of ["off", "recent", "relevant", "all"]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    if (value === initial.recall) option.selected = true;
+    recall.appendChild(option);
+  }
+
+  const extractionPrompt = document.createElement("textarea");
+  extractionPrompt.className = "memory-form-input memory-form-prompt";
+  extractionPrompt.rows = 6;
+  // Some prompts have been stored with literal "\n" escape sequences
+  // instead of real newlines (chat-side tool calls or the model itself
+  // double-escaped).  Render those as real newlines so the textarea
+  // shows a multi-line prompt; saving from this form normalises the DB
+  // value naturally.
+  extractionPrompt.value = unescapeNewlines(initial.extraction_prompt);
+
+  const intervalInput = document.createElement("input");
+  intervalInput.type = "number";
+  intervalInput.className = "memory-form-input";
+  intervalInput.min = "30";
+  intervalInput.placeholder = "300";
+  if (initial.collector_interval_seconds !== null) {
+    intervalInput.value = String(initial.collector_interval_seconds);
+  }
+
+  return { description, recall, extractionPrompt, intervalInput };
+}
+
+function labelled(label: string, control: HTMLElement): HTMLElement {
+  const wrapper = document.createElement("label");
+  wrapper.className = "memory-form-row";
+  const text = document.createElement("span");
+  text.className = "memory-form-label";
+  text.textContent = label;
+  wrapper.appendChild(text);
+  wrapper.appendChild(control);
+  return wrapper;
+}
+
+function createMemoryRow(memory: MemoryRecord): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "memory-row";
+  if (memory.archived) row.classList.add("memory-row-archived");
+
+  const name = document.createElement("span");
+  name.className = "memory-name";
+  name.textContent = memory.name;
+
+  const badge = document.createElement("span");
+  badge.className = `memory-type-badge ${memory.type}`;
+  badge.textContent = memory.type;
+
+  const description = document.createElement("span");
+  description.className = "memory-description";
+  description.textContent = memory.description;
+
+  const meta = document.createElement("span");
+  meta.className = "memory-meta";
+  meta.appendChild(metaItem("fa-list", `${memory.entry_count} entries`));
+  if (memory.last_collected_at) {
+    meta.appendChild(metaItem("fa-clock-rotate-left", formatRelativeDate(memory.last_collected_at)));
+  } else if (memory.extraction_prompt) {
+    meta.appendChild(metaItem("fa-clock-rotate-left", "never"));
+  }
+
+  row.appendChild(name);
+  row.appendChild(badge);
+  row.appendChild(description);
+  row.appendChild(meta);
+
+  row.addEventListener("click", () => {
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.MemoryDetailRequest,
+      name: memory.name,
+    });
+  });
+
+  return row;
+}
+
+function metaItem(iconClass: string, text: string): HTMLSpanElement {
+  const span = document.createElement("span");
+  span.innerHTML = `<i class="fa-solid ${iconClass}"></i>${text}`;
+  return span;
+}
+
+function renderMemoryDetail(
+  memory: MemoryRecord,
+  entries: MemoryEntryRecord[],
+  collectorRuns: MemoryEntryRecord[],
+): void {
+  memoryDetailContent.innerHTML = "";
+
+  memoryDetailContent.appendChild(createMemoryHeader(memory));
+  memoryDetailContent.appendChild(createMemoryMetadataSection(memory));
+  memoryDetailContent.appendChild(createMemoryEntriesSection(memory, entries));
+  // Collector activity is per-collection — empty for logs (they aren't
+  // driven by a collector cycle).
+  if (collectorRuns.length > 0) {
+    memoryDetailContent.appendChild(createCollectorRunsSection(memory, collectorRuns));
+  }
+}
+
+function createCollectorRunsSection(
+  memory: MemoryRecord,
+  runs: MemoryEntryRecord[],
+): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "memory-entries-section";
+
+  const title = document.createElement("h3");
+  title.textContent = `Collector activity (${runs.length})`;
+  section.appendChild(title);
+
+  for (const run of runs) {
+    section.appendChild(createCollectorRunEntry(memory, run));
+  }
+  return section;
+}
+
+function createCollectorRunEntry(memory: MemoryRecord, run: MemoryEntryRecord): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "memory-entry";
+
+  // Strip the ``[<collection>] `` prefix the Collector writes — the
+  // section is already scoped to one target so the prefix is redundant
+  // noise on every line.
+  const prefix = `[${memory.name}] `;
+  const body = run.content.startsWith(prefix) ? run.content.slice(prefix.length) : run.content;
+
+  const header = document.createElement("div");
+  header.className = "memory-entry-header";
+
+  const time = document.createElement("span");
+  time.className = "memory-entry-date memory-entry-date-primary";
+  time.textContent = formatDateTime(run.created_at);
+  header.appendChild(time);
+
+  const author = document.createElement("span");
+  author.className = "memory-entry-author";
+  author.textContent = run.author;
+  header.appendChild(author);
+
+  const content = document.createElement("div");
+  content.className = "memory-entry-content";
+  content.textContent = body;
+
+  row.appendChild(header);
+  row.appendChild(content);
+  return row;
+}
+
+function createMemoryHeader(memory: MemoryRecord): HTMLElement {
+  const header = document.createElement("div");
+  header.className = "memory-detail-header";
+
+  const title = document.createElement("h2");
+  title.textContent = memory.name;
+
+  const badge = document.createElement("span");
+  badge.className = `memory-type-badge ${memory.type}`;
+  badge.textContent = memory.type;
+
+  header.appendChild(title);
+  header.appendChild(badge);
+  if (memory.archived) {
+    const archived = document.createElement("span");
+    archived.className = "memory-type-badge";
+    archived.textContent = "archived";
+    header.appendChild(archived);
+  }
+  return header;
+}
+
+function createMemoryMetadataSection(memory: MemoryRecord): HTMLElement {
+  // Logs are system-managed (created by migrations, written by agents) — read-only.
+  // Collections are user-editable.
+  if (memory.type === "log") {
+    return createLogMetadataSection(memory);
+  }
+  return createCollectionMetadataSection(memory);
+}
+
+function createLogMetadataSection(memory: MemoryRecord): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "memory-detail-section";
+
+  const title = document.createElement("h3");
+  title.textContent = "Metadata";
+  section.appendChild(title);
+
+  const grid = document.createElement("dl");
+  grid.className = "memory-detail-grid";
+  appendDef(grid, "Description", memory.description || "—");
+  appendDef(grid, "Recall", memory.recall);
+  appendDef(grid, "Entries", String(memory.entry_count));
+  section.appendChild(grid);
+  return section;
+}
+
+function createCollectionMetadataSection(memory: MemoryRecord): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "memory-detail-section";
+
+  const title = document.createElement("h3");
+  title.textContent = "Metadata";
+  section.appendChild(title);
+
+  const fields = createMemoryFormFields({
+    description: memory.description,
+    recall: memory.recall,
+    extraction_prompt: memory.extraction_prompt ?? "",
+    collector_interval_seconds: memory.collector_interval_seconds,
+  });
+
+  section.appendChild(labelled("Description", fields.description));
+  section.appendChild(labelled("Recall", fields.recall));
+  section.appendChild(labelled("Extraction prompt", fields.extractionPrompt));
+  section.appendChild(labelled("Collector interval (seconds)", fields.intervalInput));
+
+  const readOnlyGrid = document.createElement("dl");
+  readOnlyGrid.className = "memory-detail-grid";
+  appendDef(readOnlyGrid, "Entries", String(memory.entry_count));
+  if (memory.last_collected_at) {
+    appendDef(readOnlyGrid, "Last collected", formatDateTime(memory.last_collected_at));
+  }
+  section.appendChild(readOnlyGrid);
+
+  const actions = document.createElement("div");
+  actions.className = "memory-form-actions";
+
+  const archive = document.createElement("button");
+  archive.className = "memory-form-archive";
+  archive.textContent = memory.archived ? "Archived" : "Archive";
+  archive.disabled = memory.archived;
+  archive.addEventListener("click", () => {
+    if (!confirm(`Archive "${memory.name}"? It will disappear from the active list.`)) return;
+    browser.runtime.sendMessage({ type: RuntimeMessageType.MemoryArchive, name: memory.name });
+    showToast("Archived");
+    showMemoriesList();
+  });
+
+  const save = document.createElement("button");
+  save.className = "memory-form-save";
+  save.textContent = "Save";
+  save.addEventListener("click", () => {
+    const intervalValue = fields.intervalInput.value.trim();
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.MemoryUpdate,
+      name: memory.name,
+      description: fields.description.value.trim(),
+      recall: fields.recall.value as "off" | "recent" | "relevant" | "all",
+      extraction_prompt: fields.extractionPrompt.value.trim() || null,
+      collector_interval_seconds: intervalValue ? Number(intervalValue) : null,
+    });
+    showToast("Saved");
+  });
+
+  actions.appendChild(archive);
+  actions.appendChild(save);
+  section.appendChild(actions);
+  return section;
+}
+
+function appendDef(grid: HTMLElement, label: string, value: string, monospace = false): void {
+  const dt = document.createElement("dt");
+  dt.textContent = label;
+  const dd = document.createElement("dd");
+  if (monospace) {
+    const pre = document.createElement("pre");
+    pre.textContent = value;
+    dd.appendChild(pre);
+  } else {
+    dd.textContent = value;
+  }
+  grid.appendChild(dt);
+  grid.appendChild(dd);
+}
+
+function createMemoryEntriesSection(memory: MemoryRecord, entries: MemoryEntryRecord[]): HTMLElement {
+  // The entries section is "flat" — entries themselves are the cards,
+  // so wrapping them in another card creates visual nesting noise.
+  const section = document.createElement("div");
+  section.className = "memory-entries-section";
+
+  const title = document.createElement("h3");
+  const shown = entries.length;
+  const total = memory.entry_count;
+  title.textContent =
+    total > shown ? `Entries (showing ${shown} of ${total}, newest first)` : `Entries (${total})`;
+  section.appendChild(title);
+
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "memory-entries-empty";
+    empty.textContent = "No entries yet.";
+    section.appendChild(empty);
+  } else {
+    for (const entry of entries) {
+      section.appendChild(createMemoryEntry(memory, entry));
+    }
+  }
+
+  // Logs are append-only by the system — manual entry add is collection-only.
+  if (memory.type === "collection") {
+    section.appendChild(createEntryAddForm(memory));
+  }
+  return section;
+}
+
+// Long log entries (esp. ``user-messages`` / ``penny-messages``) get
+// collapsed by default so the list stays scannable.  CSS clips after
+// ~20 visual lines; the JS heuristic decides whether to clip at all.
+const MEMORY_ENTRY_COLLAPSE_LINES = 20;
+const MEMORY_ENTRY_COLLAPSE_CHARS = 600;
+
+function createMemoryEntry(memory: MemoryRecord, entry: MemoryEntryRecord): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "memory-entry";
+
+  const header = document.createElement("div");
+  header.className = "memory-entry-header";
+
+  if (entry.key) {
+    // Collections: the key is the title.
+    const key = document.createElement("span");
+    key.className = "memory-entry-key";
+    key.textContent = entry.key;
+    header.appendChild(key);
+  }
+
+  // For logs the timestamp IS the identifier; rendered prominently
+  // either way so the eye lands on it quickly when scanning.
+  const time = document.createElement("span");
+  time.className = entry.key ? "memory-entry-date" : "memory-entry-date memory-entry-date-primary";
+  time.textContent = formatDateTime(entry.created_at);
+  header.appendChild(time);
+
+  const author = document.createElement("span");
+  author.className = "memory-entry-author";
+  author.textContent = entry.author;
+  header.appendChild(author);
+
+  // Edit/delete only for collection entries (entry_update / entry_delete are keyed).
+  if (memory.type === "collection" && entry.key) {
+    header.appendChild(createEntryActions(memory, entry, row));
+  }
+
+  const content = document.createElement("div");
+  content.className = "memory-entry-content";
+  content.textContent = entry.content;
+
+  row.appendChild(header);
+  row.appendChild(content);
+
+  if (shouldCollapseEntry(entry.content)) {
+    content.classList.add("collapsed");
+    row.appendChild(createEntryCollapseToggle(content));
+  }
+
+  return row;
+}
+
+function shouldCollapseEntry(content: string): boolean {
+  return (
+    content.split("\n").length > MEMORY_ENTRY_COLLAPSE_LINES ||
+    content.length > MEMORY_ENTRY_COLLAPSE_CHARS
+  );
+}
+
+function createEntryCollapseToggle(content: HTMLElement): HTMLElement {
+  const toggle = document.createElement("button");
+  toggle.className = "memory-entry-toggle";
+  toggle.textContent = "Show more";
+  toggle.addEventListener("click", () => {
+    const stillCollapsed = content.classList.toggle("collapsed");
+    toggle.textContent = stillCollapsed ? "Show more" : "Show less";
+  });
+  return toggle;
+}
+
+function createEntryActions(
+  memory: MemoryRecord,
+  entry: MemoryEntryRecord,
+  row: HTMLElement,
+): HTMLElement {
+  const actions = document.createElement("span");
+  actions.className = "memory-entry-actions";
+
+  const edit = document.createElement("button");
+  edit.className = "memory-entry-action";
+  edit.title = "Edit";
+  edit.innerHTML = '<i class="fa-solid fa-pen"></i>';
+  edit.addEventListener("click", (e) => {
+    e.stopPropagation();
+    enterEditMode(memory, entry, row);
+  });
+
+  const del = document.createElement("button");
+  del.className = "memory-entry-action";
+  del.title = "Delete";
+  del.innerHTML = '<i class="fa-solid fa-trash"></i>';
+  del.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!entry.key) return;
+    if (!confirm(`Delete "${entry.key}"?`)) return;
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.EntryDelete,
+      memory: memory.name,
+      key: entry.key,
+    });
+    showToast("Deleted");
+  });
+
+  actions.appendChild(edit);
+  actions.appendChild(del);
+  return actions;
+}
+
+function enterEditMode(memory: MemoryRecord, entry: MemoryEntryRecord, row: HTMLElement): void {
+  if (!entry.key) return;
+  const content = row.querySelector(".memory-entry-content") as HTMLElement | null;
+  if (!content) return;
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "memory-form-input memory-form-prompt";
+  textarea.value = entry.content;
+  textarea.rows = Math.max(3, entry.content.split("\n").length);
+
+  const actions = document.createElement("div");
+  actions.className = "memory-form-actions";
+  const cancel = document.createElement("button");
+  cancel.className = "memory-form-cancel";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => content.replaceWith(restored));
+  const save = document.createElement("button");
+  save.className = "memory-form-save";
+  save.textContent = "Save";
+  save.addEventListener("click", () => {
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.EntryUpdate,
+      memory: memory.name,
+      key: entry.key as string,
+      content: textarea.value,
+    });
+    showToast("Saved");
+  });
+
+  const restored = content.cloneNode(true) as HTMLElement;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "memory-entry-content";
+  wrapper.appendChild(textarea);
+  actions.appendChild(cancel);
+  actions.appendChild(save);
+  wrapper.appendChild(actions);
+
+  content.replaceWith(wrapper);
+}
+
+function createEntryAddForm(memory: MemoryRecord): HTMLElement {
+  const form = document.createElement("div");
+  form.className = "memory-entry-add";
+
+  const keyInput = document.createElement("input");
+  keyInput.type = "text";
+  keyInput.placeholder = "key";
+  keyInput.className = "memory-form-input memory-entry-key-input";
+
+  const contentInput = document.createElement("textarea");
+  contentInput.placeholder = "content";
+  contentInput.className = "memory-form-input";
+  contentInput.rows = 2;
+
+  const submit = document.createElement("button");
+  submit.className = "memory-form-save";
+  submit.innerHTML = '<i class="fa-solid fa-plus"></i> Add entry';
+  submit.addEventListener("click", () => {
+    const key = keyInput.value.trim();
+    const content = contentInput.value.trim();
+    if (!key || !content) {
+      showToast("Key and content required");
+      return;
+    }
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.EntryCreate,
+      memory: memory.name,
+      key,
+      content,
+    });
+    keyInput.value = "";
+    contentInput.value = "";
+    showToast("Added");
+  });
+
+  form.appendChild(keyInput);
+  form.appendChild(contentInput);
+  form.appendChild(submit);
+  return form;
 }
 
 // ============================================================

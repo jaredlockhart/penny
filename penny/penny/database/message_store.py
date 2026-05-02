@@ -28,7 +28,7 @@ class MessageStore:
     def __init__(self, engine):
         self.engine = engine
         self._on_prompt_logged: Callable[[dict], None] | None = None
-        self._on_run_outcome_set: Callable[[str, str], None] | None = None
+        self._on_run_outcome_set: Callable[[str, bool, str, str | None], None] | None = None
 
     def _session(self) -> Session:
         return Session(self.engine)
@@ -296,31 +296,6 @@ class MessageStore:
             messages.reverse()
             return messages
 
-    def get_conversation(self, sender: str, limit: int = 20) -> list[MessageLog]:
-        """Get recent conversation messages (both directions), oldest first."""
-        with self._session() as session:
-            incoming = self._get_recent_incoming(session, sender, limit)
-            threaded = self._get_threaded_replies(session, incoming)
-            autonomous = self._get_autonomous_outgoing(session, sender, limit)
-            all_messages = incoming + threaded + autonomous
-            all_messages.sort(key=lambda m: m.timestamp)
-            return all_messages[-limit:]
-
-    def _get_recent_incoming(self, session: Any, sender: str, limit: int) -> list[MessageLog]:
-        """Fetch the most recent incoming messages from a user."""
-        return list(
-            session.exec(
-                select(MessageLog)
-                .where(
-                    MessageLog.sender == sender,
-                    MessageLog.direction == PennyConstants.MessageDirection.INCOMING,
-                    MessageLog.is_reaction == False,  # noqa: E712
-                )
-                .order_by(MessageLog.timestamp.desc())
-                .limit(limit)
-            ).all()
-        )
-
     def _get_threaded_replies(self, session: Any, incoming: list[MessageLog]) -> list[MessageLog]:
         """Fetch outgoing messages that are direct replies to the given incoming messages."""
         incoming_ids = [m.id for m in incoming if m.id is not None]
@@ -336,9 +311,11 @@ class MessageStore:
         )
 
     def _get_autonomous_outgoing(
-        self, session: Any, recipient: str, limit: int
+        self, session: Any, recipient: str, since: datetime, limit: int
     ) -> list[MessageLog]:
-        """Fetch autonomous outgoing messages (no parent thread) sent to a user."""
+        """Fetch autonomous outgoing messages (no parent thread) sent to a
+        user.  ``since`` bounds the time window so the conversation
+        builder doesn't drag in stale notifications from days ago."""
         return list(
             session.exec(
                 select(MessageLog)
@@ -346,6 +323,7 @@ class MessageStore:
                     MessageLog.direction == PennyConstants.MessageDirection.OUTGOING,
                     MessageLog.parent_id == None,  # noqa: E711
                     MessageLog.recipient == recipient,
+                    MessageLog.timestamp >= since,
                 )
                 .order_by(MessageLog.timestamp.desc())
                 .limit(limit)
@@ -357,9 +335,17 @@ class MessageStore:
     ) -> list[MessageLog]:
         """Get conversation messages since a timestamp, oldest first, capped at limit.
 
-        Only includes user messages and Penny's direct replies (parent_id set).
-        Proactive notifications (thoughts, news, check-ins) are excluded — they
-        have no parent_id and are already represented in the system prompt context.
+        Includes:
+          - incoming user messages
+          - Penny's threaded replies to those messages
+          - autonomous outgoing sends (notifications, ``send_message`` from
+            collector cycles) within the same window
+
+        Autonomous sends are conversational events too — when the user
+        replies to one, ``_build_conversation`` needs the prior turn so
+        Penny knows what the reply is about.  Without this they'd be
+        invisible to the chat turns array (no parent_id linking them to
+        anything incoming) and Penny would see only the user's reply.
         """
         with self._session() as session:
             incoming = list(
@@ -376,7 +362,8 @@ class MessageStore:
                 ).all()
             )
             threaded = self._get_threaded_replies(session, incoming)
-            all_messages = incoming + threaded
+            autonomous = self._get_autonomous_outgoing(session, sender, since, limit)
+            all_messages = incoming + threaded + autonomous
             all_messages.sort(key=lambda m: m.timestamp)
             return all_messages[-limit:]
 
@@ -449,8 +436,17 @@ class MessageStore:
                 select(func.count()).select_from(MessageLog).where(MessageLog.id.notin_(has_child))
             ).one()
 
-    def set_run_outcome(self, run_id: str, outcome: str) -> None:
-        """Set the run_outcome on the last prompt log for a given run_id."""
+    def set_run_outcome(
+        self,
+        run_id: str,
+        success: bool,
+        reason: str,
+        target: str | None = None,
+    ) -> None:
+        """Set the run outcome (success / reason / target) on the last prompt
+        log row for ``run_id``.  Drives the green/red tag on the prompts
+        tab.  ``target`` is the collection name for collector cycles, None
+        for other agents."""
         try:
             with self._session() as session:
                 last_prompt = session.exec(
@@ -460,13 +456,15 @@ class MessageStore:
                     .limit(1)
                 ).first()
                 if last_prompt:
-                    last_prompt.run_outcome = outcome
+                    last_prompt.run_success = success
+                    last_prompt.run_reason = reason
+                    last_prompt.run_target = target
                     session.add(last_prompt)
                     session.commit()
                     if self._on_run_outcome_set:
-                        self._on_run_outcome_set(run_id, outcome)
+                        self._on_run_outcome_set(run_id, success, reason, target)
         except Exception as e:
-            logger.error("Failed to set run_outcome for %s: %s", run_id, e)
+            logger.error("Failed to set run outcome for %s: %s", run_id, e)
 
     def get_prompt_log_agent_names(self) -> list[str]:
         """Get distinct agent names from prompt logs."""
@@ -554,11 +552,15 @@ class MessageStore:
                 }
             )
 
-        # run_outcome is set on the last prompt that has one
-        run_outcome = None
+        # Run outcome is set on the last prompt that has one
+        run_success: bool | None = None
+        run_reason: str | None = None
+        run_target: str | None = None
         for p in reversed(prompts):
-            if p.run_outcome:
-                run_outcome = p.run_outcome
+            if p.run_success is not None or p.run_reason:
+                run_success = p.run_success
+                run_reason = p.run_reason
+                run_target = p.run_target
                 break
 
         return {
@@ -570,6 +572,8 @@ class MessageStore:
             "total_duration_ms": total_duration_ms,
             "total_input_tokens": total_input_tokens,
             "total_output_tokens": total_output_tokens,
-            "run_outcome": run_outcome,
+            "run_success": run_success,
+            "run_reason": run_reason,
+            "run_target": run_target,
             "prompts": serialized_prompts,
         }

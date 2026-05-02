@@ -13,6 +13,7 @@ from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
 from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
+from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
 from penny.database.migrate import migrate
 from penny.database.models import PromptLog, RuntimeConfig
 from penny.tests.conftest import wait_until
@@ -283,7 +284,6 @@ class TestBrowseTool:
     async def test_browser_runtime_error_becomes_error_section(self, monkeypatch):
         """A RuntimeError from request_fn (structured browser failure) is surfaced
         under the dedicated error header, not the success header."""
-        from penny.constants import PennyConstants
 
         monkeypatch.setattr(PennyConstants, "BROWSE_RETRIES", 0)
         monkeypatch.setattr(PennyConstants, "BROWSE_RETRY_DELAY", 0.0)
@@ -311,7 +311,6 @@ class TestBrowseTool:
     @pytest.mark.asyncio
     async def test_permission_denied_reports_error_in_result(self, monkeypatch):
         """Permission denial appears under the browse error header, request_fn not called."""
-        from penny.constants import PennyConstants
 
         monkeypatch.setattr(PennyConstants, "BROWSE_RETRIES", 0)
         monkeypatch.setattr(PennyConstants, "BROWSE_RETRY_DELAY", 0.0)
@@ -368,184 +367,6 @@ class _MockWs:
 
     async def send(self, data: str) -> None:
         self.sent.append(json.loads(data))
-
-
-class TestBrowserPreferenceHandlers:
-    """Preference request/add/delete handlers send correct WebSocket responses."""
-
-    USER = "testuser"
-
-    def _channel(self, tmp_path, monkeypatch) -> tuple[BrowserChannel, Database]:
-        db = _make_db(tmp_path)
-        monkeypatch.setattr(db.users, "get_primary_sender", lambda: self.USER)
-        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
-        return channel, db
-
-    @pytest.mark.asyncio
-    async def test_preferences_request_empty(self, tmp_path, monkeypatch):
-        """Request with no preferences sends an empty list."""
-        channel, _ = self._channel(tmp_path, monkeypatch)
-        ws = _MockWs()
-        await channel._handle_preferences_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "preferences_request", "valence": "positive"},
-        )
-
-        assert len(ws.sent) == 1
-        resp = ws.sent[0]
-        assert resp["type"] == "preferences_response"
-        assert resp["valence"] == "positive"
-        assert resp["preferences"] == []
-
-    @pytest.mark.asyncio
-    async def test_preferences_request_filters_by_valence(self, tmp_path, monkeypatch):
-        """Only preferences matching the requested valence are returned."""
-        channel, db = self._channel(tmp_path, monkeypatch)
-        db.preferences.add(self.USER, "dark roast coffee", "positive", source="manual")
-        db.preferences.add(self.USER, "hiking", "positive", source="manual")
-        db.preferences.add(self.USER, "cold weather", "negative", source="manual")
-
-        ws = _MockWs()
-        await channel._handle_preferences_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "preferences_request", "valence": "positive"},
-        )
-
-        resp = ws.sent[0]
-        contents = [p["content"] for p in resp["preferences"]]
-        assert "dark roast coffee" in contents
-        assert "hiking" in contents
-        assert "cold weather" not in contents
-        assert all(p["source"] == "manual" for p in resp["preferences"])
-
-    @pytest.mark.asyncio
-    async def test_preference_add_stores_and_returns_list(self, tmp_path, monkeypatch):
-        """preference_add persists the preference as manual and returns the updated list."""
-        channel, db = self._channel(tmp_path, monkeypatch)
-        ws = _MockWs()
-        await channel._handle_preference_add(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "preference_add", "valence": "positive", "content": "jazz music"},
-        )
-
-        resp = ws.sent[0]
-        assert resp["type"] == "preferences_response"
-        assert resp["valence"] == "positive"
-        assert resp["preferences"][0]["content"] == "jazz music"
-        assert resp["preferences"][0]["source"] == "manual"
-
-        saved = db.preferences.get_for_user_by_valence(self.USER, "positive")
-        assert len(saved) == 1
-        assert saved[0].source == "manual"
-
-    @pytest.mark.asyncio
-    async def test_preference_delete_removes_and_returns_list(self, tmp_path, monkeypatch):
-        """preference_delete removes the entry and returns the remaining list."""
-        channel, db = self._channel(tmp_path, monkeypatch)
-        pref = db.preferences.add(self.USER, "jazz music", "positive", source="manual")
-        assert pref is not None
-        db.preferences.add(self.USER, "hiking", "positive", source="manual")
-
-        ws = _MockWs()
-        await channel._handle_preference_delete(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "preference_delete", "preference_id": pref.id},
-        )
-
-        resp = ws.sent[0]
-        remaining = [p["content"] for p in resp["preferences"]]
-        assert "jazz music" not in remaining
-        assert "hiking" in remaining
-
-    @pytest.mark.asyncio
-    async def test_preference_add_ignores_blank_content(self, tmp_path, monkeypatch):
-        """preference_add with whitespace-only content sends nothing and stores nothing."""
-        channel, db = self._channel(tmp_path, monkeypatch)
-        ws = _MockWs()
-        await channel._handle_preference_add(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "preference_add", "valence": "positive", "content": "   "},
-        )
-
-        assert ws.sent == []
-        assert db.preferences.get_for_user_by_valence(self.USER, "positive") == []
-
-    @pytest.mark.asyncio
-    async def test_preference_delete_unknown_id_is_noop(self, tmp_path, monkeypatch):
-        """preference_delete with an unknown ID sends nothing."""
-        channel, _ = self._channel(tmp_path, monkeypatch)
-        ws = _MockWs()
-        await channel._handle_preference_delete(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "preference_delete", "preference_id": 9999},
-        )
-
-        assert ws.sent == []
-
-    @pytest.mark.asyncio
-    async def test_preferences_response_includes_thought_count(self, tmp_path, monkeypatch):
-        """Each preference item includes thought_count from linked thoughts."""
-        channel, db = self._channel(tmp_path, monkeypatch)
-        pref = db.preferences.add(self.USER, "dark roast coffee", "positive", source="manual")
-        assert pref is not None
-        db.thoughts.add(self.USER, "Coffee is great", preference_id=pref.id)
-        db.thoughts.add(self.USER, "More coffee thoughts", preference_id=pref.id)
-        db.preferences.add(self.USER, "hiking", "positive", source="manual")
-
-        ws = _MockWs()
-        await channel._handle_preferences_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "preferences_request", "valence": "positive"},
-        )
-
-        resp = ws.sent[0]
-        by_content = {p["content"]: p for p in resp["preferences"]}
-        assert by_content["dark roast coffee"]["thought_count"] == 2
-        assert by_content["hiking"]["thought_count"] == 0
-
-    @pytest.mark.asyncio
-    async def test_preference_thoughts_request(self, tmp_path, monkeypatch):
-        """preference_thoughts_request returns thoughts for a preference."""
-        channel, db = self._channel(tmp_path, monkeypatch)
-        pref = db.preferences.add(self.USER, "dark roast coffee", "positive", source="manual")
-        assert pref is not None
-        db.thoughts.add(
-            self.USER, "First thought about coffee", preference_id=pref.id, title="Coffee origins"
-        )
-        db.thoughts.add(
-            self.USER, "Second thought about coffee", preference_id=pref.id, title="Brew methods"
-        )
-
-        ws = _MockWs()
-        await channel._handle_preference_thoughts_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "preference_thoughts_request", "preference_id": pref.id},
-        )
-
-        resp = ws.sent[0]
-        assert resp["type"] == "preference_thoughts_response"
-        assert resp["preference_id"] == pref.id
-        assert len(resp["thoughts"]) == 2
-        titles = [t["title"] for t in resp["thoughts"]]
-        assert "Coffee origins" in titles
-        assert "Brew methods" in titles
-
-    @pytest.mark.asyncio
-    async def test_preference_thoughts_request_empty(self, tmp_path, monkeypatch):
-        """preference_thoughts_request with no thoughts returns empty list."""
-        channel, db = self._channel(tmp_path, monkeypatch)
-        pref = db.preferences.add(self.USER, "dark roast coffee", "positive", source="manual")
-        assert pref is not None
-
-        ws = _MockWs()
-        await channel._handle_preference_thoughts_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "preference_thoughts_request", "preference_id": pref.id},
-        )
-
-        resp = ws.sent[0]
-        assert resp["type"] == "preference_thoughts_response"
-        assert resp["thoughts"] == []
 
 
 class TestBrowserConfigHandlers:
@@ -921,176 +742,6 @@ class TestBrowserPermissionDelegation:
         for ws in [ws1, ws2]:
             dismissals = [m for m in ws.sent if m.get("type") == "permission_dismiss"]
             assert len(dismissals) == 1
-
-
-class TestBrowserThoughtReaction:
-    """_handle_thought_reaction stores valence on thought and marks it notified."""
-
-    USER = "testuser"
-
-    def _setup(self, tmp_path, monkeypatch):
-        db = _make_db(tmp_path)
-        monkeypatch.setattr(db.users, "get_primary_sender", lambda: self.USER)
-        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
-        thought = db.thoughts.add(self.USER, "Some fascinating thought content")
-        assert thought is not None
-        return channel, db, thought
-
-    def test_positive_emoji_sets_valence_and_marks_notified(self, tmp_path, monkeypatch):
-        channel, db, thought = self._setup(tmp_path, monkeypatch)
-        channel._handle_thought_reaction({"thought_id": thought.id, "emoji": "👍"})
-
-        updated = db.thoughts.get_by_id(thought.id)
-        assert updated.valence == 1
-        assert updated.notified_at is not None
-
-    def test_negative_emoji_sets_valence_and_marks_notified(self, tmp_path, monkeypatch):
-        channel, db, thought = self._setup(tmp_path, monkeypatch)
-        channel._handle_thought_reaction({"thought_id": thought.id, "emoji": "👎"})
-
-        updated = db.thoughts.get_by_id(thought.id)
-        assert updated.valence == -1
-        assert updated.notified_at is not None
-
-    def test_unknown_emoji_no_valence_set(self, tmp_path, monkeypatch):
-        channel, db, thought = self._setup(tmp_path, monkeypatch)
-        channel._handle_thought_reaction({"thought_id": thought.id, "emoji": "🐱"})
-
-        updated = db.thoughts.get_by_id(thought.id)
-        assert updated.valence is None
-        assert updated.notified_at is not None  # still marked notified
-
-    def test_no_synthetic_messages_created(self, tmp_path, monkeypatch):
-        channel, db, thought = self._setup(tmp_path, monkeypatch)
-        channel._handle_thought_reaction({"thought_id": thought.id, "emoji": "👍"})
-
-        reactions = db.messages.get_user_reactions(self.USER, limit=100)
-        assert reactions == []
-
-
-class TestBrowserThoughtsRequest:
-    """_handle_thoughts_request returns all unnotified + paginated notified."""
-
-    USER = "testuser"
-
-    def _setup(self, tmp_path, monkeypatch) -> tuple[BrowserChannel, Database]:
-        db = _make_db(tmp_path)
-        monkeypatch.setattr(db.users, "get_primary_sender", lambda: self.USER)
-        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
-        return channel, db
-
-    def _add_notified(self, db: Database, content: str) -> None:
-        thought = db.thoughts.add(self.USER, content)
-        assert thought is not None
-        db.thoughts.mark_notified(cast(int, thought.id))
-
-    @pytest.mark.asyncio
-    async def test_returns_all_unnotified_even_beyond_default_limit(self, tmp_path, monkeypatch):
-        """Every unnotified thought ships, regardless of how many notified ones exist.
-
-        Regression: a previous implementation fetched the newest 50 by created_at
-        and let the addon filter for !notified, which silently dropped old
-        unnotified thoughts whenever notified thoughts crowded the top of the
-        feed.
-        """
-        channel, db = self._setup(tmp_path, monkeypatch)
-
-        # 60 notified thoughts (newer) + 20 unnotified (older).
-        for i in range(60):
-            self._add_notified(db, f"notified-{i}")
-        for i in range(20):
-            db.thoughts.add(self.USER, f"unnotified-{i}")
-
-        ws = _MockWs()
-        await channel._handle_thoughts_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "thoughts_request"},
-        )
-
-        resp = ws.sent[0]
-        assert resp["type"] == "thoughts_response"
-        assert len(resp["unnotified"]) == 20
-        assert all(card["notified"] is False for card in resp["unnotified"])
-        # Default page size = 12 notified, with more available.
-        assert len(resp["notified"]) == 12
-        assert resp["notified_has_more"] is True
-
-    @pytest.mark.asyncio
-    async def test_unnotified_sorted_newest_first(self, tmp_path, monkeypatch):
-        channel, db = self._setup(tmp_path, monkeypatch)
-        for i in range(3):
-            db.thoughts.add(self.USER, f"thought-{i}")
-
-        ws = _MockWs()
-        await channel._handle_thoughts_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "thoughts_request"},
-        )
-
-        contents = [card["content"] for card in ws.sent[0]["unnotified"]]
-        # Newest insertion (thought-2) should come first.
-        assert contents[0].endswith("thought-2</p>") or "thought-2" in contents[0]
-        assert "thought-0" in contents[-1]
-
-    @pytest.mark.asyncio
-    async def test_notified_pages_grows_slice_and_has_more_flag(self, tmp_path, monkeypatch):
-        channel, db = self._setup(tmp_path, monkeypatch)
-        page_size = PennyConstants.BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE
-        # Three pages worth + a few extras so page 2 still has more.
-        total = page_size * 3 + 4
-        for i in range(total):
-            self._add_notified(db, f"notified-{i}")
-
-        ws = _MockWs()
-        await channel._handle_thoughts_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "thoughts_request", "notified_pages": 2},
-        )
-
-        resp = ws.sent[0]
-        assert len(resp["notified"]) == page_size * 2
-        assert resp["notified_has_more"] is True
-
-        # Request enough pages to drain everything → no has_more.
-        ws2 = _MockWs()
-        await channel._handle_thoughts_request(
-            ws2,  # ty: ignore[invalid-argument-type]
-            {"type": "thoughts_request", "notified_pages": 10},
-        )
-        resp2 = ws2.sent[0]
-        assert len(resp2["notified"]) == total
-        assert resp2["notified_has_more"] is False
-
-    @pytest.mark.asyncio
-    async def test_invalid_notified_pages_falls_back_to_one_page(self, tmp_path, monkeypatch):
-        channel, db = self._setup(tmp_path, monkeypatch)
-        page_size = PennyConstants.BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE
-        for i in range(page_size + 5):
-            self._add_notified(db, f"notified-{i}")
-
-        ws = _MockWs()
-        await channel._handle_thoughts_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "thoughts_request", "notified_pages": -1},
-        )
-
-        # Falls back to one page.
-        assert len(ws.sent[0]["notified"]) == page_size
-
-    @pytest.mark.asyncio
-    async def test_no_primary_sender_sends_empty_response(self, tmp_path, monkeypatch):
-        db = _make_db(tmp_path)
-        monkeypatch.setattr(db.users, "get_primary_sender", lambda: None)
-        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
-
-        ws = _MockWs()
-        await channel._handle_thoughts_request(
-            ws,  # ty: ignore[invalid-argument-type]
-            {"type": "thoughts_request"},
-        )
-
-        assert len(ws.sent) == 1
-        assert ws.sent[0]["type"] == "thoughts_response"
 
 
 class TestFormatToolStatus:
@@ -1501,13 +1152,16 @@ class TestBrowserPromptLogHandlers:
 
     @pytest.mark.asyncio
     async def test_prompt_logs_include_run_outcome(self, tmp_path):
-        """run_outcome is included in the response when set."""
+        """Run outcome (success / reason / target) is included in the response when set."""
         channel, db = self._channel(tmp_path)
-        self._log_prompt(db, "inner_monologue", "run1")
-        db.messages.set_run_outcome("run1", "Stored: test topic")
+        self._log_prompt(db, "collector", "run1")
+        db.messages.set_run_outcome("run1", True, "wrote 2 new spots", "prague-trip")
 
         response = await self._request_prompt_logs(channel)
-        assert response["runs"][0]["run_outcome"] == "Stored: test topic"
+        run = response["runs"][0]
+        assert run["run_success"] is True
+        assert run["run_reason"] == "wrote 2 new spots"
+        assert run["run_target"] == "prague-trip"
 
     @pytest.mark.asyncio
     async def test_prompt_logs_include_token_counts(self, tmp_path):
@@ -1522,31 +1176,37 @@ class TestBrowserPromptLogHandlers:
         assert run["prompts"][0]["input_tokens"] == 10
 
     def test_set_run_outcome(self, tmp_path):
-        """set_run_outcome updates the last prompt log for a run."""
+        """set_run_outcome stamps success / reason / target on the last prompt log for a run."""
         _, db = self._channel(tmp_path)
-        self._log_prompt(db, "inner_monologue", "run1")
-        self._log_prompt(db, "inner_monologue", "run1")
-        db.messages.set_run_outcome("run1", "Discard: duplicate of 'test'")
+        self._log_prompt(db, "collector", "run1")
+        self._log_prompt(db, "collector", "run1")
+        db.messages.set_run_outcome("run1", False, "duplicate of 'test'", "likes")
 
         with Session(db.engine) as session:
             logs = session.exec(
                 select(PromptLog).where(PromptLog.run_id == "run1").order_by(PromptLog.timestamp)  # ty: ignore[invalid-argument-type]
             ).all()
 
-        assert logs[0].run_outcome is None
-        assert logs[1].run_outcome == "Discard: duplicate of 'test'"
+        assert logs[0].run_success is None
+        assert logs[0].run_reason is None
+        assert logs[0].run_target is None
+        assert logs[1].run_success is False
+        assert logs[1].run_reason == "duplicate of 'test'"
+        assert logs[1].run_target == "likes"
 
     def test_on_run_outcome_set_callback(self, tmp_path):
-        """_on_run_outcome_set callback fires when outcome is set."""
+        """_on_run_outcome_set callback fires with structured outcome when set."""
         _, db = self._channel(tmp_path)
-        received: list[tuple[str, str]] = []
-        db.messages._on_run_outcome_set = lambda run_id, outcome: received.append((run_id, outcome))
+        received: list[tuple[str, bool, str, str | None]] = []
+        db.messages._on_run_outcome_set = lambda run_id, success, reason, target: received.append(
+            (run_id, success, reason, target)
+        )
 
-        self._log_prompt(db, "inner_monologue", "run1")
-        db.messages.set_run_outcome("run1", "Stored: test topic")
+        self._log_prompt(db, "collector", "run1")
+        db.messages.set_run_outcome("run1", True, "wrote 2 new spots", "prague-trip")
 
         assert len(received) == 1
-        assert received[0] == ("run1", "Stored: test topic")
+        assert received[0] == ("run1", True, "wrote 2 new spots", "prague-trip")
 
     def test_on_prompt_logged_callback(self, tmp_path):
         """_on_prompt_logged callback fires with prompt data for prompts with run_id."""
@@ -1576,3 +1236,298 @@ class TestBrowserPromptLogHandlers:
         assert received[0]["run_id"] == "run1"
         assert received[0]["input_tokens"] == 50
         assert received[0]["output_tokens"] == 20
+
+
+class TestBrowserMemoryHandlers:
+    """memories_request / memory_detail_request / memory_changed handlers."""
+
+    def _channel(self, tmp_path) -> tuple[BrowserChannel, Database]:
+        db = _make_db(tmp_path)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        return channel, db
+
+    def _seed_memories(self, db) -> None:
+
+        # ``collector-runs`` already exists from migration 0034 — just append.
+        db.memories.create_collection(
+            "prague-trip",
+            "Prague spots",
+            RecallMode.RELEVANT,
+            extraction_prompt="extract spots",
+            collector_interval_seconds=300,
+        )
+        db.memories.write(
+            "prague-trip",
+            [EntryInput(key="petrin-hill", content="Hill with a tower")],
+            author="user",
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="[prague-trip] ✅ wrote 2 new spots")],
+            author="collector",
+        )
+
+    @pytest.mark.asyncio
+    async def test_memories_request_returns_collections_and_logs(self, tmp_path):
+        """The list view receives every memory (collections + logs) with metadata
+        and entry counts in one response."""
+        channel, db = self._channel(tmp_path)
+        self._seed_memories(db)
+
+        ws = _MockWs()
+        await channel._handle_memories_request(ws)  # ty: ignore[invalid-argument-type]
+
+        assert len(ws.sent) == 1
+        resp = ws.sent[0]
+        assert resp["type"] == "memories_response"
+        by_name = {m["name"]: m for m in resp["memories"]}
+        assert "prague-trip" in by_name and "collector-runs" in by_name
+        assert by_name["prague-trip"]["type"] == "collection"
+        assert by_name["prague-trip"]["entry_count"] == 1
+        assert by_name["prague-trip"]["extraction_prompt"] == "extract spots"
+        assert by_name["prague-trip"]["collector_interval_seconds"] == 300
+        assert by_name["collector-runs"]["type"] == "log"
+        assert by_name["collector-runs"]["entry_count"] == 1
+        assert by_name["collector-runs"]["extraction_prompt"] is None
+
+    @pytest.mark.asyncio
+    async def test_memory_detail_request_returns_entries_newest_first(self, tmp_path):
+        """The drill-in view returns metadata + entries (newest first, capped)."""
+
+        channel, db = self._channel(tmp_path)
+        # ``collector-runs`` is created by migration 0034 — append only.
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="first")],
+            author="collector",
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="second")],
+            author="collector",
+        )
+
+        ws = _MockWs()
+        await channel._handle_memory_detail_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "memory_detail_request", "name": "collector-runs"},
+        )
+
+        resp = ws.sent[0]
+        assert resp["type"] == "memory_detail_response"
+        assert resp["memory"]["name"] == "collector-runs"
+        assert resp["memory"]["entry_count"] == 2
+        assert [e["content"] for e in resp["entries"]] == ["second", "first"]
+        assert all(e["author"] == "collector" for e in resp["entries"])
+        # Logs don't get collector_runs filtering — the field exists but is empty.
+        assert resp["collector_runs"] == []
+
+    @pytest.mark.asyncio
+    async def test_memory_detail_request_includes_matching_collector_runs(self, tmp_path):
+        """A collection's drill-in view includes the ``collector-runs``
+        entries scoped to that target — newest-first, prefix-filtered."""
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection(
+            "prague-trip", "spots", RecallMode.RELEVANT, extraction_prompt="x"
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="[other-target] ✅ unrelated cycle")],
+            author="collector",
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="[prague-trip] ✅ wrote 2 spots")],
+            author="collector",
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="[prague-trip] ❌ no source URL found")],
+            author="collector",
+        )
+
+        ws = _MockWs()
+        await channel._handle_memory_detail_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "memory_detail_request", "name": "prague-trip"},
+        )
+
+        resp = ws.sent[0]
+        runs = resp["collector_runs"]
+        assert len(runs) == 2
+        # Newest first.
+        assert runs[0]["content"] == "[prague-trip] ❌ no source URL found"
+        assert runs[1]["content"] == "[prague-trip] ✅ wrote 2 spots"
+        # Other-target run is excluded.
+        assert all("other-target" not in r["content"] for r in runs)
+
+    @pytest.mark.asyncio
+    async def test_memory_detail_request_unknown_memory_silently_drops(self, tmp_path):
+        """An unknown memory name produces no response (logged warning)."""
+        channel, _ = self._channel(tmp_path)
+        ws = _MockWs()
+        await channel._handle_memory_detail_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "memory_detail_request", "name": "not-a-real-memory"},
+        )
+        assert ws.sent == []
+
+    def test_memory_changed_callback_fires_on_collection_write(self, tmp_path):
+        """A collection write triggers the change callback so the addon can refresh."""
+
+        _, db = self._channel(tmp_path)
+        db.memories.create_collection("prague-trip", "spots", RecallMode.OFF)
+
+        received: list[str | None] = []
+        db.memories._on_memory_changed = lambda name: received.append(name)
+
+        db.memories.write(
+            "prague-trip",
+            [EntryInput(key="petrin-hill", content="Hill")],
+            author="user",
+        )
+
+        assert "prague-trip" in received
+
+    def test_memory_changed_callback_fires_on_log_append(self, tmp_path):
+        """Log appends fire the callback too — the audit log lives behind it."""
+
+        _, db = self._channel(tmp_path)
+        # ``collector-runs`` is created by migration 0034.
+        received: list[str | None] = []
+        db.memories._on_memory_changed = lambda name: received.append(name)
+
+        db.memories.append("collector-runs", [LogEntryInput(content="cycle x")], author="collector")
+
+        assert "collector-runs" in received
+
+    # ── Edit handlers ────────────────────────────────────────────────────
+
+    def test_memory_create_persists_collection(self, tmp_path):
+        """memory_create writes a new collection to the store with the
+        addon-supplied recall + extraction_prompt."""
+        channel, db = self._channel(tmp_path)
+        channel._handle_memory_create(
+            {
+                "type": "memory_create",
+                "name": "prague-trip",
+                "description": "Prague spots",
+                "recall": "relevant",
+                "extraction_prompt": "extract spots",
+                "collector_interval_seconds": 600,
+            }
+        )
+        memory = db.memories.get("prague-trip")
+        assert memory is not None
+        assert memory.type == "collection"
+        assert memory.recall == "relevant"
+        assert memory.extraction_prompt == "extract spots"
+        assert memory.collector_interval_seconds == 600
+
+    def test_memory_create_silently_drops_duplicate_name(self, tmp_path):
+        """A duplicate name is logged and dropped — no crash."""
+
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection("prague-trip", "first", RecallMode.OFF)
+        channel._handle_memory_create(
+            {
+                "type": "memory_create",
+                "name": "prague-trip",
+                "description": "second",
+                "recall": "off",
+            }
+        )
+        memory = db.memories.get("prague-trip")
+        assert memory is not None
+        assert memory.description == "first"  # original wins, no overwrite
+
+    def test_memory_update_changes_only_supplied_fields(self, tmp_path):
+        """Fields the addon doesn't send stay untouched."""
+
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection(
+            "prague-trip",
+            "old description",
+            RecallMode.OFF,
+            extraction_prompt="old prompt",
+            collector_interval_seconds=300,
+        )
+        channel._handle_memory_update(
+            {
+                "type": "memory_update",
+                "name": "prague-trip",
+                "description": "new description",
+                "recall": None,
+                "extraction_prompt": None,
+                "collector_interval_seconds": None,
+            }
+        )
+        memory = db.memories.get("prague-trip")
+        assert memory is not None
+        assert memory.description == "new description"
+        assert memory.recall == "off"
+        assert memory.extraction_prompt == "old prompt"
+        assert memory.collector_interval_seconds == 300
+
+    def test_memory_archive_marks_archived(self, tmp_path):
+
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
+        channel._handle_memory_archive({"type": "memory_archive", "name": "prague-trip"})
+        memory = db.memories.get("prague-trip")
+        assert memory is not None
+        assert memory.archived is True
+
+    def test_entry_create_writes_with_user_author(self, tmp_path):
+        """Manual entries land with author=``user`` — distinguishes addon-
+        authored from collector-authored when reading the entries list."""
+
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
+        channel._handle_entry_create(
+            {
+                "type": "entry_create",
+                "memory": "prague-trip",
+                "key": "petrin-hill",
+                "content": "Hill with a tower",
+            }
+        )
+        entries = db.memories.read_latest("prague-trip")
+        assert len(entries) == 1
+        assert entries[0].key == "petrin-hill"
+        assert entries[0].content == "Hill with a tower"
+        assert entries[0].author == "user"
+
+    def test_entry_update_replaces_content(self, tmp_path):
+
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
+        db.memories.write(
+            "prague-trip",
+            [EntryInput(key="petrin-hill", content="old")],
+            author="user",
+        )
+        channel._handle_entry_update(
+            {
+                "type": "entry_update",
+                "memory": "prague-trip",
+                "key": "petrin-hill",
+                "content": "Hill with the lookout tower",
+            }
+        )
+        entries = db.memories.get_entry("prague-trip", "petrin-hill")
+        assert entries[0].content == "Hill with the lookout tower"
+
+    def test_entry_delete_removes_row(self, tmp_path):
+
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
+        db.memories.write(
+            "prague-trip",
+            [EntryInput(key="petrin-hill", content="Hill")],
+            author="user",
+        )
+        channel._handle_entry_delete(
+            {"type": "entry_delete", "memory": "prague-trip", "key": "petrin-hill"}
+        )
+        assert db.memories.get_entry("prague-trip", "petrin-hill") == []

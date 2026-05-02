@@ -104,9 +104,6 @@ class PennyConstants:
     SIGNAL_VALIDATE_RETRY_DELAY = 5.0
     SIGNAL_VALIDATE_HTTP_TIMEOUT = 5.0
 
-    # Browser channel constants
-    BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE = 12
-
     # GitHub constants
     GITHUB_REPO_OWNER = "jaredlockhart"
     GITHUB_REPO_NAME = "penny"
@@ -138,20 +135,6 @@ class PennyConstants:
             "\U0001f4aa",  # 💪
             "\u2705",  # ✅
             "\U0001f929",  # 🤩
-        }
-    )
-
-    NEGATIVE_REACTION_EMOJIS = frozenset(
-        {
-            "\U0001f44e",  # 👎
-            "\U0001f621",  # 😡
-            "\U0001f92e",  # 🤮
-            "\U0001f4a9",  # 💩
-            "\U0001f624",  # 😤
-            "\u274c",  # ❌
-            "\U0001f61e",  # 😞
-            "\U0001f612",  # 😒
-            "\U0001f644",  # 🙄
         }
     )
 

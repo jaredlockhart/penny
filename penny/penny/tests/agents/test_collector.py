@@ -299,3 +299,149 @@ def test_log_run_handles_no_done_call(test_config, tmp_path):
     content = db.memories.read_latest("collector-runs")[0].content
     assert "❌" in content
     assert "max steps" in content.lower() or "no done" in content.lower()
+
+
+# ── Promptlog run-outcome tagging ────────────────────────────────────────
+
+
+def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
+    """The cycle's done(success, summary) and the bound target name land on
+    the matching promptlog row so the addon's prompts tab can render the
+    green/red collector-result tag.  ``run_id`` and ``response`` are
+    passed in directly — no instance state."""
+    collector, db = _make_collector(test_config, tmp_path)
+    target = Memory(
+        name="prague-trip",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+    db.messages.log_prompt(
+        model="test",
+        messages=[],
+        response={},
+        agent_name="collector",
+        run_id="run-xyz",
+    )
+    response = ControllerResponse(
+        answer="",
+        tool_calls=[
+            ToolCallRecord(
+                tool="done",
+                arguments={"success": True, "summary": "wrote 2 new spots"},
+            ),
+        ],
+    )
+
+    collector._tag_promptlog_run(target, "run-xyz", response)
+
+    runs = db.messages.get_prompt_log_runs()
+    assert runs[0]["run_success"] is True
+    assert runs[0]["run_reason"] == "wrote 2 new spots"
+    assert runs[0]["run_target"] == "prague-trip"
+
+
+def test_tag_promptlog_run_with_unknown_run_id_is_noop(test_config, tmp_path):
+    """If no promptlog rows exist for the run_id (cycle raised before the
+    loop logged anything), tagging silently does nothing rather than
+    crashing or smearing onto an unrelated row."""
+    collector, db = _make_collector(test_config, tmp_path)
+    target = Memory(
+        name="prague-trip",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+
+    collector._tag_promptlog_run(target, "never-logged", response=None)
+
+    assert db.messages.get_prompt_log_runs() == []
+
+
+def test_should_stop_loop_ignores_failed_done(test_config, tmp_path):
+    """Regression: a malformed ``done(reasoning="x")`` (missing required
+    ``success``/``summary``) used to terminate the cycle anyway because
+    ``should_stop_loop`` only checked the tool name.  Now it also requires
+    the record to not be marked failed, so the loop continues until the
+    model retries with valid args."""
+    collector, _ = _make_collector(test_config, tmp_path)
+    failed_done = ToolCallRecord(tool="done", arguments={"reasoning": "x"})
+    failed_done.failed = True
+    assert collector.should_stop_loop([failed_done]) is False
+
+    valid_done = ToolCallRecord(tool="done", arguments={"success": True, "summary": "wrote 2"})
+    assert collector.should_stop_loop([valid_done]) is True
+
+
+def test_text_form_done_is_recovered(test_config, tmp_path):
+    """Regression: gpt-oss occasionally emits ``done(...)`` as plain text
+    content instead of as a structured tool call.  The agent loop now
+    parses the text-form back into a synthesised ``ToolCallRecord`` so
+    ``_extract_done_args`` sees the model's intent rather than reporting
+    a spurious ``"max steps exceeded"``."""
+    from penny.agents.base import _parse_text_form_done
+
+    raw_args = _parse_text_form_done('{"reasoning":"x","success":true,"summary":"wrote 2 entries"}')
+    assert raw_args == {"reasoning": "x", "success": True, "summary": "wrote 2 entries"}
+
+    wrapped_args = _parse_text_form_done('done({"success": false, "summary": "no-op"})')
+    assert wrapped_args == {"success": False, "summary": "no-op"}
+
+    # Genuinely text content (not a done call) returns None.
+    assert _parse_text_form_done("Hi there!") is None
+    assert _parse_text_form_done("") is None
+    # JSON without success/summary isn't a done call.
+    assert _parse_text_form_done('{"some": "other"}') is None
+
+
+def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
+    """Regression: ``run_id`` is now owned per-cycle by ``execute`` instead
+    of being smuggled through ``self._last_run_id``.  Cycle B can't smear
+    onto cycle A's promptlog row even if A's loop crashed and B's
+    cleanup runs later."""
+    collector, db = _make_collector(test_config, tmp_path)
+    target_a = Memory(
+        name="notified-thoughts",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+    target_b = Memory(
+        name="prague-highlights",
+        type="collection",
+        description="x",
+        recall=RecallMode.OFF.value,
+        archived=False,
+        extraction_prompt="x",
+    )
+
+    db.messages.log_prompt(
+        model="test", messages=[], response={}, agent_name="collector", run_id="run-A"
+    )
+    db.messages.log_prompt(
+        model="test", messages=[], response={}, agent_name="collector", run_id="run-B"
+    )
+
+    response_a = ControllerResponse(
+        answer="",
+        tool_calls=[ToolCallRecord(tool="done", arguments={"success": True, "summary": "ok-A"})],
+    )
+    response_b = ControllerResponse(
+        answer="",
+        tool_calls=[ToolCallRecord(tool="done", arguments={"success": True, "summary": "ok-B"})],
+    )
+
+    collector._tag_promptlog_run(target_a, "run-A", response_a)
+    collector._tag_promptlog_run(target_b, "run-B", response_b)
+
+    runs = {r["run_id"]: r for r in db.messages.get_prompt_log_runs()}
+    assert runs["run-A"]["run_target"] == "notified-thoughts"
+    assert runs["run-A"]["run_reason"] == "ok-A"
+    assert runs["run-B"]["run_target"] == "prague-highlights"
+    assert runs["run-B"]["run_reason"] == "ok-B"
