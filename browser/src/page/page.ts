@@ -390,11 +390,7 @@ function createRunHeader(run: PromptLogRun): HTMLElement {
 
   const agent = document.createElement("span");
   agent.className = "run-agent";
-  // For collector cycles, prefix the label with the bound collection —
-  // every collector run reports as ``agent_name="collector"``, so the
-  // target is the only thing that distinguishes them.  Rendered inline
-  // ("<collection> collector") rather than as a separate badge.
-  agent.innerHTML = formatAgentLabel(run);
+  agent.innerHTML = AGENT_LABELS[run.agent_name] ?? run.agent_name;
   const spinner = document.createElement("span");
   spinner.className = "run-spinner";
   spinner.innerHTML = ' <i class="fa-solid fa-spinner fa-spin"></i>';
@@ -612,14 +608,13 @@ function normalizeSnippet(content: string | null | undefined): string {
   return text.slice(0, SNIPPET_MAX_CHARS) + "…";
 }
 
-function formatAgentLabel(run: PromptLogRun): string {
-  if (run.agent_name === "collector" && run.run_target) {
-    return `<i class="fa-solid fa-database"></i> ${run.run_target} collector`;
-  }
-  return AGENT_LABELS[run.agent_name] ?? run.agent_name;
-}
-
 function extractPromptType(run: PromptLogRun): string {
+  // For collector cycles, every run has prompt_type="collector" — surface
+  // the bound collection name instead, which is the only thing that
+  // distinguishes one collector run from another.
+  if (run.agent_name === "collector" && run.run_target) {
+    return run.run_target;
+  }
   for (const prompt of run.prompts) {
     if (!prompt.prompt_type) continue;
     if (prompt.prompt_type === "user_message") {
