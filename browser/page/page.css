@@ -1438,15 +1438,25 @@ h1 {
   font-size: 13px;
 }
 
-.memory-entry {
-  background: var(--bg-tertiary);
-  border-radius: 6px;
-  padding: 10px 14px;
-  margin-bottom: 8px;
+.memory-entries-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.memory-entry:last-child {
-  margin-bottom: 0;
+.memory-entries-section h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.memory-entry {
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  padding: 10px 14px;
 }
 
 .memory-entry-header {

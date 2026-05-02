@@ -1417,8 +1417,10 @@ function appendDef(grid: HTMLElement, label: string, value: string, monospace = 
 }
 
 function createMemoryEntriesSection(memory: MemoryRecord, entries: MemoryEntryRecord[]): HTMLElement {
+  // The entries section is "flat" — entries themselves are the cards,
+  // so wrapping them in another card creates visual nesting noise.
   const section = document.createElement("div");
-  section.className = "memory-detail-section";
+  section.className = "memory-entries-section";
 
   const title = document.createElement("h3");
   const shown = entries.length;
