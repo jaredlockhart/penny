@@ -170,7 +170,7 @@ function handleMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.MemoriesResponse) {
     handleMemoriesResponse(message.memories);
   } else if (message.type === RuntimeMessageType.MemoryDetailResponse) {
-    handleMemoryDetailResponse(message.memory, message.entries);
+    handleMemoryDetailResponse(message.memory, message.entries, message.collector_runs);
   } else if (message.type === RuntimeMessageType.MemoryChanged) {
     handleMemoryChanged(message.name);
   }
@@ -1056,10 +1056,11 @@ function handleMemoriesResponse(memories: MemoryRecord[]): void {
 function handleMemoryDetailResponse(
   memory: MemoryRecord,
   entries: MemoryEntryRecord[],
+  collectorRuns: MemoryEntryRecord[],
 ): void {
   activeMemoryName = memory.name;
   showMemoryDetail();
-  renderMemoryDetail(memory, entries);
+  renderMemoryDetail(memory, entries, collectorRuns);
 }
 
 function handleMemoryChanged(name: string | null): void {
@@ -1299,12 +1300,70 @@ function metaItem(iconClass: string, text: string): HTMLSpanElement {
   return span;
 }
 
-function renderMemoryDetail(memory: MemoryRecord, entries: MemoryEntryRecord[]): void {
+function renderMemoryDetail(
+  memory: MemoryRecord,
+  entries: MemoryEntryRecord[],
+  collectorRuns: MemoryEntryRecord[],
+): void {
   memoryDetailContent.innerHTML = "";
 
   memoryDetailContent.appendChild(createMemoryHeader(memory));
   memoryDetailContent.appendChild(createMemoryMetadataSection(memory));
   memoryDetailContent.appendChild(createMemoryEntriesSection(memory, entries));
+  // Collector activity is per-collection — empty for logs (they aren't
+  // driven by a collector cycle).
+  if (collectorRuns.length > 0) {
+    memoryDetailContent.appendChild(createCollectorRunsSection(memory, collectorRuns));
+  }
+}
+
+function createCollectorRunsSection(
+  memory: MemoryRecord,
+  runs: MemoryEntryRecord[],
+): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "memory-entries-section";
+
+  const title = document.createElement("h3");
+  title.textContent = `Collector activity (${runs.length})`;
+  section.appendChild(title);
+
+  for (const run of runs) {
+    section.appendChild(createCollectorRunEntry(memory, run));
+  }
+  return section;
+}
+
+function createCollectorRunEntry(memory: MemoryRecord, run: MemoryEntryRecord): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "memory-entry";
+
+  // Strip the ``[<collection>] `` prefix the Collector writes — the
+  // section is already scoped to one target so the prefix is redundant
+  // noise on every line.
+  const prefix = `[${memory.name}] `;
+  const body = run.content.startsWith(prefix) ? run.content.slice(prefix.length) : run.content;
+
+  const header = document.createElement("div");
+  header.className = "memory-entry-header";
+
+  const time = document.createElement("span");
+  time.className = "memory-entry-date memory-entry-date-primary";
+  time.textContent = formatDateTime(run.created_at);
+  header.appendChild(time);
+
+  const author = document.createElement("span");
+  author.className = "memory-entry-author";
+  author.textContent = run.author;
+  header.appendChild(author);
+
+  const content = document.createElement("div");
+  content.className = "memory-entry-content";
+  content.textContent = body;
+
+  row.appendChild(header);
+  row.appendChild(content);
+  return row;
 }
 
 function createMemoryHeader(memory: MemoryRecord): HTMLElement {

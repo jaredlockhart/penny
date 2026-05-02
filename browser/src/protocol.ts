@@ -312,6 +312,7 @@ export interface WsIncomingMemoryDetailPayload {
   type: typeof WsIncomingType.MemoryDetailResponse;
   memory: MemoryRecord;
   entries: MemoryEntryRecord[];
+  collector_runs: MemoryEntryRecord[];
 }
 
 export interface WsIncomingMemoryChangedPayload {
@@ -598,11 +599,13 @@ export interface RuntimeMemoryDetailRequest {
   name: string;
 }
 
-/** Background → memories tab: drill-in payload (metadata + entries) */
+/** Background → memories tab: drill-in payload (metadata + entries +
+ *  this collection's matching ``collector-runs`` entries — empty for logs). */
 export interface RuntimeMemoryDetailResponse {
   type: typeof RuntimeMessageType.MemoryDetailResponse;
   memory: MemoryRecord;
   entries: MemoryEntryRecord[];
+  collector_runs: MemoryEntryRecord[];
 }
 
 /** Background → memories tab: a memory was mutated, refresh */

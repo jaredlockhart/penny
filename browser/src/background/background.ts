@@ -281,6 +281,7 @@ function connect(): void {
         type: RuntimeMessageType.MemoryDetailResponse,
         memory: data.memory,
         entries: data.entries,
+        collector_runs: data.collector_runs,
       });
     } else if (data.type === WsIn.MemoryChanged) {
       broadcastToSidebar({

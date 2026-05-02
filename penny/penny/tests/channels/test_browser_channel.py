@@ -13,6 +13,7 @@ from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
 from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
+from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
 from penny.database.migrate import migrate
 from penny.database.models import PromptLog, RuntimeConfig
 from penny.tests.conftest import wait_until
@@ -1246,7 +1247,6 @@ class TestBrowserMemoryHandlers:
         return channel, db
 
     def _seed_memories(self, db) -> None:
-        from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
 
         # ``collector-runs`` already exists from migration 0034 — just append.
         db.memories.create_collection(
@@ -1293,7 +1293,6 @@ class TestBrowserMemoryHandlers:
     @pytest.mark.asyncio
     async def test_memory_detail_request_returns_entries_newest_first(self, tmp_path):
         """The drill-in view returns metadata + entries (newest first, capped)."""
-        from penny.database.memory_store import LogEntryInput
 
         channel, db = self._channel(tmp_path)
         # ``collector-runs`` is created by migration 0034 — append only.
@@ -1320,6 +1319,47 @@ class TestBrowserMemoryHandlers:
         assert resp["memory"]["entry_count"] == 2
         assert [e["content"] for e in resp["entries"]] == ["second", "first"]
         assert all(e["author"] == "collector" for e in resp["entries"])
+        # Logs don't get collector_runs filtering — the field exists but is empty.
+        assert resp["collector_runs"] == []
+
+    @pytest.mark.asyncio
+    async def test_memory_detail_request_includes_matching_collector_runs(self, tmp_path):
+        """A collection's drill-in view includes the ``collector-runs``
+        entries scoped to that target — newest-first, prefix-filtered."""
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection(
+            "prague-trip", "spots", RecallMode.RELEVANT, extraction_prompt="x"
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="[other-target] ✅ unrelated cycle")],
+            author="collector",
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="[prague-trip] ✅ wrote 2 spots")],
+            author="collector",
+        )
+        db.memories.append(
+            "collector-runs",
+            [LogEntryInput(content="[prague-trip] ❌ no source URL found")],
+            author="collector",
+        )
+
+        ws = _MockWs()
+        await channel._handle_memory_detail_request(
+            ws,  # ty: ignore[invalid-argument-type]
+            {"type": "memory_detail_request", "name": "prague-trip"},
+        )
+
+        resp = ws.sent[0]
+        runs = resp["collector_runs"]
+        assert len(runs) == 2
+        # Newest first.
+        assert runs[0]["content"] == "[prague-trip] ❌ no source URL found"
+        assert runs[1]["content"] == "[prague-trip] ✅ wrote 2 spots"
+        # Other-target run is excluded.
+        assert all("other-target" not in r["content"] for r in runs)
 
     @pytest.mark.asyncio
     async def test_memory_detail_request_unknown_memory_silently_drops(self, tmp_path):
@@ -1334,7 +1374,6 @@ class TestBrowserMemoryHandlers:
 
     def test_memory_changed_callback_fires_on_collection_write(self, tmp_path):
         """A collection write triggers the change callback so the addon can refresh."""
-        from penny.database.memory_store import EntryInput, RecallMode
 
         _, db = self._channel(tmp_path)
         db.memories.create_collection("prague-trip", "spots", RecallMode.OFF)
@@ -1352,7 +1391,6 @@ class TestBrowserMemoryHandlers:
 
     def test_memory_changed_callback_fires_on_log_append(self, tmp_path):
         """Log appends fire the callback too — the audit log lives behind it."""
-        from penny.database.memory_store import LogEntryInput
 
         _, db = self._channel(tmp_path)
         # ``collector-runs`` is created by migration 0034.
@@ -1388,7 +1426,6 @@ class TestBrowserMemoryHandlers:
 
     def test_memory_create_silently_drops_duplicate_name(self, tmp_path):
         """A duplicate name is logged and dropped — no crash."""
-        from penny.database.memory_store import RecallMode
 
         channel, db = self._channel(tmp_path)
         db.memories.create_collection("prague-trip", "first", RecallMode.OFF)
@@ -1406,7 +1443,6 @@ class TestBrowserMemoryHandlers:
 
     def test_memory_update_changes_only_supplied_fields(self, tmp_path):
         """Fields the addon doesn't send stay untouched."""
-        from penny.database.memory_store import RecallMode
 
         channel, db = self._channel(tmp_path)
         db.memories.create_collection(
@@ -1434,7 +1470,6 @@ class TestBrowserMemoryHandlers:
         assert memory.collector_interval_seconds == 300
 
     def test_memory_archive_marks_archived(self, tmp_path):
-        from penny.database.memory_store import RecallMode
 
         channel, db = self._channel(tmp_path)
         db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
@@ -1446,7 +1481,6 @@ class TestBrowserMemoryHandlers:
     def test_entry_create_writes_with_user_author(self, tmp_path):
         """Manual entries land with author=``user`` — distinguishes addon-
         authored from collector-authored when reading the entries list."""
-        from penny.database.memory_store import RecallMode
 
         channel, db = self._channel(tmp_path)
         db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
@@ -1465,7 +1499,6 @@ class TestBrowserMemoryHandlers:
         assert entries[0].author == "user"
 
     def test_entry_update_replaces_content(self, tmp_path):
-        from penny.database.memory_store import EntryInput, RecallMode
 
         channel, db = self._channel(tmp_path)
         db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
@@ -1486,7 +1519,6 @@ class TestBrowserMemoryHandlers:
         assert entries[0].content == "Hill with the lookout tower"
 
     def test_entry_delete_removes_row(self, tmp_path):
-        from penny.database.memory_store import EntryInput, RecallMode
 
         channel, db = self._channel(tmp_path)
         db.memories.create_collection("prague-trip", "x", RecallMode.OFF)

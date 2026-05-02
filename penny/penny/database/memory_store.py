@@ -41,6 +41,7 @@ from similarity.embeddings import (
     serialize_embedding,
     token_containment_ratio,
 )
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from penny.config_params import RuntimeParams
@@ -236,8 +237,6 @@ class MemoryStore:
         without N+1 round-trips.  Memories with zero entries are absent —
         callers should default to 0 when looking up a missing key.
         """
-        from sqlalchemy import func
-
         with self._session() as session:
             rows = session.exec(
                 select(MemoryEntry.memory_name, func.count(MemoryEntry.id)).group_by(  # ty: ignore[invalid-argument-type]
@@ -249,10 +248,7 @@ class MemoryStore:
     def _notify_changed(self, name: str | None) -> None:
         """Fire the change callback if registered.  Safe to call without a hook."""
         if self._on_memory_changed is not None:
-            try:
-                self._on_memory_changed(name)
-            except Exception as exc:
-                logger.error("memory_changed callback failed: %s", exc)
+            self._on_memory_changed(name)
 
     def archive(self, name: str) -> None:
         self._set_archived(name, True)
@@ -459,6 +455,28 @@ class MemoryStore:
             query = (
                 select(MemoryEntry)
                 .where(MemoryEntry.memory_name == name)
+                .order_by(MemoryEntry.created_at.desc())  # type: ignore[union-attr]
+            )
+            if k is not None:
+                query = query.limit(k)
+            return list(session.exec(query).all())
+
+    def read_latest_matching(
+        self, name: str, content_prefix: str, k: int | None = None
+    ) -> list[MemoryEntry]:
+        """Newest-first entries whose ``content`` starts with ``content_prefix``.
+
+        Used to scope a log read to one tag — e.g. ``collector-runs``
+        entries for a specific target collection (the content format is
+        ``[<target>] <marker> <summary>``).
+        """
+        with self._session() as session:
+            query = (
+                select(MemoryEntry)
+                .where(
+                    MemoryEntry.memory_name == name,
+                    MemoryEntry.content.like(f"{content_prefix}%"),  # ty: ignore[unresolved-attribute]
+                )
                 .order_by(MemoryEntry.created_at.desc())  # type: ignore[union-attr]
             )
             if k is not None:

@@ -992,13 +992,15 @@ class Agent:
         return f"### User Profile\nThe user's name is {user_info.name}."
 
     def _memory_inventory_section(self) -> str | None:
-        """### Memory Inventory — every non-archived memory by name, type, description.
+        """### Memory Inventory — every non-archived memory by name, type, description, count.
 
         Includes memories with ``recall=off`` so the model knows what
         tool calls are possible for on-demand reads.  Sorted
-        alphabetically by name for stable prompt structure.  Goes in
-        every agent's system prompt — chat and background alike — so
-        the model never needs to call ``list_memories``.
+        alphabetically by name for stable prompt structure.  Each line
+        ends with the entry count so the model has a sense of which
+        collections / logs are worth pulling from.  Goes in every
+        agent's system prompt — chat and background alike — so the model
+        never needs to call ``list_memories``.
         """
         memories = sorted(
             (m for m in self.db.memories.list_all() if not m.archived),
@@ -1006,9 +1008,11 @@ class Agent:
         )
         if not memories:
             return None
+        counts = self.db.memories.entry_counts()
         lines = ["### Memory Inventory"]
         for memory in memories:
-            lines.append(f"- {memory.name} ({memory.type}) — {memory.description}")
+            count = counts.get(memory.name, 0)
+            lines.append(f"- {memory.name} ({memory.type}, {count} entries) — {memory.description}")
         return "\n".join(lines)
 
     def _build_conversation(self, sender: str) -> list[tuple[str, str]]:

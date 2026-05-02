@@ -449,11 +449,6 @@ class BrowserChannel(MessageChannel):
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(json.dumps(response))
 
-    # Cap drill-in entries to keep payloads small.  Logs like
-    # ``user-messages`` and ``collector-runs`` accumulate quickly; full
-    # pagination can land later when edits / search arrive.
-    _MEMORY_DETAIL_PAGE_SIZE = 200
-
     async def _handle_memories_request(self, ws: ServerConnection) -> None:
         """List every memory (collections + logs, archived included) with
         metadata + entry counts for the addon's Memories tab list view."""
@@ -465,8 +460,9 @@ class BrowserChannel(MessageChannel):
             await ws.send(payload.model_dump_json())
 
     async def _handle_memory_detail_request(self, ws: ServerConnection, data: dict) -> None:
-        """Send one memory's metadata + newest-first entries (capped) for
-        the drill-in view."""
+        """Send one memory's metadata + every entry newest-first.  For
+        collections, also include the matching ``collector-runs`` entries
+        so the addon can show this collection's collector activity inline."""
         try:
             req = BrowserMemoryDetailRequest(**data)
         except ValidationError:
@@ -476,13 +472,26 @@ class BrowserChannel(MessageChannel):
         if memory is None:
             logger.warning("memory_detail_request for unknown memory: %s", req.name)
             return
-        rows = self._db.memories.read_latest(req.name, k=self._MEMORY_DETAIL_PAGE_SIZE)
+        rows = self._db.memories.read_latest(req.name)
         counts = self._db.memories.entry_counts()
         record = self._memory_to_record(memory, counts.get(memory.name, 0))
         entries = [self._entry_to_record(row) for row in rows]
-        payload = BrowserMemoryDetailResponse(memory=record, entries=entries)
+        collector_runs = [self._entry_to_record(row) for row in self._collector_runs_for(memory)]
+        payload = BrowserMemoryDetailResponse(
+            memory=record, entries=entries, collector_runs=collector_runs
+        )
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(payload.model_dump_json())
+
+    def _collector_runs_for(self, memory) -> list:
+        """Newest-first ``collector-runs`` entries for this collection.
+        Matches the ``[<target>] `` content prefix the Collector writes.
+        Empty for logs (collectors only target collections)."""
+        if memory.type != "collection":
+            return []
+        return self._db.memories.read_latest_matching(
+            PennyConstants.MEMORY_COLLECTOR_RUNS_LOG, f"[{memory.name}] "
+        )
 
     @staticmethod
     def _memory_to_record(memory, entry_count: int) -> MemoryRecord:

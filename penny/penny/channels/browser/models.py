@@ -251,11 +251,15 @@ class BrowserMemoriesResponse(BaseModel):
 
 
 class BrowserMemoryDetailResponse(BaseModel):
-    """One memory's metadata + entries (newest-first)."""
+    """One memory's metadata + entries (newest-first), plus this collection's
+    matching ``collector-runs`` entries when the memory is a collection
+    (empty for logs).  The addon renders the collector activity inline on
+    the collection's detail page."""
 
     type: str = BROWSER_RESP_TYPE_MEMORY_DETAIL
     memory: MemoryRecord
     entries: list[MemoryEntryRecord]
+    collector_runs: list[MemoryEntryRecord] = []
 
 
 class BrowserMemoryChanged(BaseModel):
