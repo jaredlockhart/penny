@@ -49,10 +49,9 @@ const promptsLoadMoreBtn = document.getElementById("prompts-load-more-btn")!;
 let activeAgentFilter = "";
 
 const AGENT_LABELS: Record<string, string> = {
-  inner_monologue: '<i class="fa-regular fa-lightbulb"></i> Thinking',
+  collector: '<i class="fa-solid fa-database"></i> Collector',
   chat: '<i class="fa-solid fa-comment"></i> Chat',
   history: '<i class="fa-solid fa-clock-rotate-left"></i> History',
-  notify: '<i class="fa-solid fa-bell"></i> Notify',
   startup: '<i class="fa-solid fa-rocket"></i> Startup',
 };
 
@@ -397,6 +396,16 @@ function createRunHeader(run: PromptLogRun): HTMLElement {
   spinner.innerHTML = ' <i class="fa-solid fa-spinner fa-spin"></i>';
   agent.appendChild(spinner);
   header.appendChild(agent);
+
+  // For collector cycles, surface which collection the run was bound to —
+  // every collector run reports as ``agent_name="collector"``, so the
+  // target is the only thing that distinguishes them.
+  if (run.agent_name === "collector" && run.run_target) {
+    const target = document.createElement("span");
+    target.className = "run-target";
+    target.textContent = run.run_target;
+    header.appendChild(target);
+  }
 
   const promptType = extractPromptType(run);
   if (promptType) {
