@@ -1439,33 +1439,80 @@ h1 {
 }
 
 .memory-entry {
-  border-bottom: 1px solid var(--border);
-  padding: 10px 0;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
 }
 
 .memory-entry:last-child {
-  border-bottom: none;
+  margin-bottom: 0;
 }
 
 .memory-entry-header {
   display: flex;
   gap: 12px;
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
+  align-items: baseline;
+  font-size: 12px;
+  margin-bottom: 6px;
 }
 
 .memory-entry-key {
   font-weight: 600;
   color: var(--accent);
   font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px;
+}
+
+.memory-entry-date {
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* When there's no key (log entries), the date IS the title — promote it. */
+.memory-entry-date-primary {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 13px;
+  margin-left: 0;
+  margin-right: auto;
+}
+
+.memory-entry-author {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 .memory-entry-content {
   color: var(--text-primary);
   font-size: 13px;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.memory-entry-content.collapsed {
+  max-height: calc(20 * 1.5em);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+}
+
+.memory-entry-toggle {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 6px 0 0 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.memory-entry-toggle:hover {
+  text-decoration: underline;
 }
 
 /* --- Memory edit forms --- */

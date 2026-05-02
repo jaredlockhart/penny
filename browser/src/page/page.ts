@@ -1445,26 +1445,40 @@ function createMemoryEntriesSection(memory: MemoryRecord, entries: MemoryEntryRe
   return section;
 }
 
+// Long log entries (esp. ``user-messages`` / ``penny-messages``) get
+// collapsed by default so the list stays scannable.  CSS clips after
+// ~20 visual lines; the JS heuristic decides whether to clip at all.
+const MEMORY_ENTRY_COLLAPSE_LINES = 20;
+const MEMORY_ENTRY_COLLAPSE_CHARS = 600;
+
 function createMemoryEntry(memory: MemoryRecord, entry: MemoryEntryRecord): HTMLElement {
   const row = document.createElement("div");
   row.className = "memory-entry";
 
   const header = document.createElement("div");
   header.className = "memory-entry-header";
+
   if (entry.key) {
+    // Collections: the key is the title.
     const key = document.createElement("span");
     key.className = "memory-entry-key";
     key.textContent = entry.key;
     header.appendChild(key);
   }
-  const author = document.createElement("span");
-  author.textContent = entry.author;
-  header.appendChild(author);
+
+  // For logs the timestamp IS the identifier; rendered prominently
+  // either way so the eye lands on it quickly when scanning.
   const time = document.createElement("span");
+  time.className = entry.key ? "memory-entry-date" : "memory-entry-date memory-entry-date-primary";
   time.textContent = formatDateTime(entry.created_at);
   header.appendChild(time);
 
-  // Edit/delete only for collection entries that actually have a key (entry_update / entry_delete are keyed).
+  const author = document.createElement("span");
+  author.className = "memory-entry-author";
+  author.textContent = entry.author;
+  header.appendChild(author);
+
+  // Edit/delete only for collection entries (entry_update / entry_delete are keyed).
   if (memory.type === "collection" && entry.key) {
     header.appendChild(createEntryActions(memory, entry, row));
   }
@@ -1475,7 +1489,31 @@ function createMemoryEntry(memory: MemoryRecord, entry: MemoryEntryRecord): HTML
 
   row.appendChild(header);
   row.appendChild(content);
+
+  if (shouldCollapseEntry(entry.content)) {
+    content.classList.add("collapsed");
+    row.appendChild(createEntryCollapseToggle(content));
+  }
+
   return row;
+}
+
+function shouldCollapseEntry(content: string): boolean {
+  return (
+    content.split("\n").length > MEMORY_ENTRY_COLLAPSE_LINES ||
+    content.length > MEMORY_ENTRY_COLLAPSE_CHARS
+  );
+}
+
+function createEntryCollapseToggle(content: HTMLElement): HTMLElement {
+  const toggle = document.createElement("button");
+  toggle.className = "memory-entry-toggle";
+  toggle.textContent = "Show more";
+  toggle.addEventListener("click", () => {
+    const stillCollapsed = content.classList.toggle("collapsed");
+    toggle.textContent = stillCollapsed ? "Show more" : "Show less";
+  });
+  return toggle;
 }
 
 function createEntryActions(
