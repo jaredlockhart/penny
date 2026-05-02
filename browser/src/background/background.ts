@@ -11,7 +11,6 @@ import {
   type DomainPermissionEntry,
   type PageContext,
   RECONNECT_DELAY_MS,
-  THOUGHTS_POLL_INTERVAL_MS,
   type RuntimeMessage,
   RuntimeMessageType,
   SERVER_URL,
@@ -31,7 +30,6 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let deviceLabel: string | null = null;
 let connectionState: ConnectionState = CS.Disconnected;
 let currentPageContext: PageContext | null = null;
-let notifiedPages: number = 1;
 
 // URLs we should never try to extract from
 const SKIP_URL_PREFIXES = ["about:", "moz-extension:", "chrome:", "data:", "file:"];
@@ -150,21 +148,6 @@ function broadcastPageInfo(
 function handleRuntimeMessage(message: RuntimeMessage): void {
   if (message.type === RuntimeMessageType.SendChat) {
     sendChatToServer(message.content, message.include_page);
-  } else if (message.type === RuntimeMessageType.ThoughtsRequest) {
-    if (typeof message.notified_pages === "number" && message.notified_pages > 0) {
-      notifiedPages = message.notified_pages;
-    }
-    requestThoughts();
-  } else if (message.type === RuntimeMessageType.ThoughtReaction) {
-    sendThoughtReaction(message.thought_id, message.emoji);
-  } else if (message.type === RuntimeMessageType.PreferencesRequest) {
-    requestPreferences(message.valence);
-  } else if (message.type === RuntimeMessageType.PreferenceAdd) {
-    sendPreferenceAdd(message.valence, message.content);
-  } else if (message.type === RuntimeMessageType.PreferenceDelete) {
-    sendPreferenceDelete(message.preference_id);
-  } else if (message.type === RuntimeMessageType.PreferenceThoughtsRequest) {
-    requestPreferenceThoughts(message.preference_id);
   } else if (message.type === RuntimeMessageType.ConfigRequest) {
     requestConfig();
   } else if (message.type === RuntimeMessageType.ConfigUpdate) {
@@ -191,6 +174,18 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     requestMemories();
   } else if (message.type === RuntimeMessageType.MemoryDetailRequest) {
     requestMemoryDetail(message.name);
+  } else if (message.type === RuntimeMessageType.MemoryCreate) {
+    sendMemoryCreate(message);
+  } else if (message.type === RuntimeMessageType.MemoryUpdate) {
+    sendMemoryUpdate(message);
+  } else if (message.type === RuntimeMessageType.MemoryArchive) {
+    sendMemoryArchive(message.name);
+  } else if (message.type === RuntimeMessageType.EntryCreate) {
+    sendEntryCreate(message.memory, message.key, message.content);
+  } else if (message.type === RuntimeMessageType.EntryUpdate) {
+    sendEntryUpdate(message.memory, message.key, message.content);
+  } else if (message.type === RuntimeMessageType.EntryDelete) {
+    sendEntryDelete(message.memory, message.key);
   }
 }
 
@@ -227,37 +222,12 @@ function connect(): void {
       setConnectionState(CS.Connected);
       sendRegister();
       sendCapabilities();
-      requestThoughts();
-      setInterval(requestThoughts, THOUGHTS_POLL_INTERVAL_MS);
     } else if (data.type === WsIncomingType.Message) {
       broadcastToSidebar({ type: RuntimeMessageType.ChatMessage, content: data.content });
     } else if (data.type === WsIncomingType.Typing) {
       broadcastToSidebar({ type: RuntimeMessageType.Typing, active: data.active, content: data.content });
     } else if (data.type === WsIncomingType.ToolRequest) {
       handleToolRequest(data);
-    } else if (data.type === WsIn.ThoughtsResponse) {
-      broadcastToSidebar({
-        type: RuntimeMessageType.ThoughtsResponse,
-        unnotified: data.unnotified,
-        notified: data.notified,
-        notified_has_more: data.notified_has_more,
-      });
-      broadcastToSidebar({
-        type: RuntimeMessageType.ThoughtCount,
-        count: data.unnotified.length,
-      });
-    } else if (data.type === WsIn.PreferencesResponse) {
-      broadcastToSidebar({
-        type: RuntimeMessageType.PreferencesResponse,
-        valence: data.valence,
-        preferences: data.preferences,
-      });
-    } else if (data.type === WsIn.PreferenceThoughtsResponse) {
-      broadcastToSidebar({
-        type: RuntimeMessageType.PreferenceThoughtsResponse,
-        preference_id: data.preference_id,
-        thoughts: data.thoughts,
-      });
     } else if (data.type === WsIn.ConfigResponse) {
       broadcastToSidebar({ type: RuntimeMessageType.ConfigResponse, params: data.params });
     } else if (data.type === WsIn.DomainPermissionsSync) {
@@ -359,39 +329,6 @@ function sendHeartbeat(): void {
   ws.send(JSON.stringify({ type: WsOutgoingType.Heartbeat }));
 }
 
-function requestThoughts(): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({
-    type: WsOutgoingType.ThoughtsRequest,
-    notified_pages: notifiedPages,
-  }));
-}
-
-function sendThoughtReaction(thoughtId: number, emoji: string): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.ThoughtReaction, thought_id: thoughtId, emoji }));
-}
-
-function requestPreferences(valence: string): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.PreferencesRequest, valence }));
-}
-
-function sendPreferenceAdd(valence: string, content: string): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.PreferenceAdd, valence, content }));
-}
-
-function sendPreferenceDelete(preferenceId: number): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.PreferenceDelete, preference_id: preferenceId }));
-}
-
-function requestPreferenceThoughts(preferenceId: number): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.PreferenceThoughtsRequest, preference_id: preferenceId }));
-}
-
 function requestConfig(): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.ConfigRequest }));
@@ -457,6 +394,62 @@ function requestMemories(): void {
 function requestMemoryDetail(name: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: WsOutgoingType.MemoryDetailRequest, name }));
+}
+
+function sendMemoryCreate(message: {
+  name: string;
+  description: string;
+  recall: string;
+  extraction_prompt?: string | null;
+  collector_interval_seconds?: number | null;
+}): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    type: WsOutgoingType.MemoryCreate,
+    name: message.name,
+    description: message.description,
+    recall: message.recall,
+    extraction_prompt: message.extraction_prompt ?? null,
+    collector_interval_seconds: message.collector_interval_seconds ?? null,
+  }));
+}
+
+function sendMemoryUpdate(message: {
+  name: string;
+  description?: string | null;
+  recall?: string | null;
+  extraction_prompt?: string | null;
+  collector_interval_seconds?: number | null;
+}): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    type: WsOutgoingType.MemoryUpdate,
+    name: message.name,
+    description: message.description ?? null,
+    recall: message.recall ?? null,
+    extraction_prompt: message.extraction_prompt ?? null,
+    collector_interval_seconds: message.collector_interval_seconds ?? null,
+  }));
+}
+
+function sendMemoryArchive(name: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.MemoryArchive, name }));
+}
+
+function sendEntryCreate(memory: string, key: string, content: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.EntryCreate, memory, key, content }));
+}
+
+function sendEntryUpdate(memory: string, key: string, content: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.EntryUpdate, memory, key, content }));
+}
+
+function sendEntryDelete(memory: string, key: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.EntryDelete, memory, key }));
 }
 
 function syncDomainPermissionsToLocal(permissions: DomainPermissionEntry[]): void {

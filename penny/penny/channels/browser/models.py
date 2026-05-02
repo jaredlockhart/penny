@@ -9,11 +9,6 @@ from penny.channels.base import PageContext
 # Incoming message types (browser → server)
 BROWSER_MSG_TYPE_MESSAGE = "message"
 BROWSER_MSG_TYPE_TOOL_RESPONSE = "tool_response"
-BROWSER_MSG_TYPE_THOUGHTS_REQUEST = "thoughts_request"
-BROWSER_MSG_TYPE_THOUGHT_REACTION = "thought_reaction"
-BROWSER_MSG_TYPE_PREFERENCES_REQUEST = "preferences_request"
-BROWSER_MSG_TYPE_PREFERENCE_ADD = "preference_add"
-BROWSER_MSG_TYPE_PREFERENCE_DELETE = "preference_delete"
 BROWSER_MSG_TYPE_HEARTBEAT = "heartbeat"
 BROWSER_MSG_TYPE_CONFIG_REQUEST = "config_request"
 BROWSER_MSG_TYPE_CONFIG_UPDATE = "config_update"
@@ -27,25 +22,27 @@ BROWSER_MSG_TYPE_SCHEDULES_REQUEST = "schedules_request"
 BROWSER_MSG_TYPE_SCHEDULE_ADD = "schedule_add"
 BROWSER_MSG_TYPE_SCHEDULE_UPDATE = "schedule_update"
 BROWSER_MSG_TYPE_SCHEDULE_DELETE = "schedule_delete"
-BROWSER_MSG_TYPE_PREFERENCE_THOUGHTS_REQUEST = "preference_thoughts_request"
 BROWSER_MSG_TYPE_PROMPT_LOGS_REQUEST = "prompt_logs_request"
 BROWSER_MSG_TYPE_MEMORIES_REQUEST = "memories_request"
 BROWSER_MSG_TYPE_MEMORY_DETAIL_REQUEST = "memory_detail_request"
+BROWSER_MSG_TYPE_MEMORY_CREATE = "memory_create"
+BROWSER_MSG_TYPE_MEMORY_UPDATE = "memory_update"
+BROWSER_MSG_TYPE_MEMORY_ARCHIVE = "memory_archive"
+BROWSER_MSG_TYPE_ENTRY_CREATE = "entry_create"
+BROWSER_MSG_TYPE_ENTRY_UPDATE = "entry_update"
+BROWSER_MSG_TYPE_ENTRY_DELETE = "entry_delete"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
 BROWSER_RESP_TYPE_TYPING = "typing"
 BROWSER_RESP_TYPE_STATUS = "status"
 BROWSER_RESP_TYPE_TOOL_REQUEST = "tool_request"
-BROWSER_RESP_TYPE_THOUGHTS = "thoughts_response"
-BROWSER_RESP_TYPE_PREFERENCES = "preferences_response"
 BROWSER_RESP_TYPE_CONFIG = "config_response"
 BROWSER_RESP_TYPE_DOMAIN_PERMISSIONS = "domain_permissions_sync"
 BROWSER_RESP_TYPE_PERMISSION_PROMPT = "permission_prompt"
 BROWSER_RESP_TYPE_PERMISSION_DISMISS = "permission_dismiss"
 BROWSER_RESP_TYPE_SCHEDULES = "schedules_response"
 BROWSER_RESP_TYPE_PROMPT_LOGS = "prompt_logs_response"
-BROWSER_RESP_TYPE_PREFERENCE_THOUGHTS = "preference_thoughts_response"
 BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE = "prompt_log_update"
 BROWSER_RESP_TYPE_RUN_OUTCOME = "run_outcome_update"
 BROWSER_RESP_TYPE_MEMORIES = "memories_response"
@@ -88,28 +85,6 @@ class BrowserToolRequest(BaseModel):
     request_id: str
     tool: str
     arguments: dict
-
-
-class BrowserPreferencesRequest(BaseModel):
-    """A request to list preferences by valence."""
-
-    type: str
-    valence: str
-
-
-class BrowserPreferenceAdd(BaseModel):
-    """A request to add a new preference."""
-
-    type: str
-    valence: str
-    content: str
-
-
-class BrowserPreferenceDelete(BaseModel):
-    """A request to delete a preference by ID."""
-
-    type: str
-    preference_id: int
 
 
 class BrowserConfigUpdate(BaseModel):
@@ -227,45 +202,6 @@ class ScheduleRecord(BaseModel):
     cron_expression: str
 
 
-class BrowserThoughtsRequest(BaseModel):
-    """A request from the addon for thought feed data.
-
-    `notified_pages` controls how many pages of notified thoughts to return.
-    The server owns the page size; the addon only counts pages.
-    """
-
-    type: str
-    notified_pages: int = 1
-
-
-class ThoughtCard(BaseModel):
-    """A single thought as serialized for the addon feed."""
-
-    id: int
-    title: str
-    content: str
-    image: str
-    created_at: str
-    notified: bool
-    seed_topic: str
-
-
-class BrowserThoughtsResponse(BaseModel):
-    """The thoughts feed payload sent to the addon."""
-
-    type: str = BROWSER_RESP_TYPE_THOUGHTS
-    unnotified: list[ThoughtCard]
-    notified: list[ThoughtCard]
-    notified_has_more: bool
-
-
-class BrowserPreferenceThoughtsRequest(BaseModel):
-    """A request to list thoughts for a specific preference."""
-
-    type: str
-    preference_id: int
-
-
 class BrowserMemoryDetailRequest(BaseModel):
     """A request to load entries + metadata for a single memory."""
 
@@ -318,3 +254,62 @@ class BrowserMemoryChanged(BaseModel):
 
     type: str = BROWSER_RESP_TYPE_MEMORY_CHANGED
     name: str | None = None
+
+
+class BrowserMemoryCreate(BaseModel):
+    """Create a new collection from the addon.  Only collections are user-
+    creatable; logs are seeded by migrations."""
+
+    type: str
+    name: str
+    description: str
+    recall: str  # "off" | "recent" | "relevant" | "all"
+    extraction_prompt: str | None = None
+    collector_interval_seconds: int | None = None
+
+
+class BrowserMemoryUpdate(BaseModel):
+    """Edit metadata on an existing collection.  Only collections are user-
+    editable; logs are read-only by design."""
+
+    type: str
+    name: str
+    description: str | None = None
+    recall: str | None = None
+    extraction_prompt: str | None = None
+    collector_interval_seconds: int | None = None
+
+
+class BrowserMemoryArchive(BaseModel):
+    """Archive a memory by name (soft-delete from the active list)."""
+
+    type: str
+    name: str
+
+
+class BrowserEntryCreate(BaseModel):
+    """Manually add one entry to a collection.  Bypasses the collector —
+    useful when the user wants to record something the auto-extractor
+    missed.  Logs are append-only by the system; no manual entry path."""
+
+    type: str
+    memory: str
+    key: str
+    content: str
+
+
+class BrowserEntryUpdate(BaseModel):
+    """Replace the content of a keyed entry in a collection."""
+
+    type: str
+    memory: str
+    key: str
+    content: str
+
+
+class BrowserEntryDelete(BaseModel):
+    """Delete a keyed entry from a collection."""
+
+    type: str
+    memory: str
+    key: str
