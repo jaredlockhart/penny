@@ -117,6 +117,10 @@ class WriteResult(BaseModel):
     key: str
     outcome: WriteOutcome
     entry_id: int | None = None
+    # Existing entry's key when ``outcome == "duplicate"`` — surfaces in
+    # the rejection message so the model can pivot to ``update_entry``
+    # when it has fresher info for the existing row.
+    matched_key: str | None = None
 
 
 MoveOutcome = Literal["ok", "not_found", "collision"]
@@ -347,8 +351,13 @@ class MemoryStore:
         thresholds: DedupThresholds,
     ) -> WriteResult:
         candidate = EntrySide(entry.key, entry.key_embedding, entry.content_embedding)
-        if self._is_duplicate(candidate, existing, thresholds):
-            return WriteResult(key=entry.key, outcome="duplicate")
+        matched = self._is_duplicate(candidate, existing, thresholds)
+        if matched is not None:
+            return WriteResult(
+                key=entry.key,
+                outcome="duplicate",
+                matched_key=matched.key,
+            )
         row = MemoryEntry(
             memory_name=name,
             key=entry.key,
@@ -781,8 +790,21 @@ class MemoryStore:
         candidate: EntrySide,
         existing: list[EntrySide],
         thresholds: DedupThresholds,
-    ) -> bool:
-        return any(self._pair_is_duplicate(candidate, side, thresholds) for side in existing)
+    ) -> EntrySide | None:
+        """Return the first existing entry that ``candidate`` collides with
+        under the dedup rule, or ``None`` if no match.  Returning the
+        matched side (instead of bool) lets callers surface *which*
+        existing entry blocked the write — the rejection message can
+        then say ``"matches existing 'Kepler Museum'"`` so the model
+        can pivot to ``update_entry`` when it has fresher info.
+
+        Truthy/falsy in a bool context is preserved (``None`` is falsy,
+        ``EntrySide`` is truthy), so ``if self._is_duplicate(...)``
+        callsites continue to work."""
+        for side in existing:
+            if self._pair_is_duplicate(candidate, side, thresholds):
+                return side
+        return None
 
     def _pair_is_duplicate(
         self,

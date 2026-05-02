@@ -449,6 +449,18 @@ class CollectionKeysTool(Tool):
 # ── Collection writes ───────────────────────────────────────────────────────
 
 
+def _format_duplicate(result: WriteResult) -> str:
+    """Format one duplicate result for the rejection message.
+
+    Names the matching existing key when present so the model can pivot
+    to ``update_entry`` instead of silently dropping fresher info.
+    Falls back to just the candidate key when ``matched_key`` is missing
+    (e.g. the matched existing entry had no key set)."""
+    if result.matched_key and result.matched_key != result.key:
+        return f"{result.key} (matches existing '{result.matched_key}')"
+    return result.key
+
+
 class CollectionWriteTool(Tool):
     """Write entries to a collection with similarity-based dedup."""
 
@@ -509,20 +521,27 @@ class CollectionWriteTool(Tool):
 
     def _format_results(self, memory: str, results: list[WriteResult]) -> str:
         written = [r.key for r in results if r.outcome == "written"]
-        duplicates = [r.key for r in results if r.outcome == "duplicate"]
+        duplicates = [r for r in results if r.outcome == "duplicate"]
         if duplicates:
             logger.info(
                 "collection_write: %d duplicate(s) rejected in %s: %s",
                 len(duplicates),
                 memory,
-                ", ".join(duplicates),
+                ", ".join(r.key for r in duplicates),
             )
         parts: list[str] = []
         if written:
             noun = "entry" if len(written) == 1 else "entries"
             parts.append(f"Wrote {len(written)} {noun} to '{memory}': {', '.join(written)}.")
         if duplicates:
-            parts.append(f"Rejected as duplicates: {', '.join(duplicates)}.")
+            # Surface the existing-key match so the model can pivot to
+            # ``update_entry`` if it has fresher info than what's already
+            # stored — otherwise the new write just gets silently dropped.
+            labelled = [_format_duplicate(r) for r in duplicates]
+            parts.append(
+                f"Rejected as duplicates: {', '.join(labelled)}.  "
+                f"Use ``update_entry`` to refresh an existing row if you have richer info."
+            )
         return " ".join(parts) if parts else "(no entries written)"
 
 
@@ -861,11 +880,20 @@ class ExistsTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ExistsArgs(**kwargs)
-        key_vec = await embed_text(self._llm, args.key) if args.key else None
+        # When the model probes with content but no key, treat the content
+        # as a name-like probe — using it as both ``key`` and ``content``
+        # lets the dedup's key-TCR signal fire against existing entries
+        # whose ``key`` matches.  Without this, ``exists(content="Kepler
+        # Museum")`` returned "no" against an existing ``key="Kepler
+        # Museum"`` because content-cosine alone (candidate "Kepler
+        # Museum" vs the existing entry's long description) sat below
+        # the strict threshold.
+        key = args.key if args.key else args.content
+        key_vec = await embed_text(self._llm, key)
         content_vec = await embed_text(self._llm, args.content)
         found = self._db.memories.exists(
             args.memories,
-            args.key,
+            key,
             key_vec,
             content_vec,
             thresholds=self._thresholds,

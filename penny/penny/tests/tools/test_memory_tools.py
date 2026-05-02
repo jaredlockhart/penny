@@ -145,7 +145,12 @@ class TestCollectionWritesAndReads:
             entries=[{"key": "dark roast coffee", "content": "different body entirely"}],
         )
         assert "Rejected as duplicates" in result
+        # The candidate's own key is named, *and* the existing key it
+        # collided with — gives the model enough context to pivot to
+        # update_entry instead of silently dropping fresher info.
         assert "dark roast coffee" in result
+        assert "matches existing 'dark roast'" in result
+        assert "update_entry" in result
 
     @pytest.mark.asyncio
     async def test_get_returns_entry_or_not_found(self, tmp_path, mock_llm):
@@ -441,6 +446,41 @@ class TestExistsAndDone:
             memories=["likes"], key="not there", content="nothing"
         )
         assert result == "no"
+
+    @pytest.mark.asyncio
+    async def test_exists_content_only_uses_content_as_key_probe(self, tmp_path, mock_llm):
+        """Regression: ``exists(content="Kepler Museum")`` must catch an
+        existing entry with ``key="Kepler Museum"``, even when the
+        existing row's *content* is a long description that doesn't
+        cosine-match the short candidate.  The tool now copies content
+        into the key slot when the model omits it, letting key-TCR fire
+        in the dedup rule."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(
+            name="prague-highlights", description="x", recall="off"
+        )
+        client = _make_llm_client(mock_llm)
+        # Existing entry: short key, long descriptive content.
+        await CollectionWriteTool(db, client, author="test").execute(
+            memory="prague-highlights",
+            entries=[
+                {
+                    "key": "Kepler Museum",
+                    "content": (
+                        "Kepler Museum – A science-museum dedicated to astronomy, "
+                        "named after Johannes Kepler, founded 2009 in the International "
+                        "Year of Astronomy with support from the Magistrate of the "
+                        "Capital City of Prague."
+                    ),
+                }
+            ],
+        )
+        # Probe with content only — what the collector usually does when
+        # checking a candidate name before writing.
+        result = await ExistsTool(db, client).execute(
+            memories=["prague-highlights"], content="Kepler Museum"
+        )
+        assert result == "yes"
 
     @pytest.mark.asyncio
     async def test_done_returns_structured_summary(self):

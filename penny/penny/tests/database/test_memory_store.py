@@ -137,6 +137,10 @@ class TestCollectionWrites:
         )
         assert results[0].outcome == "duplicate"
         assert results[0].entry_id is None
+        # ``matched_key`` is the *existing* entry's key — what the model
+        # should pivot to when calling ``update_entry``, not the rejected
+        # candidate's own key.
+        assert results[0].matched_key == "dark roast"
         assert len(db.memories.read_all("likes")) == 1
 
     def test_write_dedups_on_content_embedding(self, tmp_path):
