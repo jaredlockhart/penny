@@ -48,7 +48,7 @@ while true; do
             --build-arg "GIT_COMMIT=${CURRENT:0:7}" \
             --build-arg "GIT_COMMIT_MESSAGE=$GIT_MSG" \
             -f Dockerfile - \
-        && $COMPOSE up -d --no-build penny; then
+        && $COMPOSE up -d --no-build --no-deps penny; then
         log "penny rebuilt and restarted"
         LAST_REF="$CURRENT"
     else

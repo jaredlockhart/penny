@@ -42,23 +42,26 @@ Penny talks to you over [Signal](https://signal.org), [Discord](https://discord.
 
 ### Preferences
 
-Penny builds a model of what you care about. The **HistoryAgent** runs continuously in the background, scanning unprocessed messages and reactions and extracting preference topics in a two-pass LLM pipeline — first identify candidate topics, then classify each as positive or negative. New topics are deduplicated against existing entries via token containment ratio + embedding similarity, and only become "thinking candidates" once they cross a mention-count threshold (so a one-off comment doesn't drive autonomous research).
+Penny builds a model of what you care about. The **Collector dispatcher** scans the `user-messages` log and reaction stream in the background, extracting preference topics into the `likes` and `dislikes` collections via a two-pass LLM pipeline — first identify candidate topics, then classify each as positive or negative. New topics are deduplicated against existing entries via token containment ratio + embedding similarity, and only become "thinking candidates" once they cross a mention-count threshold (so a one-off comment doesn't drive autonomous research).
 
 You can also manage preferences directly: `/like dark roast coffee`, `/dislike cold weather`, `/unlike`, `/undislike`. These drive what Penny thinks about and what she shares with you.
 
 ### Thinking
 
-When Penny is idle, she thinks. The **ThinkingAgent** picks a random topic from your positive preferences, searches the web, and has an inner monologue — reasoning through what she finds. The result is stored as a **thought**, linked back to the preference that seeded it.
+When Penny is idle, she thinks. A collector cycle picks a random topic from your positive preferences, searches the web, and has an inner monologue — reasoning through what she finds. The result is stored as an entry in the `unnotified-thoughts` collection, linked back to the preference that seeded it.
 
-Thoughts bleed into chat context, so Penny has continuity of her own reasoning. When she finds something interesting, the **NotifyAgent** shares it with you — scoring candidates by novelty (avoiding repeats) and sentiment (preference alignment), with exponential backoff so she doesn't overwhelm you.
+Thoughts bleed into chat context, so Penny has continuity of her own reasoning. A separate `notified-thoughts` cycle picks the best un-shared thought — scoring by novelty (avoiding repeats) and sentiment (preference alignment) — composes a message, sends it, and moves the entry over. Exponential backoff keeps her from overwhelming you.
 
 ### Memory
 
-Penny's memory has three layers, all assembled into chat context on every message:
+Penny has a single memory framework with two shapes:
 
-- **Knowledge** — when Penny browses a page (search results, article reads), the **HistoryAgent** summarizes the page into a prose paragraph and stores it with an embedding, keyed by URL. On the next chat turn, the most semantically relevant entries are pulled into context, scored as `max(weighted_decay_against_conversation, current_message_cosine)` with an absolute floor that suppresses noise on greetings and uncovered topics.
-- **Related past messages** — the embedding of every outgoing/incoming message is cached. When you ask something, prior messages are scored by `cosine_to_current_message − α × centrality` (centrality = mean cosine to the rest of the corpus, suppressing centroid-magnet boilerplate), then expanded to ±5-minute neighbors so conversational follow-ups travel together.
-- **Preferences** — the **HistoryAgent** also extracts likes/dislikes from your text messages and emoji reactions in two passes (identify topics, then classify valence), deduplicated against existing entries via TCR + embedding similarity.
+- **Collections** — keyed sets with dedup-on-write. `likes`, `dislikes`, `knowledge` (page summaries), `notified-thoughts`, and any user-defined collection
+- **Logs** — append-only streams. `user-messages`, `penny-messages`, `browse-results`, plus per-collection audit trails
+
+Every memory has a `recall` flag (off / recent / relevant / all) that controls how it surfaces in chat context. On every message, Penny assembles a **recall block** that dispatches each active memory by its flag — knowledge entries pulled in by semantic similarity to the current message, recent thoughts surfaced by recency, the conversation log merged chronologically. The chat history (alternating user/assistant turns) flows alongside, independent of recall.
+
+The same primitive backs everything — whether a memory is written by a built-in side-effect (the conversation log writes itself), by a collector cycle (the `knowledge` collection fills as Penny browses), or by you from chat. New collections are immediately available to the next collector tick — no restart, no code change.
 
 
 ### Commands
@@ -77,7 +80,8 @@ Beyond regular conversation, Penny supports slash commands:
 - **/draw** — generate images via a local model (requires `LLM_IMAGE_MODEL`)
 - **/email** — search your Fastmail inbox via JMAP (requires `FASTMAIL_API_TOKEN`)
 - **/zoho** — search your Zoho Mail inbox (requires `ZOHO_API_ID`/`ZOHO_API_SECRET`/`ZOHO_REFRESH_TOKEN`)
-- **/bug**, **/feature** — file GitHub issues (requires GitHub App credentials)
+- **/bug** — file a bug report on GitHub (requires GitHub App credentials)
+- **/feature** — file a feature request on GitHub (requires GitHub App credentials)
 - **/test** — enter isolated test mode (separate DB, fresh agents) for development
 
 ## Penny's Mind
@@ -87,49 +91,39 @@ How information flows through Penny's cognitive systems — from perception to m
 ```mermaid
 flowchart TB
     User((User)) -->|message| Chat
-    User -->|reaction| Memory
+    User -->|reaction| MemoryFW
 
     subgraph Conversation["🗣 Conversation"]
-        Chat[ChatAgent<br>search web + respond]
+        Chat[ChatAgent<br>recall + browse + respond]
     end
 
-    Memory -.->|"profile · knowledge · related msgs<br>thoughts · dislikes"| Chat
+    MemoryFW -.->|"recall block<br>(per-memory flag)"| Chat
     Chat -->|reply| User
-    Chat -->|log| Memory
+    Chat -->|"log writes"| MemoryFW
 
-    subgraph Memory["🧠 Memory"]
-        Messages["Messages<br>(embedded)"]
-        Knowledge["Knowledge<br>(page summaries)"]
-        Preferences["Preferences<br>likes · dislikes"]
-        Thoughts[Thoughts]
+    subgraph MemoryFW["🧠 Memory framework"]
+        Collections["Collections<br>likes · dislikes · knowledge<br>notified-thoughts · user-defined…"]
+        Logs["Logs<br>user-messages · penny-messages<br>browse-results"]
     end
 
     subgraph Background["💭 Background — when idle"]
-        History["HistoryAgent<br>extract knowledge from<br>browses, preferences<br>from messages"]
-        Thinking["ThinkingAgent<br>pick a preference,<br>research it, store thought"]
-        Notify["NotifyAgent<br>score thoughts,<br>share the best one"]
+        Coll["Collector dispatcher<br>picks the most-overdue collection<br>runs its extraction prompt<br>writes scoped to that one target"]
     end
 
-    Messages --> History
-    History --> Knowledge
-    History --> Preferences
-    Preferences --> Thinking
-    Thinking --> Thoughts
-    Thoughts --> Notify
-    Notify -->|proactive message| User
+    MemoryFW -.->|"extraction_prompt<br>cadence · last_collected_at"| Coll
+    Coll -->|"collection_write"| MemoryFW
+    Coll -->|"send_message<br>(notify-shaped cycles)"| User
 
     style Conversation fill:#e8f5e9,stroke:#2e7d32
-    style Memory fill:#e3f2fd,stroke:#1565c0
+    style MemoryFW fill:#e3f2fd,stroke:#1565c0
     style Background fill:#fff3e0,stroke:#e65100
 ```
 
 ### The Cognitive Cycle
 
-1. **Conversation** — user sends a message, ChatAgent searches the web and responds. Context is assembled from memory: profile, related knowledge (semantically-relevant page summaries), related past messages (embedding similarity with centrality penalty + ±5-minute neighbor expansion), recent thoughts, and topics to avoid
-2. **Digestion** — when idle, HistoryAgent summarizes browsed pages into knowledge entries (one per URL, deduplicated and embedded), and extracts preferences (likes/dislikes) from text messages and emoji reactions in a two-pass LLM pipeline
-3. **Reflection** — ThinkingAgent picks a random positive preference, searches the web, and reasons through what it finds. The result is stored as a thought
-4. **Initiative** — NotifyAgent scores un-notified thoughts by novelty (avoiding repeats) and preference alignment, composes a message, and sends it with exponential backoff
-5. **Repeat** — the user's reaction feeds back into conversation, digestion, and reflection
+1. **Conversation** — user sends a message, ChatAgent assembles a recall block (every active memory rendered by its `recall` flag) plus the chat history, calls the LLM, browses if needed, and responds with sources
+2. **Collection** — when idle, the Collector dispatcher picks the most-overdue ready collection from the `memory` table and runs its extraction prompt: pulling preferences from user messages, summarizing browsed pages, generating thoughts from preferences, deciding which thoughts to send. Each collection has its own cadence (`collector_interval_seconds`)
+3. **Repeat** — outgoing messages, browses, and reactions all become memory entries that future collector cycles read
 
 ### Models
 
@@ -137,7 +131,7 @@ Penny uses up to four LLM model roles, all running locally by default:
 
 | Role | Env | Purpose | Required? |
 |---|---|---|---|
-| **Text** | `LLM_MODEL` | Single model for all agents — chat, thinking, history, notify, schedules | Yes |
+| **Text** | `LLM_MODEL` | Single model for all agents — chat, collector cycles, scheduled tasks | Yes |
 | **Embedding** | `LLM_EMBEDDING_MODEL` | Embeddings for knowledge retrieval, message similarity, and preference dedup | Optional |
 | **Vision** | `LLM_VISION_MODEL` | Image captioning when users send photos | Optional |
 | **Image** | `LLM_IMAGE_MODEL` | Image generation via `/draw` | Optional |
@@ -146,7 +140,7 @@ Text, vision, and embedding all go through the OpenAI SDK and can each point at 
 
 ### Scheduling
 
-Background agents run in priority order when idle (default: 60s after last message): schedule executor (always) → history → notify → thinking. Agents with no work are skipped. Foreground messages cancel the active background task immediately.
+Two background tracks run when idle (default: 60s after last message): the schedule executor (always-on, runs user-created cron tasks) and the Collector dispatcher (idle-gated). Each dispatcher tick picks the most-overdue ready collection from the `memory` table — rows where `extraction_prompt IS NOT NULL` and `now - last_collected_at >= collector_interval_seconds` — and runs that one. If nothing is ready, the tick is a no-op. Foreground messages cancel the active background task immediately.
 
 User-created scheduled tasks (via `/schedule`) run on their own timer regardless of idle state, so a daily weather briefing won't be blocked by an active conversation.
 
