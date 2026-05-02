@@ -1,6 +1,6 @@
 # Penny Feature TODO
 
-This document tracks potential new features and enhancements for Penny.
+This document tracks potential new features and enhancements for Penny. See [`docs/`](docs/) for in-depth design documents.
 
 ## New Agent Types
 
