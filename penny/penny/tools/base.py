@@ -140,28 +140,32 @@ class ToolExecutor:
         self.timeout = timeout
 
     def _validate_arguments(self, tool: Tool, arguments: dict[str, Any]) -> str | None:
-        """
-        Validate that all required parameters are present in arguments.
-
-        Args:
-            tool: The tool to validate against
-            arguments: The arguments provided in the tool call
-
-        Returns:
-            Error message if validation fails, None if valid
-        """
+        """Validate that all required parameters are present in arguments."""
         parameters = tool.parameters
         required_params = parameters.get("required", [])
-
         missing_params = [param for param in required_params if param not in arguments]
-
         if missing_params:
-            return (
-                f"Missing required parameter(s): {', '.join(missing_params)}. "
-                f"Please call the tool again with all required parameters."
-            )
-
+            return self._missing_params_error(missing_params, parameters.get("properties", {}))
         return None
+
+    @staticmethod
+    def _missing_params_error(missing: list[str], properties: dict[str, Any]) -> str:
+        """Build a hint-rich error message listing missing params with their types/descriptions."""
+        hints = []
+        for param in missing:
+            prop = properties.get(param, {})
+            param_type = prop.get("type", "")
+            param_desc = prop.get("description", "")
+            if param_type and param_desc:
+                hints.append(f"{param} ({param_type}: {param_desc})")
+            elif param_type:
+                hints.append(f"{param} ({param_type})")
+            else:
+                hints.append(param)
+        return (
+            f"Missing required parameter(s): {', '.join(hints)}. "
+            f"Please call the tool again with all required parameters."
+        )
 
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call."""
