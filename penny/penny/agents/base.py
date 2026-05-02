@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import urllib.parse as _urlparse
@@ -134,8 +135,6 @@ def _parse_text_form_done(content: str) -> dict | None:
     ``BackgroundAgent._run_cycle`` to synthesise a real ``ToolCallRecord``
     so the cycle's intent isn't lost when the model flubs the tool call.
     """
-    import json
-
     text = content.strip()
     if text.startswith("done(") and text.endswith(")"):
         text = text[5:-1].strip()

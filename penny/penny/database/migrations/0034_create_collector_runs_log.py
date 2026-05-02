@@ -30,7 +30,7 @@ def up(conn: sqlite3.Connection) -> None:
         (
             "collector-runs",
             "log",
-            "One entry per Collector cycle: target, marker, done() summary",
+            "One entry per Collector cycle: target + success marker + done() summary",
             "off",
             now,
         ),
