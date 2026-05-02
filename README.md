@@ -42,26 +42,21 @@ Penny talks to you over [Signal](https://signal.org), [Discord](https://discord.
 
 ### Preferences
 
-Penny builds a model of what you care about. The **Collector dispatcher** scans the `user-messages` log and reaction stream in the background, extracting preference topics into the `likes` and `dislikes` collections via a two-pass LLM pipeline — first identify candidate topics, then classify each as positive or negative. New topics are deduplicated against existing entries via token containment ratio + embedding similarity, and only become "thinking candidates" once they cross a mention-count threshold (so a one-off comment doesn't drive autonomous research).
+Penny builds a picture of what you care about. As you chat, she notices the things you bring up with interest or frustration — coffee preferences, weather complaints, hobbies you keep returning to — and files them away as likes and dislikes. A topic has to come up more than once before she takes it seriously, so an offhand comment doesn't send her down a rabbit hole.
 
-You can also manage preferences directly: `/like dark roast coffee`, `/dislike cold weather`, `/unlike`, `/undislike`. These drive what Penny thinks about and what she shares with you.
+You can also tell her directly: `/like dark roast coffee`, `/dislike cold weather`, `/unlike`, `/undislike`. These shape what she thinks about and what she shares with you.
 
 ### Thinking
 
-When Penny is idle, she thinks. A collector cycle picks a random topic from your positive preferences, searches the web, and has an inner monologue — reasoning through what she finds. The result is stored as an entry in the `unnotified-thoughts` collection, linked back to the preference that seeded it.
+When Penny isn't talking to you, she thinks. She picks something you're into, searches the web, and reasons through what she finds — keeping the result as a thought she can come back to. Thoughts feed into future conversations, so when you ask her about something she's been chewing on, the context is already there.
 
-Thoughts bleed into chat context, so Penny has continuity of her own reasoning. A separate `notified-thoughts` cycle picks the best un-shared thought — scoring by novelty (avoiding repeats) and sentiment (preference alignment) — composes a message, sends it, and moves the entry over. Exponential backoff keeps her from overwhelming you.
+When she finds something genuinely interesting — not a repeat of what she's shared before, and aligned with what you actually like — she sends it to you on her own. She paces herself so you don't get overwhelmed.
 
 ### Memory
 
-Penny has a single memory framework with two shapes:
+Penny remembers things in a few different shapes — your conversations, the pages she's read, what she's learned about you, the thoughts she's had on her own. When you ask her something, she pulls the most relevant pieces of all of that into context: a page she summarized last week, a topic you mentioned a few days ago, a thought she had this morning. Old material doesn't crowd out the new — only what's actually relevant comes along.
 
-- **Collections** — keyed sets with dedup-on-write. `likes`, `dislikes`, `knowledge` (page summaries), `notified-thoughts`, and any user-defined collection
-- **Logs** — append-only streams. `user-messages`, `penny-messages`, `browse-results`, plus per-collection audit trails
-
-Every memory has a `recall` flag (off / recent / relevant / all) that controls how it surfaces in chat context. On every message, Penny assembles a **recall block** that dispatches each active memory by its flag — knowledge entries pulled in by semantic similarity to the current message, recent thoughts surfaced by recency, the conversation log merged chronologically. The chat history (alternating user/assistant turns) flows alongside, independent of recall.
-
-The same primitive backs everything — whether a memory is written by a built-in side-effect (the conversation log writes itself), by a collector cycle (the `knowledge` collection fills as Penny browses), or by you from chat. New collections are immediately available to the next collector tick — no restart, no code change.
+She can also remember things you ask her to. Tell her to keep track of restaurants you've been to, or articles to read later, and she'll start a new memory for it on the spot — no configuration, no code change.
 
 
 ### Commands
@@ -94,25 +89,25 @@ flowchart TB
     User -->|reaction| MemoryFW
 
     subgraph Conversation["🗣 Conversation"]
-        Chat[ChatAgent<br>recall + browse + respond]
+        Chat[Chat<br>remembers · browses · responds]
     end
 
-    MemoryFW -.->|"recall block<br>(per-memory flag)"| Chat
+    MemoryFW -.->|"relevant memories"| Chat
     Chat -->|reply| User
-    Chat -->|"log writes"| MemoryFW
+    Chat -->|"records the conversation"| MemoryFW
 
-    subgraph MemoryFW["🧠 Memory framework"]
-        Collections["Collections<br>likes · dislikes · knowledge<br>notified-thoughts · user-defined…"]
-        Logs["Logs<br>user-messages · penny-messages<br>browse-results"]
+    subgraph MemoryFW["🧠 Memory"]
+        Collections["What Penny knows<br>likes · dislikes · pages she's read<br>thoughts · custom memories you've added"]
+        Logs["What Penny has heard or done<br>messages · pages browsed"]
     end
 
     subgraph Background["💭 Background — when idle"]
-        Coll["Collector dispatcher<br>picks the most-overdue collection<br>runs its extraction prompt<br>writes scoped to that one target"]
+        Coll["Background work<br>picks an overdue task,<br>updates one memory per cycle"]
     end
 
-    MemoryFW -.->|"extraction_prompt<br>cadence · last_collected_at"| Coll
-    Coll -->|"collection_write"| MemoryFW
-    Coll -->|"send_message<br>(notify-shaped cycles)"| User
+    MemoryFW -.->|"schedule + instructions"| Coll
+    Coll -->|"writes new entries"| MemoryFW
+    Coll -->|"shares thoughts when ready"| User
 
     style Conversation fill:#e8f5e9,stroke:#2e7d32
     style MemoryFW fill:#e3f2fd,stroke:#1565c0
@@ -121,9 +116,9 @@ flowchart TB
 
 ### The Cognitive Cycle
 
-1. **Conversation** — user sends a message, ChatAgent assembles a recall block (every active memory rendered by its `recall` flag) plus the chat history, calls the LLM, browses if needed, and responds with sources
-2. **Collection** — when idle, the Collector dispatcher picks the most-overdue ready collection from the `memory` table and runs its extraction prompt: pulling preferences from user messages, summarizing browsed pages, generating thoughts from preferences, deciding which thoughts to send. Each collection has its own cadence (`collector_interval_seconds`)
-3. **Repeat** — outgoing messages, browses, and reactions all become memory entries that future collector cycles read
+1. **Conversation** — you send a message; Penny pulls the relevant pieces of memory into context (a related page, a recent thought, your preferences), browses the web if she needs to, and responds with sources
+2. **Background work** — when she's idle, Penny works through her to-do list: picking up new preferences from your messages, summarizing pages she's read, generating thoughts on topics you're into, choosing which thoughts are worth sharing. Each task has its own pace
+3. **Repeat** — outgoing messages, browses, and reactions all become memories that future background work can build on
 
 ### Models
 
@@ -131,7 +126,7 @@ Penny uses up to four LLM model roles, all running locally by default:
 
 | Role | Env | Purpose | Required? |
 |---|---|---|---|
-| **Text** | `LLM_MODEL` | Single model for all agents — chat, collector cycles, scheduled tasks | Yes |
+| **Text** | `LLM_MODEL` | Single model for all of Penny's reasoning — chat, background work, scheduled tasks | Yes |
 | **Embedding** | `LLM_EMBEDDING_MODEL` | Embeddings for knowledge retrieval, message similarity, and preference dedup | Optional |
 | **Vision** | `LLM_VISION_MODEL` | Image captioning when users send photos | Optional |
 | **Image** | `LLM_IMAGE_MODEL` | Image generation via `/draw` | Optional |
@@ -140,9 +135,9 @@ Text, vision, and embedding all go through the OpenAI SDK and can each point at 
 
 ### Scheduling
 
-Two background tracks run when idle (default: 60s after last message): the schedule executor (always-on, runs user-created cron tasks) and the Collector dispatcher (idle-gated). Each dispatcher tick picks the most-overdue ready collection from the `memory` table — rows where `extraction_prompt IS NOT NULL` and `now - last_collected_at >= collector_interval_seconds` — and runs that one. If nothing is ready, the tick is a no-op. Foreground messages cancel the active background task immediately.
+Two background tracks run when Penny is idle (default: 60s after the last message): scheduled tasks you've created and Penny's own background work — extracting preferences, summarizing pages, thinking, choosing what to share. Each piece of background work has its own cadence; Penny picks the most-overdue ready task per tick, and skips the tick entirely if nothing is due. A foreground message cancels any in-progress background task immediately so the LLM is free to respond.
 
-User-created scheduled tasks (via `/schedule`) run on their own timer regardless of idle state, so a daily weather briefing won't be blocked by an active conversation.
+Scheduled tasks created via `/schedule` run on their own timer regardless of idle state, so a daily weather briefing won't be blocked by an active conversation.
 
 ### Runtime Configuration
 
@@ -156,10 +151,10 @@ The Firefox extension adds a visual, interactive layer on top of Penny's existin
 - **Active tab context** — Penny can see the page you're currently viewing (via [Defuddle](https://github.com/kepano/defuddle) content extraction). Toggle "Include page content" to ask questions about any page
 - **Browser tools** — `browse_url` opens pages in hidden tabs with the full web engine and your session. Per-addon "tool use" toggle controls whether each browser participates in tool dispatch
 - **Domain permissions** — first-time access to a new domain triggers an approve/deny prompt. Approvals persist server-side and sync across all connected addons; prompts can also be answered from Signal so you don't need a browser open. `/config DOMAIN_PERMISSION_MODE allow_all` skips prompting entirely
-- **Memory Explorer** — every memory (collections + logs) in one place: list view with type badge / entry count / last-collected timestamp, drill-in view with editable metadata (description, recall mode, extraction prompt, collector interval) and per-entry add/edit/delete on collections. Logs are read-only by design. Each collection's detail page surfaces the matching `collector-runs` entries inline so you can see what the auto-curator has been doing
+- **Memory Explorer** — every memory in one place: a list view with entry counts and last-updated timestamps, plus a drill-in view where you can edit how each memory works (description, what it should remember, how often) and add, edit, or delete individual entries. Each memory's detail page also shows a recent history of background work so you can see exactly what Penny has been doing
 - **Schedule manager** — UI for creating, editing, and deleting `/schedule` cron tasks without touching the chat
 - **Settings panel** — domain allowlist, runtime config params (the same 30+ values `/config` exposes), and addon-level toggles
-- **Prompt log viewer** — every LLM call Penny makes is browseable from the extension, grouped by run ID with input messages, response, thinking field, and a green/red collector-result tag (target collection + reason). Useful for debugging "why did Penny say that"
+- **Prompt log viewer** — every LLM call Penny makes, browseable from the extension: input prompt, response, internal reasoning, and (for background work) which memory the result was written to and why. Useful for understanding "why did Penny say that"
 - **Multi-device** — each browser registers as a device (e.g., "firefox macbook 16"). All devices share the same user identity and conversation history. In-flight progress reactions on Signal also surface on the user's message via emoji morphing (💭 → 🔍 → 📖 → cleared on completion)
 
 ```bash
