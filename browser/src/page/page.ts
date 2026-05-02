@@ -680,6 +680,14 @@ function formatDuration(ms: number): string {
   const seconds = (ms / 1000).toFixed(1);
   return `${seconds}s`;
 }
+
+/** Convert literal ``\n`` escape sequences to real newlines.  Used on
+ * extraction prompts before rendering them in the textarea — chat-side
+ * tool calls (or the model double-escaping) have stored a few prompts
+ * with the two-character escape instead of an actual newline. */
+function unescapeNewlines(text: string): string {
+  return text.replace(/\\n/g, "\n");
+}
 // ============================================================
 // Schedules
 // ============================================================
@@ -1209,7 +1217,12 @@ function createMemoryFormFields(initial: {
   const extractionPrompt = document.createElement("textarea");
   extractionPrompt.className = "memory-form-input memory-form-prompt";
   extractionPrompt.rows = 6;
-  extractionPrompt.value = initial.extraction_prompt;
+  // Some prompts have been stored with literal "\n" escape sequences
+  // instead of real newlines (chat-side tool calls or the model itself
+  // double-escaped).  Render those as real newlines so the textarea
+  // shows a multi-line prompt; saving from this form normalises the DB
+  // value naturally.
+  extractionPrompt.value = unescapeNewlines(initial.extraction_prompt);
 
   const intervalInput = document.createElement("input");
   intervalInput.type = "number";
