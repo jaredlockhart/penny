@@ -246,6 +246,115 @@ class TestCollectionWrites:
         assert db.memories.move("missing", "a", "b", author="chat") == "not_found"
 
 
+class TestDegenerateContentRejection:
+    """Write-time degenerate content guard — empty/punctuation, bare URLs, bail-out phrases."""
+
+    def _make_collection(self, tmp_path):
+        db = _make_db(tmp_path)
+        db.memories.create_collection("knowledge", "web summaries", RecallMode.RELEVANT)
+        return db
+
+    def test_pure_punctuation_rejected(self, tmp_path):
+        db = self._make_collection(tmp_path)
+        results = db.memories.write(
+            "knowledge",
+            [EntryInput(key="https://example.com", content="?")],
+            author="collector",
+        )
+        assert results[0].outcome == "rejected"
+        assert results[0].entry_id is None
+        assert len(db.memories.read_all("knowledge")) == 0
+
+    def test_ellipsis_rejected(self, tmp_path):
+        db = self._make_collection(tmp_path)
+        results = db.memories.write(
+            "knowledge",
+            [EntryInput(key="https://example.com", content="…")],
+            author="collector",
+        )
+        assert results[0].outcome == "rejected"
+        assert len(db.memories.read_all("knowledge")) == 0
+
+    def test_bare_url_rejected(self, tmp_path):
+        db = self._make_collection(tmp_path)
+        results = db.memories.write(
+            "knowledge",
+            [EntryInput(key="https://example.com", content="https://example.com/path/to/page")],
+            author="collector",
+        )
+        assert results[0].outcome == "rejected"
+        assert len(db.memories.read_all("knowledge")) == 0
+
+    def test_bailout_phrase_rejected(self, tmp_path):
+        db = self._make_collection(tmp_path)
+        results = db.memories.write(
+            "knowledge",
+            [EntryInput(key="https://example.com", content="Not sure")],
+            author="collector",
+        )
+        assert results[0].outcome == "rejected"
+        assert results[0].reason is not None
+        assert len(db.memories.read_all("knowledge")) == 0
+
+    def test_bailout_phrase_case_insensitive(self, tmp_path):
+        db = self._make_collection(tmp_path)
+        results = db.memories.write(
+            "knowledge",
+            [EntryInput(key="url", content="NOT SURE")],
+            author="collector",
+        )
+        assert results[0].outcome == "rejected"
+
+    def test_short_but_valid_content_accepted(self, tmp_path):
+        db = self._make_collection(tmp_path)
+        results = db.memories.write(
+            "knowledge",
+            [EntryInput(key="anime", content="anime")],
+            author="collector",
+        )
+        assert results[0].outcome == "written"
+
+    def test_substantive_content_accepted(self, tmp_path):
+        db = self._make_collection(tmp_path)
+        results = db.memories.write(
+            "knowledge",
+            [
+                EntryInput(
+                    key="https://example.com",
+                    content="An in-depth article about the history of coffee roasting techniques.",
+                )
+            ],
+            author="collector",
+        )
+        assert results[0].outcome == "written"
+
+    def test_mixed_batch_partial_rejection(self, tmp_path):
+        db = self._make_collection(tmp_path)
+        results = db.memories.write(
+            "knowledge",
+            [
+                EntryInput(key="good", content="A detailed summary of the article content."),
+                EntryInput(key="bad", content="?"),
+                EntryInput(key="also-bad", content="Not sure"),
+            ],
+            author="collector",
+        )
+        outcomes = {r.key: r.outcome for r in results}
+        assert outcomes["good"] == "written"
+        assert outcomes["bad"] == "rejected"
+        assert outcomes["also-bad"] == "rejected"
+        assert len(db.memories.read_all("knowledge")) == 1
+
+    def test_rejection_does_not_count_as_written_for_notify(self, tmp_path):
+        db = self._make_collection(tmp_path)
+        results = db.memories.write(
+            "knowledge",
+            [EntryInput(key="url", content="…")],
+            author="collector",
+        )
+        assert not any(r.outcome == "written" for r in results)
+
+
 class TestLogAppend:
     def test_append_multiple_entries_stored_in_order(self, tmp_path):
         db = _make_db(tmp_path)

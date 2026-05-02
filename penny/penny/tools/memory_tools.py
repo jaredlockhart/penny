@@ -522,6 +522,7 @@ class CollectionWriteTool(Tool):
     def _format_results(self, memory: str, results: list[WriteResult]) -> str:
         written = [r.key for r in results if r.outcome == "written"]
         duplicates = [r for r in results if r.outcome == "duplicate"]
+        rejected = [r for r in results if r.outcome == "rejected"]
         if duplicates:
             logger.info(
                 "collection_write: %d duplicate(s) rejected in %s: %s",
@@ -529,19 +530,26 @@ class CollectionWriteTool(Tool):
                 memory,
                 ", ".join(r.key for r in duplicates),
             )
+        if rejected:
+            logger.info(
+                "collection_write: %d degenerate entry(ies) rejected in %s: %s",
+                len(rejected),
+                memory,
+                ", ".join(f"{r.key!r} ({r.reason})" for r in rejected),
+            )
         parts: list[str] = []
         if written:
             noun = "entry" if len(written) == 1 else "entries"
             parts.append(f"Wrote {len(written)} {noun} to '{memory}': {', '.join(written)}.")
         if duplicates:
-            # Surface the existing-key match so the model can pivot to
-            # ``update_entry`` if it has fresher info than what's already
-            # stored — otherwise the new write just gets silently dropped.
             labelled = [_format_duplicate(r) for r in duplicates]
             parts.append(
                 f"Rejected as duplicates: {', '.join(labelled)}.  "
                 f"Use ``update_entry`` to refresh an existing row if you have richer info."
             )
+        if rejected:
+            labelled = [f"{r.key} ({r.reason})" for r in rejected]
+            parts.append(f"Rejected as degenerate content: {', '.join(labelled)}.")
         return " ".join(parts) if parts else "(no entries written)"
 
 
