@@ -78,6 +78,24 @@ class TestMemoryMetadata:
         with pytest.raises(MemoryNotFoundError):
             db.memories.archive("nope")
 
+    def test_unicode_name_normalization(self, tmp_path):
+        db = _make_db(tmp_path)
+        # U+2011 NON-BREAKING HYPHEN — the exact character from the bug report
+        db.memories.create_collection("prague‑highlights", "travel", RecallMode.OFF)
+
+        # Stored name is normalized to ASCII hyphen
+        assert db.memories.get("prague-highlights") is not None
+        assert db.memories.get("prague‑highlights").name == "prague-highlights"
+
+        # Write via unicode name lands in the same collection — no duplicate created
+        db.memories.write(
+            "prague‑highlights",
+            [EntryInput(key="castle", content="Prague castle was stunning")],
+            author="test",
+        )
+        assert len(db.memories.read_all("prague-highlights")) == 1
+        assert len(db.memories.list_all()) == 1
+
 
 class TestCollectionWrites:
     def test_write_returns_entry_ids(self, tmp_path):
