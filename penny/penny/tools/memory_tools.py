@@ -731,10 +731,13 @@ class LogReadRecentTool(Tool):
         "type": "object",
         "properties": {
             "memory": {"type": "string"},
-            "window_seconds": {"type": "integer"},
+            "window_seconds": {
+                "type": "integer",
+                "description": "Look-back window in seconds; defaults to 300 if omitted",
+            },
             "cap": {"type": "integer", "description": "Max entries; omit for all"},
         },
-        "required": ["memory", "window_seconds"],
+        "required": ["memory"],
     }
 
     def __init__(self, db: Database) -> None:

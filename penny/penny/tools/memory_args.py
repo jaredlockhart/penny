@@ -127,7 +127,7 @@ class ReadRecentArgs(BaseModel):
     """Entries created within the past ``window_seconds`` seconds."""
 
     memory: MemoryName
-    window_seconds: int
+    window_seconds: int = 300
     cap: int | None = None
 
 
