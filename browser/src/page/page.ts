@@ -1,6 +1,6 @@
 /**
- * Full page — consolidates thoughts, prompt logs, and all settings.
- * Tabs: Thoughts, Prompts, Schedules, Likes, Dislikes, Domains, Config.
+ * Full page — consolidates the prompt log, memory explorer, and settings.
+ * Tabs: Prompts, Memories, Schedules, Domains, Config.
  */
 
 import {
@@ -9,8 +9,6 @@ import {
   type DomainPermissionEntry,
   type MemoryEntryRecord,
   type MemoryRecord,
-  type PreferenceItem,
-  type PreferenceThoughtItem,
   type PromptLogEntry,
   type PromptLogRun,
   type RuntimeConfigParam,
@@ -19,18 +17,14 @@ import {
   type ScheduleItem,
   STORAGE_KEY_DOMAIN_ALLOWLIST,
   STORAGE_KEY_TOOL_USE,
-  type ThoughtCard,
 } from "../protocol.js";
 
 // --- Top-level state ---
 
 type Tab =
-  | "thoughts"
   | "prompts"
   | "memories"
   | "schedules"
-  | "likes"
-  | "dislikes"
   | "domains"
   | "config";
 
@@ -45,25 +39,6 @@ function showToast(text: string): void {
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove("visible"), 2000);
 }
-
-// --- Thoughts state ---
-
-const grid = document.getElementById("grid")!;
-const thoughtsLoading = document.getElementById("loading")!;
-const thoughtsLoadMore = document.getElementById("thoughts-load-more")!;
-const thoughtsLoadMoreBtn = document.getElementById("thoughts-load-more-btn")!;
-const modal = document.getElementById("modal")!;
-const modalImage = document.getElementById("modal-image") as HTMLImageElement;
-const modalTitle = document.getElementById("modal-title")!;
-const modalDate = document.getElementById("modal-date")!;
-const modalText = document.getElementById("modal-text")!;
-
-let unnotifiedThoughts: ThoughtCard[] = [];
-let notifiedThoughts: ThoughtCard[] = [];
-let notifiedHasMore = false;
-let notifiedPages = 1;
-let activeThoughtTab: "new" | "archive" = "new";
-let modalThought: ThoughtCard | null = null;
 
 // --- Prompts state ---
 
@@ -117,16 +92,14 @@ function init(): void {
     btn.addEventListener("click", () => switchTab(btn.getAttribute("data-tab") as Tab));
   }
 
-  // Load initial data for thoughts tab
-  browser.runtime.sendMessage({ type: RuntimeMessageType.ThoughtsRequest });
+  // Load initial data for the prompts tab (default)
+  requestPromptLogs(0);
+  promptsLoaded = true;
 
   // Set up all panel interactions
-  setupThoughts();
   setupPrompts();
   setupMemories();
   setupSchedules();
-  setupPreferences("positive", "likes");
-  setupPreferences("negative", "dislikes");
   setupDomains();
   setupConfig();
 }
@@ -140,18 +113,13 @@ function switchTab(tab: Tab): void {
   }
 
   // Request data for the activated tab
-  if (tab === "thoughts") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.ThoughtsRequest });
-  } else if (tab === "prompts" && !promptsLoaded) {
+  if (tab === "prompts" && !promptsLoaded) {
     requestPromptLogs(0);
+    promptsLoaded = true;
   } else if (tab === "memories") {
     requestMemories();
   } else if (tab === "schedules") {
     browser.runtime.sendMessage({ type: RuntimeMessageType.SchedulesRequest });
-  } else if (tab === "likes") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferencesRequest, valence: "positive" });
-  } else if (tab === "dislikes") {
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferencesRequest, valence: "negative" });
   } else if (tab === "domains") {
     loadDomainsFromCache();
   } else if (tab === "config") {
@@ -165,12 +133,7 @@ function switchTab(tab: Tab): void {
 // ============================================================
 
 function handleMessage(message: RuntimeMessage): void {
-  if (message.type === RuntimeMessageType.ThoughtsResponse) {
-    unnotifiedThoughts = message.unnotified;
-    notifiedThoughts = message.notified;
-    notifiedHasMore = message.notified_has_more;
-    renderThoughts();
-  } else if (message.type === RuntimeMessageType.PromptLogsResponse) {
+  if (message.type === RuntimeMessageType.PromptLogsResponse) {
     promptsLoaded = true;
     if (message.runs.length > 0 && allRuns.length > 0) {
       appendRuns(message.runs);
@@ -191,10 +154,6 @@ function handleMessage(message: RuntimeMessage): void {
     );
   } else if (message.type === RuntimeMessageType.SchedulesResponse) {
     renderSchedules(message.schedules, message.error);
-  } else if (message.type === RuntimeMessageType.PreferencesResponse) {
-    renderPreferences(message.valence, message.preferences);
-  } else if (message.type === RuntimeMessageType.PreferenceThoughtsResponse) {
-    renderPreferenceThoughts(message.preference_id, message.thoughts);
   } else if (message.type === RuntimeMessageType.ConfigResponse) {
     renderConfig(message.params);
     if (pendingConfigSave) {
@@ -215,205 +174,6 @@ function handleMessage(message: RuntimeMessage): void {
   }
 }
 
-// ============================================================
-// Thoughts
-// ============================================================
-
-function setupThoughts(): void {
-  for (const btn of Array.from(document.querySelectorAll(".thought-tab"))) {
-    btn.addEventListener("click", () => switchThoughtTab(btn.getAttribute("data-ttab") as "new" | "archive"));
-  }
-
-  thoughtsLoadMoreBtn.addEventListener("click", loadNextPage);
-
-  document.getElementById("modal-backdrop")!.addEventListener("click", closeModal);
-  document.getElementById("modal-close")!.addEventListener("click", closeModal);
-  document.getElementById("modal-thumbs-up")!.addEventListener("click", () => modalReact("\u{1f44d}"));
-  document.getElementById("modal-thumbs-down")!.addEventListener("click", () => modalReact("\u{1f44e}"));
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeModal();
-  });
-}
-
-function switchThoughtTab(tab: "new" | "archive"): void {
-  activeThoughtTab = tab;
-
-  for (const btn of Array.from(document.querySelectorAll(".thought-tab"))) {
-    btn.classList.toggle("active", btn.getAttribute("data-ttab") === tab);
-  }
-
-  renderThoughts();
-}
-
-function renderThoughts(): void {
-  thoughtsLoading.classList.add("hidden");
-  grid.innerHTML = "";
-
-  const visible = activeThoughtTab === "new" ? unnotifiedThoughts : notifiedThoughts;
-
-  if (visible.length === 0) {
-    thoughtsLoading.textContent = activeThoughtTab === "new"
-      ? "No new thoughts yet. Penny is still thinking..."
-      : "No archived thoughts yet.";
-    thoughtsLoading.classList.remove("hidden");
-    thoughtsLoadMore.classList.add("hidden");
-    return;
-  }
-
-  renderCards(visible);
-  const showLoadMore = activeThoughtTab === "archive" && notifiedHasMore;
-  thoughtsLoadMore.classList.toggle("hidden", !showLoadMore);
-}
-
-function loadNextPage(): void {
-  notifiedPages += 1;
-  browser.runtime.sendMessage({
-    type: RuntimeMessageType.ThoughtsRequest,
-    notified_pages: notifiedPages,
-  });
-}
-
-function renderCards(thoughts: ThoughtCard[]): void {
-  for (const thought of thoughts) {
-    grid.appendChild(createCard(thought));
-  }
-}
-
-function createCard(thought: ThoughtCard): HTMLElement {
-  const card = document.createElement("div");
-  card.className = "card";
-  card.dataset.id = String(thought.id);
-  card.style.cursor = "pointer";
-  card.addEventListener("click", () => openModal(thought));
-
-  if (thought.image) {
-    const img = document.createElement("img");
-    img.className = "card-image";
-    img.src = thought.image;
-    img.alt = thought.title;
-    img.loading = "lazy";
-    img.addEventListener("error", () => {
-      img.replaceWith(createPlaceholder());
-    });
-    card.appendChild(img);
-  } else {
-    card.appendChild(createPlaceholder());
-  }
-
-  const body = document.createElement("div");
-  body.className = "card-body";
-
-  const title = document.createElement("div");
-  title.className = "card-title";
-  title.textContent = thought.title || "Untitled thought";
-  body.appendChild(title);
-
-  const byline = buildByline(thought);
-  if (byline) {
-    const date = document.createElement("div");
-    date.className = "card-date";
-    date.textContent = byline;
-    body.appendChild(date);
-  }
-
-  const content = document.createElement("div");
-  content.className = "card-content";
-  content.innerHTML = thought.content;
-  body.appendChild(content);
-
-  card.appendChild(body);
-
-  if (!thought.notified) {
-    const actions = document.createElement("div");
-    actions.className = "card-actions";
-
-    const thumbsUp = document.createElement("button");
-    thumbsUp.className = "reaction-btn thumbs-up";
-    thumbsUp.innerHTML = '<i class="fa-solid fa-thumbs-up"></i>';
-    thumbsUp.addEventListener("click", (e) => {
-      e.stopPropagation();
-      reactToThought(thought.id, "\u{1f44d}", card);
-    });
-
-    const thumbsDown = document.createElement("button");
-    thumbsDown.className = "reaction-btn thumbs-down";
-    thumbsDown.innerHTML = '<i class="fa-solid fa-thumbs-down"></i>';
-    thumbsDown.addEventListener("click", (e) => {
-      e.stopPropagation();
-      reactToThought(thought.id, "\u{1f44e}", card);
-    });
-
-    actions.appendChild(thumbsUp);
-    actions.appendChild(thumbsDown);
-    card.appendChild(actions);
-  }
-
-  return card;
-}
-
-function reactToThought(thoughtId: number, emoji: string, card: HTMLElement | null): void {
-  browser.runtime.sendMessage({
-    type: RuntimeMessageType.ThoughtReaction,
-    thought_id: thoughtId,
-    emoji,
-  });
-  if (card) {
-    card.style.transition = "opacity 0.3s, transform 0.3s";
-    card.style.opacity = "0";
-    card.style.transform = "scale(0.95)";
-    setTimeout(() => card.remove(), 300);
-  }
-}
-
-function createPlaceholder(): HTMLElement {
-  const div = document.createElement("div");
-  div.className = "card-image-placeholder";
-  div.textContent = "\u{1f4ad}";
-  return div;
-}
-
-function buildByline(thought: ThoughtCard): string {
-  const parts: string[] = [];
-  if (thought.created_at) parts.push(formatDate(thought.created_at));
-  parts.push(thought.seed_topic || "free thought");
-  return parts.join(" \u00b7 ");
-}
-
-function openModal(thought: ThoughtCard): void {
-  modalThought = thought;
-  modalImage.src = thought.image || "";
-  modalTitle.textContent = thought.title || "Untitled thought";
-  modalDate.textContent = buildByline(thought);
-  modalText.innerHTML = thought.content;
-  const actions = document.getElementById("modal-actions")!;
-  actions.classList.toggle("hidden", thought.notified);
-  modal.classList.remove("hidden");
-}
-
-function closeModal(): void {
-  modal.classList.add("hidden");
-  modalThought = null;
-}
-
-function modalReact(emoji: string): void {
-  if (!modalThought) return;
-  const card = document.querySelector(`.card[data-id="${modalThought.id}"]`) as HTMLElement | null;
-  reactToThought(modalThought.id, emoji, card);
-  closeModal();
-}
-
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return "";
-  }
-}
 
 // ============================================================
 // Prompts
@@ -895,189 +655,28 @@ function formatTokens(count: number): string {
   return String(count);
 }
 
+const MS_PER_DAY = 86_400_000;
+
+function formatRelativeDate(iso: string): string {
+  try {
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then)) return iso;
+    const days = Math.floor((Date.now() - then) / MS_PER_DAY);
+    if (days <= 0) return "today";
+    if (days === 1) return "yesterday";
+    if (days < 7) return `${days}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    return formatDateTime(iso);
+  } catch {
+    return iso;
+  }
+}
+
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const seconds = (ms / 1000).toFixed(1);
   return `${seconds}s`;
 }
-
-// ============================================================
-// Preferences
-// ============================================================
-
-const MS_PER_DAY = 86_400_000;
-
-function renderPreferences(valence: string, prefs: PreferenceItem[]): void {
-  const listEl = document.getElementById(valence === "positive" ? "likes-list" : "dislikes-list")!;
-  listEl.innerHTML = "";
-
-  if (prefs.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "prefs-empty";
-    empty.textContent = valence === "positive" ? "No likes yet." : "No dislikes yet.";
-    listEl.appendChild(empty);
-    return;
-  }
-
-  for (const pref of prefs) {
-    listEl.appendChild(createPreferenceContainer(pref));
-  }
-}
-
-function createPreferenceRow(pref: PreferenceItem): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "pref-row";
-
-  const toggle = document.createElement("span");
-  toggle.className = "pref-toggle";
-  toggle.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
-
-  const name = document.createElement("span");
-  name.className = "pref-name";
-  name.textContent = pref.content;
-
-  const meta = createPreferenceMeta(pref);
-
-  const del = document.createElement("button");
-  del.className = "pref-delete";
-  del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-  del.setAttribute("aria-label", `Remove ${pref.content}`);
-  del.addEventListener("click", (event: MouseEvent) => {
-    event.stopPropagation();
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceDelete, preference_id: pref.id });
-  });
-
-  row.appendChild(toggle);
-  row.appendChild(name);
-  row.appendChild(meta);
-  row.appendChild(del);
-  return row;
-}
-
-function createPreferenceMeta(pref: PreferenceItem): HTMLSpanElement {
-  const meta = document.createElement("span");
-  meta.className = "pref-meta";
-  const sourceLabel = pref.source === "manual" ? "manual" : "extracted";
-  const sourceIcon = pref.source === "manual" ? "fa-hand" : "fa-robot";
-  const thoughtLabel = pref.thought_count === 1 ? "thought" : "thoughts";
-  meta.innerHTML =
-    `<span><i class="fa-solid ${sourceIcon}"></i>${sourceLabel}</span>` +
-    `<span><i class="fa-solid fa-comment"></i>${pref.mention_count} mentions</span>` +
-    `<span><i class="fa-solid fa-lightbulb"></i>${pref.thought_count} ${thoughtLabel}</span>`;
-  return meta;
-}
-
-function createPreferenceContainer(pref: PreferenceItem): HTMLDivElement {
-  const container = document.createElement("div");
-  container.className = "pref-container";
-  container.dataset.prefId = String(pref.id);
-
-  const row = createPreferenceRow(pref);
-  const detail = document.createElement("div");
-  detail.className = "pref-detail";
-
-  container.appendChild(row);
-  container.appendChild(detail);
-
-  if (pref.thought_count > 0) {
-    row.classList.add("pref-expandable");
-    row.addEventListener("click", () => {
-      const expanded = container.classList.toggle("expanded");
-      if (expanded && detail.children.length === 0) {
-        detail.innerHTML = '<div class="pref-thoughts-loading">Loading thoughts...</div>';
-        browser.runtime.sendMessage({
-          type: RuntimeMessageType.PreferenceThoughtsRequest,
-          preference_id: pref.id,
-        });
-      }
-    });
-  }
-
-  return container;
-}
-
-function renderPreferenceThoughts(preferenceId: number, thoughts: PreferenceThoughtItem[]): void {
-  const container = document.querySelector(`.pref-container[data-pref-id="${preferenceId}"]`);
-  if (!container) return;
-  const detail = container.querySelector(".pref-detail");
-  if (!detail) return;
-  detail.innerHTML = "";
-
-  if (thoughts.length === 0) {
-    detail.innerHTML = '<div class="pref-thoughts-empty">No thoughts yet.</div>';
-    return;
-  }
-
-  for (const thought of thoughts) {
-    detail.appendChild(createThoughtItem(thought));
-  }
-}
-
-function createThoughtItem(thought: PreferenceThoughtItem): HTMLDivElement {
-  const item = document.createElement("div");
-  item.className = "pref-thought-item";
-
-  if (thought.image) {
-    const image = document.createElement("img");
-    image.className = "pref-thought-image";
-    image.src = thought.image;
-    item.appendChild(image);
-  }
-
-  const body = document.createElement("div");
-  body.className = "pref-thought-body";
-
-  const title = document.createElement("span");
-  title.className = "pref-thought-title";
-  title.textContent = thought.title ?? "Untitled";
-
-  const date = document.createElement("span");
-  date.className = "pref-thought-date";
-  if (thought.created_at !== null) {
-    date.textContent = formatRelativeDate(thought.created_at);
-  }
-
-  const snippet = document.createElement("div");
-  snippet.className = "pref-thought-snippet";
-  snippet.textContent = thought.content;
-
-  body.appendChild(title);
-  body.appendChild(date);
-  body.appendChild(snippet);
-  item.appendChild(body);
-  return item;
-}
-
-function formatRelativeDate(isoDate: string): string {
-  const date = new Date(isoDate);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / MS_PER_DAY);
-  if (diffDays === 0) return "today";
-  if (diffDays === 1) return "yesterday";
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  return date.toLocaleDateString();
-}
-
-function setupPreferences(valence: string, prefix: string): void {
-  const input = document.getElementById(`${prefix}-input`) as HTMLInputElement;
-  const btn = document.getElementById(`${prefix}-add-btn`) as HTMLButtonElement;
-
-  function add(): void {
-    const content = input.value.trim();
-    if (!content) return;
-    browser.runtime.sendMessage({ type: RuntimeMessageType.PreferenceAdd, valence, content });
-    input.value = "";
-    showToast(`Added ${valence === "positive" ? "like" : "dislike"}: ${content}`);
-  }
-
-  btn.addEventListener("click", add);
-  input.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter") add();
-  });
-}
-
 // ============================================================
 // Schedules
 // ============================================================
@@ -1460,6 +1059,7 @@ function showMemoryDetail(): void {
 
 function renderMemoriesList(): void {
   memoriesList.innerHTML = "";
+  memoriesList.appendChild(createNewMemoryControl());
   if (allMemories.length === 0) {
     const empty = document.createElement("div");
     empty.className = "panel-loading";
@@ -1470,6 +1070,133 @@ function renderMemoriesList(): void {
   for (const memory of allMemories) {
     memoriesList.appendChild(createMemoryRow(memory));
   }
+}
+
+function createNewMemoryControl(): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "memory-new-control";
+
+  const button = document.createElement("button");
+  button.className = "memory-new-btn";
+  button.innerHTML = '<i class="fa-solid fa-plus"></i> New collection';
+  button.addEventListener("click", () => {
+    wrapper.replaceWith(createNewMemoryForm());
+  });
+  wrapper.appendChild(button);
+  return wrapper;
+}
+
+function createNewMemoryForm(): HTMLElement {
+  const form = document.createElement("div");
+  form.className = "memory-new-form";
+
+  const fields = createMemoryFormFields({
+    description: "",
+    recall: "off",
+    extraction_prompt: "",
+    collector_interval_seconds: null,
+  });
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.placeholder = "collection-name";
+  nameInput.className = "memory-form-input";
+
+  form.appendChild(labelled("Name", nameInput));
+  form.appendChild(labelled("Description", fields.description));
+  form.appendChild(labelled("Recall", fields.recall));
+  form.appendChild(labelled("Extraction prompt", fields.extractionPrompt));
+  form.appendChild(labelled("Collector interval (seconds)", fields.intervalInput));
+
+  const actions = document.createElement("div");
+  actions.className = "memory-form-actions";
+
+  const cancel = document.createElement("button");
+  cancel.className = "memory-form-cancel";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => renderMemoriesList());
+
+  const create = document.createElement("button");
+  create.className = "memory-form-save";
+  create.textContent = "Create";
+  create.addEventListener("click", () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      showToast("Name is required");
+      return;
+    }
+    const promptValue = fields.extractionPrompt.value.trim();
+    const intervalValue = fields.intervalInput.value.trim();
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.MemoryCreate,
+      name,
+      description: fields.description.value.trim(),
+      recall: fields.recall.value as "off" | "recent" | "relevant" | "all",
+      extraction_prompt: promptValue || null,
+      collector_interval_seconds: intervalValue ? Number(intervalValue) : null,
+    });
+    showToast("Created");
+  });
+
+  actions.appendChild(cancel);
+  actions.appendChild(create);
+  form.appendChild(actions);
+  return form;
+}
+
+interface MemoryFormFields {
+  description: HTMLTextAreaElement;
+  recall: HTMLSelectElement;
+  extractionPrompt: HTMLTextAreaElement;
+  intervalInput: HTMLInputElement;
+}
+
+function createMemoryFormFields(initial: {
+  description: string;
+  recall: string;
+  extraction_prompt: string;
+  collector_interval_seconds: number | null;
+}): MemoryFormFields {
+  const description = document.createElement("textarea");
+  description.className = "memory-form-input";
+  description.rows = 2;
+  description.value = initial.description;
+
+  const recall = document.createElement("select");
+  recall.className = "memory-form-input";
+  for (const value of ["off", "recent", "relevant", "all"]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    if (value === initial.recall) option.selected = true;
+    recall.appendChild(option);
+  }
+
+  const extractionPrompt = document.createElement("textarea");
+  extractionPrompt.className = "memory-form-input memory-form-prompt";
+  extractionPrompt.rows = 6;
+  extractionPrompt.value = initial.extraction_prompt;
+
+  const intervalInput = document.createElement("input");
+  intervalInput.type = "number";
+  intervalInput.className = "memory-form-input";
+  intervalInput.min = "30";
+  intervalInput.placeholder = "300";
+  if (initial.collector_interval_seconds !== null) {
+    intervalInput.value = String(initial.collector_interval_seconds);
+  }
+
+  return { description, recall, extractionPrompt, intervalInput };
+}
+
+function labelled(label: string, control: HTMLElement): HTMLElement {
+  const wrapper = document.createElement("label");
+  wrapper.className = "memory-form-row";
+  const text = document.createElement("span");
+  text.className = "memory-form-label";
+  text.textContent = label;
+  wrapper.appendChild(text);
+  wrapper.appendChild(control);
+  return wrapper;
 }
 
 function createMemoryRow(memory: MemoryRecord): HTMLElement {
@@ -1550,6 +1277,15 @@ function createMemoryHeader(memory: MemoryRecord): HTMLElement {
 }
 
 function createMemoryMetadataSection(memory: MemoryRecord): HTMLElement {
+  // Logs are system-managed (created by migrations, written by agents) — read-only.
+  // Collections are user-editable.
+  if (memory.type === "log") {
+    return createLogMetadataSection(memory);
+  }
+  return createCollectionMetadataSection(memory);
+}
+
+function createLogMetadataSection(memory: MemoryRecord): HTMLElement {
   const section = document.createElement("div");
   section.className = "memory-detail-section";
 
@@ -1559,21 +1295,74 @@ function createMemoryMetadataSection(memory: MemoryRecord): HTMLElement {
 
   const grid = document.createElement("dl");
   grid.className = "memory-detail-grid";
-
   appendDef(grid, "Description", memory.description || "—");
   appendDef(grid, "Recall", memory.recall);
   appendDef(grid, "Entries", String(memory.entry_count));
-  if (memory.collector_interval_seconds !== null) {
-    appendDef(grid, "Collector interval", `${memory.collector_interval_seconds}s`);
-  }
-  if (memory.last_collected_at) {
-    appendDef(grid, "Last collected", formatDateTime(memory.last_collected_at));
-  }
-  if (memory.extraction_prompt) {
-    appendDef(grid, "Extraction prompt", memory.extraction_prompt, true);
-  }
-
   section.appendChild(grid);
+  return section;
+}
+
+function createCollectionMetadataSection(memory: MemoryRecord): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "memory-detail-section";
+
+  const title = document.createElement("h3");
+  title.textContent = "Metadata";
+  section.appendChild(title);
+
+  const fields = createMemoryFormFields({
+    description: memory.description,
+    recall: memory.recall,
+    extraction_prompt: memory.extraction_prompt ?? "",
+    collector_interval_seconds: memory.collector_interval_seconds,
+  });
+
+  section.appendChild(labelled("Description", fields.description));
+  section.appendChild(labelled("Recall", fields.recall));
+  section.appendChild(labelled("Extraction prompt", fields.extractionPrompt));
+  section.appendChild(labelled("Collector interval (seconds)", fields.intervalInput));
+
+  const readOnlyGrid = document.createElement("dl");
+  readOnlyGrid.className = "memory-detail-grid";
+  appendDef(readOnlyGrid, "Entries", String(memory.entry_count));
+  if (memory.last_collected_at) {
+    appendDef(readOnlyGrid, "Last collected", formatDateTime(memory.last_collected_at));
+  }
+  section.appendChild(readOnlyGrid);
+
+  const actions = document.createElement("div");
+  actions.className = "memory-form-actions";
+
+  const archive = document.createElement("button");
+  archive.className = "memory-form-archive";
+  archive.textContent = memory.archived ? "Archived" : "Archive";
+  archive.disabled = memory.archived;
+  archive.addEventListener("click", () => {
+    if (!confirm(`Archive "${memory.name}"? It will disappear from the active list.`)) return;
+    browser.runtime.sendMessage({ type: RuntimeMessageType.MemoryArchive, name: memory.name });
+    showToast("Archived");
+    showMemoriesList();
+  });
+
+  const save = document.createElement("button");
+  save.className = "memory-form-save";
+  save.textContent = "Save";
+  save.addEventListener("click", () => {
+    const intervalValue = fields.intervalInput.value.trim();
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.MemoryUpdate,
+      name: memory.name,
+      description: fields.description.value.trim(),
+      recall: fields.recall.value as "off" | "recent" | "relevant" | "all",
+      extraction_prompt: fields.extractionPrompt.value.trim() || null,
+      collector_interval_seconds: intervalValue ? Number(intervalValue) : null,
+    });
+    showToast("Saved");
+  });
+
+  actions.appendChild(archive);
+  actions.appendChild(save);
+  section.appendChild(actions);
   return section;
 }
 
@@ -1608,16 +1397,20 @@ function createMemoryEntriesSection(memory: MemoryRecord, entries: MemoryEntryRe
     empty.className = "memory-entries-empty";
     empty.textContent = "No entries yet.";
     section.appendChild(empty);
-    return section;
+  } else {
+    for (const entry of entries) {
+      section.appendChild(createMemoryEntry(memory, entry));
+    }
   }
 
-  for (const entry of entries) {
-    section.appendChild(createMemoryEntry(entry));
+  // Logs are append-only by the system — manual entry add is collection-only.
+  if (memory.type === "collection") {
+    section.appendChild(createEntryAddForm(memory));
   }
   return section;
 }
 
-function createMemoryEntry(entry: MemoryEntryRecord): HTMLElement {
+function createMemoryEntry(memory: MemoryRecord, entry: MemoryEntryRecord): HTMLElement {
   const row = document.createElement("div");
   row.className = "memory-entry";
 
@@ -1636,6 +1429,11 @@ function createMemoryEntry(entry: MemoryEntryRecord): HTMLElement {
   time.textContent = formatDateTime(entry.created_at);
   header.appendChild(time);
 
+  // Edit/delete only for collection entries that actually have a key (entry_update / entry_delete are keyed).
+  if (memory.type === "collection" && entry.key) {
+    header.appendChild(createEntryActions(memory, entry, row));
+  }
+
   const content = document.createElement("div");
   content.className = "memory-entry-content";
   content.textContent = entry.content;
@@ -1643,6 +1441,126 @@ function createMemoryEntry(entry: MemoryEntryRecord): HTMLElement {
   row.appendChild(header);
   row.appendChild(content);
   return row;
+}
+
+function createEntryActions(
+  memory: MemoryRecord,
+  entry: MemoryEntryRecord,
+  row: HTMLElement,
+): HTMLElement {
+  const actions = document.createElement("span");
+  actions.className = "memory-entry-actions";
+
+  const edit = document.createElement("button");
+  edit.className = "memory-entry-action";
+  edit.title = "Edit";
+  edit.innerHTML = '<i class="fa-solid fa-pen"></i>';
+  edit.addEventListener("click", (e) => {
+    e.stopPropagation();
+    enterEditMode(memory, entry, row);
+  });
+
+  const del = document.createElement("button");
+  del.className = "memory-entry-action";
+  del.title = "Delete";
+  del.innerHTML = '<i class="fa-solid fa-trash"></i>';
+  del.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!entry.key) return;
+    if (!confirm(`Delete "${entry.key}"?`)) return;
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.EntryDelete,
+      memory: memory.name,
+      key: entry.key,
+    });
+    showToast("Deleted");
+  });
+
+  actions.appendChild(edit);
+  actions.appendChild(del);
+  return actions;
+}
+
+function enterEditMode(memory: MemoryRecord, entry: MemoryEntryRecord, row: HTMLElement): void {
+  if (!entry.key) return;
+  const content = row.querySelector(".memory-entry-content") as HTMLElement | null;
+  if (!content) return;
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "memory-form-input memory-form-prompt";
+  textarea.value = entry.content;
+  textarea.rows = Math.max(3, entry.content.split("\n").length);
+
+  const actions = document.createElement("div");
+  actions.className = "memory-form-actions";
+  const cancel = document.createElement("button");
+  cancel.className = "memory-form-cancel";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => content.replaceWith(restored));
+  const save = document.createElement("button");
+  save.className = "memory-form-save";
+  save.textContent = "Save";
+  save.addEventListener("click", () => {
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.EntryUpdate,
+      memory: memory.name,
+      key: entry.key as string,
+      content: textarea.value,
+    });
+    showToast("Saved");
+  });
+
+  const restored = content.cloneNode(true) as HTMLElement;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "memory-entry-content";
+  wrapper.appendChild(textarea);
+  actions.appendChild(cancel);
+  actions.appendChild(save);
+  wrapper.appendChild(actions);
+
+  content.replaceWith(wrapper);
+}
+
+function createEntryAddForm(memory: MemoryRecord): HTMLElement {
+  const form = document.createElement("div");
+  form.className = "memory-entry-add";
+
+  const keyInput = document.createElement("input");
+  keyInput.type = "text";
+  keyInput.placeholder = "key";
+  keyInput.className = "memory-form-input memory-entry-key-input";
+
+  const contentInput = document.createElement("textarea");
+  contentInput.placeholder = "content";
+  contentInput.className = "memory-form-input";
+  contentInput.rows = 2;
+
+  const submit = document.createElement("button");
+  submit.className = "memory-form-save";
+  submit.innerHTML = '<i class="fa-solid fa-plus"></i> Add entry';
+  submit.addEventListener("click", () => {
+    const key = keyInput.value.trim();
+    const content = contentInput.value.trim();
+    if (!key || !content) {
+      showToast("Key and content required");
+      return;
+    }
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.EntryCreate,
+      memory: memory.name,
+      key,
+      content,
+    });
+    keyInput.value = "";
+    contentInput.value = "";
+    showToast("Added");
+  });
+
+  form.appendChild(keyInput);
+  form.appendChild(contentInput);
+  form.appendChild(submit);
+  return form;
 }
 
 // ============================================================

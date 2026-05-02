@@ -25,12 +25,6 @@ export const ConnectionState = {
 export type WsOutgoingType =
   | "message"
   | "tool_response"
-  | "thoughts_request"
-  | "thought_reaction"
-  | "preferences_request"
-  | "preference_add"
-  | "preference_delete"
-  | "preference_thoughts_request"
   | "heartbeat"
   | "config_request"
   | "config_update"
@@ -45,16 +39,16 @@ export type WsOutgoingType =
   | "schedule_delete"
   | "prompt_logs_request"
   | "memories_request"
-  | "memory_detail_request";
+  | "memory_detail_request"
+  | "memory_create"
+  | "memory_update"
+  | "memory_archive"
+  | "entry_create"
+  | "entry_update"
+  | "entry_delete";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
-  ThoughtsRequest: "thoughts_request",
-  ThoughtReaction: "thought_reaction",
-  PreferencesRequest: "preferences_request",
-  PreferenceAdd: "preference_add",
-  PreferenceDelete: "preference_delete",
-  PreferenceThoughtsRequest: "preference_thoughts_request",
   Heartbeat: "heartbeat",
   ConfigRequest: "config_request",
   ConfigUpdate: "config_update",
@@ -70,13 +64,13 @@ export const WsOutgoingType = {
   PromptLogsRequest: "prompt_logs_request",
   MemoriesRequest: "memories_request",
   MemoryDetailRequest: "memory_detail_request",
+  MemoryCreate: "memory_create",
+  MemoryUpdate: "memory_update",
+  MemoryArchive: "memory_archive",
+  EntryCreate: "entry_create",
+  EntryUpdate: "entry_update",
+  EntryDelete: "entry_delete",
 } as const satisfies Record<string, WsOutgoingType>;
-
-export interface WsOutgoingThoughtReaction {
-  type: typeof WsOutgoingType.ThoughtReaction;
-  thought_id: number;
-  emoji: string;
-}
 
 export interface WsOutgoingMessage {
   type: typeof WsOutgoingType.Message;
@@ -90,27 +84,6 @@ export interface WsOutgoingToolResponse {
   request_id: string;
   result?: string;
   error?: string;
-}
-
-export interface WsOutgoingPreferencesRequest {
-  type: typeof WsOutgoingType.PreferencesRequest;
-  valence: string;
-}
-
-export interface WsOutgoingPreferenceAdd {
-  type: typeof WsOutgoingType.PreferenceAdd;
-  valence: string;
-  content: string;
-}
-
-export interface WsOutgoingPreferenceDelete {
-  type: typeof WsOutgoingType.PreferenceDelete;
-  preference_id: number;
-}
-
-export interface WsOutgoingPreferenceThoughtsRequest {
-  type: typeof WsOutgoingType.PreferenceThoughtsRequest;
-  preference_id: number;
 }
 
 export interface WsOutgoingHeartbeat {
@@ -145,10 +118,6 @@ export interface WsOutgoingScheduleDelete {
 export type WsOutgoing =
   | WsOutgoingMessage
   | WsOutgoingToolResponse
-  | WsOutgoingPreferencesRequest
-  | WsOutgoingPreferenceAdd
-  | WsOutgoingPreferenceDelete
-  | WsOutgoingPreferenceThoughtsRequest
   | WsOutgoingHeartbeat
   | WsOutgoingCapabilitiesUpdate
   | WsOutgoingSchedulesRequest
@@ -163,9 +132,6 @@ export type WsIncomingType =
   | "typing"
   | "status"
   | "tool_request"
-  | "thoughts_response"
-  | "preferences_response"
-  | "preference_thoughts_response"
   | "config_response"
   | "domain_permissions_sync"
   | "permission_prompt"
@@ -182,9 +148,6 @@ export const WsIncomingType = {
   Typing: "typing",
   Status: "status",
   ToolRequest: "tool_request",
-  ThoughtsResponse: "thoughts_response",
-  PreferencesResponse: "preferences_response",
-  PreferenceThoughtsResponse: "preference_thoughts_response",
   ConfigResponse: "config_response",
   DomainPermissionsSync: "domain_permissions_sync",
   PermissionPrompt: "permission_prompt",
@@ -219,51 +182,6 @@ export interface WsIncomingToolRequestPayload {
   request_id: string;
   tool: string;
   arguments: Record<string, unknown>;
-}
-
-export interface ThoughtCard {
-  id: number;
-  title: string;
-  content: string;
-  image: string;
-  created_at: string;
-  notified: boolean;
-  seed_topic: string;
-}
-
-export interface WsIncomingThoughtsPayload {
-  type: typeof WsIncomingType.ThoughtsResponse;
-  unnotified: ThoughtCard[];
-  notified: ThoughtCard[];
-  notified_has_more: boolean;
-}
-
-export interface PreferenceItem {
-  id: number;
-  content: string;
-  mention_count: number;
-  source: string;
-  thought_count: number;
-}
-
-export interface PreferenceThoughtItem {
-  id: number;
-  title: string | null;
-  content: string;
-  image: string | null;
-  created_at: string | null;
-}
-
-export interface WsIncomingPreferencesPayload {
-  type: typeof WsIncomingType.PreferencesResponse;
-  valence: string;
-  preferences: PreferenceItem[];
-}
-
-export interface WsIncomingPreferenceThoughtsPayload {
-  type: typeof WsIncomingType.PreferenceThoughtsResponse;
-  preference_id: number;
-  thoughts: PreferenceThoughtItem[];
 }
 
 export interface RuntimeConfigParam {
@@ -406,9 +324,6 @@ export type WsIncomingPayload =
   | WsIncomingTypingPayload
   | WsIncomingStatusPayload
   | WsIncomingToolRequestPayload
-  | WsIncomingThoughtsPayload
-  | WsIncomingPreferencesPayload
-  | WsIncomingPreferenceThoughtsPayload
   | WsIncomingConfigPayload
   | WsIncomingDomainPermissionsPayload
   | WsIncomingPermissionPromptPayload
@@ -432,16 +347,6 @@ export type RuntimeMessageType =
   | "permission_response"
   | "permission_dismiss"
   | "page_info"
-  | "thoughts_request"
-  | "thoughts_response"
-  | "thought_reaction"
-  | "thought_count"
-  | "preferences_request"
-  | "preferences_response"
-  | "preference_add"
-  | "preference_delete"
-  | "preference_thoughts_request"
-  | "preference_thoughts_response"
   | "config_request"
   | "config_response"
   | "config_update"
@@ -463,7 +368,13 @@ export type RuntimeMessageType =
   | "memories_response"
   | "memory_detail_request"
   | "memory_detail_response"
-  | "memory_changed";
+  | "memory_changed"
+  | "memory_create"
+  | "memory_update"
+  | "memory_archive"
+  | "entry_create"
+  | "entry_update"
+  | "entry_delete";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -474,16 +385,6 @@ export const RuntimeMessageType = {
   PermissionResponse: "permission_response",
   PermissionDismiss: "permission_dismiss",
   PageInfo: "page_info",
-  ThoughtsRequest: "thoughts_request",
-  ThoughtsResponse: "thoughts_response",
-  ThoughtReaction: "thought_reaction",
-  ThoughtCount: "thought_count",
-  PreferencesRequest: "preferences_request",
-  PreferencesResponse: "preferences_response",
-  PreferenceAdd: "preference_add",
-  PreferenceDelete: "preference_delete",
-  PreferenceThoughtsRequest: "preference_thoughts_request",
-  PreferenceThoughtsResponse: "preference_thoughts_response",
   ConfigRequest: "config_request",
   ConfigResponse: "config_response",
   ConfigUpdate: "config_update",
@@ -506,6 +407,12 @@ export const RuntimeMessageType = {
   MemoryDetailRequest: "memory_detail_request",
   MemoryDetailResponse: "memory_detail_response",
   MemoryChanged: "memory_changed",
+  MemoryCreate: "memory_create",
+  MemoryUpdate: "memory_update",
+  MemoryArchive: "memory_archive",
+  EntryCreate: "entry_create",
+  EntryUpdate: "entry_update",
+  EntryDelete: "entry_delete",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -562,75 +469,6 @@ export interface RuntimePageInfo {
   favicon: string;
   image: string;      // og:image or similar meta image
   available: boolean;  // false if extraction failed or on a privileged page
-}
-
-/** Feed page → background: request thoughts.
- *  `notified_pages` lets the page grow the visible notified slice on "load
- *  more" without losing pagination on subsequent background polls. The
- *  server owns the page size; the client only counts pages. */
-export interface RuntimeThoughtsRequest {
-  type: typeof RuntimeMessageType.ThoughtsRequest;
-  notified_pages?: number;
-}
-
-/** Background → page: thoughts data */
-export interface RuntimeThoughtsResponse {
-  type: typeof RuntimeMessageType.ThoughtsResponse;
-  unnotified: ThoughtCard[];
-  notified: ThoughtCard[];
-  notified_has_more: boolean;
-}
-
-/** Feed page → background: react to a thought */
-export interface RuntimeThoughtReaction {
-  type: typeof RuntimeMessageType.ThoughtReaction;
-  thought_id: number;
-  emoji: string;
-}
-
-/** Background → sidebar: unnotified thought count */
-export interface RuntimeThoughtCount {
-  type: typeof RuntimeMessageType.ThoughtCount;
-  count: number;
-}
-
-/** Sidebar → background: request preferences by valence */
-export interface RuntimePreferencesRequest {
-  type: typeof RuntimeMessageType.PreferencesRequest;
-  valence: string;
-}
-
-/** Background → sidebar: preferences list for a valence */
-export interface RuntimePreferencesResponse {
-  type: typeof RuntimeMessageType.PreferencesResponse;
-  valence: string;
-  preferences: PreferenceItem[];
-}
-
-/** Sidebar → background: add a preference */
-export interface RuntimePreferenceAdd {
-  type: typeof RuntimeMessageType.PreferenceAdd;
-  valence: string;
-  content: string;
-}
-
-/** Sidebar → background: delete a preference */
-export interface RuntimePreferenceDelete {
-  type: typeof RuntimeMessageType.PreferenceDelete;
-  preference_id: number;
-}
-
-/** Page → background: request thoughts for a preference */
-export interface RuntimePreferenceThoughtsRequest {
-  type: typeof RuntimeMessageType.PreferenceThoughtsRequest;
-  preference_id: number;
-}
-
-/** Background → page: thoughts for a preference */
-export interface RuntimePreferenceThoughtsResponse {
-  type: typeof RuntimeMessageType.PreferenceThoughtsResponse;
-  preference_id: number;
-  thoughts: PreferenceThoughtItem[];
 }
 
 /** Sidebar → background: request all config params */
@@ -773,6 +611,55 @@ export interface RuntimeMemoryChanged {
   name: string | null;
 }
 
+/** Memories tab → background: create a new collection */
+export interface RuntimeMemoryCreate {
+  type: typeof RuntimeMessageType.MemoryCreate;
+  name: string;
+  description: string;
+  recall: "off" | "recent" | "relevant" | "all";
+  extraction_prompt?: string | null;
+  collector_interval_seconds?: number | null;
+}
+
+/** Memories tab → background: update collection metadata */
+export interface RuntimeMemoryUpdate {
+  type: typeof RuntimeMessageType.MemoryUpdate;
+  name: string;
+  description?: string | null;
+  recall?: "off" | "recent" | "relevant" | "all" | null;
+  extraction_prompt?: string | null;
+  collector_interval_seconds?: number | null;
+}
+
+/** Memories tab → background: archive a memory */
+export interface RuntimeMemoryArchive {
+  type: typeof RuntimeMessageType.MemoryArchive;
+  name: string;
+}
+
+/** Memories tab → background: add an entry to a collection */
+export interface RuntimeEntryCreate {
+  type: typeof RuntimeMessageType.EntryCreate;
+  memory: string;
+  key: string;
+  content: string;
+}
+
+/** Memories tab → background: edit an entry's content */
+export interface RuntimeEntryUpdate {
+  type: typeof RuntimeMessageType.EntryUpdate;
+  memory: string;
+  key: string;
+  content: string;
+}
+
+/** Memories tab → background: delete an entry */
+export interface RuntimeEntryDelete {
+  type: typeof RuntimeMessageType.EntryDelete;
+  memory: string;
+  key: string;
+}
+
 export type RuntimeMessage =
   | RuntimeSendChat
   | RuntimeChatMessage
@@ -782,16 +669,6 @@ export type RuntimeMessage =
   | RuntimePermissionResponse
   | RuntimePermissionDismiss
   | RuntimePageInfo
-  | RuntimeThoughtsRequest
-  | RuntimeThoughtsResponse
-  | RuntimeThoughtReaction
-  | RuntimeThoughtCount
-  | RuntimePreferencesRequest
-  | RuntimePreferencesResponse
-  | RuntimePreferenceAdd
-  | RuntimePreferenceDelete
-  | RuntimePreferenceThoughtsRequest
-  | RuntimePreferenceThoughtsResponse
   | RuntimeConfigRequest
   | RuntimeConfigResponse
   | RuntimeConfigUpdate
@@ -813,7 +690,13 @@ export type RuntimeMessage =
   | RuntimeMemoriesResponse
   | RuntimeMemoryDetailRequest
   | RuntimeMemoryDetailResponse
-  | RuntimeMemoryChanged;
+  | RuntimeMemoryChanged
+  | RuntimeMemoryCreate
+  | RuntimeMemoryUpdate
+  | RuntimeMemoryArchive
+  | RuntimeEntryCreate
+  | RuntimeEntryUpdate
+  | RuntimeEntryDelete;
 
 // --- Domain permissions ---
 
@@ -837,7 +720,6 @@ export interface PageContext {
 
 // --- Tool constants ---
 
-export const THOUGHTS_POLL_INTERVAL_MS = 300_000;
 export const TAB_LOAD_TIMEOUT_MS = 60_000;
 
 // --- Chat UI ---

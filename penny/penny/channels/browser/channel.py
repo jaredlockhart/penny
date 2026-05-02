@@ -12,10 +12,11 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import websockets
 from pydantic import BaseModel, ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from websockets.asyncio.server import Server, ServerConnection
 
@@ -26,72 +27,74 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_CONFIG_UPDATE,
     BROWSER_MSG_TYPE_DOMAIN_DELETE,
     BROWSER_MSG_TYPE_DOMAIN_UPDATE,
+    BROWSER_MSG_TYPE_ENTRY_CREATE,
+    BROWSER_MSG_TYPE_ENTRY_DELETE,
+    BROWSER_MSG_TYPE_ENTRY_UPDATE,
     BROWSER_MSG_TYPE_HEARTBEAT,
     BROWSER_MSG_TYPE_MEMORIES_REQUEST,
+    BROWSER_MSG_TYPE_MEMORY_ARCHIVE,
+    BROWSER_MSG_TYPE_MEMORY_CREATE,
     BROWSER_MSG_TYPE_MEMORY_DETAIL_REQUEST,
+    BROWSER_MSG_TYPE_MEMORY_UPDATE,
     BROWSER_MSG_TYPE_MESSAGE,
     BROWSER_MSG_TYPE_PERMISSION_DECISION,
-    BROWSER_MSG_TYPE_PREFERENCE_ADD,
-    BROWSER_MSG_TYPE_PREFERENCE_DELETE,
-    BROWSER_MSG_TYPE_PREFERENCE_THOUGHTS_REQUEST,
-    BROWSER_MSG_TYPE_PREFERENCES_REQUEST,
     BROWSER_MSG_TYPE_PROMPT_LOGS_REQUEST,
     BROWSER_MSG_TYPE_REGISTER,
     BROWSER_MSG_TYPE_SCHEDULE_ADD,
     BROWSER_MSG_TYPE_SCHEDULE_DELETE,
     BROWSER_MSG_TYPE_SCHEDULE_UPDATE,
     BROWSER_MSG_TYPE_SCHEDULES_REQUEST,
-    BROWSER_MSG_TYPE_THOUGHT_REACTION,
-    BROWSER_MSG_TYPE_THOUGHTS_REQUEST,
     BROWSER_MSG_TYPE_TOOL_RESPONSE,
     BROWSER_RESP_TYPE_CONFIG,
     BROWSER_RESP_TYPE_MESSAGE,
-    BROWSER_RESP_TYPE_PREFERENCE_THOUGHTS,
-    BROWSER_RESP_TYPE_PREFERENCES,
     BROWSER_RESP_TYPE_PROMPT_LOG_UPDATE,
     BROWSER_RESP_TYPE_PROMPT_LOGS,
     BROWSER_RESP_TYPE_SCHEDULES,
     BROWSER_RESP_TYPE_STATUS,
-    BROWSER_RESP_TYPE_THOUGHTS,
     BROWSER_RESP_TYPE_TYPING,
     BrowserCapabilitiesUpdate,
     BrowserConfigUpdate,
     BrowserDomainDelete,
     BrowserDomainPermissionsSync,
     BrowserDomainUpdate,
+    BrowserEntryCreate,
+    BrowserEntryDelete,
+    BrowserEntryUpdate,
     BrowserIncoming,
     BrowserMemoriesResponse,
+    BrowserMemoryArchive,
     BrowserMemoryChanged,
+    BrowserMemoryCreate,
     BrowserMemoryDetailRequest,
     BrowserMemoryDetailResponse,
+    BrowserMemoryUpdate,
     BrowserOutgoing,
     BrowserPermissionDecision,
     BrowserPermissionDismiss,
     BrowserPermissionPrompt,
-    BrowserPreferenceAdd,
-    BrowserPreferenceDelete,
-    BrowserPreferencesRequest,
-    BrowserPreferenceThoughtsRequest,
     BrowserRegister,
     BrowserRunOutcomeUpdate,
     BrowserScheduleAdd,
     BrowserScheduleDelete,
     BrowserScheduleUpdate,
-    BrowserThoughtsRequest,
-    BrowserThoughtsResponse,
     BrowserToolRequest,
     BrowserToolResponse,
     DomainPermissionRecord,
     MemoryEntryRecord,
     MemoryRecord,
     ScheduleRecord,
-    ThoughtCard,
 )
 from penny.channels.permission_manager import PermissionManager
 from penny.commands.schedule import ScheduleParseResult
 from penny.config_params import RUNTIME_CONFIG_PARAMS, get_params_by_group
 from penny.constants import ChannelType, PennyConstants
-from penny.database.models import RuntimeConfig, Schedule, Thought, UserInfo
+from penny.database.memory_store import (
+    EntryInput,
+    MemoryNotFoundError,
+    MemoryTypeError,
+    RecallMode,
+)
+from penny.database.models import RuntimeConfig, Schedule, UserInfo
 from penny.prompts import Prompt
 from penny.tools.base import Tool
 
@@ -252,30 +255,6 @@ class BrowserChannel(MessageChannel):
                 self._permission_manager.handle_decision(msg.request_id, msg.allowed)
             return device_label
 
-        if msg_type == BROWSER_MSG_TYPE_THOUGHTS_REQUEST:
-            await self._handle_thoughts_request(ws, data)
-            return device_label
-
-        if msg_type == BROWSER_MSG_TYPE_THOUGHT_REACTION:
-            self._handle_thought_reaction(data)
-            return device_label
-
-        if msg_type == BROWSER_MSG_TYPE_PREFERENCES_REQUEST:
-            await self._handle_preferences_request(ws, data)
-            return device_label
-
-        if msg_type == BROWSER_MSG_TYPE_PREFERENCE_ADD:
-            await self._handle_preference_add(ws, data)
-            return device_label
-
-        if msg_type == BROWSER_MSG_TYPE_PREFERENCE_DELETE:
-            await self._handle_preference_delete(ws, data)
-            return device_label
-
-        if msg_type == BROWSER_MSG_TYPE_PREFERENCE_THOUGHTS_REQUEST:
-            await self._handle_preference_thoughts_request(ws, data)
-            return device_label
-
         if msg_type == BROWSER_MSG_TYPE_MESSAGE:
             return await self._handle_chat_message(ws, data, device_label)
 
@@ -329,6 +308,30 @@ class BrowserChannel(MessageChannel):
 
         if msg_type == BROWSER_MSG_TYPE_MEMORY_DETAIL_REQUEST:
             await self._handle_memory_detail_request(ws, data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_MEMORY_CREATE:
+            self._handle_memory_create(data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_MEMORY_UPDATE:
+            self._handle_memory_update(data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_MEMORY_ARCHIVE:
+            self._handle_memory_archive(data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_ENTRY_CREATE:
+            self._handle_entry_create(data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_ENTRY_UPDATE:
+            self._handle_entry_update(data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_ENTRY_DELETE:
+            self._handle_entry_delete(data)
             return device_label
 
         return device_label
@@ -427,81 +430,6 @@ class BrowserChannel(MessageChannel):
         else:
             future.set_result((response.result or "", response.image))
 
-    async def _handle_thoughts_request(self, ws: ServerConnection, data: dict) -> None:
-        """Query recent thoughts and send them to the browser.
-
-        Sends every unnotified thought (so the badge count is exact) and the
-        first N pages of notified thoughts. The addon controls how many pages
-        it wants via `notified_pages`, growing it on "load more" so polled
-        refreshes don't reset pagination. Page size lives only on the server.
-        """
-        primary = self._db.users.get_primary_sender()
-        if not primary:
-            await self._send_ws(ws, BrowserOutgoing(type=BROWSER_RESP_TYPE_THOUGHTS))
-            return
-
-        request = BrowserThoughtsRequest(**data)
-        page_size = PennyConstants.BROWSER_THOUGHTS_NOTIFIED_PAGE_SIZE
-        notified_pages = max(request.notified_pages, 1)
-        notified_limit = page_size * notified_pages
-
-        unnotified = sorted(
-            self._db.thoughts.get_all_unnotified(primary),
-            key=lambda thought: thought.created_at,
-            reverse=True,
-        )
-        # Fetch one extra to detect whether more notified thoughts exist.
-        notified_plus_one = self._db.thoughts.get_recent_notified(primary, limit=notified_limit + 1)
-        notified_has_more = len(notified_plus_one) > notified_limit
-        notified = notified_plus_one[:notified_limit]
-        seed_topics = self._resolve_seed_topics([*unnotified, *notified])
-
-        def to_card(thought: Thought) -> ThoughtCard:
-            return ThoughtCard(
-                id=cast(int, thought.id),
-                title=thought.title or "",
-                content=self.prepare_outgoing(thought.content),
-                image=thought.image or "",
-                created_at=thought.created_at.isoformat() if thought.created_at else "",
-                notified=thought.notified_at is not None,
-                seed_topic=seed_topics.get(thought.preference_id, ""),
-            )
-
-        response = BrowserThoughtsResponse(
-            unnotified=[to_card(thought) for thought in unnotified],
-            notified=[to_card(thought) for thought in notified],
-            notified_has_more=notified_has_more,
-        )
-        with contextlib.suppress(websockets.ConnectionClosed):
-            await ws.send(response.model_dump_json())
-
-    def _handle_thought_reaction(self, data: dict) -> None:
-        """Handle a thumbs up/down reaction to a thought from the feed page."""
-        thought_id = data.get("thought_id")
-        emoji = data.get("emoji", "")
-        if not thought_id or not emoji:
-            return
-
-        primary = self._db.users.get_primary_sender()
-        if not primary:
-            return
-
-        valence = self._classify_reaction_emoji(emoji)
-        if valence is not None:
-            self._db.thoughts.set_valence(thought_id, valence)
-
-        self._db.thoughts.mark_notified(thought_id)
-        logger.info("Thought %d reacted with %s from feed (valence=%s)", thought_id, emoji, valence)
-
-    @staticmethod
-    def _classify_reaction_emoji(emoji: str) -> int | None:
-        """Return 1 for positive emoji, -1 for negative, None for unrecognised."""
-        if emoji in PennyConstants.POSITIVE_REACTION_EMOJIS:
-            return 1
-        if emoji in PennyConstants.NEGATIVE_REACTION_EMOJIS:
-            return -1
-        return None
-
     _PROMPT_LOG_PAGE_SIZE = 50
 
     async def _handle_prompt_logs_request(self, ws: ServerConnection, data: dict) -> None:
@@ -582,89 +510,120 @@ class BrowserChannel(MessageChannel):
             created_at=entry.created_at.isoformat(),
         )
 
-    async def _handle_preferences_request(self, ws: ServerConnection, data: dict) -> None:
-        """Query preferences by valence and send them to the browser."""
-        try:
-            req = BrowserPreferencesRequest(**data)
-        except Exception:
-            logger.warning("Invalid preferences_request: %s", str(data)[:200])
-            return
-        await self._send_preferences(ws, req.valence)
+    # ── Memory edits (refresh fanned out via _on_memory_changed) ─────────
 
-    async def _handle_preference_add(self, ws: ServerConnection, data: dict) -> None:
-        """Add a preference and send the updated list for its valence."""
-        try:
-            req = BrowserPreferenceAdd(**data)
-        except Exception:
-            logger.warning("Invalid preference_add: %s", str(data)[:200])
-            return
-        primary = self._db.users.get_primary_sender()
-        if not primary or not req.content.strip():
-            return
-        self._db.preferences.add(primary, req.content.strip(), req.valence, source="manual")
-        await self._send_preferences(ws, req.valence)
+    # Author tag for entries the user adds manually via the addon —
+    # distinguishes addon-authored from collector-authored when reading
+    # the entries list.  Matches the convention used elsewhere in the
+    # codebase (chat-side ``/like`` writes too land as ``"user"``).
+    _ADDON_ENTRY_AUTHOR = "user"
 
-    async def _handle_preference_delete(self, ws: ServerConnection, data: dict) -> None:
-        """Delete a preference and send the updated list for its valence."""
+    def _handle_memory_create(self, data: dict) -> None:
+        """Create a new collection from the addon.  Logs are seeded by
+        migrations and not user-creatable here."""
         try:
-            req = BrowserPreferenceDelete(**data)
-        except Exception:
-            logger.warning("Invalid preference_delete: %s", str(data)[:200])
-            return
-        pref = self._db.preferences.get_by_id(req.preference_id)
-        if not pref:
-            return
-        valence = pref.valence
-        self._db.preferences.delete(req.preference_id)
-        await self._send_preferences(ws, valence)
-
-    async def _send_preferences(self, ws: ServerConnection, valence: str) -> None:
-        """Send a preferences_response for the given valence."""
-        primary = self._db.users.get_primary_sender()
-        prefs = self._db.preferences.get_for_user_by_valence(primary, valence) if primary else []
-        pref_ids = {p.id for p in prefs if p.id is not None}
-        thought_counts = self._db.thoughts.count_by_preference_ids(pref_ids)
-        items = [
-            {
-                "id": p.id,
-                "content": p.content,
-                "mention_count": p.mention_count,
-                "source": p.source,
-                "thought_count": thought_counts.get(cast(int, p.id), 0),
-            }
-            for p in prefs
-        ]
-        response = {"type": BROWSER_RESP_TYPE_PREFERENCES, "valence": valence, "preferences": items}
-        with contextlib.suppress(websockets.ConnectionClosed):
-            await ws.send(json.dumps(response))
-
-    async def _handle_preference_thoughts_request(self, ws: ServerConnection, data: dict) -> None:
-        """Return thoughts seeded by a specific preference."""
-        try:
-            req = BrowserPreferenceThoughtsRequest(**data)
+            req = BrowserMemoryCreate(**data)
         except ValidationError:
-            logger.warning("Invalid preference_thoughts_request: %s", str(data)[:200])
+            logger.warning("Invalid memory_create: %s", str(data)[:200])
             return
-        thoughts = self._db.thoughts.get_for_preference(req.preference_id)
-        items = [self._format_preference_thought(t) for t in thoughts]
-        response = {
-            "type": BROWSER_RESP_TYPE_PREFERENCE_THOUGHTS,
-            "preference_id": req.preference_id,
-            "thoughts": items,
-        }
-        with contextlib.suppress(websockets.ConnectionClosed):
-            await ws.send(json.dumps(response))
+        try:
+            recall = RecallMode(req.recall)
+        except ValueError:
+            logger.warning("Invalid recall mode in memory_create: %s", req.recall)
+            return
+        try:
+            self._db.memories.create_collection(
+                req.name,
+                req.description,
+                recall,
+                extraction_prompt=req.extraction_prompt,
+                collector_interval_seconds=req.collector_interval_seconds,
+            )
+        except IntegrityError:
+            logger.warning("memory_create with duplicate name: %s", req.name)
 
-    @staticmethod
-    def _format_preference_thought(thought: Thought) -> dict:
-        """Format a thought for the preference detail panel."""
-        return {
-            "id": thought.id,
-            "title": thought.title,
-            "content": thought.content,
-            "image": thought.image,
-            "created_at": thought.created_at.isoformat() if thought.created_at else None,
-        }
+    def _handle_memory_update(self, data: dict) -> None:
+        """Edit metadata on an existing collection.  Only fields that are
+        not ``None`` are applied, matching ``update_collection_metadata``."""
+        try:
+            req = BrowserMemoryUpdate(**data)
+        except ValidationError:
+            logger.warning("Invalid memory_update: %s", str(data)[:200])
+            return
+        recall: RecallMode | None = None
+        if req.recall is not None:
+            try:
+                recall = RecallMode(req.recall)
+            except ValueError:
+                logger.warning("Invalid recall mode in memory_update: %s", req.recall)
+                return
+        try:
+            self._db.memories.update_collection_metadata(
+                req.name,
+                description=req.description,
+                recall=recall,
+                extraction_prompt=req.extraction_prompt,
+                collector_interval_seconds=req.collector_interval_seconds,
+            )
+        except (MemoryNotFoundError, MemoryTypeError) as exc:
+            logger.warning("memory_update failed for %s: %s", req.name, exc)
+
+    def _handle_memory_archive(self, data: dict) -> None:
+        """Soft-delete a memory from the active list."""
+        try:
+            req = BrowserMemoryArchive(**data)
+        except ValidationError:
+            logger.warning("Invalid memory_archive: %s", str(data)[:200])
+            return
+        try:
+            self._db.memories.archive(req.name)
+        except MemoryNotFoundError as exc:
+            logger.warning("memory_archive failed for %s: %s", req.name, exc)
+
+    def _handle_entry_create(self, data: dict) -> None:
+        """Manually add a single entry to a collection (bypasses the
+        collector — useful when the user wants to record something the
+        auto-extractor missed).  Dedup still runs; duplicates are silently
+        dropped — the addon will see the existing entry on refresh."""
+        try:
+            req = BrowserEntryCreate(**data)
+        except ValidationError:
+            logger.warning("Invalid entry_create: %s", str(data)[:200])
+            return
+        try:
+            self._db.memories.write(
+                req.memory,
+                [EntryInput(key=req.key, content=req.content)],
+                author=self._ADDON_ENTRY_AUTHOR,
+            )
+        except MemoryTypeError as exc:
+            logger.warning("entry_create on non-collection %s: %s", req.memory, exc)
+
+    def _handle_entry_update(self, data: dict) -> None:
+        """Replace the content of an existing keyed entry."""
+        try:
+            req = BrowserEntryUpdate(**data)
+        except ValidationError:
+            logger.warning("Invalid entry_update: %s", str(data)[:200])
+            return
+        try:
+            self._db.memories.update(
+                req.memory, req.key, req.content, author=self._ADDON_ENTRY_AUTHOR
+            )
+        except MemoryTypeError as exc:
+            logger.warning("entry_update on non-collection %s: %s", req.memory, exc)
+
+    def _handle_entry_delete(self, data: dict) -> None:
+        """Delete a keyed entry from a collection."""
+        try:
+            req = BrowserEntryDelete(**data)
+        except ValidationError:
+            logger.warning("Invalid entry_delete: %s", str(data)[:200])
+            return
+        try:
+            self._db.memories.delete(req.memory, req.key)
+        except MemoryTypeError as exc:
+            logger.warning("entry_delete on non-collection %s: %s", req.memory, exc)
 
     async def _handle_config_request(self, ws: ServerConnection) -> None:
         """Return all runtime config params with current values."""
@@ -848,14 +807,6 @@ class BrowserChannel(MessageChannel):
         }
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(json.dumps(response))
-
-    def _resolve_seed_topics(self, thoughts: list) -> dict[int | None, str]:
-        """Build a map of preference_id → preference content for seed topics."""
-        pref_ids = {t.preference_id for t in thoughts if t.preference_id is not None}
-        if not pref_ids:
-            return {}
-        prefs = self._db.preferences.get_by_ids(pref_ids)
-        return {p.id: p.content for p in prefs}
 
     async def _handle_chat_message(
         self, ws: ServerConnection, data: dict, device_label: str | None

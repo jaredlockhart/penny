@@ -1467,6 +1467,140 @@ h1 {
   word-break: break-word;
 }
 
+/* --- Memory edit forms --- */
+
+.memory-new-control {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.memory-new-btn,
+.memory-form-save,
+.memory-form-cancel,
+.memory-form-archive {
+  border: 1px solid var(--bg-tertiary);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.memory-new-btn:hover,
+.memory-form-save:hover,
+.memory-form-cancel:hover,
+.memory-form-archive:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+
+.memory-form-save {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-primary);
+}
+
+.memory-form-save:hover {
+  filter: brightness(1.1);
+}
+
+.memory-form-archive:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.memory-new-form,
+.memory-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.memory-new-form {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+
+.memory-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.memory-form-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.memory-form-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.memory-form-input:focus {
+  border-color: var(--accent);
+}
+
+.memory-form-prompt {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.memory-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.memory-entry-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.memory-entry-action {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.memory-entry-action:hover {
+  color: var(--text-primary);
+}
+
+.memory-entry-add {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-entry-key-input {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
 /* --- Toast --- */
 
 #toast {
