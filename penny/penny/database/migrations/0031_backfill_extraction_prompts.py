@@ -97,7 +97,7 @@ _KNOWLEDGE_PROMPT = (
     "prose; no bullets, no markdown, no headers.\n"
     '3. For each page, call collection_get("knowledge", key=<page '
     "title>) to see whether you already have a summary.  If one is "
-    'returned, call collection_update("knowledge", key=<title>, '
+    'returned, call update_entry("knowledge", key=<title>, '
     "content=<merged paragraph>) — integrate any new details from "
     "this fetch while preserving existing ones.  Otherwise, call "
     'collection_write("knowledge", entries=[{key: <title>, '
