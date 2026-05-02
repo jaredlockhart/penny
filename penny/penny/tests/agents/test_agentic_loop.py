@@ -540,6 +540,37 @@ class TestEmptyContentRetry:
 
         await agent.close()
 
+    @pytest.mark.asyncio
+    async def test_empty_content_after_tool_calls_returns_fallback_response(
+        self, test_db, mock_llm
+    ):
+        """After tool calls, double empty returns FALLBACK_RESPONSE not AGENT_EMPTY_RESPONSE.
+
+        Reproduces the production scenario where the model makes several searches then
+        fails to synthesize on the final step (preceding_tool_calls > 0).  The distinction
+        matters: FALLBACK_RESPONSE signals "searched but couldn't synthesise" while
+        AGENT_EMPTY_RESPONSE signals "never tried to answer".
+        """
+        # 4 steps: 3 tool calls + 1 final step where model must synthesise but fails
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=4)
+
+        def handler(request, count):
+            if count <= 3:
+                return mock_llm._make_tool_call_response(
+                    request, "search", {"query": f"query {count}"}
+                )
+            # Final step and its retry both return empty — model can't synthesise
+            return mock_llm._make_text_response(request, "")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test question", max_steps=max_steps)
+        assert response.answer == PennyResponse.FALLBACK_RESPONSE
+        # 3 tool calls + empty final step + empty retry = 5 model calls
+        assert len(mock_llm.requests) == 5
+
+        await agent.close()
+
 
 class TestParallelToolCalls:
     """Test that multiple tool calls in a single turn are dispatched in parallel."""
