@@ -1025,3 +1025,80 @@ async def test_chat_tool_surface_excludes_entry_mutations(
         assert "read_similar" in names
         assert "collection_get" in names
         assert "collection_keys" in names
+
+
+# ── 7. Quote-reply handling ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_quote_reply_sets_parent_id_and_uses_thread_context(
+    signal_server,
+    mock_llm,
+    make_config,
+    test_user_info,
+    running_penny,
+):
+    """Quote-reply: incoming message gets parent_id; agent sees the quoted thread.
+
+    When a user quote-replies to a prior Penny message the incoming log row
+    must have parent_id pointing to the quoted outgoing message, and the LLM
+    call for the reply must include the original exchange in its history.
+    """
+    from sqlmodel import select
+
+    from penny.database.models import MessageLog
+
+    config = make_config()
+
+    # Phase 1 — first exchange
+    mock_llm.set_default_flow(final_response="It's sunny in New York!")
+    async with running_penny(config) as penny:
+        await signal_server.push_message(sender=TEST_SENDER, content="what's the weather?")
+        await signal_server.wait_for_message_containing("New York", timeout=10.0)
+
+        with penny.db.get_session() as session:
+            outgoing = session.exec(
+                select(MessageLog).where(MessageLog.direction == "outgoing")
+            ).first()
+        assert outgoing is not None
+        outgoing_id = outgoing.id
+        outgoing_content = outgoing.content  # may have markdown stripped
+
+        # Phase 2 — quote-reply to Penny's response
+        mock_llm.set_default_flow(final_response="Boston is cloudy today!")
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="what about Boston?",
+            quote={"id": 12345, "author": "+15551234567", "text": outgoing_content},
+        )
+        await signal_server.wait_for_message_containing("Boston", timeout=10.0)
+
+        # The incoming quote-reply should have parent_id pointing to Penny's prior reply
+        with penny.db.get_session() as session:
+            quote_reply_msg = session.exec(
+                select(MessageLog).where(
+                    MessageLog.direction == "incoming",
+                    MessageLog.content == "what about Boston?",
+                )
+            ).first()
+        assert quote_reply_msg is not None
+        assert quote_reply_msg.parent_id == outgoing_id, (
+            f"Quote-reply incoming message must have parent_id={outgoing_id},"
+            f" got {quote_reply_msg.parent_id}"
+        )
+
+        # The LLM call for the quote-reply must include the original exchange in history.
+        # Requests 0-1 are the first message (tool call + final).
+        # Requests 2+ are for the quote-reply.
+        assert len(mock_llm.requests) >= 3, "Expected requests for both exchanges"
+        quote_reply_request = mock_llm.requests[2]
+        history_msgs = [
+            m for m in quote_reply_request["messages"] if m.get("role") in ("user", "assistant")
+        ]
+        roles_contents = [(m["role"], m["content"]) for m in history_msgs]
+        assert any("weather" in c.lower() for _, c in roles_contents), (
+            "LLM history for quote-reply must include the original question"
+        )
+        assert any("sunny" in c.lower() or "New York" in c for _, c in roles_contents), (
+            "LLM history for quote-reply must include Penny's original reply"
+        )

@@ -110,7 +110,7 @@ class LogEntryInput(BaseModel):
     content_embedding: list[float] | None = None
 
 
-WriteOutcome = Literal["written", "duplicate"]
+WriteOutcome = Literal["written", "duplicate", "rejected"]
 
 
 class WriteResult(BaseModel):
@@ -121,6 +121,8 @@ class WriteResult(BaseModel):
     # the rejection message so the model can pivot to ``update_entry``
     # when it has fresher info for the existing row.
     matched_key: str | None = None
+    # Human-readable reason when ``outcome == "rejected"``.
+    reason: str | None = None
 
 
 MoveOutcome = Literal["ok", "not_found", "collision"]
@@ -350,6 +352,10 @@ class MemoryStore:
         existing: list[EntrySide],
         thresholds: DedupThresholds,
     ) -> WriteResult:
+        rejection_reason = _degenerate_reason(entry.content)
+        if rejection_reason is not None:
+            logger.debug("Rejected degenerate collection entry %r: %s", entry.key, rejection_reason)
+            return WriteResult(key=entry.key, outcome="rejected", reason=rejection_reason)
         candidate = EntrySide(entry.key, entry.key_embedding, entry.content_embedding)
         matched = self._is_duplicate(candidate, existing, thresholds)
         if matched is not None:
@@ -850,6 +856,50 @@ def _score_signals(
 
 
 _WORD_TOKEN_RE = re.compile(r"\w+")
+
+# Matches content that is a bare URL with no surrounding description.
+_BARE_URL_RE = re.compile(r"^https?://\S+$")
+
+# LLM bail-out phrases that produce useless knowledge entries.
+_WRITE_BAILOUT_PHRASES: frozenset[str] = frozenset(
+    {
+        "not sure",
+        "i'm not sure",
+        "i am not sure",
+        "i cannot help with that",
+        "i can't help with that",
+        "i don't know",
+        "i do not know",
+        "n/a",
+        "no information",
+        "no information available",
+        "unable to summarize",
+        "unable to provide a summary",
+        "no content available",
+        "content not available",
+        "page not available",
+        "content unavailable",
+        "access denied",
+        "error",
+    }
+)
+
+
+def _degenerate_reason(content: str) -> str | None:
+    """Return a rejection reason if ``content`` is too degenerate to store.
+
+    Catches empty/pure-punctuation strings, bare URLs, and known LLM
+    bail-out phrases.  Returns ``None`` when content is acceptable.
+    Applied at collection write time to keep the corpus clean.
+    """
+    stripped = content.strip()
+    if not _WORD_TOKEN_RE.findall(stripped):
+        return "content has no word tokens (empty, punctuation, or ellipsis only)"
+    if _BARE_URL_RE.match(stripped):
+        return "content is a bare URL with no descriptive text"
+    if stripped.lower() in _WRITE_BAILOUT_PHRASES:
+        return f"content matches a known LLM bail-out phrase: {stripped!r}"
+    return None
 
 
 def _is_low_info(content: str) -> bool:

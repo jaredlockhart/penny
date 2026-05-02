@@ -542,17 +542,22 @@ class MessageChannel(ABC):
         await self._append_to_memory_log(
             PennyConstants.MEMORY_USER_MESSAGES_LOG, message.content, "user"
         )
+        parent_id: int | None = None
+        if message.quoted_text:
+            parent_id, _ = self._db.messages.get_thread_context(message.quoted_text)
         response = await self._message_agent.handle(
             content=message.content,
             sender=user_sender,
             images=message.images or None,
             page_context=message.page_context,
+            quoted_text=message.quoted_text,
             **self._make_handle_kwargs(message, progress),
         )
         incoming_id = self._db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING,
             user_sender,
             message.content,
+            parent_id=parent_id,
             signal_timestamp=message.signal_timestamp,
             device_id=device_id,
         )
