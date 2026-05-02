@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from similarity.embeddings import (
     cosine_similarity,
     deserialize_embedding,
+    normalize_unicode,
     serialize_embedding,
     token_containment_ratio,
 )
@@ -137,6 +138,11 @@ class EntrySide(NamedTuple):
     content_vec: list[float] | None
 
 
+def _slug(name: str) -> str:
+    """Normalize a memory name: unicode dash variants → ASCII hyphen, lowercase."""
+    return normalize_unicode(name).lower()
+
+
 class MemoryStore:
     """CRUD for memories (collections, logs) and their entries.
 
@@ -210,6 +216,7 @@ class MemoryStore:
         extraction_prompt: str | None = None,
         collector_interval_seconds: int | None = None,
     ) -> Memory:
+        name = _slug(name)
         with self._session() as session:
             memory = Memory(
                 name=name,
@@ -230,7 +237,7 @@ class MemoryStore:
 
     def get(self, name: str) -> Memory | None:
         with self._session() as session:
-            return session.get(Memory, name)
+            return session.get(Memory, _slug(name))
 
     def list_all(self) -> list[Memory]:
         with self._session() as session:
@@ -263,6 +270,7 @@ class MemoryStore:
         self._set_archived(name, False)
 
     def _set_archived(self, name: str, archived: bool) -> None:
+        name = _slug(name)
         with self._session() as session:
             memory = session.get(Memory, name)
             if memory is None:
@@ -282,6 +290,7 @@ class MemoryStore:
         collector_interval_seconds: int | None = None,
     ) -> Memory:
         """Update fields on an existing collection.  Only set fields are applied."""
+        name = _slug(name)
         self._require_type(name, MemoryType.COLLECTION)
         with self._session() as session:
             memory = session.get(Memory, name)
@@ -307,6 +316,7 @@ class MemoryStore:
         Called whether the collector did real work or just exited via
         ``done()`` — what matters for cadence is that the *check* happened.
         """
+        name = _slug(name)
         with self._session() as session:
             memory = session.get(Memory, name)
             if memory is None:
@@ -331,6 +341,7 @@ class MemoryStore:
         evaluated against existing entries in the same memory using the
         configured thresholds (or the module defaults).
         """
+        name = _slug(name)
         self._require_type(name, MemoryType.COLLECTION)
         thresholds = thresholds or self._default_thresholds()
         existing = self._load_entries_with_vectors(name)
@@ -384,6 +395,7 @@ class MemoryStore:
         Most collections have a single entry per key (dedup keeps it that way),
         but the method operates on all matching rows for safety.
         """
+        name = _slug(name)
         self._require_type(name, MemoryType.COLLECTION)
         with self._session() as session:
             rows = self._entries_by_key(session, name, key)
@@ -403,6 +415,8 @@ class MemoryStore:
         Returns "collision" if a target-collection entry with the same key
         already exists (the caller resolves the collision).
         """
+        from_name = _slug(from_name)
+        to_name = _slug(to_name)
         self._require_type(from_name, MemoryType.COLLECTION)
         self._require_type(to_name, MemoryType.COLLECTION)
         with self._session() as session:
@@ -422,6 +436,7 @@ class MemoryStore:
 
     def delete(self, name: str, key: str) -> int:
         """Delete every entry with `key` in a collection. Returns rows removed."""
+        name = _slug(name)
         self._require_type(name, MemoryType.COLLECTION)
         with self._session() as session:
             rows = self._entries_by_key(session, name, key)
@@ -436,6 +451,7 @@ class MemoryStore:
 
     def append(self, name: str, entries: list[LogEntryInput], author: str) -> list[MemoryEntry]:
         """Append one or more entries to a log memory. No dedup; keyless."""
+        name = _slug(name)
         self._require_type(name, MemoryType.LOG)
         created: list[MemoryEntry] = []
         with self._session() as session:
@@ -462,10 +478,11 @@ class MemoryStore:
 
     def get_entry(self, name: str, key: str) -> list[MemoryEntry]:
         with self._session() as session:
-            return self._entries_by_key(session, name, key)
+            return self._entries_by_key(session, _slug(name), key)
 
     def read_latest(self, name: str, k: int | None = None) -> list[MemoryEntry]:
         """Return entries newest-first. With `k=None`, returns every entry."""
+        name = _slug(name)
         with self._session() as session:
             query = (
                 select(MemoryEntry)
@@ -485,6 +502,7 @@ class MemoryStore:
         entries for a specific target collection (the content format is
         ``[<target>] <marker> <summary>``).
         """
+        name = _slug(name)
         with self._session() as session:
             query = (
                 select(MemoryEntry)
@@ -503,9 +521,10 @@ class MemoryStore:
     ) -> list[MemoryEntry]:
         cutoff = datetime.now(UTC).timestamp() - window_seconds
         cutoff_dt = datetime.fromtimestamp(cutoff, tz=UTC)
-        return self.read_since(name, cutoff_dt, cap)
+        return self.read_since(_slug(name), cutoff_dt, cap)
 
     def read_since(self, name: str, cursor: datetime, cap: int | None = None) -> list[MemoryEntry]:
+        name = _slug(name)
         with self._session() as session:
             query = (
                 select(MemoryEntry)
@@ -518,6 +537,7 @@ class MemoryStore:
 
     def read_random(self, name: str, k: int | None = None) -> list[MemoryEntry]:
         """Return `k` entries sampled uniformly at random. `k=None` returns all."""
+        name = _slug(name)
         with self._session() as session:
             rows = list(
                 session.exec(select(MemoryEntry).where(MemoryEntry.memory_name == name)).all()
@@ -544,6 +564,7 @@ class MemoryStore:
         cutoff is the larger of the two.  With ``k=None`` every qualifying
         entry is returned.
         """
+        name = _slug(name)
         rows = self._embedded_rows(name)
         scored = self._score(rows, [anchor])
         cutoff = _adaptive_cutoff(scored, floor)
@@ -593,6 +614,7 @@ class MemoryStore:
         like preferences); filtering them would wipe out 75%+ of the
         user's actual stated topics.
         """
+        name = _slug(name)
         if not conversation_anchors:
             return []
         rows = self._embedded_rows(name)
@@ -671,6 +693,7 @@ class MemoryStore:
         Returns the union of all in-window entries deduplicated by id and
         ordered chronologically (oldest→newest).
         """
+        name = _slug(name)
         if not hits:
             return []
         delta = timedelta(minutes=window_minutes)
@@ -697,6 +720,7 @@ class MemoryStore:
         return expanded
 
     def read_all(self, name: str) -> list[MemoryEntry]:
+        name = _slug(name)
         with self._session() as session:
             return list(
                 session.exec(
@@ -707,6 +731,7 @@ class MemoryStore:
             )
 
     def keys(self, name: str) -> list[str]:
+        name = _slug(name)
         with self._session() as session:
             rows = list(
                 session.exec(
@@ -742,6 +767,7 @@ class MemoryStore:
         Runs the same similarity-based dedup used by `write`, plus an exact
         key-match shortcut when a key is supplied. Returns True on the first hit.
         """
+        names = [_slug(n) for n in names]
         thresholds = thresholds or self._default_thresholds()
         candidate = EntrySide(key, key_embedding, content_embedding)
         for name in names:
