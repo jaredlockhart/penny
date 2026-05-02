@@ -60,6 +60,7 @@ class ChatAgent(Agent):
         sender: str,
         images: list[str] | None = None,
         page_context: PageContext | None = None,
+        quoted_text: str | None = None,
         on_tool_start: Callable[[list[tuple[str, dict]]], Awaitable[None]] | None = None,
     ) -> ControllerResponse:
         """Handle an incoming message — summary method.
@@ -70,7 +71,7 @@ class ChatAgent(Agent):
         self._pending_page_context = page_context
         try:
             content, has_images = await self._process_images(content, images)
-            history = self.get_history(sender)
+            history = self.get_history(sender, quoted_text=quoted_text)
 
             if has_images:
                 logger.info("Handling vision message from %s", sender)
@@ -207,8 +208,18 @@ class ChatAgent(Agent):
             return None
         return f"### Current Browser Page\n{context.title}\n{context.url}"
 
-    def get_history(self, user: str) -> list[tuple[str, str]] | None:
-        """Recent conversation messages for chat continuity."""
+    def get_history(
+        self, user: str, quoted_text: str | None = None
+    ) -> list[tuple[str, str]] | None:
+        """Recent conversation messages for chat continuity.
+
+        When a quote-reply is present, walks the parent chain for that
+        specific thread. Falls back to the standard recent-message window.
+        """
+        if quoted_text:
+            _, thread_history = self.db.messages.get_thread_context(quoted_text)
+            if thread_history:
+                return thread_history
         return self._build_conversation(user)
 
     # ── Ambient recall ────────────────────────────────────────────────────
