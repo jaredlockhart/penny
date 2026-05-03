@@ -8,6 +8,8 @@ layer's signature.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, Field
@@ -20,6 +22,12 @@ from pydantic import BaseModel, BeforeValidator, Field
 # with refusals or "memory not found" errors.  Normalise on the way in so
 # the rest of the stack sees a single canonical form.
 _UNICODE_DASHES = "‐‑‒–—―−"
+
+# Unicode whitespace variants that look like a space but aren't ASCII U+0020.
+# Ollama's Go JSON parser can misidentify string boundaries when these appear
+# inside tool-call argument values, causing spurious 500 errors.  We replace
+# all of them with a plain ASCII space before the value reaches any logic.
+_UNICODE_WHITESPACE_RE = re.compile(r"[\u00a0\u202f\u2009\u2007\u2008\u200a\u205f\u3000]")
 
 
 def _normalize_dashes(value: object) -> object:
@@ -39,8 +47,33 @@ def _normalize_dash_list(value: object) -> object:
     return [_normalize_dashes(item) for item in value]
 
 
+def _normalize_content(value: object) -> object:
+    """Coerce and sanitise a content field value.
+
+    Two defences against LLM misbehaviour observed in the wild:
+
+    1. **Structured JSON in a string field** — the model occasionally emits a
+       list of objects (e.g. ``[{"headline": ..., "url": ...}]``) where the
+       schema requires a plain string.  Ollama's tool-call parser fails with
+       ``invalid character ':' after array element`` when these payloads
+       contain URL values whose ``https:`` colon lands in an unexpected
+       position.  Serialise the value to a compact JSON string so the write
+       proceeds and the data is preserved rather than lost entirely.
+
+    2. **Unicode narrow no-break spaces** — characters like U+202F appear in
+       model output inside dates and prices and can trip Ollama's JSON scanner.
+       Replace all non-ASCII whitespace variants with a plain ASCII space.
+    """
+    if isinstance(value, (list, dict)):
+        value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, str):
+        value = _UNICODE_WHITESPACE_RE.sub(" ", value)
+    return value
+
+
 MemoryName = Annotated[str, BeforeValidator(_normalize_dashes)]
 MemoryNameList = Annotated[list[str], BeforeValidator(_normalize_dash_list)]
+ContentStr = Annotated[str, BeforeValidator(_normalize_content)]
 
 # ── Metadata ────────────────────────────────────────────────────────────────
 
@@ -145,7 +178,7 @@ class CollectionEntrySpec(BaseModel):
     """One entry in a ``collection_write`` batch."""
 
     key: str
-    content: str
+    content: ContentStr
 
 
 class CollectionWriteArgs(BaseModel):
@@ -160,7 +193,7 @@ class UpdateEntryArgs(BaseModel):
 
     memory: MemoryName
     key: str
-    content: str
+    content: ContentStr
 
 
 class CollectionMoveArgs(BaseModel):
@@ -192,7 +225,7 @@ class LogAppendArgs(BaseModel):
     """Append one keyless entry to a log."""
 
     memory: MemoryName
-    content: str
+    content: ContentStr
 
 
 # ── Introspection ───────────────────────────────────────────────────────────

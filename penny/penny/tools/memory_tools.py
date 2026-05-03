@@ -502,8 +502,19 @@ class CollectionWriteTool(Tool):
                 "items": {
                     "type": "object",
                     "properties": {
-                        "key": {"type": "string"},
-                        "content": {"type": "string"},
+                        "key": {
+                            "type": "string",
+                            "description": "Short topic or identifier (3-10 words).",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": (
+                                "Plain text body. Must be a flat string — do not nest "
+                                "JSON objects or arrays. If citing a source URL, include "
+                                "at most one URL per entry; give separate entries for "
+                                "separate sources."
+                            ),
+                        },
                     },
                     "required": ["key", "content"],
                 },
@@ -589,7 +600,13 @@ class UpdateEntryTool(Tool):
         "properties": {
             "memory": {"type": "string"},
             "key": {"type": "string"},
-            "content": {"type": "string"},
+            "content": {
+                "type": "string",
+                "description": (
+                    "Plain text replacement body. Must be a flat string — "
+                    "do not nest JSON objects or arrays."
+                ),
+            },
         },
         "required": ["memory", "key", "content"],
     }
@@ -962,7 +979,10 @@ class LogAppendTool(Tool):
         "type": "object",
         "properties": {
             "memory": {"type": "string"},
-            "content": {"type": "string"},
+            "content": {
+                "type": "string",
+                "description": "Plain text. Must be a flat string — do not nest JSON or arrays.",
+            },
         },
         "required": ["memory", "content"],
     }

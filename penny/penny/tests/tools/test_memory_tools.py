@@ -525,6 +525,50 @@ class TestExistsAndDone:
         assert "Wrote 1 entry to 'prague-highlights'" in result
 
     @pytest.mark.asyncio
+    async def test_unicode_whitespace_in_content_normalized(self, tmp_path, mock_llm):
+        """Regression: model output sometimes contains narrow no-break spaces
+        (U+202F) inside content values — e.g. in dates like 'May 3 2026'
+        or prices like '$125 – $145 billion'.  These can trip Ollama's
+        JSON parser, causing 500 errors.  ContentStr normalises all non-ASCII
+        whitespace to plain ASCII space on the way in."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="ai-news", description="x", recall="off")
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        # Narrow no-break space U+202F between words
+        result = await write.execute(
+            memory="ai-news",
+            entries=[{"key": "2026-05-03", "content": "May 3 2026 headline"}],
+        )
+        assert "Wrote 1 entry" in result
+        entry = db.memories.get_entry("ai-news", "2026-05-03")
+        assert entry[0].content == "May 3 2026 headline"
+
+    @pytest.mark.asyncio
+    async def test_structured_json_content_coerced_to_string(self, tmp_path, mock_llm):
+        """Regression: the model occasionally emits content as an array of
+        objects (e.g. [{"headline": ..., "url": "https://..."}]) instead of a
+        plain string.  Ollama's parser fails on these with 'invalid character
+        \":\" after array element'.  CollectionEntrySpec coerces the value to a
+        compact JSON string so the write proceeds and data is not lost."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="ai-news", description="x", recall="off")
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        structured = [
+            {"headline": "Some AI news", "url": "https://example.com/article"},
+            {"headline": "More news", "url": "https://other.com/story"},
+        ]
+        result = await write.execute(
+            memory="ai-news",
+            entries=[{"key": "2026-05-03", "content": structured}],
+        )
+        assert "Wrote 1 entry" in result
+        entry = db.memories.get_entry("ai-news", "2026-05-03")
+        # Content is stored as a JSON string, not the original list
+        assert isinstance(entry[0].content, str)
+        assert "Some AI news" in entry[0].content
+        assert "https://example.com/article" in entry[0].content
+
+    @pytest.mark.asyncio
     async def test_exists_content_only_uses_content_as_key_probe(self, tmp_path, mock_llm):
         """Regression: ``exists(content="Kepler Museum")`` must catch an
         existing entry with ``key="Kepler Museum"``, even when the
