@@ -100,38 +100,87 @@ class Collector(BackgroundAgent):
         target = self._next_ready_collection()
         if target is None:
             return False
+        success, _ = await self._execute_cycle(target)
+        return success
 
-        # Own ``run_id`` here so cleanup has the correct UUID even if
-        # ``_run_cycle`` raises before any prompts are logged — and so
-        # neighbouring cycles can't smear into each other's promptlog
-        # rows via stale instance state.
+    async def run_for(self, collection_name: str) -> tuple[bool, str]:
+        """Run one extraction cycle for the named collection, bypassing readiness checks.
+
+        Used by the chat agent's TestExtractionPromptTool to trigger on-demand
+        cycles while authoring or refining an extraction_prompt.  Returns
+        ``(success, message)`` where ``message`` is either an error description
+        or the cycle's ``done()`` summary prefixed with "Collector cycle complete.".
+        """
+        collection = self.db.memories.get(collection_name)
+        if collection is None:
+            return False, f"Collection '{collection_name}' not found."
+        if collection.archived:
+            return False, f"Collection '{collection_name}' is archived."
+        if collection.extraction_prompt is None:
+            return (
+                False,
+                f"Collection '{collection_name}' has no extraction_prompt — "
+                f"set one with collection_update before testing.",
+            )
+        return await self._execute_cycle(collection)
+
+    async def _execute_cycle(self, collection: Memory) -> tuple[bool, str]:
+        """Run one full agent cycle bound to ``collection`` with audit cleanup.
+
+        Owns the ``run_id`` so cleanup has the correct UUID even if
+        ``_run_cycle`` raises before any prompts are logged, and so
+        neighbouring cycles can't smear into each other's promptlog rows.
+        """
         run_id = uuid.uuid4().hex
         success = False
         response: ControllerResponse | None = None
         cancelled = False
         try:
-            self._current_target = target
+            self._current_target = collection
             result = await self._run_cycle(run_id)
             success = result.success
             response = result.response
         except asyncio.CancelledError:
-            # Foreground activity (an incoming user message) preempted the
-            # cycle.  Tag the row clearly instead of letting it look like
-            # a model crash, then re-raise so the task ends.
+            # Foreground activity preempted the cycle — tag clearly rather
+            # than letting it look like a model crash, then re-raise.
             cancelled = True
             raise
         finally:
-            # Stamp regardless of success — what matters for cadence is
-            # that the *check* happened.  A persistently-failing collection
-            # otherwise gets re-attempted every tick.
-            self.db.memories.mark_collected(target.name)
+            # Stamp regardless of success — cadence is driven by the check
+            # happening, not by success.  A persistently-failing collection
+            # would otherwise be re-attempted on every tick.
+            self.db.memories.mark_collected(collection.name)
             if cancelled:
-                self._tag_promptlog_run_cancelled(target, run_id)
+                self._tag_promptlog_run_cancelled(collection, run_id)
             else:
-                self._log_run(target, response)
-                self._tag_promptlog_run(target, run_id, response)
+                self._log_run(collection, response)
+                self._tag_promptlog_run(collection, run_id, response)
             self._current_target = None
-        return success
+        _, summary = self._extract_done_args(response)
+        tool_trace = self._format_tool_trace(response)
+        message = f"Collector cycle complete. {summary}"
+        if tool_trace:
+            message = f"{message}\n\n{tool_trace}"
+        return success, message
+
+    @staticmethod
+    def _format_tool_trace(response: ControllerResponse | None) -> str:
+        """Numbered list of tool calls from the cycle, with long args truncated."""
+        if not response or not response.tool_calls:
+            return ""
+        lines = []
+        for i, record in enumerate(response.tool_calls, 1):
+            args = ", ".join(
+                f"{k}={Collector._truncate_arg(v)}" for k, v in record.arguments.items()
+            )
+            lines.append(f"{i}. {record.tool}({args})")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _truncate_arg(value: object) -> str:
+        """Stringify a tool argument value, truncating to 50 chars."""
+        rendered = str(value)
+        return rendered if len(rendered) <= 50 else rendered[:47] + "..."
 
     # ── Per-cycle audit log ───────────────────────────────────────────────
 

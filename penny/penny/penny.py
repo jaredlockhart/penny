@@ -156,6 +156,7 @@ class Penny:
             config=config,
             embedding_model_client=self.embedding_model_client,
         )
+        self.chat_agent.set_collector(self.collector)
         self.schedule_executor = ScheduleExecutor(
             model_client=self.model_client,
             db=self.db,
