@@ -639,6 +639,58 @@ class CollectionUpdateTool(Tool):
         return f"Updated '{args.name}'."
 
 
+class CollectionMetadataTool(Tool):
+    """Return the metadata fields for a single memory (collection or log)."""
+
+    name = "collection_metadata"
+    description = (
+        "Return metadata for a memory: description, recall mode, "
+        "collector interval, last collected timestamp, archived state, "
+        "and extraction prompt.  Works for both collections and logs."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string", "description": "Collection or log name"},
+        },
+        "required": ["memory"],
+    }
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def execute(self, **kwargs: Any) -> str:
+        args = MemoryNameArgs(**kwargs)
+        memory = self._db.memories.get(args.memory)
+        if memory is None:
+            return f"Memory '{args.memory}' not found."
+        return self._format(memory)
+
+    def _format(self, memory: Any) -> str:
+        interval = (
+            f"{memory.collector_interval_seconds}s"
+            if memory.collector_interval_seconds is not None
+            else "not set"
+        )
+        last_collected = (
+            memory.last_collected_at.strftime("%Y-%m-%d %H:%M:%S")
+            if memory.last_collected_at is not None
+            else "never"
+        )
+        has_extraction_prompt = "yes" if memory.extraction_prompt else "no"
+        lines = [
+            f"name: {memory.name}",
+            f"type: {memory.type}",
+            f"description: {memory.description}",
+            f"recall: {memory.recall}",
+            f"archived: {memory.archived}",
+            f"interval: {interval}",
+            f"last collected: {last_collected}",
+            f"extraction prompt: {has_extraction_prompt}",
+        ]
+        return "\n".join(lines)
+
+
 class CollectionMoveTool(Tool):
     """Move an entry between collections by key."""
 
@@ -989,6 +1041,7 @@ def build_memory_tools(
         CollectionGetTool(db),
         CollectionReadRandomTool(db),
         CollectionKeysTool(db),
+        CollectionMetadataTool(db),
         LogReadRecentTool(db),
         LogReadNextTool(db, agent_name),
         ExistsTool(db, llm_client),
