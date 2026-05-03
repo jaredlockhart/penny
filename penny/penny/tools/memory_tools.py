@@ -703,7 +703,6 @@ class CollectionMetadataTool(Tool):
             if memory.last_collected_at is not None
             else "never"
         )
-        has_extraction_prompt = "yes" if memory.extraction_prompt else "no"
         lines = [
             f"name: {memory.name}",
             f"type: {memory.type}",
@@ -712,7 +711,7 @@ class CollectionMetadataTool(Tool):
             f"archived: {memory.archived}",
             f"interval: {interval}",
             f"last collected: {last_collected}",
-            f"extraction prompt: {has_extraction_prompt}",
+            f"extraction prompt: {memory.extraction_prompt or 'none'}",
         ]
         return "\n".join(lines)
 

@@ -105,6 +105,7 @@ class TestMemoryMetadata:
             "travel highlights",
             RecallMode.OFF,
             collector_interval_seconds=300,
+            extraction_prompt="Browse for Prague spots and write entries.",
         )
         tool = CollectionMetadataTool(db)
         result = asyncio.run(tool.execute(memory="prague-highlights"))
@@ -114,6 +115,14 @@ class TestMemoryMetadata:
         assert "off" in result
         assert "300s" in result
         assert "never" in result  # last collected
+        assert "Browse for Prague spots and write entries." in result
+
+    def test_collection_metadata_tool_no_extraction_prompt(self, tmp_path):
+        db = _make_db(tmp_path)
+        db.memories.create_collection("plain", "no collector", RecallMode.OFF)
+        tool = CollectionMetadataTool(db)
+        result = asyncio.run(tool.execute(memory="plain"))
+        assert "extraction prompt: none" in result
 
     def test_collection_metadata_tool_not_found(self, tmp_path):
         db = _make_db(tmp_path)
