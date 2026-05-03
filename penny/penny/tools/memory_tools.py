@@ -27,6 +27,7 @@ from penny.database.memory_store import (
     DedupThresholds,
     EntryInput,
     LogEntryInput,
+    MemoryAlreadyExistsError,
     MemoryNotFoundError,
     RecallMode,
     WriteResult,
@@ -220,12 +221,15 @@ class CollectionCreateTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = CreateMemoryArgs(**kwargs)
-        self._db.memories.create_collection(
-            args.name,
-            args.description,
-            RecallMode(args.recall),
-            extraction_prompt=args.extraction_prompt,
-        )
+        try:
+            self._db.memories.create_collection(
+                args.name,
+                args.description,
+                RecallMode(args.recall),
+                extraction_prompt=args.extraction_prompt,
+            )
+        except MemoryAlreadyExistsError:
+            return f"Collection '{args.name}' already exists."
         return f"Created collection '{args.name}'."
 
 
@@ -257,7 +261,10 @@ class LogCreateTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = CreateMemoryArgs(**kwargs)
-        self._db.memories.create_log(args.name, args.description, RecallMode(args.recall))
+        try:
+            self._db.memories.create_log(args.name, args.description, RecallMode(args.recall))
+        except MemoryAlreadyExistsError:
+            return f"Log '{args.name}' already exists."
         return f"Created log '{args.name}'."
 
 
