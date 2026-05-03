@@ -1082,6 +1082,7 @@ class TestExtractionPromptTool(Tool):
     """Immediately run the collector for a named collection, bypassing the schedule."""
 
     name = "test_extraction_prompt"
+    timeout = 300.0  # collector cycles include browse calls that can take several minutes
     description = (
         "Immediately trigger one collector cycle for the named collection, bypassing "
         "the normal idle-gated schedule.  Use this while authoring or refining an "
