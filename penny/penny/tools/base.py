@@ -17,6 +17,7 @@ class Tool(ABC):
     name: str
     description: str
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
+    timeout: float | None = None  # None = use ToolExecutor's global timeout
 
     _registry: ClassVar[dict[str, type[Tool]]] = {}
 
@@ -208,9 +209,10 @@ class ToolExecutor:
         try:
             logger.info("Executing tool: %s", tool_call.tool)
             logger.debug("Tool arguments: %s", tool_call.arguments)
+            effective_timeout = tool.timeout if tool.timeout is not None else self.timeout
             result = await asyncio.wait_for(
                 tool.execute(**tool_call.arguments),
-                timeout=self.timeout,
+                timeout=effective_timeout,
             )
             logger.info("Tool executed successfully: %s", tool_call.tool)
             logger.debug("Tool result: %s", result)
@@ -220,7 +222,7 @@ class ToolExecutor:
             return ToolResult(
                 tool=tool_call.tool,
                 result=None,
-                error=f"Tool execution timeout after {self.timeout}s",
+                error=f"Tool execution timeout after {effective_timeout}s",
                 id=tool_call.id,
             )
         except Exception as e:

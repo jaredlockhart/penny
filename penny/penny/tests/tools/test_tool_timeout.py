@@ -28,6 +28,19 @@ class SlowTool(Tool):
         return "completed"
 
 
+class LongTimeoutTool(Tool):
+    """Test tool with a per-tool timeout override."""
+
+    name = "long_timeout_tool"
+    description = "A tool with a generous per-tool timeout"
+    parameters = {"type": "object", "properties": {}}
+    timeout = 10.0
+
+    async def execute(self, **kwargs):
+        await asyncio.sleep(0.05)
+        return "done"
+
+
 class TestToolTimeout:
     """Test tool execution timeout behavior."""
 
@@ -102,3 +115,36 @@ class TestToolTimeout:
         assert agent._tool_executor.timeout == 90.0
 
         await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_per_tool_timeout_overrides_global(self):
+        """Tool.timeout takes precedence over the executor's global timeout."""
+        registry = ToolRegistry()
+        tool = LongTimeoutTool()
+        registry.register(tool)
+
+        # Global timeout is much shorter than the tool's own timeout.
+        executor = ToolExecutor(registry, timeout=0.01)
+
+        tool_call = ToolCall(tool="long_timeout_tool", arguments={})
+        result = await executor.execute(tool_call)
+
+        assert result.error is None
+        assert result.result == "done"
+
+    @pytest.mark.asyncio
+    async def test_per_tool_timeout_respected_when_exceeded(self):
+        """A per-tool timeout that is exceeded still produces a timeout error."""
+        registry = ToolRegistry()
+        slow = SlowTool(sleep_duration=1.0)
+        slow.timeout = 0.05  # type: ignore[assignment]
+        registry.register(slow)
+
+        executor = ToolExecutor(registry, timeout=60.0)
+
+        tool_call = ToolCall(tool="slow_tool", arguments={})
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "timeout" in result.error.lower()
+        assert "0.05s" in result.error
