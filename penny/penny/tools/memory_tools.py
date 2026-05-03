@@ -39,6 +39,7 @@ from penny.tools.memory_args import (
     CollectionDeleteEntryArgs,
     CollectionEntrySpec,
     CollectionGetArgs,
+    CollectionMergeArgs,
     CollectionMoveArgs,
     CollectionUpdateArgs,
     CollectionWriteArgs,
@@ -759,6 +760,63 @@ class CollectionMoveTool(Tool):
         return f"Moved '{args.key}' from '{args.from_memory}' to '{args.to_memory}'."
 
 
+class CollectionMergeTool(Tool):
+    """Merge all entries from one collection into another, then archive the source."""
+
+    name = "collection_merge"
+    description = (
+        "Move every entry from ``from_memory`` into ``to_memory``, then archive "
+        "``from_memory``.  Entries whose key already exists in ``to_memory`` are "
+        "dropped (destination wins).  Use this to resolve duplicate collections."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "from_memory": {
+                "type": "string",
+                "description": "Collection to merge from (will be archived)",
+            },
+            "to_memory": {"type": "string", "description": "Collection to merge into (kept)"},
+        },
+        "required": ["from_memory", "to_memory"],
+    }
+
+    def __init__(self, db: Database, author: str) -> None:
+        self._db = db
+        self._author = author
+
+    async def execute(self, **kwargs: Any) -> str:
+        args = CollectionMergeArgs(**kwargs)
+        return self._merge(args.from_memory, args.to_memory)
+
+    def _merge(self, from_name: str, to_name: str) -> str:
+        source_keys = self._db.memories.keys(from_name)
+        if not source_keys:
+            self._db.memories.archive(from_name)
+            return f"'{from_name}' was empty — archived with nothing to move."
+        moved, dropped = self._move_entries(from_name, to_name, source_keys)
+        self._db.memories.archive(from_name)
+        return self._summary(from_name, to_name, moved, dropped)
+
+    def _move_entries(self, from_name: str, to_name: str, keys: list[str]) -> tuple[int, int]:
+        moved = 0
+        dropped = 0
+        for key in keys:
+            outcome = self._db.memories.move(key, from_name, to_name, author=self._author)
+            if outcome == "ok":
+                moved += 1
+            else:
+                dropped += 1
+        return moved, dropped
+
+    def _summary(self, from_name: str, to_name: str, moved: int, dropped: int) -> str:
+        parts = [f"Merged '{from_name}' → '{to_name}': {moved} moved"]
+        if dropped:
+            parts.append(f"{dropped} dropped (key already in destination)")
+        parts.append(f"'{from_name}' archived.")
+        return ", ".join(parts[:2]) + f". {parts[-1]}" if dropped else f"{parts[0]}. {parts[-1]}"
+
+
 class CollectionDeleteEntryTool(Tool):
     """Delete an entry from a collection by key."""
 
@@ -1083,6 +1141,7 @@ def build_memory_tools(
     return [
         CollectionCreateTool(db),
         CollectionUpdateTool(db),
+        CollectionMergeTool(db, agent_name),
         CollectionArchiveTool(db),
         CollectionUnarchiveTool(db),
         LogCreateTool(db),

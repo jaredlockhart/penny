@@ -19,6 +19,7 @@ from penny.tools.memory_tools import (
     CollectionDeleteEntryTool,
     CollectionGetTool,
     CollectionKeysTool,
+    CollectionMergeTool,
     CollectionMoveTool,
     CollectionReadRandomTool,
     CollectionUnarchiveTool,
@@ -590,6 +591,56 @@ class TestAuthorAttribution:
         assert rows[0].author == "preference-extractor"
 
 
+class TestCollectionMerge:
+    @pytest.mark.asyncio
+    async def test_merge_moves_entries_and_archives_source(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="src", description="x", recall="off")
+        await CollectionCreateTool(db).execute(name="dst", description="x", recall="off")
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        await write.execute(memory="src", entries=[{"key": "a", "content": "alpha"}])
+        await write.execute(memory="src", entries=[{"key": "b", "content": "beta"}])
+
+        result = await CollectionMergeTool(db, "test").execute(from_memory="src", to_memory="dst")
+
+        assert "2 moved" in result
+        assert "archived" in result
+        assert db.memories.get("src").archived is True
+        assert len(db.memories.read_all("dst")) == 2
+        assert len(db.memories.read_all("src")) == 0
+
+    @pytest.mark.asyncio
+    async def test_merge_drops_colliding_keys(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="src", description="x", recall="off")
+        await CollectionCreateTool(db).execute(name="dst", description="x", recall="off")
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        await write.execute(memory="src", entries=[{"key": "shared", "content": "from src"}])
+        await write.execute(memory="src", entries=[{"key": "unique", "content": "only in src"}])
+        await write.execute(memory="dst", entries=[{"key": "shared", "content": "already in dst"}])
+
+        result = await CollectionMergeTool(db, "test").execute(from_memory="src", to_memory="dst")
+
+        assert "1 moved" in result
+        assert "1 dropped" in result
+        dst_entries = db.memories.read_all("dst")
+        assert len(dst_entries) == 2
+        contents = {e.key: e.content for e in dst_entries}
+        assert contents["shared"] == "already in dst"  # destination wins
+        assert contents["unique"] == "only in src"
+
+    @pytest.mark.asyncio
+    async def test_merge_empty_source_archives_it(self, tmp_path):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="src", description="x", recall="off")
+        await CollectionCreateTool(db).execute(name="dst", description="x", recall="off")
+
+        result = await CollectionMergeTool(db, "test").execute(from_memory="src", to_memory="dst")
+
+        assert "archived" in result
+        assert db.memories.get("src").archived is True
+
+
 class TestFactory:
     """Two distinct surfaces, mutually exclusive: chat (lifecycle + reads, no
     entry mutations) vs collector (reads + entry mutations pinned to scope).
@@ -603,6 +654,7 @@ class TestFactory:
             # Lifecycle (chat owns the shape of memory)
             "collection_create",
             "collection_update",
+            "collection_merge",
             "collection_archive",
             "collection_unarchive",
             "log_create",
