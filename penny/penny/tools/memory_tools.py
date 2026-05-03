@@ -57,6 +57,7 @@ from penny.tools.memory_args import (
 )
 
 if TYPE_CHECKING:
+    from penny.agents.collector import Collector
     from penny.llm.client import LlmClient
 
 logger = logging.getLogger(__name__)
@@ -1073,6 +1074,37 @@ class DoneTool(Tool):
         args = DoneArgs(**kwargs)
         marker = "success" if args.success else "no-op/fail"
         return f"Cycle complete ({marker}): {args.summary}"
+
+
+# ── On-demand collector trigger ─────────────────────────────────────────────
+
+
+class TestExtractionPromptTool(Tool):
+    """Immediately run the collector for a named collection, bypassing the schedule."""
+
+    name = "test_extraction_prompt"
+    description = (
+        "Immediately trigger one collector cycle for the named collection, bypassing "
+        "the normal idle-gated schedule.  Use this while authoring or refining an "
+        "extraction_prompt to verify the collector reads the right sources and writes "
+        "the expected entries.  Returns the cycle's success flag and done() summary."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string", "description": "Collection name to test"},
+        },
+        "required": ["memory"],
+    }
+
+    def __init__(self, collector: Collector) -> None:
+        self._collector = collector
+
+    async def execute(self, **kwargs: Any) -> str:
+        args = MemoryNameArgs(**kwargs)
+        success, summary = await self._collector.run_for(args.memory)
+        marker = "✅" if success else "❌"
+        return f"{marker} {summary}"
 
 
 # ── Factory ─────────────────────────────────────────────────────────────────

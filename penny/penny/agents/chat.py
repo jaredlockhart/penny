@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
@@ -20,7 +20,12 @@ from penny.database.models import Memory, MemoryEntry
 from penny.llm.models import LlmError
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
+from penny.tools import Tool
 from penny.tools.browse import BrowseTool
+from penny.tools.memory_tools import TestExtractionPromptTool
+
+if TYPE_CHECKING:
+    from penny.agents.collector import Collector
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,17 @@ class ChatAgent(Agent):
         # agents inherit the True default to keep tools available so they
         # can call ``done`` / ``send_message`` on the final step.
         self._keep_tools_on_final_step = False
+        self._collector: Collector | None = None
+
+    def set_collector(self, collector: Collector) -> None:
+        """Bind the Collector so test_extraction_prompt is available in chat."""
+        self._collector = collector
+
+    def get_tools(self) -> list[Tool]:
+        tools = super().get_tools()
+        if self._collector is not None:
+            tools.append(TestExtractionPromptTool(self._collector))
+        return tools
 
     # ── Message handling ───────────────────────────────────────────────
 

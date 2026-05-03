@@ -33,6 +33,7 @@ from penny.tools.memory_tools import (
     LogReadRecentTool,
     ReadLatestTool,
     ReadSimilarTool,
+    TestExtractionPromptTool,
     UpdateEntryTool,
     build_memory_tools,
 )
@@ -639,6 +640,54 @@ class TestCollectionMerge:
 
         assert "archived" in result
         assert db.memories.get("src").archived is True
+
+
+class TestTestExtractionPromptTool:
+    """TestExtractionPromptTool delegates to Collector.run_for — test the formatting."""
+
+    class _MockCollector:
+        """Duck-typed stub: records the call and returns a configured result."""
+
+        def __init__(self, result: tuple[bool, str]) -> None:
+            self._result = result
+            self.called_with: str | None = None
+
+        async def run_for(self, collection_name: str) -> tuple[bool, str]:
+            self.called_with = collection_name
+            return self._result
+
+    @pytest.mark.asyncio
+    async def test_success_returns_checkmark_and_summary(self):
+        collector = self._MockCollector((True, "Collector cycle complete. wrote 3 entries"))
+        tool = TestExtractionPromptTool(collector)  # ty: ignore[invalid-argument-type]
+        result = await tool.execute(memory="prague-highlights")
+        assert collector.called_with == "prague-highlights"
+        assert result.startswith("✅")
+        assert "wrote 3 entries" in result
+
+    @pytest.mark.asyncio
+    async def test_failure_returns_x_and_summary(self):
+        collector = self._MockCollector((False, "Collector cycle complete. max steps exceeded"))
+        tool = TestExtractionPromptTool(collector)  # ty: ignore[invalid-argument-type]
+        result = await tool.execute(memory="likes")
+        assert result.startswith("❌")
+        assert "max steps exceeded" in result
+
+    @pytest.mark.asyncio
+    async def test_validation_error_returns_x_and_error_message(self):
+        collector = self._MockCollector((False, "Collection 'missing' not found."))
+        tool = TestExtractionPromptTool(collector)  # ty: ignore[invalid-argument-type]
+        result = await tool.execute(memory="missing")
+        assert result.startswith("❌")
+        assert "not found" in result
+
+    @pytest.mark.asyncio
+    async def test_unicode_dash_in_memory_name_normalized(self):
+        """MemoryNameArgs normalises Unicode dashes before passing to run_for."""
+        collector = self._MockCollector((True, "Collector cycle complete. wrote 1 entry"))
+        tool = TestExtractionPromptTool(collector)  # ty: ignore[invalid-argument-type]
+        await tool.execute(memory="prague‑highlights")  # U+2011 non-breaking hyphen
+        assert collector.called_with == "prague-highlights"
 
 
 class TestFactory:
