@@ -23,6 +23,7 @@ from penny.tools.memory_tools import (
     CollectionMoveTool,
     CollectionReadRandomTool,
     CollectionUnarchiveTool,
+    CollectionUpdateTool,
     CollectionWriteTool,
     DoneTool,
     ExistsTool,
@@ -135,6 +136,40 @@ class TestCreateAndList:
         result = await LogCreateTool(db).execute(name="events", description="second", recall="off")
         assert "already exists" in result
         assert "events" in result
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_short_extraction_prompt(self, tmp_path):
+        db = _make_db(tmp_path)
+        result = await CollectionCreateTool(db).execute(
+            name="notes", description="x", recall="off", extraction_prompt="yes"
+        )
+        assert "too short" in result
+        assert "minimum" in result
+        assert db.memories.get("notes") is None  # collection not created
+
+    @pytest.mark.asyncio
+    async def test_create_accepts_null_extraction_prompt(self, tmp_path):
+        db = _make_db(tmp_path)
+        result = await CollectionCreateTool(db).execute(name="notes", description="x", recall="off")
+        assert "Created" in result
+        assert db.memories.get("notes") is not None
+
+    @pytest.mark.asyncio
+    async def test_create_accepts_long_enough_extraction_prompt(self, tmp_path):
+        db = _make_db(tmp_path)
+        prompt = "Extract likes from user-messages log and write to collection."
+        result = await CollectionCreateTool(db).execute(
+            name="notes", description="x", recall="off", extraction_prompt=prompt
+        )
+        assert "Created" in result
+
+    @pytest.mark.asyncio
+    async def test_update_rejects_short_extraction_prompt(self, tmp_path):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="notes", description="x", recall="off")
+        result = await CollectionUpdateTool(db).execute(name="notes", extraction_prompt="yes")
+        assert "too short" in result
+        assert db.memories.get("notes").extraction_prompt is None  # unchanged
 
 
 class TestCollectionWritesAndReads:
