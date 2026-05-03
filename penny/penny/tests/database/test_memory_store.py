@@ -7,6 +7,7 @@ enforcement, log append, cursor monotonicity, and the similarity-based
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -20,6 +21,7 @@ from penny.database.memory_store import (
     MemoryTypeError,
     RecallMode,
 )
+from penny.tools.memory_tools import CollectionMetadataTool
 
 
 def _make_db(tmp_path) -> Database:
@@ -95,6 +97,29 @@ class TestMemoryMetadata:
         )
         assert len(db.memories.read_all("prague-highlights")) == 1
         assert len(db.memories.list_all()) == 1
+
+    def test_collection_metadata_tool_returns_all_fields(self, tmp_path):
+        db = _make_db(tmp_path)
+        db.memories.create_collection(
+            "prague-highlights",
+            "travel highlights",
+            RecallMode.OFF,
+            collector_interval_seconds=300,
+        )
+        tool = CollectionMetadataTool(db)
+        result = asyncio.run(tool.execute(memory="prague-highlights"))
+        assert "prague-highlights" in result
+        assert "collection" in result
+        assert "travel highlights" in result
+        assert "off" in result
+        assert "300s" in result
+        assert "never" in result  # last collected
+
+    def test_collection_metadata_tool_not_found(self, tmp_path):
+        db = _make_db(tmp_path)
+        tool = CollectionMetadataTool(db)
+        result = asyncio.run(tool.execute(memory="nonexistent"))
+        assert "not found" in result
 
 
 class TestCollectionWrites:
