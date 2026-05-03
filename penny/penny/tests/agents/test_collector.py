@@ -463,6 +463,32 @@ async def test_run_for_runs_cycle_and_returns_done_summary(test_config, tmp_path
     assert success is True
     assert "Collector cycle complete" in message
     assert "wrote 2 entries" in message
+    assert "1. done(" in message
+
+
+def test_format_tool_trace_numbers_calls_and_truncates_args():
+    response = ControllerResponse(
+        answer="",
+        tool_calls=[
+            ToolCallRecord(tool="log_read_next", arguments={"memory": "user-messages"}),
+            ToolCallRecord(tool="browse", arguments={"queries": ["prague spa " * 10]}),
+            ToolCallRecord(tool="done", arguments={"success": True, "summary": "wrote 2 entries"}),
+        ],
+    )
+    trace = Collector._format_tool_trace(response)
+    lines = trace.splitlines()
+    assert lines[0] == "1. log_read_next(memory=user-messages)"
+    assert lines[1].startswith("2. browse(queries=")
+    assert "..." in lines[1]  # long query was truncated
+    assert (
+        len(lines[1]) <= len("2. browse(queries=") + 50 + 2
+    )  # name + max rendered arg + closing paren
+    assert lines[2].startswith("3. done(")
+
+
+def test_format_tool_trace_empty_when_no_calls():
+    assert Collector._format_tool_trace(None) == ""
+    assert Collector._format_tool_trace(ControllerResponse(answer="", tool_calls=[])) == ""
 
 
 def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):

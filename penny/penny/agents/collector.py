@@ -157,7 +157,30 @@ class Collector(BackgroundAgent):
                 self._tag_promptlog_run(collection, run_id, response)
             self._current_target = None
         _, summary = self._extract_done_args(response)
-        return success, f"Collector cycle complete. {summary}"
+        tool_trace = self._format_tool_trace(response)
+        message = f"Collector cycle complete. {summary}"
+        if tool_trace:
+            message = f"{message}\n\n{tool_trace}"
+        return success, message
+
+    @staticmethod
+    def _format_tool_trace(response: ControllerResponse | None) -> str:
+        """Numbered list of tool calls from the cycle, with long args truncated."""
+        if not response or not response.tool_calls:
+            return ""
+        lines = []
+        for i, record in enumerate(response.tool_calls, 1):
+            args = ", ".join(
+                f"{k}={Collector._truncate_arg(v)}" for k, v in record.arguments.items()
+            )
+            lines.append(f"{i}. {record.tool}({args})")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _truncate_arg(value: object) -> str:
+        """Stringify a tool argument value, truncating to 50 chars."""
+        rendered = str(value)
+        return rendered if len(rendered) <= 50 else rendered[:47] + "..."
 
     # ── Per-cycle audit log ───────────────────────────────────────────────
 
