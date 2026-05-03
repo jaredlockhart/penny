@@ -171,6 +171,13 @@ class CollectionMoveArgs(BaseModel):
     to_memory: MemoryName
 
 
+class CollectionMergeArgs(BaseModel):
+    """Merge all entries from one collection into another, then archive the source."""
+
+    from_memory: MemoryName
+    to_memory: MemoryName
+
+
 class CollectionDeleteEntryArgs(BaseModel):
     """Delete an entry from a collection by key."""
 
