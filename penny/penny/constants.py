@@ -79,6 +79,7 @@ class PennyConstants:
 
     BROWSE_RETRIES = 4
     BROWSE_RETRY_DELAY = 1.0
+    BROWSE_REQUEST_TIMEOUT = 20.0
     MAX_SEARCH_LINKS = 10
     BROWSE_SEARCH_HEADER = "## search: "
     BROWSE_PAGE_HEADER = "## browse: "
