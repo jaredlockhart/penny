@@ -1,11 +1,13 @@
 """Tests for handling tool calls with non-existent tool names and missing parameters."""
 
 import pytest
+from pydantic import BaseModel
 
 from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
+from penny.tools import ToolCall
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
 
 
@@ -221,3 +223,80 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class _EntrySpec(BaseModel):
+    key: str
+    content: str
+
+
+class _BatchArgs(BaseModel):
+    entries: list[_EntrySpec]
+
+
+class _BatchTool(Tool):
+    """Tool whose top-level args pass schema validation but whose nested Pydantic model can fail.
+
+    Mirrors the collection_write pattern: 'entries' is required at the top level but
+    each entry's fields are validated by a nested Pydantic model inside execute().
+    """
+
+    name = "batch_tool"
+    description = "Tool with nested batch validation"
+    parameters = {
+        "type": "object",
+        "properties": {"entries": {"type": "array"}},
+        "required": ["entries"],
+    }
+
+    async def execute(self, **kwargs):
+        args = _BatchArgs(**kwargs)
+        return f"ok: {len(args.entries)} entries"
+
+
+class TestPydanticValidationErrorHandling:
+    """Pydantic ValidationError raised inside execute() is returned as a clean ToolResult error."""
+
+    @pytest.mark.asyncio
+    async def test_validation_error_returned_as_tool_result_error(self):
+        """ValidationError from inside execute() is caught and returned with a clear message."""
+        registry = ToolRegistry()
+        tool = _BatchTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        # entries present (passes schema check), but each entry uses 'description' not 'content'
+        tool_call = ToolCall(
+            tool="batch_tool",
+            arguments={"entries": [{"key": "cafe", "description": "Nice bar"}]},
+        )
+        result = await executor.execute(tool_call)
+
+        assert result.result is None
+        assert result.error is not None
+        assert "content" in result.error
+        assert "batch_tool" in result.error
+        assert "Please call the tool again" in result.error
+
+    @pytest.mark.asyncio
+    async def test_validation_error_lists_each_bad_field(self):
+        """Error message names each field that failed validation."""
+        registry = ToolRegistry()
+        tool = _BatchTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        # Two entries both missing 'content'; the error must mention the field twice
+        tool_call = ToolCall(
+            tool="batch_tool",
+            arguments={
+                "entries": [
+                    {"key": "a", "description": "first"},
+                    {"key": "b", "description": "second"},
+                ]
+            },
+        )
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "content" in result.error
