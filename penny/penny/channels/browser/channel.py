@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 
 import websockets
 from pydantic import BaseModel, ValidationError
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from websockets.asyncio.server import Server, ServerConnection
 
@@ -90,6 +89,7 @@ from penny.config_params import RUNTIME_CONFIG_PARAMS, get_params_by_group
 from penny.constants import ChannelType, PennyConstants
 from penny.database.memory_store import (
     EntryInput,
+    MemoryAlreadyExistsError,
     MemoryNotFoundError,
     MemoryTypeError,
     RecallMode,
@@ -548,7 +548,7 @@ class BrowserChannel(MessageChannel):
                 extraction_prompt=req.extraction_prompt,
                 collector_interval_seconds=req.collector_interval_seconds,
             )
-        except IntegrityError:
+        except MemoryAlreadyExistsError:
             logger.warning("memory_create with duplicate name: %s", req.name)
 
     def _handle_memory_update(self, data: dict) -> None:

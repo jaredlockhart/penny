@@ -72,6 +72,10 @@ class MemoryNotFoundError(Exception):
     """Raised when an operation targets a memory that doesn't exist."""
 
 
+class MemoryAlreadyExistsError(Exception):
+    """Raised when a collection or log with the given name already exists."""
+
+
 class DedupThresholds(BaseModel):
     """Per-signal strict + relaxed thresholds for the memory dedup rule."""
 
@@ -217,6 +221,8 @@ class MemoryStore:
         collector_interval_seconds: int | None = None,
     ) -> Memory:
         name = _slug(name)
+        if self.get(name) is not None:
+            raise MemoryAlreadyExistsError(name)
         with self._session() as session:
             memory = Memory(
                 name=name,

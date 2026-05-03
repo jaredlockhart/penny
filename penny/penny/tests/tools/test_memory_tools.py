@@ -113,6 +113,28 @@ class TestCreateAndList:
         assert memories["user-messages"].type == "log"
         assert memories["user-messages"].recall == "recent"
 
+    @pytest.mark.asyncio
+    async def test_create_collection_duplicate_returns_user_friendly_message(self, tmp_path):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="ai-news", description="first", recall="off")
+        result = await CollectionCreateTool(db).execute(
+            name="ai-news", description="second slightly different", recall="relevant"
+        )
+        assert "already exists" in result
+        assert "ai-news" in result
+        # Original collection is unchanged
+        memory = db.memories.get("ai-news")
+        assert memory is not None
+        assert memory.description == "first"
+
+    @pytest.mark.asyncio
+    async def test_create_log_duplicate_returns_user_friendly_message(self, tmp_path):
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="first", recall="recent")
+        result = await LogCreateTool(db).execute(name="events", description="second", recall="off")
+        assert "already exists" in result
+        assert "events" in result
+
 
 class TestCollectionWritesAndReads:
     @pytest.mark.asyncio
