@@ -5,6 +5,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
+from pydantic import ValidationError
+
 from penny.constants import ProgressEmoji
 from penny.tools.models import ToolCall, ToolDefinition, ToolResult
 
@@ -225,6 +227,8 @@ class ToolExecutor:
                 error=f"Tool execution timeout after {effective_timeout}s",
                 id=tool_call.id,
             )
+        except ValidationError as e:
+            return self._pydantic_error_result(tool_call, e)
         except Exception as e:
             logger.exception("Tool execution error: %s", tool_call.tool)
             return ToolResult(
@@ -233,3 +237,13 @@ class ToolExecutor:
                 error=f"Tool execution error: {str(e)}",
                 id=tool_call.id,
             )
+
+    def _pydantic_error_result(self, tool_call: ToolCall, e: ValidationError) -> ToolResult:
+        """Build a clean error result from a Pydantic ValidationError raised inside execute()."""
+        parts = [f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()]
+        error = (
+            f"Invalid arguments for {tool_call.tool}: {'; '.join(parts)}. "
+            f"Please call the tool again with the correct parameters."
+        )
+        logger.error("Tool argument validation error: %s - %s", tool_call.tool, error)
+        return ToolResult(tool=tool_call.tool, result=None, error=error, id=tool_call.id)

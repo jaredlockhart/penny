@@ -15,7 +15,6 @@ from penny.channels.base import PageContext
 from penny.channels.browser.models import BrowserIncoming
 from penny.channels.discord.models import DiscordUser
 from penny.llm.models import LlmToolCall, LlmToolCallFunction
-from penny.tools.memory_args import CollectionEntrySpec, CollectionWriteArgs
 
 
 class TestPageContextRequiresAllFields:
@@ -49,35 +48,6 @@ class TestDiscordUserRequiresDiscriminator:
     def test_missing_discriminator_rejected(self) -> None:
         with pytest.raises(ValidationError, match="discriminator"):
             DiscordUser(id="1", username="alice")  # ty: ignore[missing-argument]
-
-
-class TestCollectionEntrySpecDescriptionAlias:
-    """LLMs confuse top-level 'description' with per-entry 'content' — both must be accepted."""
-
-    def test_content_field_accepted(self) -> None:
-        entry = CollectionEntrySpec.model_validate({"key": "k", "content": "c"})
-        assert entry.content == "c"
-
-    def test_description_alias_accepted(self) -> None:
-        entry = CollectionEntrySpec.model_validate({"key": "k", "description": "c"})
-        assert entry.content == "c"
-
-    def test_kwargs_construction_still_works(self) -> None:
-        entry = CollectionEntrySpec(key="k", content="c")
-        assert entry.content == "c"
-
-    def test_collection_write_args_with_description_entries(self) -> None:
-        args = CollectionWriteArgs.model_validate(
-            {
-                "memory": "places",
-                "entries": [
-                    {"key": "cafe", "description": "Nice rooftop bar"},
-                    {"key": "restaurant", "content": "Italian place downtown"},
-                ],
-            }
-        )
-        assert args.entries[0].content == "Nice rooftop bar"
-        assert args.entries[1].content == "Italian place downtown"
 
 
 class TestLlmToolCallRequiresIdAndFunctionName:

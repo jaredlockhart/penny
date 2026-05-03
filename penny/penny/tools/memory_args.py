@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import AliasChoices, BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 # Models occasionally substitute Unicode dashes (U+2010–U+2015) for ASCII
 # hyphen-minus (U+002D) when emitting memory names — gpt-oss has been
@@ -145,10 +145,7 @@ class CollectionEntrySpec(BaseModel):
     """One entry in a ``collection_write`` batch."""
 
     key: str
-    # LLMs occasionally send 'description' instead of 'content', confusing the
-    # top-level collection 'description' field with the per-entry content field.
-    # Accept both names so the write is not silently dropped.
-    content: str = Field(validation_alias=AliasChoices("content", "description"))
+    content: str
 
 
 class CollectionWriteArgs(BaseModel):
