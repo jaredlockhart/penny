@@ -45,6 +45,7 @@ from penny.tools.memory_args import (
     CollectionWriteArgs,
     CreateMemoryArgs,
     DoneArgs,
+    EmptyArgs,
     ExistsArgs,
     LogAppendArgs,
     MemoryNameArgs,
@@ -446,6 +447,35 @@ class ReadSimilarTool(Tool):
             return "(similarity search unavailable — no embedding model configured)"
         entries = self._db.memories.read_similar(args.memory, vec, args.k)
         return _format_entries(entries)
+
+
+class CollectionListTool(Tool):
+    """List all non-archived memories with their type, entry count, and description."""
+
+    name = "collection_list"
+    description = (
+        "List all available memories (collections and logs) with their name, type, "
+        "entry count, and description. Use this to discover what memories exist before "
+        "reading or writing."
+    )
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def execute(self, **kwargs: Any) -> str:
+        EmptyArgs(**kwargs)
+        memories = sorted(
+            (m for m in self._db.memories.list_all() if not m.archived),
+            key=lambda m: m.name,
+        )
+        if not memories:
+            return "(no memories)"
+        counts = self._db.memories.entry_counts()
+        lines = []
+        for memory in memories:
+            count = counts.get(memory.name, 0)
+            lines.append(f"- {memory.name} ({memory.type}, {count} entries) — {memory.description}")
+        return "\n".join(lines)
 
 
 class CollectionKeysTool(Tool):
@@ -1150,6 +1180,7 @@ def build_memory_tools(
     producing a reply.
     """
     reads: list[Tool] = [
+        CollectionListTool(db),
         ReadLatestTool(db),
         ReadSimilarTool(db, llm_client),
         CollectionGetTool(db),
