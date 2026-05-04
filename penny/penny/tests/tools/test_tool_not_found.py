@@ -1,5 +1,7 @@
 """Tests for handling tool calls with non-existent tool names and missing parameters."""
 
+import logging
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +9,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -96,6 +99,22 @@ class TestToolNotFound:
         assert "search" in error_content.lower()  # The actual tool name
 
         await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_tool_not_found_logs_arguments(self, caplog):
+        """Tool-not-found error logs both the tool name and its arguments."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        with caplog.at_level(logging.ERROR, logger="penny.tools.base"):
+            await executor.execute(ToolCall(tool="bottleneck", arguments={"data": [1, 2, 3]}))
+
+        assert any(
+            "bottleneck" in r.message and "data" in r.message
+            for r in caplog.records
+            if r.levelno == logging.ERROR
+        )
 
 
 class StubDoneTool(Tool):
