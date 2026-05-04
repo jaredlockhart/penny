@@ -122,6 +122,70 @@ class StubDoneTool(Tool):
         return "done"
 
 
+class TestToolNameNormalization:
+    """ToolExecutor strips LLM formatting artifacts before registry lookup."""
+
+    def _make_executor_with_search(self) -> ToolExecutor:
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        return ToolExecutor(registry)
+
+    @pytest.mark.asyncio
+    async def test_strips_functions_dot_prefix(self):
+        """'Functions.search' resolves to the registered 'search' tool."""
+        from penny.tools.models import ToolCall
+
+        executor = self._make_executor_with_search()
+        result = await executor.execute(
+            ToolCall(tool="Functions.search", arguments={"query": "hi"})
+        )
+        assert result.error is None
+        assert result.tool == "search"
+
+    @pytest.mark.asyncio
+    async def test_strips_lowercase_functions_dot_prefix(self):
+        """'functions.search' (lowercase) also resolves correctly."""
+        from penny.tools.models import ToolCall
+
+        executor = self._make_executor_with_search()
+        result = await executor.execute(
+            ToolCall(tool="functions.search", arguments={"query": "hi"})
+        )
+        assert result.error is None
+        assert result.tool == "search"
+
+    @pytest.mark.asyncio
+    async def test_strips_trailing_question_mark(self):
+        """'search?' resolves to the registered 'search' tool."""
+        from penny.tools.models import ToolCall
+
+        executor = self._make_executor_with_search()
+        result = await executor.execute(ToolCall(tool="search?", arguments={"query": "hi"}))
+        assert result.error is None
+        assert result.tool == "search"
+
+    @pytest.mark.asyncio
+    async def test_strips_prefix_and_trailing_punctuation_together(self):
+        """'Functions.search?' strips both prefix and trailing '?' in one pass."""
+        from penny.tools.models import ToolCall
+
+        executor = self._make_executor_with_search()
+        result = await executor.execute(
+            ToolCall(tool="Functions.search?", arguments={"query": "hi"})
+        )
+        assert result.error is None
+        assert result.tool == "search"
+
+    def test_normalize_tool_name_leaves_valid_names_unchanged(self):
+        """Well-formed names are returned as-is."""
+        assert ToolExecutor._normalize_tool_name("search") == "search"
+        assert ToolExecutor._normalize_tool_name("collection_list") == "collection_list"
+
+    def test_normalize_tool_name_unknown_prefix_not_stripped(self):
+        """An unrecognised prefix is left in place; only 'Functions.'/'functions.' are stripped."""
+        assert ToolExecutor._normalize_tool_name("Tools.search") == "Tools.search"
+
+
 class TestMissingRequiredParameters:
     """Validation error messages include parameter type and description hints."""
 
