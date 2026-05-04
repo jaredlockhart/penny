@@ -31,6 +31,19 @@ logger = logging.getLogger(__name__)
 # Default API key for local inference servers that require one but don't check it
 _DEFAULT_API_KEY = "not-needed"
 
+# Nudge injected into the conversation when Ollama rejects a tool call due to malformed JSON.
+# The model doesn't know its output was invalid; telling it explicitly prompts a clean retry.
+_TOOL_CALL_PARSE_ERROR_NUDGE = (
+    "Your previous tool call had malformed JSON. "
+    "Please retry the tool call with strictly valid JSON — "
+    "no extra braces, no syntax errors in the argument values."
+)
+
+
+def _is_tool_call_parse_error(error_str: str) -> bool:
+    """Return True if the error is Ollama's server-side tool call JSON parse failure."""
+    return "error parsing tool call" in error_str
+
 
 class LlmClient:
     """Client for LLM inference via OpenAI-compatible APIs.
@@ -75,14 +88,16 @@ class LlmClient:
     ) -> LlmResponse:
         """Generate a chat completion with optional tool calling."""
         last_error: Exception | None = None
+        # Local copy — may grow with a retry nudge when Ollama rejects tool call JSON.
+        active_messages = list(messages)
 
         for attempt in range(self.max_retries):
             try:
                 logger.debug("Sending chat request (attempt %d/%d)", attempt + 1, self.max_retries)
 
                 start = time.time()
-                messages_snapshot = list(messages)
-                translated_messages = self._translate_messages(messages)
+                messages_snapshot = list(active_messages)
+                translated_messages = self._translate_messages(active_messages)
 
                 kwargs = self._build_chat_kwargs(translated_messages, tools, format)
                 raw = await self.client.chat.completions.create(**kwargs)
@@ -117,12 +132,25 @@ class LlmClient:
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
             except openai.OpenAIError as error:
-                last_error = LlmResponseError(str(error))
-                logger.warning(
-                    "LLM chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
-                )
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(self.retry_delay)
+                error_str = str(error)
+                last_error = LlmResponseError(error_str)
+                if _is_tool_call_parse_error(error_str):
+                    logger.warning(
+                        "Malformed tool call JSON (attempt %d/%d) — injecting retry nudge: %s",
+                        attempt + 1,
+                        self.max_retries,
+                        error_str[:200],
+                    )
+                    if attempt < self.max_retries - 1:
+                        active_messages = active_messages + [
+                            {"role": "user", "content": _TOOL_CALL_PARSE_ERROR_NUDGE}
+                        ]
+                else:
+                    logger.warning(
+                        "LLM chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
+                    )
+                    if attempt < self.max_retries - 1:
+                        await asyncio.sleep(self.retry_delay)
 
         logger.error("LLM chat failed after %d attempts: %s", self.max_retries, last_error)
         if last_error is None:

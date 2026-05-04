@@ -1455,3 +1455,77 @@ class TestPromptLogAnnotations:
         assert logs[0].agent_name == logs[1].agent_name == "Agent"
 
         await agent.close()
+
+
+class TestToolCallParseErrorRetry:
+    """Test LlmClient retries with a nudge message when Ollama rejects tool call JSON."""
+
+    @pytest.mark.asyncio
+    async def test_injects_nudge_on_tool_call_parse_error(self, monkeypatch):
+        """LlmClient retries with a nudge when Ollama returns a tool call parse error."""
+        import openai
+
+        from penny.llm.client import LlmClient
+
+        calls: list[list[dict]] = []
+
+        parse_err = (
+            "error parsing tool call: raw='...}}}', err=invalid character '}' after top-level value"
+        )
+
+        class _MockCreate:
+            async def create(self, **kwargs: list | None) -> object:
+                calls.append(list(kwargs.get("messages") or []))
+                if len(calls) == 1:
+                    raise openai.OpenAIError(parse_err)
+
+                class _Msg:
+                    role = "assistant"
+                    content = "Recovered response"
+                    tool_calls = None
+                    model_extra: dict = {}
+
+                class _Choice:
+                    message = _Msg()
+
+                class _Completion:
+                    model = "test-model"
+                    choices = [_Choice()]
+
+                    def model_dump(self) -> dict:
+                        return {}
+
+                return _Completion()
+
+        class _MockChat:
+            completions = _MockCreate()
+
+        class _MockOpenAI:
+            def __init__(self, **kwargs: object) -> None:
+                pass
+
+            chat = _MockChat()
+
+            async def close(self) -> None:
+                pass
+
+        monkeypatch.setattr("penny.llm.client.openai.AsyncOpenAI", _MockOpenAI)
+
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            max_retries=2,
+            retry_delay=0,
+        )
+        response = await client.chat([{"role": "user", "content": "hello"}])
+
+        assert len(calls) == 2, "Expected exactly one retry"
+        nudge = next(
+            (m for m in calls[1] if "tool call" in m.get("content", "").lower()),
+            None,
+        )
+        assert nudge is not None, (
+            "Retry request should include a nudge about the malformed tool call"
+        )
+        assert nudge["role"] == "user"
+        assert response.content == "Recovered response"
