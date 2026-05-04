@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -221,3 +222,54 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class TestToolNameNormalization:
+    """Trailing punctuation on tool names is stripped before registry lookup."""
+
+    @pytest.mark.asyncio
+    async def test_trailing_question_mark_resolves_to_registered_tool(self):
+        """A tool called as 'search?' finds the registered 'search' tool."""
+        registry = ToolRegistry()
+        tool = StubSearchTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(ToolCall(tool="search?", arguments={"query": "test"}))
+
+        assert result.error is None
+        assert result.result == "Mock search results for testing"
+
+    @pytest.mark.asyncio
+    async def test_trailing_exclamation_resolves_to_registered_tool(self):
+        """A tool called as 'search!' finds the registered 'search' tool."""
+        registry = ToolRegistry()
+        tool = StubSearchTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(ToolCall(tool="search!", arguments={"query": "test"}))
+
+        assert result.error is None
+        assert result.result == "Mock search results for testing"
+
+    @pytest.mark.asyncio
+    async def test_clean_tool_name_passes_through_unchanged(self):
+        """Normal tool names without trailing punctuation are unaffected."""
+        registry = ToolRegistry()
+        tool = StubSearchTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(ToolCall(tool="search", arguments={"query": "test"}))
+
+        assert result.error is None
+        assert result.result == "Mock search results for testing"
+
+    def test_normalize_tool_name_strips_question_mark(self):
+        """_normalize_tool_name strips trailing '?'."""
+        assert ToolExecutor._normalize_tool_name("collection_list?") == "collection_list"
+
+    def test_normalize_tool_name_no_op_on_clean_name(self):
+        """_normalize_tool_name leaves clean names unchanged."""
+        assert ToolExecutor._normalize_tool_name("collection_list") == "collection_list"

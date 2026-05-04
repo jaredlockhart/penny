@@ -168,8 +168,19 @@ class ToolExecutor:
             f"Please call the tool again with all required parameters."
         )
 
+    @staticmethod
+    def _normalize_tool_name(name: str) -> str:
+        """Strip trailing punctuation that models append to signal uncertainty (e.g. '?')."""
+        return name.rstrip("?!")
+
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call."""
+        normalized = self._normalize_tool_name(tool_call.tool)
+        if normalized != tool_call.tool:
+            logger.warning(
+                "Stripped trailing punctuation from tool name: %r → %r", tool_call.tool, normalized
+            )
+            tool_call = ToolCall(tool=normalized, arguments=tool_call.arguments, id=tool_call.id)
         tool = self.registry.get(tool_call.tool)
         if tool is None:
             return self._tool_not_found_result(tool_call)

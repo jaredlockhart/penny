@@ -206,6 +206,10 @@ class ExistsArgs(BaseModel):
     key: str | None = None
 
 
+class EmptyArgs(BaseModel):
+    """No-parameter args for tools that take no arguments."""
+
+
 class DoneArgs(BaseModel):
     """Cycle terminator — pair the exit with a success flag and a summary.
 

@@ -19,6 +19,7 @@ from penny.tools.memory_tools import (
     CollectionDeleteEntryTool,
     CollectionGetTool,
     CollectionKeysTool,
+    CollectionListTool,
     CollectionMergeTool,
     CollectionMoveTool,
     CollectionReadRandomTool,
@@ -708,6 +709,7 @@ class TestFactory:
             "collection_unarchive",
             "log_create",
             # Reads
+            "collection_list",
             "collection_get",
             "collection_read_random",
             "collection_keys",
@@ -727,6 +729,7 @@ class TestFactory:
         names = {tool.name for tool in tools}
         # Reads + entry mutations (pinned to scope) + log_append; no lifecycle
         assert names == {
+            "collection_list",
             "collection_get",
             "collection_read_random",
             "collection_keys",
@@ -817,3 +820,55 @@ class TestScopedFactory:
         delete = CollectionDeleteEntryTool(db, scope="likes")
         result = await delete.execute(memory="dislikes", key="k")
         assert "Refused" in result
+
+
+class TestCollectionListTool:
+    """collection_list returns all non-archived memories with metadata."""
+
+    @pytest.mark.asyncio
+    async def test_empty_returns_sentinel(self, tmp_path):
+        db = _make_db(tmp_path)
+        result = await CollectionListTool(db).execute()
+        assert result == "(no memories)"
+
+    @pytest.mark.asyncio
+    async def test_lists_collections_with_metadata(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="alpha", description="first", recall="off")
+        await CollectionCreateTool(db).execute(name="beta", description="second", recall="off")
+        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="t").execute(
+            memory="alpha", entries=[{"key": "k", "content": "v"}]
+        )
+
+        result = await CollectionListTool(db).execute()
+
+        assert "alpha" in result
+        assert "beta" in result
+        assert "1 entries" in result  # alpha has one entry
+        assert "0 entries" in result  # beta is empty
+        assert "first" in result
+        assert "second" in result
+
+    @pytest.mark.asyncio
+    async def test_excludes_archived_memories(self, tmp_path):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="visible", description="keep", recall="off")
+        await CollectionCreateTool(db).execute(name="hidden", description="gone", recall="off")
+        await CollectionArchiveTool(db).execute(memory="hidden")
+
+        result = await CollectionListTool(db).execute()
+
+        assert "visible" in result
+        assert "hidden" not in result
+
+    @pytest.mark.asyncio
+    async def test_sorted_alphabetically(self, tmp_path):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="zebra", description="z", recall="off")
+        await CollectionCreateTool(db).execute(name="apple", description="a", recall="off")
+
+        result = await CollectionListTool(db).execute()
+        lines = result.splitlines()
+
+        assert lines[0].startswith("- apple")
+        assert lines[1].startswith("- zebra")
