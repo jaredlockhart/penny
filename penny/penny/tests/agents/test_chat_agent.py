@@ -196,6 +196,11 @@ Only browse if memory \
 doesn't have what the user needs, or for current/external info \
 (news, products, prices, fresh facts).
 
+You cannot write, update, or delete memory entries — ``collection_write``, \
+``update_entry``, ``collection_delete_entry``, ``collection_move``, and \
+``log_append`` are not in your tool list. Entries are written automatically \
+by background collector agents.
+
 When the user wants to start tracking a new topic — a trip, project, \
 list of recipes, anything — call ``collection_create`` with a clear \
 ``extraction_prompt``. The extraction_prompt is the brain of a \
@@ -1025,6 +1030,37 @@ async def test_chat_tool_surface_excludes_entry_mutations(
         assert "read_similar" in names
         assert "collection_get" in names
         assert "collection_keys" in names
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_prohibits_collection_write(
+    signal_server, mock_llm, test_config, test_user_info, running_penny
+):
+    """The chat system prompt must explicitly name collection_write as unavailable.
+
+    Structural enforcement (tool absent from registry) stops hallucinated writes
+    at execution time, but the model still wastes an agentic-loop step before
+    it self-corrects.  An explicit prompt-level prohibition reduces the chance
+    the model attempts the call in the first place.  Regression for #1077.
+    """
+    mock_llm.set_default_flow(final_response="sure! 👍")
+
+    async with running_penny(test_config):
+        await signal_server.push_message(
+            sender=TEST_SENDER,
+            content="add this to my collection",
+        )
+        await signal_server.wait_for_message(timeout=10.0)
+
+    first_request = mock_llm.requests[0]
+    messages = first_request.get("messages", [])
+    system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
+    assert "collection_write" in system_text, (
+        "CONVERSATION_PROMPT should explicitly name collection_write as unavailable in chat"
+    )
+    assert "cannot write" in system_text.lower(), (
+        "CONVERSATION_PROMPT should tell the model it cannot write memory entries"
+    )
 
 
 # ── 7. Quote-reply handling ───────────────────────────────────────────────
