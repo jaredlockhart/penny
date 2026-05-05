@@ -6,7 +6,7 @@ from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
-from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.base import Tool, ToolCall, ToolExecutor, ToolRegistry
 
 
 class StubSearchTool(Tool):
@@ -96,6 +96,84 @@ class TestToolNotFound:
         assert "search" in error_content.lower()  # The actual tool name
 
         await agent.close()
+
+    def test_find_similar_tool_returns_suffix_match(self):
+        """_find_similar_tool returns the tool that ends with _{name}."""
+        result = ToolExecutor._find_similar_tool("read_next", ["log_read_next", "collection_write"])
+        assert result == "log_read_next"
+
+    def test_find_similar_tool_returns_tool_when_called_name_has_spurious_prefix(self):
+        """_find_similar_tool returns the tool when the LLM adds a spurious prefix."""
+        result = ToolExecutor._find_similar_tool(
+            "collection_update_entry", ["update_entry", "collection_write"]
+        )
+        assert result == "update_entry"
+
+    def test_find_similar_tool_returns_none_when_no_match(self):
+        """_find_similar_tool returns None when no tool ends with _{name}."""
+        result = ToolExecutor._find_similar_tool("search", ["browse", "log_read_next"])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_not_found_error_suggests_similar_tool(self):
+        """Tool-not-found error includes a 'Did you mean X?' hint for suffix-matched tools."""
+
+        class LogReadNextStub(Tool):
+            name = "log_read_next"
+            description = "Read next log entries"
+            parameters = {
+                "type": "object",
+                "properties": {"memory": {"type": "string"}},
+                "required": ["memory"],
+            }
+
+            async def execute(self, **kwargs):
+                return "entries"
+
+        registry = ToolRegistry()
+        registry.register(LogReadNextStub())
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(
+            ToolCall(tool="read_next", arguments={"memory": "user-messages"})
+        )
+
+        assert result.error is not None
+        assert "Did you mean 'log_read_next'?" in result.error
+
+    @pytest.mark.asyncio
+    async def test_not_found_error_suggests_update_entry_for_collection_update_entry(self):
+        """Tool-not-found error suggests update_entry when LLM calls collection_update_entry."""
+
+        class UpdateEntryStub(Tool):
+            name = "update_entry"
+            description = "Update an entry"
+            parameters = {
+                "type": "object",
+                "properties": {
+                    "memory": {"type": "string"},
+                    "key": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["memory", "key", "content"],
+            }
+
+            async def execute(self, **kwargs):
+                return "updated"
+
+        registry = ToolRegistry()
+        registry.register(UpdateEntryStub())
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(
+            ToolCall(
+                tool="collection_update_entry",
+                arguments={"memory": "likes", "key": "coffee", "content": "loves coffee"},
+            )
+        )
+
+        assert result.error is not None
+        assert "Did you mean 'update_entry'?" in result.error
 
 
 class StubDoneTool(Tool):

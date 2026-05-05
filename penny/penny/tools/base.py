@@ -180,19 +180,38 @@ class ToolExecutor:
 
     def _tool_not_found_result(self, tool_call: ToolCall) -> ToolResult:
         """Build error result when the requested tool doesn't exist."""
-        logger.error("Tool not found: %s", tool_call.tool)
+        logger.error("Tool not found: %s (arguments: %s)", tool_call.tool, tool_call.arguments)
         available_tools = [t.name for t in self.registry.get_all()]
         available_list = ", ".join(available_tools) if available_tools else "none"
+        suggestion = self._find_similar_tool(tool_call.tool, available_tools)
+        suggestion_hint = f" Did you mean '{suggestion}'?" if suggestion else ""
         return ToolResult(
             tool=tool_call.tool,
             result=None,
             error=(
-                f"Tool '{tool_call.tool}' not found. "
+                f"Tool '{tool_call.tool}' not found.{suggestion_hint} "
                 f"Available tools: {available_list}. "
                 f"You must ONLY use the tools listed above."
             ),
             id=tool_call.id,
         )
+
+    @staticmethod
+    def _find_similar_tool(name: str, available: list[str]) -> str | None:
+        """Return a similar tool name based on shared suffix patterns.
+
+        Handles two hallucination patterns:
+        - LLM drops a prefix: read_next → log_read_next (tool ends with _{name})
+        - LLM adds a spurious prefix: collection_update_entry → update_entry
+          (called name ends with _{tool})
+        """
+        for tool_name in available:
+            if tool_name.endswith(f"_{name}"):
+                return tool_name
+        for tool_name in available:
+            if name.endswith(f"_{tool_name}"):
+                return tool_name
+        return None
 
     def _validation_error_result(self, tool_call: ToolCall, error: str) -> ToolResult:
         """Build error result for argument validation failure."""
