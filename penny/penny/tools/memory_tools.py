@@ -194,6 +194,8 @@ class CollectionCreateTool(Tool):
         "\n"
         "- Name every tool explicitly in the steps: "
         '``log_read_next("X")``, ``collection_write("X", entries=[...])``, '
+        '``update_entry("X", key=..., content=...)``, '
+        '``collection_delete_entry("X", key=...)``, '
         "``send_message(content=...)``, ``done()``.  The collector won't "
         "call a tool the prompt doesn't name.\n"
         "- Only include ``send_message`` if the user explicitly asked for "
