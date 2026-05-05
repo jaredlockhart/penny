@@ -386,10 +386,10 @@ Each step is independently deployable. Integration tests serve as the parity har
 
 Dry-run harness at `data/collection-harness/` validates the tool surface and prompt shapes against gpt-oss:20b (Ollama, temperature 0). Four scenarios, all running end-to-end with stubbed tool implementations:
 
-- **`preference_extraction.py`** (history agent) — `read_next` + batched per-collection `write` to likes/dislikes. Cycle: 4 turns. Correctly filters non-preferences, handles dedup rejections without retry, exits cleanly.
+- **`preference_extraction.py`** (history agent) — `log_read_next` + batched per-collection `write` to likes/dislikes. Cycle: 4 turns. Correctly filters non-preferences, handles dedup rejections without retry, exits cleanly.
 - **`thinking.py`** (thinking agent) — `read_random` from likes, `read_all` from dislikes, `search`, `browse`, `exists` cross-collection check, `write`. Cycle: 6–7 turns. Validates dislike-filtering in model-space; model even steers its browse choice away from dislike-adjacent content.
 - **`notify.py`** (notifier) — `read_random` from unnotified-thoughts, `send_message`, `collection_move` to notified-thoughts. Cycle: 4 turns. Move primitive preserves key/content; empty-queue path exits in 2 turns.
-- **`knowledge.py`** (knowledge extractor) — `read_next` from browse-results (cap=1 per invocation), single-entry `write` to knowledge. Cycle: 3 turns. Each invocation processes one page; pagination happens across runs via cursor.
+- **`knowledge.py`** (knowledge extractor) — `log_read_next` from browse-results (cap=1 per invocation), single-entry `write` to knowledge. Cycle: 3 turns. Each invocation processes one page; pagination happens across runs via cursor.
 
 All harnesses use narrow single-purpose tools, explicit `done()` exit, no stray text. Validates that:
 - gpt-oss:20b handles the tool shapes reliably
