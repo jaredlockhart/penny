@@ -79,7 +79,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37
+        assert count == 38
 
         conn = sqlite3.connect(db_path)
         tables = {
@@ -119,7 +119,7 @@ class TestMigrate:
 
         count1 = migrate(db_path)
         count2 = migrate(db_path)
-        assert count1 == 37
+        assert count1 == 38
         assert count2 == 0
 
     def test_tracks_in_migrations_table(self, tmp_path):
@@ -157,8 +157,8 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        # 0001 is skipped; 0002 through 0037 run = 36 migrations
-        assert count == 36
+        # 0001 is skipped; 0002 through 0038 run = 37 migrations
+        assert count == 37
 
     def test_bootstrap_with_tables_already_present(self, tmp_path):
         """If tables already exist (from SQLModel.create_tables), migration should succeed."""
@@ -184,7 +184,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37  # all migrations applied
+        assert count == 38  # all migrations applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
@@ -236,4 +236,64 @@ class TestMigrate:
         prompt = row[0]
         assert "collection_update" not in prompt
         assert 'update_entry("knowledge", key=<title>,' in prompt
+        conn.close()
+
+    def test_0038_fixes_likes_dislikes_extraction_prompts(self, tmp_path):
+        """Migration 0038 replaces vague 'update or delete' with explicit tool names
+        in likes and dislikes extraction_prompts seeded by migration 0031."""
+        import importlib.util
+        from pathlib import Path
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        likes_old = (
+            "accurate (e.g. 'I don't actually like X anymore'), update or delete that entry."
+        )
+        dislikes_old = "applies, update or delete that entry."
+        conn.execute(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            ("likes", likes_old),
+        )
+        conn.execute(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            ("dislikes", dislikes_old),
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0038_fix_likes_dislikes_extraction_prompts.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0038", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        likes_row = conn.execute(
+            "SELECT extraction_prompt FROM memory WHERE name = 'likes'"
+        ).fetchone()
+        dislikes_row = conn.execute(
+            "SELECT extraction_prompt FROM memory WHERE name = 'dislikes'"
+        ).fetchone()
+        assert likes_row is not None
+        assert dislikes_row is not None
+        likes_prompt = likes_row[0]
+        dislikes_prompt = dislikes_row[0]
+        assert "update or delete" not in likes_prompt
+        assert 'update_entry("likes"' in likes_prompt
+        assert 'collection_delete_entry("likes"' in likes_prompt
+        assert "update or delete" not in dislikes_prompt
+        assert 'update_entry("dislikes"' in dislikes_prompt
+        assert 'collection_delete_entry("dislikes"' in dislikes_prompt
         conn.close()

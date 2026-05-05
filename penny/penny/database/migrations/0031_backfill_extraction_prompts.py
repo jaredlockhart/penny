@@ -47,8 +47,9 @@ _LIKES_PROMPT = (
     '4. Call collection_write("likes", entries=[...]) once with all '
     "extracted likes batched.\n"
     "5. If a recent message indicates an existing like is no longer "
-    "accurate (e.g. 'I don't actually like X anymore'), update or delete "
-    "that entry.\n"
+    "accurate (e.g. 'I don't actually like X anymore'), call "
+    'update_entry("likes", key=<topic>, content=<updated message>) '
+    'or collection_delete_entry("likes", key=<topic>).\n'
     "6. Call done().\n\n"
     "Frustration about NOT FINDING something the user wants is a LIKE "
     "for that thing.  If no likes appear in the new messages, just call "
@@ -72,7 +73,8 @@ _DISLIKES_PROMPT = (
     '4. Call collection_write("dislikes", entries=[...]) once with all '
     "extracted dislikes batched.\n"
     "5. If a recent message indicates an existing dislike no longer "
-    "applies, update or delete that entry.\n"
+    'applies, call update_entry("dislikes", key=<topic>, '
+    'content=<updated message>) or collection_delete_entry("dislikes", key=<topic>).\n'
     "6. Call done().\n\n"
     "Frustration about NOT FINDING something the user wants is a LIKE "
     "for that thing, not a dislike — leave it for the likes collector. "
