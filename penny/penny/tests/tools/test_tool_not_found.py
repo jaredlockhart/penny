@@ -6,7 +6,7 @@ from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
-from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.base import Tool, ToolCall, ToolExecutor, ToolRegistry
 
 
 class StubSearchTool(Tool):
@@ -96,6 +96,53 @@ class TestToolNotFound:
         assert "search" in error_content.lower()  # The actual tool name
 
         await agent.close()
+
+    def test_find_similar_tool_returns_suffix_match(self):
+        """_find_similar_tool returns the tool that ends with _{name}."""
+        result = ToolExecutor._find_similar_tool("delete_entry", ["collection_delete_entry"])
+        assert result == "collection_delete_entry"
+
+    def test_find_similar_tool_returns_tool_when_called_name_has_spurious_prefix(self):
+        """_find_similar_tool returns the tool when the LLM adds a spurious prefix."""
+        result = ToolExecutor._find_similar_tool(
+            "collection_update_entry", ["update_entry", "collection_write"]
+        )
+        assert result == "update_entry"
+
+    def test_find_similar_tool_returns_none_when_no_match(self):
+        """_find_similar_tool returns None when no similar tool exists."""
+        result = ToolExecutor._find_similar_tool("search", ["browse", "log_read_next"])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_not_found_error_suggests_collection_delete_entry_for_delete_entry(self):
+        """Tool-not-found error suggests collection_delete_entry when LLM calls delete_entry."""
+
+        class CollectionDeleteEntryStub(Tool):
+            name = "collection_delete_entry"
+            description = "Delete a collection entry"
+            parameters = {
+                "type": "object",
+                "properties": {
+                    "memory": {"type": "string"},
+                    "key": {"type": "string"},
+                },
+                "required": ["memory", "key"],
+            }
+
+            async def execute(self, **kwargs):
+                return "deleted"
+
+        registry = ToolRegistry()
+        registry.register(CollectionDeleteEntryStub())
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(
+            ToolCall(tool="delete_entry", arguments={"memory": "likes", "key": "coffee"})
+        )
+
+        assert result.error is not None
+        assert "Did you mean 'collection_delete_entry'?" in result.error
 
 
 class StubDoneTool(Tool):

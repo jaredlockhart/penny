@@ -207,8 +207,8 @@ surface. Just create the collection, mention it in your reply \
 conversation; the collector does the rest in the background. A \
 good extraction_prompt names what to extract, which logs to read \
 (usually penny-messages and browse-results for research topics), \
-and how to handle corrections (update or delete stale entries when \
-the user flags them).
+and how to handle corrections (``update_entry`` or \
+``collection_delete_entry`` when the user flags stale entries).
 
 When a 'Current Browser Page' section appears above, the user is browsing \
 that page right now. If they say 'this page', 'this thread', 'this article', \
