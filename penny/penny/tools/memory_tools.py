@@ -365,7 +365,8 @@ class ReadLatestTool(Tool):
     name = "read_latest"
     description = (
         "Return the newest entries in a memory, newest first. Works for "
-        "both collections and logs. Omit ``k`` to return every entry."
+        "both collections and logs — use ``read_latest``, not "
+        "``collection_read_latest``. Omit ``k`` to return every entry."
     )
     parameters = {
         "type": "object",
