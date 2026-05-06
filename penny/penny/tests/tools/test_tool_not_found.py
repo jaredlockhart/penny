@@ -6,7 +6,7 @@ from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
-from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.base import Tool, ToolCall, ToolExecutor, ToolRegistry
 
 
 class StubSearchTool(Tool):
@@ -96,6 +96,50 @@ class TestToolNotFound:
         assert "search" in error_content.lower()  # The actual tool name
 
         await agent.close()
+
+    def test_find_similar_tool_suffix_match(self):
+        """_find_similar_tool returns the tool that ends with _{name} (LLM drops prefix)."""
+        result = ToolExecutor._find_similar_tool("read_next", ["log_read_next", "collection_write"])
+        assert result == "log_read_next"
+
+    def test_find_similar_tool_spurious_prefix_match(self):
+        """_find_similar_tool returns the base tool when LLM adds a spurious prefix."""
+        result = ToolExecutor._find_similar_tool(
+            "collection_read_latest", ["read_latest", "collection_write"]
+        )
+        assert result == "read_latest"
+
+    def test_find_similar_tool_returns_none_when_no_match(self):
+        """_find_similar_tool returns None when no tool name is similar."""
+        result = ToolExecutor._find_similar_tool("search", ["browse", "log_read_next"])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_not_found_error_suggests_read_latest_for_collection_read_latest(self):
+        """Tool-not-found error includes 'Did you mean read_latest?' for collection_read_latest."""
+
+        class ReadLatestStub(Tool):
+            name = "read_latest"
+            description = "Return the newest entries in a memory"
+            parameters = {
+                "type": "object",
+                "properties": {"memory": {"type": "string"}},
+                "required": ["memory"],
+            }
+
+            async def execute(self, **kwargs):
+                return "entries"
+
+        registry = ToolRegistry()
+        registry.register(ReadLatestStub())
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(
+            ToolCall(tool="collection_read_latest", arguments={"memory": "likes"})
+        )
+
+        assert result.error is not None
+        assert "Did you mean 'read_latest'?" in result.error
 
 
 class StubDoneTool(Tool):
