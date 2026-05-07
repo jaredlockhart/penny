@@ -98,6 +98,79 @@ class TestToolNotFound:
         await agent.close()
 
 
+class DoneStub(Tool):
+    """Stub for the 'done' terminator tool — used in dot-normalization tests."""
+
+    name = "done"
+    description = "Signal cycle completion"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "success": {"type": "boolean", "description": "True if cycle succeeded."},
+            "summary": {"type": "string", "description": "One-sentence summary."},
+        },
+        "required": ["success", "summary"],
+    }
+
+    async def execute(self, **kwargs):
+        return "done"
+
+
+class TestLeadingDotNormalization:
+    """Leading dot in LLM-emitted tool names is stripped at parse time."""
+
+    @pytest.mark.asyncio
+    async def test_dot_prefixed_done_terminates_loop(self, test_db, mock_llm):
+        """Agent loop terminates correctly when LLM calls '.done' instead of 'done'."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[DoneStub()],
+            db=db,
+            config=config,
+        )
+
+        def handler(request, count):
+            # LLM hallucinates ".done" instead of "done"
+            return mock_llm._make_tool_call_response(
+                request, ".done", {"success": True, "summary": "cycle complete"}
+            )
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test", max_steps=5)
+
+        # Loop stops after the first tool call — only 1 LLM call made
+        assert len(mock_llm.requests) == 1
+        # Record carries the normalised name and is not failed
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].tool == "done"
+        assert not response.tool_calls[0].failed
+
+        await agent.close()
+
+
 class StubDoneTool(Tool):
     """Stub tool with two required typed+described parameters."""
 
