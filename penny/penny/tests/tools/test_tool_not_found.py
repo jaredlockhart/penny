@@ -98,6 +98,79 @@ class TestToolNotFound:
         await agent.close()
 
 
+class StubCollectionWriteTool(Tool):
+    """Stub for collection_write — used in pluralised-name normalization tests."""
+
+    name = "collection_write"
+    description = "Write entries to a collection"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string", "description": "Collection name."},
+            "entries": {"type": "array", "description": "Entries to write.", "items": {}},
+        },
+        "required": ["memory", "entries"],
+    }
+
+    async def execute(self, **kwargs):
+        return "ok"
+
+
+class TestPluralisedToolNameNormalization:
+    """collections_* tool names are normalised to collection_* at parse time."""
+
+    @pytest.mark.asyncio
+    async def test_collections_write_resolves_to_collection_write(self, test_db, mock_llm):
+        """Agent executes collection_write when LLM calls 'collections_write' (plural)."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[StubCollectionWriteTool()],
+            db=db,
+            config=config,
+        )
+
+        def handler(request, count):
+            if count == 1:
+                # LLM pluralises "collection_write" → "collections_write"
+                return mock_llm._make_tool_call_response(
+                    request, "collections_write", {"memory": "likes", "entries": []}
+                )
+            return mock_llm._make_text_response(request, "Done.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test", max_steps=3)
+
+        # Tool should have been found and executed (not returned a "not found" error)
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].tool == "collection_write"
+        assert not response.tool_calls[0].failed
+
+        await agent.close()
+
+
 class StubDoneTool(Tool):
     """Stub tool with two required typed+described parameters."""
 
