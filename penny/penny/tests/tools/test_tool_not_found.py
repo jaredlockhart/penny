@@ -98,6 +98,77 @@ class TestToolNotFound:
         await agent.close()
 
 
+class StubReadLatestTool(Tool):
+    """Stub for read_latest — used in reader-alias normalization tests."""
+
+    name = "read_latest"
+    description = "Return the newest entries in a memory"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string", "description": "Memory name."},
+            "k": {"type": "integer", "description": "Max entries; omit for all"},
+        },
+        "required": ["memory"],
+    }
+
+    async def execute(self, **kwargs):
+        return "ok"
+
+
+class TestReaderToolNameNormalization:
+    """'reader' tool name is normalised to 'read_latest' at parse time."""
+
+    @pytest.mark.asyncio
+    async def test_reader_resolves_to_read_latest(self, test_db, mock_llm):
+        """Agent executes read_latest when LLM calls 'reader' (hallucinated alias)."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[StubReadLatestTool()],
+            db=db,
+            config=config,
+        )
+
+        def handler(request, count):
+            if count == 1:
+                # LLM hallucinates "reader" instead of "read_latest"
+                return mock_llm._make_tool_call_response(request, "reader", {"memory": "likes"})
+            return mock_llm._make_text_response(request, "Done.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test", max_steps=3)
+
+        # Tool should have been found and executed (not returned a "not found" error)
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].tool == "read_latest"
+        assert not response.tool_calls[0].failed
+
+        await agent.close()
+
+
 class StubDoneTool(Tool):
     """Stub tool with two required typed+described parameters."""
 

@@ -812,6 +812,9 @@ class Agent:
         for tool_call in response.message.tool_calls or []:
             tool_call_id = tool_call.id
             tool_name = tool_call.function.name
+            if tool_name == "reader":
+                logger.warning("Normalised tool name %r → %r", tool_name, "read_latest")
+                tool_name = "read_latest"
             arguments = tool_call.function.arguments
             # Pop reasoning before dedup (same args + different reasoning = repeat)
             reasoning = arguments.pop("reasoning", None)
