@@ -79,7 +79,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37
+        assert count == 38
 
         conn = sqlite3.connect(db_path)
         tables = {
@@ -119,7 +119,7 @@ class TestMigrate:
 
         count1 = migrate(db_path)
         count2 = migrate(db_path)
-        assert count1 == 37
+        assert count1 == 38
         assert count2 == 0
 
     def test_tracks_in_migrations_table(self, tmp_path):
@@ -157,8 +157,8 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        # 0001 is skipped; 0002 through 0037 run = 36 migrations
-        assert count == 36
+        # 0001 is skipped; 0002 through 0037 and 0039 run = 37 migrations
+        assert count == 37
 
     def test_bootstrap_with_tables_already_present(self, tmp_path):
         """If tables already exist (from SQLModel.create_tables), migration should succeed."""
@@ -184,12 +184,55 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37  # all migrations applied
+        assert count == 38  # all migrations applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
         applied = {row[0] for row in cursor.fetchall()}
         assert "0001_initial_schema" in applied
+        conn.close()
+
+    def test_0039_fixes_read_recent_in_extraction_prompts(self, tmp_path):
+        """Migration 0039 replaces read_recent( with log_read_recent( in extraction prompts."""
+        import importlib.util
+        from pathlib import Path
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        broken_prompt = 'Call read_recent("user-messages", 300) to fetch recent entries.'
+        conn.execute(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            ("my-collection", broken_prompt),
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0039_fix_read_recent_in_extraction_prompts.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0039", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT extraction_prompt FROM memory WHERE name = 'my-collection'"
+        ).fetchone()
+        assert row is not None
+        prompt = row[0]
+        assert 'log_read_recent("user-messages", 300)' in prompt
+        assert "read_recent(" not in prompt.replace("log_read_recent(", "")
         conn.close()
 
     def test_0037_fixes_knowledge_extraction_prompt(self, tmp_path):
