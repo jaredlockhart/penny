@@ -279,6 +279,9 @@ class LlmClient:
             model=raw.model,
         )
 
+    # Strips Qwen-style special tokens (e.g. <|channel|>) and any trailing text from tool names.
+    _SPECIAL_TOKEN_PATTERN = re.compile(r"<\|[^|]*\|>.*")
+
     @staticmethod
     def _parse_tool_call(tool_call: openai.types.chat.ChatCompletionMessageToolCall) -> LlmToolCall:
         """Parse a single OpenAI tool call, deserializing JSON arguments."""
@@ -293,10 +296,15 @@ class LlmClient:
                 )
                 arguments = LlmClient._extract_malformed_arguments(tool_call.function.arguments)
 
+        raw_name = tool_call.function.name
+        name = LlmClient._SPECIAL_TOKEN_PATTERN.sub("", raw_name).strip()
+        if name != raw_name:
+            logger.warning("Stripped special token from tool name: %r → %r", raw_name, name)
+
         return LlmToolCall(
             id=tool_call.id,
             function=LlmToolCallFunction(
-                name=tool_call.function.name,
+                name=name,
                 arguments=arguments,
             ),
         )
