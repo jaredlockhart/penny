@@ -260,7 +260,9 @@ class LlmClient:
 
         tool_calls = None
         if message.tool_calls:
-            tool_calls = [self._parse_tool_call(tc) for tc in message.tool_calls]
+            parsed = [self._parse_tool_call(tc) for tc in message.tool_calls]
+            valid = [tc for tc in parsed if tc is not None]
+            tool_calls = valid if valid else None
 
         # Reasoning fields are non-standard extensions (Ollama uses
         # ``reasoning_content``, newer OpenAI ``reasoning``). They land in
@@ -280,8 +282,20 @@ class LlmClient:
         )
 
     @staticmethod
-    def _parse_tool_call(tool_call: openai.types.chat.ChatCompletionMessageToolCall) -> LlmToolCall:
-        """Parse a single OpenAI tool call, deserializing JSON arguments."""
+    def _parse_tool_call(
+        tool_call: openai.types.chat.ChatCompletionMessageToolCall,
+    ) -> LlmToolCall | None:
+        """Parse a single OpenAI tool call, deserializing JSON arguments.
+
+        Returns None for tool calls whose name contains non-identifier characters
+        (e.g. ``..commentary?``). This happens when a model emits a pseudo-XML block
+        such as ``<commentary>`` that the SDK misparses as a tool call.
+        """
+        name = tool_call.function.name
+        if not LlmClient._VALID_TOOL_NAME.match(name):
+            logger.warning("Malformed tool call name (discarding): %r", name)
+            return None
+
         arguments = {}
         if tool_call.function.arguments:
             try:
@@ -296,10 +310,13 @@ class LlmClient:
         return LlmToolCall(
             id=tool_call.id,
             function=LlmToolCallFunction(
-                name=tool_call.function.name,
+                name=name,
                 arguments=arguments,
             ),
         )
+
+    # Valid tool names: letters, digits, underscores, hyphens only
+    _VALID_TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
 
     # Regex to extract quoted strings from a queries array
     _QUERY_PATTERN = re.compile(r'"queries"\s*:\s*\[([^\]]*)', re.DOTALL)
