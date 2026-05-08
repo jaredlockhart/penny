@@ -221,3 +221,96 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class _FakeFunction:
+    """Minimal stand-in for openai ChatCompletionMessageToolCall.function."""
+
+    def __init__(self, name: str, arguments: str = "{}"):
+        self.name = name
+        self.arguments = arguments
+
+
+class _FakeToolCall:
+    """Minimal stand-in for openai ChatCompletionMessageToolCall."""
+
+    def __init__(self, name: str, arguments: str = "{}"):
+        self.id = "call_test"
+        self.function = _FakeFunction(name, arguments)
+
+
+class TestMalformedToolCallName:
+    """Tool call names containing non-identifier characters are discarded at parse time."""
+
+    def test_parse_tool_call_rejects_non_identifier_name(self):
+        """_parse_tool_call returns None for names like '..commentary?'."""
+        result = LlmClient._parse_tool_call(_FakeToolCall("..commentary?"))
+        assert result is None
+
+    def test_parse_tool_call_rejects_trailing_question_mark(self):
+        """_parse_tool_call returns None for names like 'write?' (issue #1095)."""
+        result = LlmClient._parse_tool_call(_FakeToolCall("write?"))
+        assert result is None
+
+    def test_parse_tool_call_accepts_valid_name(self):
+        """_parse_tool_call returns an LlmToolCall for standard names."""
+        result = LlmClient._parse_tool_call(_FakeToolCall("search", '{"query": "test"}'))
+        assert result is not None
+        assert result.function.name == "search"
+
+    @pytest.mark.asyncio
+    async def test_malformed_tool_name_not_dispatched_to_executor(self, test_db, mock_llm):
+        """Malformed tool call names are discarded — no 'tool not found' error reaches the model.
+
+        Simulates the '..commentary?' artifact reported in issue #1093.
+        """
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        search_tool = StubSearchTool()
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[search_tool],
+            db=db,
+            config=config,
+        )
+
+        messages_sent = []
+
+        def handler(request: dict, count: int):
+            messages_sent.append(request["messages"])
+            if count == 1:
+                # Simulate the LLM emitting a pseudo-XML commentary artifact
+                return mock_llm._make_tool_call_response(request, "..commentary?", {})
+            return mock_llm._make_text_response(request, "All good.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test", max_steps=3)
+
+        assert response.answer is not None
+        # The malformed call was discarded — no tool-role error messages passed back
+        for call_messages in messages_sent:
+            tool_messages = [m for m in call_messages if m.get("role") == "tool"]
+            assert all("not found" not in m.get("content", "").lower() for m in tool_messages)
+
+        await agent.close()
