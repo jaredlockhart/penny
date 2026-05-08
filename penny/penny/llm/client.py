@@ -282,6 +282,12 @@ class LlmClient:
     @staticmethod
     def _parse_tool_call(tool_call: openai.types.chat.ChatCompletionMessageToolCall) -> LlmToolCall:
         """Parse a single OpenAI tool call, deserializing JSON arguments."""
+        name = tool_call.function.name
+        sanitized = LlmClient._TRAILING_PUNCT.sub("", name)
+        if sanitized != name:
+            logger.warning(
+                "Trailing punctuation stripped from tool call name: %r -> %r", name, sanitized
+            )
         arguments = {}
         if tool_call.function.arguments:
             try:
@@ -296,11 +302,13 @@ class LlmClient:
         return LlmToolCall(
             id=tool_call.id,
             function=LlmToolCallFunction(
-                name=tool_call.function.name,
+                name=sanitized,
                 arguments=arguments,
             ),
         )
 
+    # Trailing punctuation that models sometimes append to tool names (e.g. "log_read_next?")
+    _TRAILING_PUNCT = re.compile(r"[?!.,;:]+$")
     # Regex to extract quoted strings from a queries array
     _QUERY_PATTERN = re.compile(r'"queries"\s*:\s*\[([^\]]*)', re.DOTALL)
     _QUOTED_STRING = re.compile(r'"([^"]+)"')
