@@ -716,7 +716,7 @@ class TestFactory:
             "log_read_next",
             "read_latest",
             "read_similar",
-            "exists",
+            "memory_exists",
         }
 
     def test_collector_surface_has_scoped_writes_and_reads(self, tmp_path, mock_llm):
@@ -735,7 +735,7 @@ class TestFactory:
             "log_read_next",
             "read_latest",
             "read_similar",
-            "exists",
+            "memory_exists",
             "collection_write",
             "update_entry",
             "collection_delete_entry",

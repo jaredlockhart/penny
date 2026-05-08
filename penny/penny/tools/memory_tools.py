@@ -989,7 +989,7 @@ class LogAppendTool(Tool):
 class ExistsTool(Tool):
     """Probe whether an equivalent entry already exists across a set of memories."""
 
-    name = "exists"
+    name = "memory_exists"
     description = (
         "Check whether an entry equivalent to the given key/content already "
         "exists in any of the listed memories. Uses the same similarity-based "
