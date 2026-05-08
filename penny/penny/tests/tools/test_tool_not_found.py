@@ -98,6 +98,43 @@ class TestToolNotFound:
         await agent.close()
 
 
+class StubLogReadRecentTool(Tool):
+    """Stub for log_read_recent — used in close-match suggestion tests."""
+
+    name = "log_read_recent"
+    description = "Return entries created within the past window_seconds seconds"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string", "description": "Memory name."},
+            "window_seconds": {"type": "integer", "description": "Lookback window."},
+        },
+        "required": ["memory", "window_seconds"],
+    }
+
+    async def execute(self, **kwargs):
+        return "entries"
+
+
+class TestToolNotFoundSuggestionReadRecent:
+    """'read_recent' (without log_ prefix) suggests 'log_read_recent'."""
+
+    @pytest.mark.asyncio
+    async def test_did_you_mean_for_read_recent(self):
+        """'read_recent' produces a 'Did you mean log_read_recent?' suggestion."""
+        from penny.tools.models import ToolCall
+
+        registry = ToolRegistry()
+        registry.register(StubLogReadRecentTool())
+        executor = ToolExecutor(registry, timeout=30.0)
+
+        tool_call = ToolCall(tool="read_recent", arguments={})
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "Did you mean 'log_read_recent'?" in result.error
+
+
 class StubDoneTool(Tool):
     """Stub tool with two required typed+described parameters."""
 
