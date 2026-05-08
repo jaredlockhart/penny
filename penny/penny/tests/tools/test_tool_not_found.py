@@ -221,3 +221,114 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class _FakeFunction:
+    """Minimal stand-in for openai ChatCompletionMessageToolCall.function."""
+
+    def __init__(self, name: str, arguments: str = "{}"):
+        self.name = name
+        self.arguments = arguments
+
+
+class _FakeToolCall:
+    """Minimal stand-in for openai ChatCompletionMessageToolCall."""
+
+    def __init__(self, name: str, arguments: str = "{}"):
+        self.id = "call_test"
+        self.function = _FakeFunction(name, arguments)
+
+
+class StubLogTool(Tool):
+    """Stub tool named log_read_next for testing trailing-punctuation recovery."""
+
+    name = "log_read_next"
+    description = "Read the next log entry"
+    parameters = {"type": "object", "properties": {}, "required": []}
+
+    async def execute(self, **kwargs):
+        return "log entry"
+
+
+class TestTrailingPunctuationStripping:
+    """Trailing punctuation on tool call names is stripped, not discarded."""
+
+    def test_trailing_question_mark_stripped(self):
+        """log_read_next? is normalized to log_read_next."""
+        result = LlmClient._parse_tool_call(_FakeToolCall("log_read_next?"))
+        assert result is not None
+        assert result.function.name == "log_read_next"
+
+    def test_trailing_period_stripped(self):
+        """search. is normalized to search."""
+        result = LlmClient._parse_tool_call(_FakeToolCall("search."))
+        assert result is not None
+        assert result.function.name == "search"
+
+    def test_multiple_trailing_punct_stripped(self):
+        """Runs of trailing punctuation are all removed."""
+        result = LlmClient._parse_tool_call(_FakeToolCall("search?!"))
+        assert result is not None
+        assert result.function.name == "search"
+
+    def test_valid_name_unchanged(self):
+        """Names with no trailing punctuation pass through unchanged."""
+        result = LlmClient._parse_tool_call(_FakeToolCall("search", '{"query": "test"}'))
+        assert result is not None
+        assert result.function.name == "search"
+
+    @pytest.mark.asyncio
+    async def test_trailing_punct_tool_is_executed_not_errored(self, test_db, mock_llm):
+        """Tool call with trailing ? is executed successfully rather than returning not-found.
+
+        Simulates the log_read_next? artifact reported in issue #1096.
+        """
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        log_tool = StubLogTool()
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[log_tool],
+            db=db,
+            config=config,
+        )
+
+        messages_sent = []
+
+        def handler(request: dict, count: int):
+            messages_sent.append(request["messages"])
+            if count == 1:
+                return mock_llm._make_tool_call_response(request, "log_read_next?", {})
+            return mock_llm._make_text_response(request, "Done.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test", max_steps=3)
+
+        assert response.answer is not None
+        # The tool was executed — no "not found" error in any tool message
+        for call_messages in messages_sent:
+            tool_messages = [m for m in call_messages if m.get("role") == "tool"]
+            assert all("not found" not in m.get("content", "").lower() for m in tool_messages)
+
+        await agent.close()
