@@ -181,6 +181,7 @@ class ToolExecutor:
     def _tool_not_found_result(self, tool_call: ToolCall) -> ToolResult:
         """Build error result when the requested tool doesn't exist."""
         logger.error("Tool not found: %s", tool_call.tool)
+        logger.debug("Malformed tool call payload: %s", tool_call)
         available_tools = [t.name for t in self.registry.get_all()]
         available_list = ", ".join(available_tools) if available_tools else "none"
         return ToolResult(
