@@ -98,6 +98,26 @@ class TestToolNotFound:
         await agent.close()
 
 
+class TestMalformedToolNames:
+    """ToolExecutor handles malformed tool names (LLM hallucinations) gracefully."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("malformed_name", ["collections…...???", "...?"])
+    async def test_malformed_names_return_not_found_error(self, malformed_name):
+        """Malformed tool names from the bug report produce a not-found error with tool list."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        from penny.tools.models import ToolCall
+
+        result = await executor.execute(ToolCall(tool=malformed_name, arguments={}))
+
+        assert result.error is not None
+        assert "not found" in result.error
+        assert "search" in result.error
+
+
 class StubDoneTool(Tool):
     """Stub tool with two required typed+described parameters."""
 
