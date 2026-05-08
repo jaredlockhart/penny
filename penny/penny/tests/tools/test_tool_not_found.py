@@ -247,6 +247,11 @@ class TestMalformedToolCallName:
         result = LlmClient._parse_tool_call(_FakeToolCall("..commentary?"))
         assert result is None
 
+    def test_parse_tool_call_rejects_trailing_question_mark(self):
+        """_parse_tool_call returns None for names like 'write?' (issue #1095)."""
+        result = LlmClient._parse_tool_call(_FakeToolCall("write?"))
+        assert result is None
+
     def test_parse_tool_call_accepts_valid_name(self):
         """_parse_tool_call returns an LlmToolCall for standard names."""
         result = LlmClient._parse_tool_call(_FakeToolCall("search", '{"query": "test"}'))
