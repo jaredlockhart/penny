@@ -98,6 +98,78 @@ class TestToolNotFound:
         await agent.close()
 
 
+class StubLogReadNextTool(Tool):
+    """Stub for log_read_next — used in special token sanitization tests."""
+
+    name = "log_read_next"
+    description = "Return the next unread log entries"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string", "description": "Memory name."},
+        },
+        "required": ["memory"],
+    }
+
+    async def execute(self, **kwargs):
+        return "entries"
+
+
+class TestSpecialTokenSanitization:
+    """Qwen-style special tokens are stripped from tool names before registry lookup."""
+
+    @pytest.mark.asyncio
+    async def test_special_token_stripped_from_tool_name(self, test_db, mock_llm):
+        """Tool executes correctly when LLM emits a Qwen special token in the name."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[StubLogReadNextTool()],
+            db=db,
+            config=config,
+        )
+
+        def handler(request, count):
+            if count == 1:
+                # LLM emits tool name contaminated with a Qwen special token
+                return mock_llm._make_tool_call_response(
+                    request, "log_read_next<|channel|>commentary", {"memory": "browse-results"}
+                )
+            return mock_llm._make_text_response(request, "Done.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test", max_steps=3)
+
+        # Tool should have been found and executed (not returned a "not found" error)
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].tool == "log_read_next"
+        assert not response.tool_calls[0].failed
+
+        await agent.close()
+
+
 class StubDoneTool(Tool):
     """Stub tool with two required typed+described parameters."""
 
