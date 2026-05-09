@@ -49,7 +49,7 @@ class Prompt:
         "that page right now. If they say 'this page', 'this thread', 'this article', "
         "or anything ambiguous, they mean the Current Browser Page — not something "
         "from earlier in the conversation.\n\n"
-        "How to use the browse tool:\n"
+        "How to use the `browse` tool:\n"
         "1. If the user gave you URLs, read them directly — pass the URLs in the "
         "queries array. Do NOT search for a site the user already linked.\n"
         "2. If the user gave you a topic (no URLs), search first to discover "
