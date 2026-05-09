@@ -293,10 +293,15 @@ class LlmClient:
                 )
                 arguments = LlmClient._extract_malformed_arguments(tool_call.function.arguments)
 
+        raw_name = tool_call.function.name or ""
+        name = LlmClient._sanitize_tool_name(raw_name)
+        if name != raw_name:
+            logger.warning("Sanitized malformed tool name %r → %r", raw_name, name)
+
         return LlmToolCall(
             id=tool_call.id,
             function=LlmToolCallFunction(
-                name=tool_call.function.name,
+                name=name,
                 arguments=arguments,
             ),
         )
@@ -304,6 +309,10 @@ class LlmClient:
     # Regex to extract quoted strings from a queries array
     _QUERY_PATTERN = re.compile(r'"queries"\s*:\s*\[([^\]]*)', re.DOTALL)
     _QUOTED_STRING = re.compile(r'"([^"]+)"')
+
+    # Tool name sanitization: split at first ellipsis, strip non-identifier edge chars
+    _TOOL_NAME_ELLIPSIS = re.compile(r"…|\.\.\.")
+    _TOOL_NAME_EDGE_STRIP = re.compile(r"^[^a-zA-Z0-9_]+|[^a-zA-Z0-9_]+$")
 
     @staticmethod
     def _extract_malformed_arguments(raw: str) -> dict[str, Any]:
@@ -317,6 +326,17 @@ class LlmClient:
             if items:
                 return {"queries": items}
         return {}
+
+    @staticmethod
+    def _sanitize_tool_name(name: str) -> str:
+        """Strip LLM prose fragments from a tool name.
+
+        Truncates at the first ellipsis (unicode … or ASCII ...) then strips
+        non-identifier characters from both edges. Converts e.g.
+        "collection_write…Wait" → "collection_write" and "...Wait" → "".
+        """
+        name = LlmClient._TOOL_NAME_ELLIPSIS.split(name)[0]
+        return LlmClient._TOOL_NAME_EDGE_STRIP.sub("", name)
 
     # ── Internal: logging ────────────────────────────────────────────────
 
