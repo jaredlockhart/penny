@@ -221,3 +221,62 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class TestToolNameSanitization:
+    """Tool names with trailing/leading punctuation are sanitized before dispatch."""
+
+    @pytest.mark.asyncio
+    async def test_trailing_punctuation_stripped_tool_executes(self, test_db, mock_llm):
+        """Tool name 'search?' is sanitized to 'search' and the tool executes successfully."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        search_tool = StubSearchTool()
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[search_tool],
+            db=db,
+            config=config,
+        )
+
+        messages_sent = []
+
+        def handler(request: dict, count: int) -> dict:
+            messages_sent.append(request["messages"])
+            if count == 1:
+                return mock_llm._make_tool_call_response(request, "search?", {"query": "test"})
+            return mock_llm._make_text_response(request, "Here are the results.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test prompt", max_steps=3)
+
+        assert response.answer is not None
+        assert len(messages_sent) == 2
+        second_call_messages = messages_sent[1]
+        tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
+        assert len(tool_messages) > 0
+        assert "not found" not in tool_messages[0]["content"].lower()
+        assert "Mock search results" in tool_messages[0]["content"]
+
+        await agent.close()

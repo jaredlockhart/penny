@@ -282,6 +282,10 @@ class LlmClient:
     @staticmethod
     def _parse_tool_call(tool_call: openai.types.chat.ChatCompletionMessageToolCall) -> LlmToolCall:
         """Parse a single OpenAI tool call, deserializing JSON arguments."""
+        raw_name = tool_call.function.name
+        name = re.sub(r"^[^a-zA-Z0-9_]+|[^a-zA-Z0-9_]+$", "", raw_name)
+        if name != raw_name:
+            logger.warning("Stripped invalid characters from tool name: %r -> %r", raw_name, name)
         arguments = {}
         if tool_call.function.arguments:
             try:
@@ -296,7 +300,7 @@ class LlmClient:
         return LlmToolCall(
             id=tool_call.id,
             function=LlmToolCallFunction(
-                name=tool_call.function.name,
+                name=name,
                 arguments=arguments,
             ),
         )
