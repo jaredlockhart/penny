@@ -215,9 +215,10 @@ that page right now. If they say 'this page', 'this thread', 'this article', \
 or anything ambiguous, they mean the Current Browser Page — not something \
 from earlier in the conversation.
 
-How to use the browse tool:
+How to use the `browse` tool:
 1. If the user gave you URLs, read them directly — pass the URLs in the \
-queries array. Do NOT search for a site the user already linked.
+queries array. There is no `browser.open` — use `browse` for both URL reads and searches. \
+Do NOT search for a site the user already linked.
 2. If the user gave you a topic (no URLs), search first to discover \
 relevant pages.
 3. Read the most promising pages by passing their URLs in the queries \

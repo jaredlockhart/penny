@@ -97,7 +97,7 @@ class BrowseTool(Tool):
         """Dynamic description reflecting current max_calls."""
         n = self._max_calls
         items = "query and/or URL" if n == 1 else "queries and/or URLs"
-        return f"Look things up. Pass up to {n} {items}."
+        return f"Search the web or read a URL. Pass up to {n} {items}."
 
     @property
     def parameters(self) -> dict[str, Any]:  # type: ignore[override]

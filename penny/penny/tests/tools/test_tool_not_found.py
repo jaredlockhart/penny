@@ -98,6 +98,90 @@ class TestToolNotFound:
         await agent.close()
 
 
+class _BrowseNamedStub(Tool):
+    """Test stub with a unique class-level name to avoid Tool._registry conflicts.
+
+    Use with an instance-level name override so ToolRegistry sees 'browse'
+    without clobbering BrowseTool in the shared Tool._registry class dict.
+    """
+
+    name = "_browse_named_stub"
+    description = "Look things up"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return "browse results"
+
+
+def _make_browse_tool() -> _BrowseNamedStub:
+    """Return a stub tool instance whose ToolRegistry name is 'browse'."""
+    tool = _BrowseNamedStub()
+    tool.name = "browse"  # instance override — Tool._registry still sees "_browse_named_stub"
+    return tool
+
+
+class TestNearMatchCorrection:
+    """ToolExecutor suggests the likely intended tool when the name is a near-miss."""
+
+    @pytest.mark.asyncio
+    async def test_browser_search_suggests_browse(self):
+        """'browser.search' hallucination produces a 'Did you mean browse?' correction."""
+        from penny.tools.models import ToolCall
+
+        registry = ToolRegistry()
+        registry.register(_make_browse_tool())
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(ToolCall(tool="browser.search", arguments={}))
+
+        assert result.error is not None
+        assert "Did you mean `browse`?" in result.error
+
+    @pytest.mark.asyncio
+    async def test_browser_open_suggests_browse(self):
+        """'browser.open' hallucination produces a 'Did you mean browse?' correction."""
+        from penny.tools.models import ToolCall
+
+        registry = ToolRegistry()
+        registry.register(_make_browse_tool())
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(ToolCall(tool="browser.open", arguments={}))
+
+        assert result.error is not None
+        assert "Did you mean `browse`?" in result.error
+
+    @pytest.mark.asyncio
+    async def test_no_correction_when_no_near_match(self):
+        """Completely unrelated tool name produces no correction hint."""
+        from penny.tools.models import ToolCall
+
+        registry = ToolRegistry()
+        registry.register(_make_browse_tool())
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(ToolCall(tool="send_email", arguments={}))
+
+        assert result.error is not None
+        assert "Did you mean" not in result.error
+
+    def test_find_near_match_prefix_browser_search(self):
+        """'browser.search' matches 'browse' because it starts with 'browse'."""
+        assert ToolExecutor._find_near_match("browser.search", ["browse", "done"]) == "browse"
+
+    def test_find_near_match_prefix_browser_open(self):
+        """'browser.open' matches 'browse' because it starts with 'browse'."""
+        assert ToolExecutor._find_near_match("browser.open", ["browse", "done"]) == "browse"
+
+    def test_find_near_match_substring(self):
+        """Substring match: tool name contained in the requested name."""
+        assert ToolExecutor._find_near_match("full_search_web", ["search", "done"]) == "search"
+
+    def test_find_near_match_no_match(self):
+        """Returns None when no registered tool resembles the requested name."""
+        assert ToolExecutor._find_near_match("send_email", ["browse", "done"]) is None
+
+
 class StubDoneTool(Tool):
     """Stub tool with two required typed+described parameters."""
 
