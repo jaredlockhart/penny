@@ -136,6 +136,16 @@ class ToolRegistry:
 class ToolExecutor:
     """Executes tools with timeout and error handling."""
 
+    # Transparent redirects for tool names the model commonly guesses but that
+    # differ from the actual implementation name.  Resolved before lookup so the
+    # alias behaves identically to the canonical name.
+    _TOOL_ALIASES: dict[str, str] = {
+        # read_similar is shape-agnostic (works for collections and logs); the
+        # model pattern-matches from collection_get / collection_read_random /
+        # collection_keys and guesses this name instead.
+        "collection_read_similar": "read_similar",
+    }
+
     def __init__(self, registry: ToolRegistry, timeout: float = 30.0):
         self.registry = registry
         self.timeout = timeout
@@ -170,6 +180,12 @@ class ToolExecutor:
 
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call."""
+        if tool_call.tool in self._TOOL_ALIASES:
+            canonical = self._TOOL_ALIASES[tool_call.tool]
+            logger.warning(
+                "Tool alias %s → %s; use %s directly", tool_call.tool, canonical, canonical
+            )
+            tool_call = ToolCall(tool=canonical, arguments=tool_call.arguments, id=tool_call.id)
         tool = self.registry.get(tool_call.tool)
         if tool is None:
             return self._tool_not_found_result(tool_call)
