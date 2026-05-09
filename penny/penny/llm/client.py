@@ -282,6 +282,7 @@ class LlmClient:
     @staticmethod
     def _parse_tool_call(tool_call: openai.types.chat.ChatCompletionMessageToolCall) -> LlmToolCall:
         """Parse a single OpenAI tool call, deserializing JSON arguments."""
+        logger.debug("Raw tool call from SDK: id=%s name=%r", tool_call.id, tool_call.function.name)
         arguments = {}
         if tool_call.function.arguments:
             try:
