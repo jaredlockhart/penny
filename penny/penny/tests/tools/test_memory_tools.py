@@ -805,6 +805,27 @@ class TestScopedFactory:
         assert db.memories.get_entry("dst", "k")[0].content == "v"
 
     @pytest.mark.asyncio
+    async def test_scoped_move_defaults_to_memory_from_scope(self, tmp_path, mock_llm):
+        """Omitting to_memory on a scoped tool defaults to the bound scope."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="src", description="x", recall="off")
+        await CollectionCreateTool(db).execute(name="dst", description="x", recall="off")
+        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="t").execute(
+            memory="src", entries=[{"key": "k", "content": "v"}]
+        )
+
+        move = CollectionMoveTool(db, author="collector:dst", scope="dst")
+        result = await move.execute(key="k", from_memory="src")
+        assert "Moved 'k'" in result
+        assert db.memories.get_entry("dst", "k")[0].content == "v"
+
+    @pytest.mark.asyncio
+    async def test_scoped_move_to_memory_not_required_in_schema(self, tmp_path):
+        """Scoped instance exposes to_memory as optional in its parameters schema."""
+        move = CollectionMoveTool(_make_db(tmp_path), author="collector:dst", scope="dst")
+        assert "to_memory" not in move.parameters["required"]
+
+    @pytest.mark.asyncio
     async def test_scoped_move_rejects_outbound(self, tmp_path):
         db = _make_db(tmp_path)
         move = CollectionMoveTool(db, author="collector:src", scope="src")

@@ -738,8 +738,25 @@ class CollectionMoveTool(Tool):
         self._db = db
         self._author = author
         self._scope = scope
+        if scope is not None:
+            # When scoped, to_memory is always the bound collection — make it optional
+            # so the model doesn't fail validation if it omits the predetermined value.
+            self.parameters = {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "from_memory": {"type": "string"},
+                    "to_memory": {
+                        "type": "string",
+                        "description": f"Destination collection; defaults to '{scope}'.",
+                    },
+                },
+                "required": ["key", "from_memory"],
+            }
 
     async def execute(self, **kwargs: Any) -> str:
+        if self._scope is not None and "to_memory" not in kwargs:
+            kwargs["to_memory"] = self._scope
         args = CollectionMoveArgs(**kwargs)
         # Scope constrains the destination side of the move (the write).
         # Source-side ``from_memory`` is unrestricted — moving an entry
