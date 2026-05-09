@@ -413,11 +413,13 @@ class ReadSimilarTool(Tool):
 
     name = "read_similar"
     description = (
-        "Return entries from a memory ordered by content similarity to an "
-        "``anchor`` phrase. Works for both collections and logs — use this "
-        "to find past conversations on a topic (search ``user-messages`` or "
-        "``penny-messages``), past browse results, related preferences or "
-        "facts, or any other historically-relevant entry."
+        "``read_similar`` — return entries from a memory ordered by content "
+        "similarity to an ``anchor`` phrase. Works for both collections and "
+        "logs — use this to find past conversations on a topic (search "
+        "``user-messages`` or ``penny-messages``), past browse results, "
+        "related preferences or facts, or any other historically-relevant "
+        "entry. (Call this tool as ``read_similar``, not "
+        "``collection_read_similar``.)"
     )
     parameters = {
         "type": "object",

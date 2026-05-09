@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -221,3 +222,57 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class StubReadSimilarTool(Tool):
+    """Stub stand-in for ReadSimilarTool to test alias resolution without DB."""
+
+    name = "read_similar"
+    description = "Return similar entries."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string"},
+            "anchor": {"type": "string"},
+        },
+        "required": ["memory", "anchor"],
+    }
+
+    async def execute(self, **kwargs):
+        return "similar entries"
+
+
+class TestToolAliases:
+    """collection_read_similar transparently redirects to read_similar."""
+
+    @pytest.mark.asyncio
+    async def test_collection_read_similar_alias_executes_read_similar(self):
+        """ToolExecutor resolves collection_read_similar → read_similar at call time."""
+        registry = ToolRegistry()
+        registry.register(StubReadSimilarTool())
+        executor = ToolExecutor(registry)
+
+        call = ToolCall(
+            tool="collection_read_similar",
+            arguments={"memory": "likes", "anchor": "coffee"},
+        )
+        result = await executor.execute(call)
+
+        assert result.error is None
+        assert result.result == "similar entries"
+
+    @pytest.mark.asyncio
+    async def test_collection_read_similar_alias_not_in_tool_not_found(self):
+        """collection_read_similar with a missing underlying tool still fails cleanly."""
+        registry = ToolRegistry()  # read_similar not registered
+        executor = ToolExecutor(registry)
+
+        call = ToolCall(
+            tool="collection_read_similar",
+            arguments={"memory": "likes", "anchor": "coffee"},
+        )
+        result = await executor.execute(call)
+
+        # Should fail with the canonical name in the error, not the alias
+        assert result.error is not None
+        assert "read_similar" in result.error
