@@ -180,19 +180,36 @@ class ToolExecutor:
 
     def _tool_not_found_result(self, tool_call: ToolCall) -> ToolResult:
         """Build error result when the requested tool doesn't exist."""
-        logger.error("Tool not found: %s", tool_call.tool)
         available_tools = [t.name for t in self.registry.get_all()]
         available_list = ", ".join(available_tools) if available_tools else "none"
+        near_match = self._find_near_match(tool_call.tool, available_tools)
+        logger.error("Tool not found: %s (available: %s)", tool_call.tool, available_list)
+        correction = f" Did you mean `{near_match}`?" if near_match else ""
         return ToolResult(
             tool=tool_call.tool,
             result=None,
             error=(
-                f"Tool '{tool_call.tool}' not found. "
+                f"Tool '{tool_call.tool}' not found.{correction} "
                 f"Available tools: {available_list}. "
                 f"You must ONLY use the tools listed above."
             ),
             id=tool_call.id,
         )
+
+    @staticmethod
+    def _find_near_match(requested: str, available: list[str]) -> str | None:
+        """Return a registered tool name if the requested name looks like a variant of it.
+
+        Prefix matches are checked first (strongest signal), then substring matches.
+        Handles hallucinations like 'browser.search' → 'browse'.
+        """
+        for name in available:
+            if requested.startswith(name) or name.startswith(requested):
+                return name
+        for name in available:
+            if name in requested:
+                return name
+        return None
 
     def _validation_error_result(self, tool_call: ToolCall, error: str) -> ToolResult:
         """Build error result for argument validation failure."""
