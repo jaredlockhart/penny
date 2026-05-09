@@ -1,5 +1,7 @@
 """Tests for handling tool calls with non-existent tool names and missing parameters."""
 
+import logging
+
 import pytest
 
 from penny.agents.base import Agent
@@ -221,3 +223,78 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class _StubTool(Tool):
+    """Minimal stub tool for garbled-name tests."""
+
+    name = "_garbled_test_stub"
+    description = "Stub"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return "ok"
+
+
+class TestGarbledToolNameLogging:
+    """Non-ASCII tool names trigger a WARNING log to distinguish encoding corruption."""
+
+    @pytest.mark.asyncio
+    async def test_non_ascii_tool_name_logs_encoding_warning(self, caplog):
+        """Tool name with non-ASCII chars (like Unicode ellipsis) logs a WARNING about encoding."""
+        from penny.tools.models import ToolCall
+
+        registry = ToolRegistry()
+        tool = _StubTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        with caplog.at_level(logging.WARNING, logger="penny.tools.base"):
+            result = await executor.execute(ToolCall(tool="const?……?…", arguments={}))
+
+        assert result.error is not None
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("encoding corruption" in r.getMessage() for r in warning_records)
+
+    @pytest.mark.asyncio
+    async def test_ascii_hallucination_does_not_log_encoding_warning(self, caplog):
+        """A hallucinated but ASCII tool name does not trigger the encoding-corruption warning."""
+        from penny.tools.models import ToolCall
+
+        registry = ToolRegistry()
+        tool = _StubTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        with caplog.at_level(logging.WARNING, logger="penny.tools.base"):
+            result = await executor.execute(ToolCall(tool="send_email", arguments={}))
+
+        assert result.error is not None
+        encoding_warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "encoding corruption" in r.getMessage()
+        ]
+        assert len(encoding_warnings) == 0
+
+    @pytest.mark.asyncio
+    async def test_tool_not_found_error_includes_full_call_details(self, caplog):
+        """ERROR log for tool-not-found includes the full tool call dict, not just the name."""
+        from penny.tools.models import ToolCall
+
+        registry = ToolRegistry()
+        tool = _StubTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        with caplog.at_level(logging.ERROR, logger="penny.tools.base"):
+            result = await executor.execute(
+                ToolCall(tool="missing_tool", arguments={"key": "value"}, id="call-123")
+            )
+
+        assert result.error is not None
+        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(error_records) > 0
+        error_msg = error_records[0].getMessage()
+        assert "key" in error_msg  # arguments dict present
+        assert "call-123" in error_msg  # id present
