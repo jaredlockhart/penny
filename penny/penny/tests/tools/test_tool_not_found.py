@@ -221,3 +221,118 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class StubCollectionWriteTool(Tool):
+    """Stub for collection_write to test malformed-name sanitization."""
+
+    name = "collection_write"
+    description = "Write an entry to a collection."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "key": {"type": "string", "description": "Entry key"},
+            "content": {"type": "string", "description": "Entry content"},
+        },
+        "required": ["key", "content"],
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict] = []
+
+    async def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        return "written"
+
+
+class TestToolNameSanitization:
+    """LlmClient strips prose fragments from malformed tool names before dispatch."""
+
+    def test_unicode_ellipsis_truncates_tool_name(self):
+        """collection_write…Wait is sanitized to collection_write."""
+        from penny.llm import LlmClient
+
+        result = LlmClient._sanitize_tool_name("collection_write…Wait")
+        assert result == "collection_write"
+
+    def test_ascii_ellipsis_mid_name_truncates(self):
+        """collection_write...Wait is sanitized to collection_write."""
+        from penny.llm import LlmClient
+
+        result = LlmClient._sanitize_tool_name("collection_write...Wait")
+        assert result == "collection_write"
+
+    def test_leading_ascii_ellipsis_yields_empty_string(self):
+        """...Wait (no valid prefix) sanitizes to empty string."""
+        from penny.llm import LlmClient
+
+        result = LlmClient._sanitize_tool_name("...Wait")
+        assert result == ""
+
+    def test_clean_tool_name_passes_through_unchanged(self):
+        """Valid identifier names are not modified."""
+        from penny.llm import LlmClient
+
+        assert LlmClient._sanitize_tool_name("collection_write") == "collection_write"
+        assert LlmClient._sanitize_tool_name("read_similar") == "read_similar"
+        assert LlmClient._sanitize_tool_name("browse") == "browse"
+
+    def test_leading_trailing_non_identifier_chars_stripped(self):
+        """Non-identifier edge characters are stripped."""
+        from penny.llm import LlmClient
+
+        assert LlmClient._sanitize_tool_name(" search ") == "search"
+        assert LlmClient._sanitize_tool_name("?search?") == "search"
+
+    @pytest.mark.asyncio
+    async def test_malformed_unicode_ellipsis_name_routes_to_real_tool(self, test_db, mock_llm):
+        """When LLM emits 'collection_write…Wait', sanitization routes to collection_write."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        write_tool = StubCollectionWriteTool()
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[write_tool],
+            db=db,
+            config=config,
+        )
+
+        def handler(request: dict, count: int) -> dict:
+            if count == 1:
+                # LLM emits malformed name with unicode ellipsis suffix
+                return mock_llm._make_tool_call_response(
+                    request, "collection_write…Wait", {"key": "k", "content": "v"}
+                )
+            return mock_llm._make_text_response(request, "Done.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test", max_steps=3)
+
+        assert response.answer is not None
+        # The sanitized tool name must have executed collection_write successfully
+        assert len(write_tool.calls) == 1
+        assert write_tool.calls[0] == {"key": "k", "content": "v"}
+
+        await agent.close()
