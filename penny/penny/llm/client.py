@@ -279,6 +279,8 @@ class LlmClient:
             model=raw.model,
         )
 
+    _INVALID_NAME_CHARS = re.compile(r"^[^a-zA-Z0-9_]+|[^a-zA-Z0-9_]+$")
+
     @staticmethod
     def _parse_tool_call(tool_call: openai.types.chat.ChatCompletionMessageToolCall) -> LlmToolCall:
         """Parse a single OpenAI tool call, deserializing JSON arguments."""
@@ -293,10 +295,15 @@ class LlmClient:
                 )
                 arguments = LlmClient._extract_malformed_arguments(tool_call.function.arguments)
 
+        raw_name = tool_call.function.name
+        name = LlmClient._INVALID_NAME_CHARS.sub("", raw_name)
+        if name != raw_name:
+            logger.warning("Stripped invalid characters from tool name: %r -> %r", raw_name, name)
+
         return LlmToolCall(
             id=tool_call.id,
             function=LlmToolCallFunction(
-                name=tool_call.function.name,
+                name=name,
                 arguments=arguments,
             ),
         )
