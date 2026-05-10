@@ -8,6 +8,7 @@ layer's signature.
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, Field
@@ -41,6 +42,24 @@ def _normalize_dash_list(value: object) -> object:
 
 MemoryName = Annotated[str, BeforeValidator(_normalize_dashes)]
 MemoryNameList = Annotated[list[str], BeforeValidator(_normalize_dash_list)]
+
+
+def _coerce_content(value: object) -> object:
+    """Coerce non-string content to a JSON string.
+
+    The LLM occasionally passes a list or dict (raw structured data from a
+    search/browse result) where a plain string is required.  JSON-serialising
+    the value preserves the information rather than aborting with a
+    ValidationError.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, dict)):
+        return json.dumps(value)
+    return value
+
+
+EntryContent = Annotated[str, BeforeValidator(_coerce_content)]
 
 # ── Metadata ────────────────────────────────────────────────────────────────
 
@@ -145,7 +164,7 @@ class CollectionEntrySpec(BaseModel):
     """One entry in a ``collection_write`` batch."""
 
     key: str
-    content: str
+    content: EntryContent
 
 
 class CollectionWriteArgs(BaseModel):
@@ -160,7 +179,7 @@ class UpdateEntryArgs(BaseModel):
 
     memory: MemoryName
     key: str
-    content: str
+    content: EntryContent
 
 
 class CollectionMoveArgs(BaseModel):
@@ -192,7 +211,7 @@ class LogAppendArgs(BaseModel):
     """Append one keyless entry to a log."""
 
     memory: MemoryName
-    content: str
+    content: EntryContent
 
 
 # ── Introspection ───────────────────────────────────────────────────────────

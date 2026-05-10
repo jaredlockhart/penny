@@ -504,7 +504,13 @@ class CollectionWriteTool(Tool):
                     "type": "object",
                     "properties": {
                         "key": {"type": "string"},
-                        "content": {"type": "string"},
+                        "content": {
+                            "type": "string",
+                            "description": (
+                                "A plain string. Serialize any structured data "
+                                "(lists, dicts) to a string before passing."
+                            ),
+                        },
                     },
                     "required": ["key", "content"],
                 },
