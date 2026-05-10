@@ -1,5 +1,8 @@
 """Tests for handling tool calls with non-existent tool names and missing parameters."""
 
+import json
+from unittest.mock import MagicMock
+
 import pytest
 
 from penny.agents.base import Agent
@@ -221,3 +224,40 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+def _make_openai_tool_call(name: str, arguments: dict) -> MagicMock:
+    """Build a minimal mock of openai.types.chat.ChatCompletionMessageToolCall."""
+    tc = MagicMock()
+    tc.id = "call_test"
+    tc.function.name = name
+    tc.function.arguments = json.dumps(arguments)
+    return tc
+
+
+class TestToolNameSanitization:
+    """_parse_tool_call strips invalid characters from LLM-generated tool names."""
+
+    def test_trailing_question_marks_stripped(self):
+        """search?? is normalized to search before registry lookup."""
+        tc = _make_openai_tool_call("search??", {"query": "test"})
+        result = LlmClient._parse_tool_call(tc)
+        assert result.function.name == "search"
+
+    def test_leading_invalid_chars_stripped(self):
+        """??search is normalized to search."""
+        tc = _make_openai_tool_call("??search", {})
+        result = LlmClient._parse_tool_call(tc)
+        assert result.function.name == "search"
+
+    def test_valid_name_unchanged(self):
+        """browse_page is returned unchanged."""
+        tc = _make_openai_tool_call("browse_page", {"url": "http://example.com"})
+        result = LlmClient._parse_tool_call(tc)
+        assert result.function.name == "browse_page"
+
+    def test_internal_underscores_preserved(self):
+        """search_emails with underscores is left intact."""
+        tc = _make_openai_tool_call("search_emails", {"query": "test"})
+        result = LlmClient._parse_tool_call(tc)
+        assert result.function.name == "search_emails"
