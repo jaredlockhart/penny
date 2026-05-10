@@ -262,6 +262,26 @@ class TestCollectionWritesAndReads:
         result = await ReadSimilarTool(db, None).execute(memory="likes", anchor="whatever")
         assert "similarity search unavailable" in result
 
+    @pytest.mark.asyncio
+    async def test_write_coerces_list_content_to_json_string(self, tmp_path, mock_llm):
+        """Regression: LLM passes a list of dicts as entry content instead of a plain
+        string.  The tool must coerce it to a JSON string rather than raising a
+        ValidationError and silently dropping the write."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="news", description="x", recall="off")
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        structured_content = [{"headline": "OpenAI launches GPT-5", "url": "https://example.com"}]
+        result = await write.execute(
+            memory="news",
+            entries=[{"key": "gpt-5-launch", "content": structured_content}],
+        )
+        assert "Wrote 1 entry to 'news'" in result
+        rows = db.memories.get_entry("news", "gpt-5-launch")
+        assert len(rows) == 1
+        # Content must be a string (JSON-serialised form of the original list)
+        assert isinstance(rows[0].content, str)
+        assert "OpenAI launches GPT-5" in rows[0].content
+
 
 class TestCollectionMutations:
     @pytest.mark.asyncio
