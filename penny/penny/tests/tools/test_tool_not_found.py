@@ -221,3 +221,65 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class StubAliasedTool(Tool):
+    """Tool with aliases for testing alias resolution in ToolRegistry."""
+
+    name = "primary_tool"
+    aliases = ["alias_one", "alias_two"]
+    description = "A tool with aliases"
+    parameters = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    }
+
+    async def execute(self, **kwargs):
+        return "results"
+
+
+class TestToolAliases:
+    """ToolRegistry resolves alias names to their primary tool."""
+
+    def test_alias_resolves_to_primary_tool(self):
+        """registry.get() with an alias returns the same tool as the primary name."""
+        registry = ToolRegistry()
+        tool = StubAliasedTool()
+        registry.register(tool)
+
+        assert registry.get("primary_tool") is tool
+        assert registry.get("alias_one") is tool
+        assert registry.get("alias_two") is tool
+
+    def test_get_all_excludes_aliases(self):
+        """get_all() returns each tool once, not once per alias."""
+        registry = ToolRegistry()
+        tool = StubAliasedTool()
+        registry.register(tool)
+
+        all_tools = registry.get_all()
+        assert len(all_tools) == 1
+        assert all_tools[0] is tool
+
+    def test_unregister_removes_aliases(self):
+        """Unregistering a tool also removes its aliases from the registry."""
+        registry = ToolRegistry()
+        tool = StubAliasedTool()
+        registry.register(tool)
+        registry.unregister("primary_tool")
+
+        assert registry.get("primary_tool") is None
+        assert registry.get("alias_one") is None
+        assert registry.get("alias_two") is None
+
+    def test_existence_alias_routes_to_exists_tool(self):
+        """registry.get('existence') resolves to the exists tool (the hallucinated name)."""
+        from penny.tools.memory_tools import ExistsTool
+
+        registry = ToolRegistry()
+        tool = ExistsTool(db=None, llm_client=None)  # ty: ignore[invalid-argument-type]
+        registry.register(tool)
+
+        assert registry.get("existence") is tool
+        assert registry.get("exists") is tool
