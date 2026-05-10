@@ -296,6 +296,47 @@ class TestModelErrorHandling:
         await agent.close()
 
     @pytest.mark.asyncio
+    async def test_llm_response_error_returns_agent_model_error(self, test_db, mock_llm):
+        """500 server errors (including 'error parsing tool call') return AGENT_MODEL_ERROR."""
+        from penny.llm.models import LlmResponseError
+
+        agent, _db, max_steps = _make_agent(test_db, mock_llm)
+
+        def handler(request, count):
+            raise LlmResponseError(
+                "Error code: 500 - error parsing tool call: "
+                'raw=\'{"content":"unspecified",{"key":"zinc"}}\', '
+                "err=invalid character '{'"
+            )
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test prompt", max_steps=max_steps)
+        assert response.answer == PennyResponse.AGENT_MODEL_ERROR
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_malformed_tool_call_error_returns_agent_model_error(self, test_db, mock_llm):
+        """LlmMalformedToolCallError (from model-generated bad JSON) returns AGENT_MODEL_ERROR."""
+        from penny.llm.models import LlmMalformedToolCallError
+
+        agent, _db, max_steps = _make_agent(test_db, mock_llm)
+
+        def handler(request, count):
+            raise LlmMalformedToolCallError(
+                "error parsing tool call",
+                raw_json='{"content":"unspecified",{"key":"zinc"}}',
+            )
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test prompt", max_steps=max_steps)
+        assert response.answer == PennyResponse.AGENT_MODEL_ERROR
+
+        await agent.close()
+
+    @pytest.mark.asyncio
     async def test_non_llm_exception_propagates(self, test_db, mock_llm):
         """Programmer bugs in the LLM call path must surface, not be swallowed."""
         agent, _db, max_steps = _make_agent(test_db, mock_llm)
@@ -1455,3 +1496,54 @@ class TestPromptLogAnnotations:
         assert logs[0].agent_name == logs[1].agent_name == "Agent"
 
         await agent.close()
+
+
+class TestClassifyApiError:
+    """Unit tests for LlmClient._classify_api_error — error-type detection."""
+
+    def _make_fake_error(self, message: str) -> Exception:
+        """Create a minimal fake openai.OpenAIError-like object."""
+        return Exception(message)
+
+    def _make_client(self):
+        """Create a minimal LlmClient for testing the classifier."""
+        from penny.llm import LlmClient
+
+        return LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            max_retries=3,
+            retry_delay=0.0,
+        )
+
+    def test_malformed_tool_call_pattern_detected(self):
+        """'error parsing tool call' in the error message → LlmMalformedToolCallError."""
+        from penny.llm.models import LlmMalformedToolCallError
+
+        client = self._make_client()
+        raw = '{"content":"unspecified",{"key":"zinc"}}'
+        error = self._make_fake_error(
+            f"Error code: 500 - error parsing tool call: raw='{raw}', err=invalid character '{{'"
+        )
+        result = client._classify_api_error(error, attempt=0)
+        assert isinstance(result, LlmMalformedToolCallError)
+        assert result.raw_json == raw
+
+    def test_malformed_tool_call_no_raw_json_still_classified(self):
+        """Pattern match works even when the error body has no raw='...' fragment."""
+        from penny.llm.models import LlmMalformedToolCallError
+
+        client = self._make_client()
+        error = self._make_fake_error("500 error parsing tool call: something went wrong")
+        result = client._classify_api_error(error, attempt=0)
+        assert isinstance(result, LlmMalformedToolCallError)
+        assert result.raw_json is None
+
+    def test_generic_500_becomes_response_error(self):
+        """A plain 500 without the tool call pattern → LlmResponseError."""
+        from penny.llm.models import LlmResponseError
+
+        client = self._make_client()
+        error = self._make_fake_error("Error code: 500 - internal server error")
+        result = client._classify_api_error(error, attempt=0)
+        assert isinstance(result, LlmResponseError)

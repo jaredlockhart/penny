@@ -18,7 +18,7 @@ from penny.config import Config
 from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
 from penny.llm import LlmClient
-from penny.llm.models import LlmError
+from penny.llm.models import LlmError, LlmMalformedToolCallError
 from penny.llm.refusal import is_refusal
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -587,6 +587,9 @@ class Agent:
                 prompt_type=prompt_type,
                 run_id=run_id,
             )
+        except LlmMalformedToolCallError as exception:
+            logger.error("LLM generated malformed tool call JSON — raw: %s", exception.raw_json)
+            return None
         except LlmError as exception:
             logger.error("LLM chat failed: %s", exception)
             return None

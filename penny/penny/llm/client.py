@@ -18,6 +18,7 @@ import openai
 from penny.llm.models import (
     LlmConnectionError,
     LlmError,
+    LlmMalformedToolCallError,
     LlmMessage,
     LlmNotFoundError,
     LlmResponse,
@@ -117,10 +118,7 @@ class LlmClient:
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
             except openai.OpenAIError as error:
-                last_error = LlmResponseError(str(error))
-                logger.warning(
-                    "LLM chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
-                )
+                last_error = self._classify_api_error(error, attempt)
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
 
@@ -250,6 +248,34 @@ class LlmClient:
                 "json_schema": {"name": "response", "strict": True, "schema": format},
             }
         return {"type": format}
+
+    # ── Internal: error classification ──────────────────────────────────
+
+    # Matches the raw JSON fragment in Ollama's "error parsing tool call" error body
+    _MALFORMED_TOOL_CALL_RAW = re.compile(r"error parsing tool call")
+    _MALFORMED_TOOL_CALL_JSON = re.compile(r"raw='([^']*)'")
+
+    def _classify_api_error(self, error: openai.OpenAIError, attempt: int) -> LlmError:
+        """Map an OpenAI API error to the appropriate LlmError subclass.
+
+        Detects Ollama's 'error parsing tool call' 500 — which means the model
+        generated malformed JSON, not that the server is unavailable — and raises
+        LlmMalformedToolCallError so callers can distinguish model output errors
+        from transient infrastructure failures.
+        """
+        error_msg = str(error)
+        if self._MALFORMED_TOOL_CALL_RAW.search(error_msg):
+            raw_match = self._MALFORMED_TOOL_CALL_JSON.search(error_msg)
+            raw_json = raw_match.group(1) if raw_match else None
+            logger.warning(
+                "LLM generated malformed tool call JSON (attempt %d/%d): raw=%s",
+                attempt + 1,
+                self.max_retries,
+                raw_json,
+            )
+            return LlmMalformedToolCallError(error_msg, raw_json=raw_json)
+        logger.warning("LLM chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, error)
+        return LlmResponseError(error_msg)
 
     # ── Internal: response parsing ───────────────────────────────────────
 

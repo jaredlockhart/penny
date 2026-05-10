@@ -30,6 +30,19 @@ class LlmResponseError(LlmError):
     """Server returned an error response."""
 
 
+class LlmMalformedToolCallError(LlmError):
+    """Model generated malformed tool call JSON that the server could not parse.
+
+    Raised when Ollama (or any OpenAI-compatible backend) returns a 500 error
+    with an 'error parsing tool call' message. The raw malformed JSON is
+    attached for debugging.
+    """
+
+    def __init__(self, message: str, raw_json: str | None = None) -> None:
+        super().__init__(message)
+        self.raw_json = raw_json
+
+
 # ── Response types ───────────────────────────────────────────────────────
 
 
