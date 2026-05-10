@@ -18,6 +18,7 @@ class Tool(ABC):
     description: str
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
     timeout: float | None = None  # None = use ToolExecutor's global timeout
+    aliases: ClassVar[list[str]] = []
 
     _registry: ClassVar[dict[str, type[Tool]]] = {}
 
@@ -107,21 +108,32 @@ class ToolRegistry:
     def __init__(self):
         """Initialize empty registry."""
         self._tools: dict[str, Tool] = {}
+        self._aliases: dict[str, str] = {}  # alias → primary name
 
     def register(self, tool: Tool) -> None:
-        """Register a tool."""
+        """Register a tool and any aliases it declares."""
         self._tools[tool.name] = tool
+        for alias in tool.aliases:
+            self._aliases[alias] = tool.name
 
     def unregister(self, name: str) -> None:
-        """Unregister a tool by name."""
-        self._tools.pop(name, None)
+        """Unregister a tool and its aliases by primary name."""
+        tool = self._tools.pop(name, None)
+        if tool is not None:
+            for alias in tool.aliases:
+                self._aliases.pop(alias, None)
 
     def get(self, name: str) -> Tool | None:
-        """Get a tool by name."""
-        return self._tools.get(name)
+        """Get a tool by primary name or alias."""
+        tool = self._tools.get(name)
+        if tool is None:
+            canonical = self._aliases.get(name)
+            if canonical:
+                tool = self._tools.get(canonical)
+        return tool
 
     def get_all(self) -> list[Tool]:
-        """Get all registered tools."""
+        """Get all registered tools (primary names only, no alias duplicates)."""
         return list(self._tools.values())
 
     def get_definitions(self) -> list[ToolDefinition]:
