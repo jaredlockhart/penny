@@ -1,8 +1,13 @@
 """Pydantic models for tool calling."""
 
+import re
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# Tool names must be identifier-like: start with a letter, contain only ASCII letters,
+# digits, and underscores. Rejects garbled names with unicode or punctuation.
+_TOOL_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*$")
 
 
 class SearchResult(BaseModel):
@@ -67,6 +72,16 @@ class ToolCall(BaseModel):
     tool: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     id: str | None = None
+
+    @field_validator("tool")
+    @classmethod
+    def tool_name_is_valid(cls, v: str) -> str:
+        if not _TOOL_NAME_RE.match(v):
+            raise ValueError(
+                f"Invalid tool name {v!r}: must start with a letter and contain only "
+                f"ASCII letters, digits, and underscores"
+            )
+        return v
 
 
 class ToolResult(BaseModel):

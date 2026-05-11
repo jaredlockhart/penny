@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from penny.agents.models import ChatMessage, ControllerResponse, MessageRole, ToolCallRecord
 from penny.config import Config
 from penny.constants import PennyConstants, ValidationReason
@@ -875,7 +877,20 @@ class Agent:
             logger.debug("Tool reasoning: %s", reasoning[:200])
 
         record = ToolCallRecord(tool=tool_name, arguments=arguments, reasoning=reasoning)
-        tool_call = ToolCall(tool=tool_name, arguments=arguments)
+        try:
+            tool_call = ToolCall(tool=tool_name, arguments=arguments)
+        except ValidationError:
+            available_tools = [t.name for t in self._tool_registry.get_all()]
+            available_list = ", ".join(available_tools) if available_tools else "none"
+            logger.error("Rejected invalid tool name: %r", tool_name)
+            result_str = (
+                f"Error: Tool name '{tool_name}' is invalid (must use only ASCII letters, "
+                f"digits, and underscores). "
+                f"Available tools: {available_list}. "
+                f"You must ONLY use the tools listed above."
+            )
+            record.failed = True
+            return result_str, record, [], None
         tool_result = await self._tool_executor.execute(tool_call)
 
         if tool_result.error:
