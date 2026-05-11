@@ -541,6 +541,52 @@ class TestEmptyContentRetry:
         await agent.close()
 
 
+class TestToolCallCap:
+    """Test that the tool-call cap forces an early final step before context saturation."""
+
+    @pytest.mark.asyncio
+    async def test_batched_tool_calls_cap_forces_early_final_step(self, test_db, mock_llm):
+        """When batched tool calls accumulate to steps-1, the final step is forced early.
+
+        Regression guard for the observed bug: preceding_tool_calls=11 with MAX_STEPS=8.
+        Each agentic loop step can produce multiple tool call records (parallel calls),
+        so the step count alone does not bound the total tool call context. The cap
+        ensures the model gets a final step before accumulating more than steps-1 records.
+        """
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=4)
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(tool="search", result="result")
+        )
+
+        def handler(request, count):
+            # Steps 1 and 2: 2 parallel tool calls each → 4 total records.
+            # Cap = max_steps - 1 = 3, so after 4 records the next step is final.
+            if count in (1, 2):
+                return mock_llm._make_parallel_tool_calls_response(
+                    request,
+                    [
+                        ("search", {"query": f"query {count}a"}),
+                        ("search", {"query": f"query {count}b"}),
+                    ],
+                )
+            # Step 3 is forced final (tools stripped) — model produces answer.
+            return mock_llm._make_text_response(request, "here is the answer")
+
+        mock_llm.set_response_handler(handler)
+        agent.allow_repeat_tools = True
+
+        response = await agent.run("test question", max_steps=max_steps)
+        assert response.answer == "here is the answer"
+        assert len(response.tool_calls) == 4
+
+        # Third model call must have no tools (early forced final step from cap).
+        assert mock_llm.requests[2]["tools"] is None
+        # Only 3 model calls — cap fired one step before max_steps would have.
+        assert len(mock_llm.requests) == 3
+
+        await agent.close()
+
+
 class TestParallelToolCalls:
     """Test that multiple tool calls in a single turn are dispatched in parallel."""
 

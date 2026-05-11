@@ -412,7 +412,9 @@ class Agent:
 
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
-            is_final_step = step == steps - 1
+            # Force final step early when batched tool calls accumulate to the cap,
+            # preventing context growth beyond what the 1-per-step case allows.
+            is_final_step = step == steps - 1 or len(tool_call_records) >= steps - 1
             step_tools = self._tools_for_step(tools, is_final_step)
 
             response = await self._call_model_validated(messages, step_tools, run_id, prompt_type)
