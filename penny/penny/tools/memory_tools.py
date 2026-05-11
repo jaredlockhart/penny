@@ -385,6 +385,38 @@ class ReadLatestTool(Tool):
         return _format_entries(entries)
 
 
+class CollectionReadLatestTool(Tool):
+    """Return the newest entries in a collection (alias for read_latest).
+
+    Surfaced under the old per-shape name to handle stale extraction_prompts
+    and LLM hallucinations that call collection_read_latest instead of the
+    unified read_latest tool.
+    """
+
+    name = "collection_read_latest"
+    description = (
+        "Return the newest entries in a collection, newest first. "
+        "Omit ``k`` to return every entry. "
+        "Alias for ``read_latest`` — use either name."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string"},
+            "k": {"type": "integer", "description": "Max entries; omit for all"},
+        },
+        "required": ["memory"],
+    }
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def execute(self, **kwargs: Any) -> str:
+        args = ReadLatestArgs(**kwargs)
+        entries = self._db.memories.read_latest(args.memory, args.k)
+        return _format_entries(entries)
+
+
 class CollectionReadRandomTool(Tool):
     """Return entries sampled uniformly at random from a collection."""
 
@@ -1151,6 +1183,7 @@ def build_memory_tools(
     """
     reads: list[Tool] = [
         ReadLatestTool(db),
+        CollectionReadLatestTool(db),
         ReadSimilarTool(db, llm_client),
         CollectionGetTool(db),
         CollectionReadRandomTool(db),
