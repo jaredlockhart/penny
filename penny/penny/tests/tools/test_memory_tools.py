@@ -22,6 +22,7 @@ from penny.tools.memory_tools import (
     CollectionMergeTool,
     CollectionMoveTool,
     CollectionReadRandomTool,
+    CollectionReadRecentTool,
     CollectionUnarchiveTool,
     CollectionUpdateTool,
     CollectionWriteTool,
@@ -341,6 +342,17 @@ class TestLogTools:
         )
         rendered = await LogReadRecentTool(db).execute(memory="events", window_seconds=3600)
         assert "hello" in rendered
+
+    @pytest.mark.asyncio
+    async def test_collection_read_recent_window(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        client = _make_llm_client(mock_llm)
+        await CollectionCreateTool(db).execute(name="items", description="x", recall="recent")
+        await CollectionWriteTool(db, client, "test", scope=None).execute(
+            memory="items", entries=[{"key": "thing", "content": "recent entry"}]
+        )
+        rendered = await CollectionReadRecentTool(db).execute(memory="items", window_seconds=3600)
+        assert "recent entry" in rendered
 
     @pytest.mark.asyncio
     async def test_log_similar_with_client(self, tmp_path, mock_llm):
@@ -710,6 +722,7 @@ class TestFactory:
             # Reads
             "collection_get",
             "collection_read_random",
+            "collection_read_recent",
             "collection_keys",
             "collection_metadata",
             "log_read_recent",
@@ -729,6 +742,7 @@ class TestFactory:
         assert names == {
             "collection_get",
             "collection_read_random",
+            "collection_read_recent",
             "collection_keys",
             "collection_metadata",
             "log_read_recent",
