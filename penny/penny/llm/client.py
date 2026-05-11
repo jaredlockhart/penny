@@ -296,7 +296,7 @@ class LlmClient:
         return LlmToolCall(
             id=tool_call.id,
             function=LlmToolCallFunction(
-                name=tool_call.function.name,
+                name=tool_call.function.name.strip().rstrip("?"),
                 arguments=arguments,
             ),
         )
