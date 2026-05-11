@@ -9,6 +9,18 @@ from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
 
 
+def _make_fake_tool_call(name: str, arguments: str = "{}") -> object:
+    """Build a minimal object that looks like an OpenAI ChatCompletionMessageToolCall."""
+    return type(
+        "ToolCall",
+        (),
+        {
+            "id": "call_test",
+            "function": type("Fn", (), {"name": name, "arguments": arguments})(),
+        },
+    )()
+
+
 class StubSearchTool(Tool):
     """Minimal stub tool for testing tool-not-found handling."""
 
@@ -220,4 +232,30 @@ class TestMissingRequiredParameters:
         assert "boolean" in error_content
         assert "string" in error_content
 
-        await agent.close()
+
+class TestToolNameSanitization:
+    """LlmClient._parse_tool_call strips malformed names from the model."""
+
+    def test_strips_trailing_question_mark(self):
+        """Trailing '?' hallucinated by the LLM is stripped before the name is stored."""
+        fake_tc = _make_fake_tool_call("collection_get?", '{"key": "val"}')
+        result = LlmClient._parse_tool_call(fake_tc)
+        assert result.function.name == "collection_get"
+
+    def test_strips_whitespace_from_name(self):
+        """Leading and trailing whitespace in tool names is stripped."""
+        fake_tc = _make_fake_tool_call("  update_batch  ", "{}")
+        result = LlmClient._parse_tool_call(fake_tc)
+        assert result.function.name == "update_batch"
+
+    def test_strips_question_mark_and_whitespace_together(self):
+        """Both whitespace and trailing '?' are stripped when combined."""
+        fake_tc = _make_fake_tool_call(" functions? ", "{}")
+        result = LlmClient._parse_tool_call(fake_tc)
+        assert result.function.name == "functions"
+
+    def test_clean_name_unchanged(self):
+        """A well-formed tool name passes through without modification."""
+        fake_tc = _make_fake_tool_call("search", '{"query": "test"}')
+        result = LlmClient._parse_tool_call(fake_tc)
+        assert result.function.name == "search"
