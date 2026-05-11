@@ -1,5 +1,7 @@
 """Tests for handling tool calls with non-existent tool names and missing parameters."""
 
+import logging
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +9,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -221,3 +224,21 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class TestToolNotFoundLogging:
+    """Available tool names are logged at DEBUG level when a tool is not found."""
+
+    def test_logs_available_tools_at_debug_on_unknown_name(self, caplog):
+        """DEBUG log includes the available tool list when the model calls an unknown tool."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="entry_update", arguments={}, id="call_test")
+
+        with caplog.at_level(logging.DEBUG, logger="penny.tools.base"):
+            executor._tool_not_found_result(tool_call)
+
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+        assert any("search" in r.message for r in debug_records)
