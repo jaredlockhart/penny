@@ -21,6 +21,7 @@ from penny.tools.memory_tools import (
     CollectionKeysTool,
     CollectionMergeTool,
     CollectionMoveTool,
+    CollectionReadLatestTool,
     CollectionReadRandomTool,
     CollectionUnarchiveTool,
     CollectionUpdateTool,
@@ -261,6 +262,16 @@ class TestCollectionWritesAndReads:
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
         result = await ReadSimilarTool(db, None).execute(memory="likes", anchor="whatever")
         assert "similarity search unavailable" in result
+
+    @pytest.mark.asyncio
+    async def test_collection_read_latest_alias(self, tmp_path, mock_llm):
+        """collection_read_latest is an alias for read_latest — returns newest entries."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        await write.execute(memory="likes", entries=[{"key": "coffee", "content": "loves coffee"}])
+        rendered = await CollectionReadLatestTool(db).execute(memory="likes")
+        assert "coffee" in rendered
 
 
 class TestCollectionMutations:
@@ -709,6 +720,7 @@ class TestFactory:
             "log_create",
             # Reads
             "collection_get",
+            "collection_read_latest",
             "collection_read_random",
             "collection_keys",
             "collection_metadata",
@@ -728,6 +740,7 @@ class TestFactory:
         # Reads + entry mutations (pinned to scope) + log_append; no lifecycle
         assert names == {
             "collection_get",
+            "collection_read_latest",
             "collection_read_random",
             "collection_keys",
             "collection_metadata",
