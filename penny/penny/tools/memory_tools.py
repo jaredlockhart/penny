@@ -853,13 +853,42 @@ class CollectionDeleteEntryTool(Tool):
 # ── Log reads ───────────────────────────────────────────────────────────────
 
 
+class CollectionReadRecentTool(Tool):
+    """Return collection entries created within the past ``window_seconds`` seconds."""
+
+    name = "collection_read_recent"
+    description = (
+        "Return entries in a collection created within the past ``window_seconds`` "
+        "seconds, oldest first. Use for 'what was added recently' queries on "
+        "collections. For logs, use ``log_read_recent`` instead."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string"},
+            "window_seconds": {"type": "integer"},
+            "cap": {"type": "integer", "description": "Max entries; omit for all"},
+        },
+        "required": ["memory", "window_seconds"],
+    }
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def execute(self, **kwargs: Any) -> str:
+        args = ReadRecentArgs(**kwargs)
+        entries = self._db.memories.read_recent(args.memory, args.window_seconds, args.cap)
+        return _format_entries(entries)
+
+
 class LogReadRecentTool(Tool):
     """Return log entries created within the past ``window_seconds`` seconds."""
 
     name = "log_read_recent"
     description = (
-        "Return entries created within the past ``window_seconds`` seconds, "
-        "oldest first. Use for 'what just happened' queries."
+        "Return entries in a log created within the past ``window_seconds`` seconds, "
+        "oldest first. Use for 'what just happened' queries on logs. For "
+        "collections, use ``collection_read_recent`` instead."
     )
     parameters = {
         "type": "object",
@@ -1154,6 +1183,7 @@ def build_memory_tools(
         ReadSimilarTool(db, llm_client),
         CollectionGetTool(db),
         CollectionReadRandomTool(db),
+        CollectionReadRecentTool(db),
         CollectionKeysTool(db),
         CollectionMetadataTool(db),
         LogReadRecentTool(db),
