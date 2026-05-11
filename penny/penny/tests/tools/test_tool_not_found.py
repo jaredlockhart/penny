@@ -1,5 +1,7 @@
 """Tests for handling tool calls with non-existent tool names and missing parameters."""
 
+import logging
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +9,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -89,9 +92,9 @@ class TestToolNotFound:
         tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
         assert len(tool_messages) > 0
 
-        # The error should list available tools
+        # The error should tell the model the name is invalid and list available tools
         error_content = tool_messages[0]["content"]
-        assert "not found" in error_content.lower()
+        assert "not a valid tool name" in error_content.lower()
         assert "available" in error_content.lower()
         assert "search" in error_content.lower()  # The actual tool name
 
@@ -221,3 +224,51 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class TestToolNotFoundLogging:
+    """Unknown tool calls log at WARNING (recoverable misbehavior) not ERROR."""
+
+    def test_logs_at_warning_not_error_for_hallucinated_name(self, caplog):
+        """Tool-not-found logs WARNING so monitoring noise is appropriate to severity."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="AI", arguments={}, id="call_ai")
+
+        with caplog.at_level(logging.DEBUG, logger="penny.tools.base"):
+            executor._tool_not_found_result(tool_call)
+
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("AI" in r.message for r in warning_records)
+        # Must not emit an ERROR — the situation is fully recoverable
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+
+    def test_logs_available_tools_at_debug_on_unknown_name(self, caplog):
+        """DEBUG log includes the available tool list for diagnostics."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="AI", arguments={}, id="call_ai")
+
+        with caplog.at_level(logging.DEBUG, logger="penny.tools.base"):
+            executor._tool_not_found_result(tool_call)
+
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+        assert any("search" in r.message for r in debug_records)
+
+    def test_error_message_tells_model_name_is_invalid(self):
+        """Error returned to model says the name is invalid, not just absent."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="AI", arguments={}, id="call_ai")
+        result = executor._tool_not_found_result(tool_call)
+
+        assert result.error is not None
+        assert "not a valid tool name" in result.error.lower()
+        assert "do not invent" in result.error.lower()
+        assert "search" in result.error  # lists available tools
