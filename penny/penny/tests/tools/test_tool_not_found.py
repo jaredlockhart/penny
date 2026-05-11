@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -22,6 +23,37 @@ class StubSearchTool(Tool):
 
     async def execute(self, **kwargs):
         return "Mock search results for testing"
+
+
+class TestToolCallValidation:
+    """Test ToolCall model validation for tool names."""
+
+    def test_valid_tool_name_accepted(self):
+        """ASCII identifier-like names pass validation."""
+        tc = ToolCall(tool="collection_write", arguments={})
+        assert tc.tool == "collection_write"
+
+    def test_garbled_non_ascii_name_rejected(self):
+        """Tool names with Unicode or punctuation raise ValidationError."""
+        import pydantic
+
+        garbled = "entries……??…???"
+        with pytest.raises(pydantic.ValidationError, match="Invalid tool name"):
+            ToolCall(tool=garbled, arguments={})
+
+    def test_empty_name_rejected(self):
+        """Empty tool name raises ValidationError."""
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError, match="Invalid tool name"):
+            ToolCall(tool="", arguments={})
+
+    def test_name_starting_with_digit_rejected(self):
+        """Tool names starting with a digit are rejected."""
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError, match="Invalid tool name"):
+            ToolCall(tool="1search", arguments={})
 
 
 class TestToolNotFound:
@@ -94,6 +126,68 @@ class TestToolNotFound:
         assert "not found" in error_content.lower()
         assert "available" in error_content.lower()
         assert "search" in error_content.lower()  # The actual tool name
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_agent_handles_garbled_non_ascii_tool_name(self, test_db, mock_llm):
+        """Garbled tool names with non-ASCII characters are rejected with a clear error."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        search_tool = StubSearchTool()
+
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[search_tool],
+            db=db,
+            config=config,
+        )
+
+        messages_sent = []
+
+        # The exact garbled name from the bug report (contains Unicode ellipsis + question marks)
+        garbled_name = "entries……??.…??..????…???….????"
+
+        def handler(request: dict, count: int) -> dict:
+            messages_sent.append(request["messages"])
+            if count == 1:
+                return mock_llm._make_tool_call_response(request, garbled_name, {})
+            return mock_llm._make_text_response(request, "Using search instead.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test prompt", max_steps=3)
+
+        assert response.answer is not None
+        assert len(messages_sent) == 2
+
+        # The error should have been sent back to the model with available tools listed
+        second_call_messages = messages_sent[1]
+        tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
+        assert len(tool_messages) > 0
+        error_content = tool_messages[0]["content"]
+        assert "Error:" in error_content
+        assert "search" in error_content  # Available tool name appears in the list
 
         await agent.close()
 
