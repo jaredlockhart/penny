@@ -79,7 +79,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37
+        assert count == 38
 
         conn = sqlite3.connect(db_path)
         tables = {
@@ -119,7 +119,7 @@ class TestMigrate:
 
         count1 = migrate(db_path)
         count2 = migrate(db_path)
-        assert count1 == 37
+        assert count1 == 38
         assert count2 == 0
 
     def test_tracks_in_migrations_table(self, tmp_path):
@@ -157,8 +157,8 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        # 0001 is skipped; 0002 through 0037 run = 36 migrations
-        assert count == 36
+        # 0001 is skipped; 0002 through 0038 run = 37 migrations
+        assert count == 37
 
     def test_bootstrap_with_tables_already_present(self, tmp_path):
         """If tables already exist (from SQLModel.create_tables), migration should succeed."""
@@ -184,7 +184,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37  # all migrations applied
+        assert count == 38  # all migrations applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
@@ -236,4 +236,55 @@ class TestMigrate:
         prompt = row[0]
         assert "collection_update" not in prompt
         assert 'update_entry("knowledge", key=<title>,' in prompt
+        conn.close()
+
+    def test_0038_adds_read_similar_to_knowledge_prompt(self, tmp_path):
+        """Migration 0038 adds read_similar guidance to the knowledge extraction_prompt."""
+        import importlib.util
+        from pathlib import Path
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        # Seed a prompt that matches the expected old text (after 0037's fix)
+        old_prompt = (
+            'call collection_get("knowledge", key=<page title>) to see whether you '
+            "already have a summary.  If one is returned, call "
+            'update_entry("knowledge", key=<title>, content=<merged paragraph>) '
+            "— integrate any new details from this fetch while preserving existing "
+            "ones.  Otherwise, call "
+            'collection_write("knowledge", entries=[{key: <title>, content: <new paragraph>}]).'
+        )
+        conn.execute(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            ("knowledge", old_prompt),
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0038_add_read_similar_to_knowledge_prompt.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0038", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT extraction_prompt FROM memory WHERE name = 'knowledge'"
+        ).fetchone()
+        assert row is not None
+        prompt = row[0]
+        assert "read_similar" in prompt
+        assert "collection_search" in prompt  # mentioned as the tool that does NOT exist
         conn.close()
