@@ -1,11 +1,14 @@
 """Tests for handling tool calls with non-existent tool names and missing parameters."""
 
+import json
+
 import pytest
 
 from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
+from penny.llm.client import LlmClient as LlmClientImpl
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
 
 
@@ -22,6 +25,43 @@ class StubSearchTool(Tool):
 
     async def execute(self, **kwargs):
         return "Mock search results for testing"
+
+
+def _make_fake_tool_call(name: str, arguments: dict) -> object:
+    """Build a minimal fake OpenAI tool call object for _parse_tool_call tests."""
+    return type(
+        "FakeToolCall",
+        (),
+        {
+            "id": "call_test",
+            "function": type(
+                "FakeFn",
+                (),
+                {"name": name, "arguments": json.dumps(arguments)},
+            )(),
+        },
+    )()
+
+
+class TestToolNameSanitization:
+    """_parse_tool_call strips trailing non-word characters from tool names."""
+
+    def test_strips_trailing_question_mark(self):
+        result = LlmClientImpl._parse_tool_call(_make_fake_tool_call("collection_update?", {}))
+        assert result.function.name == "collection_update"
+
+    def test_strips_multiple_trailing_punctuation(self):
+        result = LlmClientImpl._parse_tool_call(_make_fake_tool_call("update?!", {}))
+        assert result.function.name == "update"
+
+    def test_preserves_clean_name(self):
+        result = LlmClientImpl._parse_tool_call(_make_fake_tool_call("collection_update", {}))
+        assert result.function.name == "collection_update"
+
+    def test_preserves_arguments(self):
+        result = LlmClientImpl._parse_tool_call(_make_fake_tool_call("my_tool?", {"key": "value"}))
+        assert result.function.name == "my_tool"
+        assert result.function.arguments == {"key": "value"}
 
 
 class TestToolNotFound:
