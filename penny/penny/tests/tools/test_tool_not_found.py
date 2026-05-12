@@ -1,5 +1,7 @@
 """Tests for handling tool calls with non-existent tool names and missing parameters."""
 
+import logging
+
 import pytest
 
 from penny.agents.base import Agent
@@ -7,6 +9,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -221,3 +224,50 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class TestMalformedToolName:
+    """Malformed tool names (non-identifier characters) are caught before registry lookup."""
+
+    @pytest.mark.asyncio
+    async def test_delete_question_mark_returns_error_not_not_found(self):
+        """'delete?' produces a malformed-name error, not a tool-not-found error."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="delete?", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "not found" not in result.error
+        assert "letters, digits, and underscores" in result.error
+        assert "search" in result.error  # lists available tools
+
+    @pytest.mark.asyncio
+    async def test_malformed_name_logs_warning_not_error(self, caplog):
+        """Malformed tool name is logged at WARNING level (not ERROR)."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="delete?", arguments={}, id="call_1")
+        with caplog.at_level(logging.DEBUG, logger="penny.tools.base"):
+            await executor.execute(tool_call)
+
+        assert any(r.levelname == "WARNING" and "delete?" in r.message for r in caplog.records)
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_valid_identifier_passes_format_check(self):
+        """A valid tool name is not rejected by the format check."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="nonexistent_tool", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "letters, digits, and underscores" not in result.error
+        assert "not found" in result.error

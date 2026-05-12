@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
@@ -133,6 +134,9 @@ class ToolRegistry:
         return [tool.to_ollama_tool() for tool in self._tools.values()]
 
 
+_VALID_TOOL_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
 class ToolExecutor:
     """Executes tools with timeout and error handling."""
 
@@ -170,6 +174,8 @@ class ToolExecutor:
 
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call."""
+        if not _VALID_TOOL_NAME.match(tool_call.tool):
+            return self._malformed_tool_name_result(tool_call)
         tool = self.registry.get(tool_call.tool)
         if tool is None:
             return self._tool_not_found_result(tool_call)
@@ -189,6 +195,22 @@ class ToolExecutor:
             error=(
                 f"Tool '{tool_call.tool}' not found. "
                 f"Available tools: {available_list}. "
+                f"You must ONLY use the tools listed above."
+            ),
+            id=tool_call.id,
+        )
+
+    def _malformed_tool_name_result(self, tool_call: ToolCall) -> ToolResult:
+        """Build error result when the tool name contains invalid characters."""
+        available_tools = [t.name for t in self.registry.get_all()]
+        available_list = ", ".join(available_tools) if available_tools else "none"
+        logger.warning("LLM sent malformed tool name: %r", tool_call.tool)
+        return ToolResult(
+            tool=tool_call.tool,
+            result=None,
+            error=(
+                f"'{tool_call.tool}' is not a valid tool name — tool names may only contain "
+                f"letters, digits, and underscores. Available tools: {available_list}. "
                 f"You must ONLY use the tools listed above."
             ),
             id=tool_call.id,
