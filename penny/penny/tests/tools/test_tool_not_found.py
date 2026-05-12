@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -221,3 +222,57 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class StubLogReadNextTool(Tool):
+    """Minimal stub with a log_-prefixed name to test _find_similar_tool."""
+
+    name = "log_read_next"
+    description = "Read log entries"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return "entries"
+
+
+class TestFindSimilarTool:
+    """_find_similar_tool detects common LLM morphological errors."""
+
+    @pytest.mark.asyncio
+    async def test_did_you_mean_when_prefix_dropped(self):
+        """'read_next' → 'Did you mean: log_read_next?' when log_read_next is registered."""
+        registry = ToolRegistry()
+        registry.register(StubLogReadNextTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="read_next", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "Did you mean: log_read_next?" in result.error
+
+    @pytest.mark.asyncio
+    async def test_did_you_mean_when_spurious_prefix_added(self):
+        """'collection_search' → 'Did you mean: search?' when search is registered."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="collection_search", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "Did you mean: search?" in result.error
+
+    @pytest.mark.asyncio
+    async def test_no_did_you_mean_when_no_match(self):
+        """No hint when the called name has no suffix/prefix match in the registry."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="completely_wrong_name", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "Did you mean" not in result.error

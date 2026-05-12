@@ -892,7 +892,8 @@ class LogReadNextTool(Tool):
     description = (
         "Return entries appended to a log since this agent's last committed read. "
         "Use this to process new content incrementally without re-seeing entries "
-        "from earlier runs."
+        "from earlier runs. "
+        "This tool is called log_read_next — do not use read_next (the log_ prefix is required)."
     )
     parameters = {
         "type": "object",

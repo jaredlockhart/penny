@@ -183,16 +183,34 @@ class ToolExecutor:
         logger.error("Tool not found: %s", tool_call.tool)
         available_tools = [t.name for t in self.registry.get_all()]
         available_list = ", ".join(available_tools) if available_tools else "none"
+        similar = self._find_similar_tool(tool_call.tool)
+        hint = f" Did you mean: {similar}?" if similar else ""
         return ToolResult(
             tool=tool_call.tool,
             result=None,
             error=(
-                f"Tool '{tool_call.tool}' not found. "
+                f"Tool '{tool_call.tool}' not found.{hint} "
                 f"Available tools: {available_list}. "
                 f"You must ONLY use the tools listed above."
             ),
             id=tool_call.id,
         )
+
+    def _find_similar_tool(self, called_name: str) -> str | None:
+        """Find a registered tool the caller likely meant.
+
+        Handles two common LLM morphological errors:
+        - Drops a prefix: 'read_next' called when 'log_read_next' is registered
+        - Adds a spurious prefix: 'collection_read_latest' called when 'read_latest' is registered
+        """
+        registered = [t.name for t in self.registry.get_all()]
+        for name in registered:
+            if name.endswith(f"_{called_name}"):
+                return name
+        for name in registered:
+            if called_name.endswith(f"_{name}"):
+                return name
+        return None
 
     def _validation_error_result(self, tool_call: ToolCall, error: str) -> ToolResult:
         """Build error result for argument validation failure."""
