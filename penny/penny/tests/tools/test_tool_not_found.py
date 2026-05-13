@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -221,3 +222,81 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class StubLookupTool(Tool):
+    """Minimal stub to test call_X hallucination detection without shadowing BrowseTool."""
+
+    name = "stub_lookup"
+    description = "Stub lookup"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return "results"
+
+
+class StubReadLatestTool(Tool):
+    """Minimal stub to test fuzzy name matching for close-name hallucinations."""
+
+    name = "stub_read_latest"
+    description = "Return newest entries"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return "entries"
+
+
+class TestFindSimilarTool:
+    """_find_similar_tool detects call_ prefix and close-name hallucinations."""
+
+    @pytest.mark.asyncio
+    async def test_did_you_mean_when_call_prefix_added(self):
+        """'call_stub_lookup' → 'Did you mean: stub_lookup?' covers the call_browse pattern."""
+        registry = ToolRegistry()
+        registry.register(StubLookupTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="call_stub_lookup", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "Did you mean: stub_lookup?" in result.error
+
+    @pytest.mark.asyncio
+    async def test_no_did_you_mean_when_no_match(self):
+        """No hint when the called name has no prefix or close match in the registry."""
+        registry = ToolRegistry()
+        registry.register(StubLookupTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="completely_wrong_name", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "Did you mean" not in result.error
+
+    @pytest.mark.asyncio
+    async def test_call_prefix_only_matches_registered_tool(self):
+        """'call_missing' produces no hint when 'missing' is not a registered tool."""
+        registry = ToolRegistry()
+        registry.register(StubLookupTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="call_missing", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "Did you mean" not in result.error
+
+    @pytest.mark.asyncio
+    async def test_did_you_mean_for_close_name_match(self):
+        """'read_newest' → 'Did you mean: stub_read_latest?' covers fuzzy-name hallucinations."""
+        registry = ToolRegistry()
+        registry.register(StubReadLatestTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="read_newest", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "Did you mean: stub_read_latest?" in result.error

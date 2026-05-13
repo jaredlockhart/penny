@@ -1,6 +1,7 @@
 """Base classes for tools."""
 
 import asyncio
+import difflib
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
@@ -183,16 +184,37 @@ class ToolExecutor:
         logger.error("Tool not found: %s", tool_call.tool)
         available_tools = [t.name for t in self.registry.get_all()]
         available_list = ", ".join(available_tools) if available_tools else "none"
+        similar = self._find_similar_tool(tool_call.tool)
+        hint = f" Did you mean: {similar}?" if similar else ""
         return ToolResult(
             tool=tool_call.tool,
             result=None,
             error=(
-                f"Tool '{tool_call.tool}' not found. "
+                f"Tool '{tool_call.tool}' not found.{hint} "
                 f"Available tools: {available_list}. "
                 f"You must ONLY use the tools listed above."
             ),
             id=tool_call.id,
         )
+
+    def _find_similar_tool(self, called_name: str) -> str | None:
+        """Find a registered tool the caller likely meant.
+
+        Handles two hallucination patterns:
+        1. 'call_' prefix: the model mirrors OpenAI tool-call ID format
+           (e.g., 'call_browse' when 'browse' is registered).
+        2. Close name: the model invents a plausible-sounding name similar to
+           an existing tool (e.g., 'read_newest' when 'read_latest' exists).
+        """
+        if called_name.startswith("call_"):
+            candidate = called_name[len("call_") :]
+            if self.registry.get(candidate) is not None:
+                return candidate
+        registered_names = [t.name for t in self.registry.get_all()]
+        matches = difflib.get_close_matches(called_name, registered_names, n=1, cutoff=0.55)
+        if matches:
+            return matches[0]
+        return None
 
     def _validation_error_result(self, tool_call: ToolCall, error: str) -> ToolResult:
         """Build error result for argument validation failure."""
