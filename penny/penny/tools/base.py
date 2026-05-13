@@ -183,16 +183,31 @@ class ToolExecutor:
         logger.error("Tool not found: %s", tool_call.tool)
         available_tools = [t.name for t in self.registry.get_all()]
         available_list = ", ".join(available_tools) if available_tools else "none"
+        similar = self._find_similar_tool(tool_call.tool)
+        hint = f" Did you mean: {similar}?" if similar else ""
         return ToolResult(
             tool=tool_call.tool,
             result=None,
             error=(
-                f"Tool '{tool_call.tool}' not found. "
+                f"Tool '{tool_call.tool}' not found.{hint} "
                 f"Available tools: {available_list}. "
                 f"You must ONLY use the tools listed above."
             ),
             id=tool_call.id,
         )
+
+    def _find_similar_tool(self, called_name: str) -> str | None:
+        """Find a registered tool the caller likely meant.
+
+        Handles the common LLM hallucination where 'call_' is prepended to the
+        tool name, mirroring the OpenAI tool-call ID format (e.g., 'call_browse'
+        called when 'browse' is registered).
+        """
+        if called_name.startswith("call_"):
+            candidate = called_name[len("call_") :]
+            if self.registry.get(candidate) is not None:
+                return candidate
+        return None
 
     def _validation_error_result(self, tool_call: ToolCall, error: str) -> ToolResult:
         """Build error result for argument validation failure."""
