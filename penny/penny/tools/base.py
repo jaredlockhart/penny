@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
@@ -9,6 +10,10 @@ from penny.constants import ProgressEmoji
 from penny.tools.models import ToolCall, ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
+
+# Characters that are not valid in a tool name (lowercase letters, digits, underscore).
+# Models occasionally append punctuation (e.g., '?') to tool names.
+_TOOL_NAME_INVALID = re.compile(r"[^a-zA-Z0-9_]")
 
 
 class Tool(ABC):
@@ -170,6 +175,10 @@ class ToolExecutor:
 
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call."""
+        normalized = _TOOL_NAME_INVALID.sub("", tool_call.tool)
+        if normalized != tool_call.tool:
+            logger.warning("Stripped invalid characters from tool name: %r", tool_call.tool)
+            tool_call = ToolCall(tool=normalized, arguments=tool_call.arguments, id=tool_call.id)
         tool = self.registry.get(tool_call.tool)
         if tool is None:
             return self._tool_not_found_result(tool_call)
