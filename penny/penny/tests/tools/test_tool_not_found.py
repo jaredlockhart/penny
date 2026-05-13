@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -221,3 +222,59 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class StubWriteTool(Tool):
+    """Stub to test trailing-punctuation normalization (mirrors collection_write pattern)."""
+
+    name = "stub_write"
+    description = "Write something"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return "written"
+
+
+class TestToolNameNormalization:
+    """ToolExecutor strips invalid characters from tool names before lookup."""
+
+    @pytest.mark.asyncio
+    async def test_trailing_question_mark_is_stripped_and_tool_executes(self):
+        """'stub_write?' normalizes to 'stub_write' and executes without error."""
+        registry = ToolRegistry()
+        registry.register(StubWriteTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="stub_write?", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is None
+        assert result.result == "written"
+        assert result.tool == "stub_write"
+
+    @pytest.mark.asyncio
+    async def test_name_without_invalid_chars_is_unchanged(self):
+        """A clean tool name passes through normalization unmodified."""
+        registry = ToolRegistry()
+        registry.register(StubWriteTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="stub_write", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is None
+        assert result.tool == "stub_write"
+
+    @pytest.mark.asyncio
+    async def test_unknown_name_after_stripping_still_returns_error(self):
+        """If the stripped name is still unknown, tool-not-found error is returned."""
+        registry = ToolRegistry()
+        registry.register(StubWriteTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="no_such_tool?", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "not found" in result.error
+        assert result.tool == "no_such_tool"
