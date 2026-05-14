@@ -146,8 +146,6 @@ async def test_access_token_refreshed_and_cached():
         FAKE_REFRESH_TOKEN,
         timeout=_ZOHO_TIMEOUT,
         max_body_length=_EMAIL_MAX_LENGTH,
-        search_limit=_EMAIL_SEARCH_LIMIT,
-        list_limit=_EMAIL_LIST_LIMIT,
     )
 
     with patch.object(client._http, "post", new_callable=AsyncMock) as mock_post:

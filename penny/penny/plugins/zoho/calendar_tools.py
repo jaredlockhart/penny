@@ -259,7 +259,7 @@ class CheckAvailabilityTool(Tool):
             conflicts = []
             for evt in events:
                 # Check if event overlaps with requested time
-                if evt.start < end and evt.end > start:
+                if evt.start and evt.end and evt.start < end and evt.end > start:
                     conflicts.append(evt)
 
             if not conflicts:
