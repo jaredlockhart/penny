@@ -106,10 +106,12 @@ class PermissionManager:
             # Re-check — a prior prompt may have resolved this domain
             permission = self._db.domain_permissions.check_domain(domain)
             if permission == DomainPermissionValue.ALLOWED:
-                result_future.set_result(True)
+                if not result_future.done():
+                    result_future.set_result(True)
                 continue
             if permission == DomainPermissionValue.BLOCKED:
-                result_future.set_result(False)
+                if not result_future.done():
+                    result_future.set_result(False)
                 continue
 
             allowed = await self._prompt(domain, url)
@@ -118,7 +120,8 @@ class PermissionManager:
                 self._db.domain_permissions.set_permission(domain, perm)
                 await self._channel_manager.sync_domain_permissions()
 
-            result_future.set_result(allowed)
+            if not result_future.done():
+                result_future.set_result(allowed)
 
     # --- Prompt orchestration ---
 

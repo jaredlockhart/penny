@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from github_api.api import GitHubAPI
 
     from penny.llm.image_client import OllamaImageClient
-    from penny.zoho.models import ZohoCredentials
+    from penny.plugins import Plugin
 
 __all__ = [
     "Command",
@@ -39,8 +39,8 @@ def create_command_registry(
     message_agent_factory: Callable | None = None,
     github_api: GitHubAPI | None = None,
     image_model_client: OllamaImageClient | None = None,
-    fastmail_api_token: str | None = None,
-    zoho_credentials: ZohoCredentials | None = None,
+    plugin_commands: list[Command] | None = None,
+    email_plugins: list[Plugin] | None = None,
 ) -> CommandRegistry:
     """
     Factory to create registry with builtin commands.
@@ -50,8 +50,8 @@ def create_command_registry(
                               (required for test command)
         github_api: Optional GitHub API client (required for bug command)
         image_model_client: Optional image generation OllamaImageClient (required for draw command)
-        fastmail_api_token: Optional Fastmail API token (required for email command)
-        zoho_credentials: Optional ZohoCredentials for Zoho Mail API (required for zoho command)
+        plugin_commands: Commands contributed by loaded plugins
+        email_plugins: Loaded plugins with email capability (for /email routing)
 
     Returns:
         CommandRegistry with all builtin commands registered
@@ -93,22 +93,15 @@ def create_command_registry(
 
         registry.register(DrawCommand())
 
-    # Register email command if Fastmail API token is configured
-    if fastmail_api_token:
-        from penny.commands.email import EmailCommand
+    # Register unified /email command if any email plugins are configured
+    active_email_plugins = email_plugins or []
+    if active_email_plugins:
+        from penny.email.command import EmailCommand
 
-        registry.register(EmailCommand(fastmail_api_token))
+        registry.register(EmailCommand(active_email_plugins))
 
-    # Register zoho command if Zoho credentials are configured
-    if zoho_credentials:
-        from penny.commands.zoho import ZohoCommand
-
-        registry.register(
-            ZohoCommand(
-                zoho_credentials.client_id,
-                zoho_credentials.client_secret,
-                zoho_credentials.refresh_token,
-            )
-        )
+    # Register individual plugin commands (e.g. /zoho, /invoice)
+    for cmd in plugin_commands or []:
+        registry.register(cmd)
 
     return registry
