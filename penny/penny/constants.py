@@ -96,6 +96,12 @@ class PennyConstants:
     ZOHO_ACCOUNTS_URL = "https://mail.zoho.com/api/accounts"
     ZOHO_API_BASE = "https://mail.zoho.com/api"
 
+    # Zoho Calendar API constants
+    ZOHO_CALENDAR_API_BASE = "https://calendar.zoho.com/api/v1"
+
+    # Zoho Projects API constants (v3)
+    ZOHO_PROJECTS_API_BASE = "https://projectsapi.zoho.com/api/v3"
+
     # Test mode constants
     TEST_DB_PATH = Path("data/penny/penny-test.db")
 
