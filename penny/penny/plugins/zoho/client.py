@@ -36,11 +36,15 @@ class ZohoClient:
         *,
         timeout: float,
         max_body_length: int,
+        search_limit: int = EMAIL_SEARCH_LIMIT,
+        list_limit: int = EMAIL_SEARCH_LIMIT,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._refresh_token = refresh_token
         self._max_body_length = max_body_length
+        self._search_limit = search_limit
+        self._list_limit = list_limit
         self._session: ZohoSession | None = None
         self._account: ZohoAccount | None = None
         self._folders: list[ZohoFolder] | None = None
@@ -194,9 +198,11 @@ class ZohoClient:
     async def list_emails(
         self,
         folder_name: str | None = None,
-        limit: int = EMAIL_SEARCH_LIMIT,
+        limit: int | None = None,
     ) -> list[EmailSummary]:
         """List emails from a specific folder."""
+        if limit is None:
+            limit = self._list_limit
         account = await self._ensure_account()
         headers = await self._get_headers()
 
@@ -231,9 +237,11 @@ class ZohoClient:
         subject: str | None = None,
         after: str | None = None,
         before: str | None = None,
-        limit: int = EMAIL_SEARCH_LIMIT,
+        limit: int | None = None,
     ) -> list[EmailSummary]:
         """Search emails and return summaries."""
+        if limit is None:
+            limit = self._search_limit
         search_parts = []
         if text:
             search_parts.append(f'entire:"{text}"' if " " in text else f"entire:{text}")
