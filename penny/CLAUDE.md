@@ -85,18 +85,14 @@ penny/
     draw.py           — /draw: generate images via Ollama image model (optional)
     bug.py            — /bug: file GitHub issues (optional, requires GitHub App)
     feature.py        — /feature: file GitHub feature requests (optional, requires GitHub App)
-    email.py          — /email: search Fastmail email via JMAP (optional)
-    zoho.py           — /zoho: search Zoho Mail via Zoho Mail API (optional)
   tools/
     base.py           — Tool ABC, ToolRegistry, ToolExecutor
     models.py         — ToolCall, ToolResult, ToolDefinition, SearchResult, and per-tool arg models
     browse.py         — BrowseTool: web search and page reading via browser extension
     content_cleaning.py — Post-processing for browse results (strips navigation, proxy images, boilerplate)
-    search_emails.py  — SearchEmailsTool (JMAP + Zoho)
-    read_emails.py    — ReadEmailTool (JMAP + Zoho)
-    list_emails.py    — ListEmailsTool (folder listings)
-    list_folders.py   — ListFoldersTool (available mailboxes)
-    draft_email.py    — DraftEmailTool (compose + stage draft)
+    search_emails.py  — SearchEmailsTool (uses EmailClient protocol)
+    read_emails.py    — ReadEmailsTool (uses EmailClient protocol)
+    list_emails.py    — ListEmailsTool (folder listings via EmailClient)
     memory_args.py    — Pydantic arg models for the memory tool surface
     memory_tools.py   — 21 Tool subclasses over db.memories.* (collection + log + introspection) and build_memory_tools(db, embedding_client, author) factory
   channels/
@@ -128,13 +124,35 @@ penny/
     embeddings.py     — Re-exports serialize/deserialize/cosine from shared similarity/ package
     similarity.py     — Penny-specific: embed_text, sentiment scores, novelty, preference vectors
   email/
-    protocol.py       — EmailClient Protocol — shared interface for JMAP + Zoho email backends
-  jmap/
-    client.py         — JmapClient: Fastmail JMAP API client (httpx)
-    models.py         — JmapSession, EmailAddress, EmailSummary, EmailDetail
-  zoho/
-    client.py         — ZohoClient: Zoho Mail API client (httpx + OAuth refresh)
-    models.py         — Zoho Mail API Pydantic models
+    __init__.py       — Re-exports EmailClient, EmailAddress, EmailDetail, EmailSummary
+    protocol.py       — EmailClient Protocol (implemented by plugin email clients)
+    models.py         — Shared email models: EmailAddress, EmailSummary, EmailDetail
+    command.py        — /email: unified multi-provider routing command
+  plugins/
+    __init__.py       — Plugin ABC, CAPABILITY_EMAIL, load_plugins()
+    fastmail/
+      __init__.py     — FastmailPlugin class (PLUGIN_CLASS entry point)
+      client.py       — JmapClient: Fastmail JMAP API client (httpx)
+      models.py       — JmapSession model
+      commands.py     — FastmailEmailCommand
+      tools.py        — (Fastmail uses shared search/read tools)
+    zoho/
+      __init__.py     — ZohoPlugin class (PLUGIN_CLASS entry point)
+      client.py       — ZohoClient: Zoho Mail API client (httpx + OAuth)
+      calendar_client.py — ZohoCalendarClient: Zoho Calendar API client
+      projects_client.py — ZohoProjectsClient: Zoho Projects API client
+      models.py       — ZohoCredentials, ZohoSession, ZohoAccount, ZohoFolder
+      rules.py        — RuleMatcher and RuleExecutor for email rules
+      commands.py     — ZohoEmailCommand, ZohoCalendarCommand, ZohoProjectCommand
+      tools.py        — Email tools: ListEmailsTool, ListFoldersTool, DraftEmailTool, MoveEmailsTool, CreateFolderTool, ApplyLabelTool, ListLabelsTool
+      calendar_tools.py — Calendar tools: list_calendars, get_events, check_availability, find_free_slots, create_event
+      project_tools.py  — Project tools: list_projects, create_project, list_tasks, create_task, update_task, etc.
+    invoiceninja/     — Stub plugin (not yet implemented)
+      __init__.py     — InvoiceNinjaPlugin class (PLUGIN_CLASS entry point)
+      client.py       — InvoiceNinjaClient stub
+      models.py       — Invoice, InvoiceNinjaCredentials
+      commands.py     — InvoiceCommand stub
+      tools.py        — ListInvoicesTool stub
   html_utils.py       — Shared HTML text extraction helpers
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
@@ -296,8 +314,8 @@ Penny supports slash commands sent as messages (e.g., `/debug`, `/config`). Comm
 - **/draw** (`draw.py`): Generate images via Ollama image model (requires `LLM_IMAGE_MODEL`)
 - **/bug** (`bug.py`): File a bug report on GitHub (requires GitHub App config)
 - **/feature** (`feature.py`): File a feature request on GitHub (requires GitHub App config)
-- **/email** (`email.py`): Search Fastmail email via JMAP (requires `FASTMAIL_API_TOKEN`)
-- **/zoho** (`zoho.py`): Search Zoho Mail via the Zoho Mail API (requires `ZOHO_API_ID`, `ZOHO_API_SECRET`, `ZOHO_REFRESH_TOKEN`)
+- **/email** (`email/command.py`): Search email via enabled email provider plugins (requires `PLUGINS` env var and provider credentials)
+- **/zoho** (`plugins/zoho/commands.py`): Search Zoho Mail via the Zoho Mail API (requires `ZOHO_API_ID`, `ZOHO_API_SECRET`, `ZOHO_REFRESH_TOKEN` and `zoho` in `PLUGINS`)
 
 ### Runtime Configuration
 - `/config` reads and writes to a `RuntimeConfig` table in SQLite
