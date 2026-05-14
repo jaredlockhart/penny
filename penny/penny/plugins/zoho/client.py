@@ -541,7 +541,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{self._get_api_base()}/accounts/{account.account_id}/messages"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/updatemessage"
 
         # Extract just the messageId part from "folderId:messageId" format
         pure_message_ids = []
@@ -651,7 +651,7 @@ class ZohoClient:
         account = await self._ensure_account()
         headers = await self._get_headers()
 
-        url = f"{self._get_api_base()}/accounts/{account.account_id}/messages"
+        url = f"{self._get_api_base()}/accounts/{account.account_id}/updatemessage"
 
         # Extract just the messageId part
         pure_message_ids = []
