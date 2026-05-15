@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 # or <tools><search>...</search></tools>
 _XML_TAG_PATTERN = re.compile(r"<[a-zA-Z]\w*[\s=>].*</[a-zA-Z]\w*>", re.DOTALL)
 
+# Matches legacy OpenAI-style namespace prefixes some models emit:
+#   functions.name  (dot notation)
+#   functions(name) (parenthesis notation — newer variant, see issue #1165)
+_FUNCTIONS_NAMESPACE_PREFIX = re.compile(r"^functions[\.(]([^)]+)\)?$", re.IGNORECASE)
+
 # Matches <think>...</think> blocks emitted inline by some models (e.g. DeepSeek-R1, Qwen3)
 _THINK_TAG_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
 
@@ -812,6 +817,11 @@ class Agent:
         for tool_call in response.message.tool_calls or []:
             tool_call_id = tool_call.id
             tool_name = tool_call.function.name
+            m = _FUNCTIONS_NAMESPACE_PREFIX.match(tool_name)
+            if m:
+                normalized = m.group(1)
+                logger.warning("Normalised tool name %r → %r", tool_name, normalized)
+                tool_name = normalized
             arguments = tool_call.function.arguments
             # Pop reasoning before dedup (same args + different reasoning = repeat)
             reasoning = arguments.pop("reasoning", None)
