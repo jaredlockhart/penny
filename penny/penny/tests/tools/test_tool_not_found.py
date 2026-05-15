@@ -2,11 +2,155 @@
 
 import pytest
 
-from penny.agents.base import Agent
+from penny.agents.base import _FUNCTIONS_NAMESPACE_PREFIX, Agent
 from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+
+
+class StubLogReadRecentTool(Tool):
+    """Stub that mimics log_read_recent for namespace-prefix normalisation tests."""
+
+    name = "log_read_recent"
+    description = "Return log entries within a time window"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return "(no entries)"
+
+
+class TestFunctionsNamespacePrefix:
+    """Tool names wrapped in functions.name or functions(name) prefixes are normalised."""
+
+    def test_paren_notation_extracted(self):
+        """Regex extracts bare name from functions(name) parenthesis form."""
+        m = _FUNCTIONS_NAMESPACE_PREFIX.match("functions(read_latest)")
+        assert m is not None
+        assert m.group(1) == "read_latest"
+
+    def test_dot_notation_extracted(self):
+        """Regex extracts bare name from functions.name dot form."""
+        m = _FUNCTIONS_NAMESPACE_PREFIX.match("functions.read_latest")
+        assert m is not None
+        assert m.group(1) == "read_latest"
+
+    def test_case_insensitive(self):
+        """Regex handles mixed-case Functions( prefix."""
+        m = _FUNCTIONS_NAMESPACE_PREFIX.match("Functions(search)")
+        assert m is not None
+        assert m.group(1) == "search"
+
+    def test_bare_name_not_matched(self):
+        """Regex does not match a bare tool name (no prefix)."""
+        m = _FUNCTIONS_NAMESPACE_PREFIX.match("read_latest")
+        assert m is None
+
+    @pytest.mark.asyncio
+    async def test_agent_executes_tool_with_paren_prefix(self, test_db, mock_llm):
+        """Agent successfully executes a tool when LLM emits functions(name) prefix."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+
+        stub = StubLogReadRecentTool()
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[stub],
+            db=db,
+            config=config,
+        )
+
+        tool_messages: list[dict] = []
+
+        def handler(request: dict, count: int) -> dict:
+            if count == 1:
+                return mock_llm._make_tool_call_response(request, "functions(log_read_recent)", {})
+            tool_messages.extend(m for m in request["messages"] if m.get("role") == "tool")
+            return mock_llm._make_text_response(request, "all done")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("read something", max_steps=3)
+
+        assert response.answer == "all done"
+        assert len(tool_messages) > 0
+        assert "not found" not in tool_messages[0]["content"].lower()
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].tool == "log_read_recent"
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_agent_executes_tool_with_dot_prefix(self, test_db, mock_llm):
+        """Agent successfully executes a tool when LLM emits functions.name dot prefix."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+
+        stub = StubLogReadRecentTool()
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[stub],
+            db=db,
+            config=config,
+        )
+
+        tool_messages: list[dict] = []
+
+        def handler(request: dict, count: int) -> dict:
+            if count == 1:
+                return mock_llm._make_tool_call_response(request, "functions.log_read_recent", {})
+            tool_messages.extend(m for m in request["messages"] if m.get("role") == "tool")
+            return mock_llm._make_text_response(request, "all done")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("read something", max_steps=3)
+
+        assert response.answer == "all done"
+        assert len(tool_messages) > 0
+        assert "not found" not in tool_messages[0]["content"].lower()
+
+        await agent.close()
 
 
 class StubSearchTool(Tool):
