@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -221,3 +222,62 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class StubLogReadRecentTool(Tool):
+    """Stub that mimics log_read_recent for near-match suggestion tests."""
+
+    name = "log_read_recent"
+    description = "Return log entries within a time window"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return "(no entries)"
+
+
+class TestToolNotFoundSuggestionReadRecent:
+    """Tool-not-found error for common log_read_recent hallucinations suggests correct name."""
+
+    @pytest.mark.asyncio
+    async def test_did_you_mean_for_read_recent(self):
+        """When model calls read_recent, error suggests the correct log_read_recent."""
+        registry = ToolRegistry()
+        registry.register(StubLogReadRecentTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="read_recent", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "not found" in result.error
+        assert "log_read_recent" in result.error
+        assert "Did you mean" in result.error
+
+    @pytest.mark.asyncio
+    async def test_did_you_mean_for_read_log_recent(self):
+        """When model calls read_log_recent (words reversed), error suggests log_read_recent."""
+        registry = ToolRegistry()
+        registry.register(StubLogReadRecentTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="read_log_recent", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "not found" in result.error
+        assert "log_read_recent" in result.error
+        assert "Did you mean" in result.error
+
+    @pytest.mark.asyncio
+    async def test_no_suggestion_for_completely_unknown_tool(self):
+        """No 'Did you mean' hint when there is no close match."""
+        registry = ToolRegistry()
+        registry.register(StubLogReadRecentTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="xyzzy_totally_unknown", arguments={}, id="call_1")
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "not found" in result.error
+        assert "Did you mean" not in result.error
