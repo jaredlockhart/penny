@@ -190,7 +190,7 @@ Explain what you're looking for, what you already know, \
 and what you'll do with the result.
 
 Search memory first. The recall block above shows the most relevant \
-entries verbatim, and your memory tools (`read_latest`, \
+entries verbatim, and your memory tools (`log_read_latest`, \
 `read_similar`, etc.) cover everything else stored. \
 Only browse if memory \
 doesn't have what the user needs, or for current/external info \
@@ -1021,7 +1021,7 @@ async def test_chat_tool_surface_excludes_entry_mutations(
         assert "collection_unarchive" in names
 
         # Reads stay — chat needs them for "tell me what's saved" style queries
-        assert "read_latest" in names
+        assert "log_read_latest" in names
         assert "read_similar" in names
         assert "collection_get" in names
         assert "collection_keys" in names

@@ -714,7 +714,7 @@ class TestFactory:
             "collection_metadata",
             "log_read_recent",
             "log_read_next",
-            "read_latest",
+            "log_read_latest",
             "read_similar",
             "exists",
         }
@@ -733,7 +733,7 @@ class TestFactory:
             "collection_metadata",
             "log_read_recent",
             "log_read_next",
-            "read_latest",
+            "log_read_latest",
             "read_similar",
             "exists",
             "collection_write",

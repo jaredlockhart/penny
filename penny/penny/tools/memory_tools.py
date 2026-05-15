@@ -362,7 +362,7 @@ class CollectionGetTool(Tool):
 class ReadLatestTool(Tool):
     """Return the newest entries in a memory (works for collections and logs)."""
 
-    name = "read_latest"
+    name = "log_read_latest"
     description = (
         "Return the newest entries in a memory, newest first. Works for "
         "both collections and logs. Omit ``k`` to return every entry."
@@ -1137,10 +1137,10 @@ def build_memory_tools(
       ``BackgroundAgent.get_tools`` when channel is wired).  Collectors
       own the *contents* of their bound collection.
 
-    Reads are shape-agnostic (``read_latest`` / ``read_similar``); the
+    Reads are shape-agnostic (``log_read_latest`` / ``read_similar``); the
     parallel ``collection_*`` / ``log_*`` versions were merged earlier
     since they share the same access-layer call.  ``read_all`` was
-    removed — pagination via ``read_latest(memory, k=N)`` is always
+    removed — pagination via ``log_read_latest(memory, k=N)`` is always
     safer than dumping a 1,000-entry collection into the prompt.
 
     ``DoneTool`` is intentionally not in this surface — it's a
