@@ -27,7 +27,7 @@ class Prompt:
         "Explain what you're looking for, what you already know, "
         "and what you'll do with the result.\n\n"
         "Search memory first. The recall block above shows the most relevant "
-        "entries verbatim, and your memory tools (`read_latest`, "
+        "entries verbatim, and your memory tools (`log_read_latest`, "
         "`read_similar`, etc.) cover everything else stored. "
         "Only browse if memory "
         "doesn't have what the user needs, or for current/external info "

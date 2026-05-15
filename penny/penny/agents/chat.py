@@ -253,7 +253,7 @@ class ChatAgent(Agent):
         ``recall`` mode is not ``'off'``.  Each memory is rendered by mode:
 
           off      — skipped
-          recent   — newest-first slice (``read_latest``)
+          recent   — newest-first slice (``log_read_latest``)
           relevant — hybrid similarity over the conversation window
                      (``read_similar_hybrid``; skipped without embedding)
           all      — full set in insertion order (``read_all``)
