@@ -343,6 +343,17 @@ class TestLogTools:
         assert "hello" in rendered
 
     @pytest.mark.asyncio
+    async def test_read_recent_default_window(self, tmp_path, mock_llm):
+        """log_read_recent is callable with only ``memory`` — window_seconds defaults to 3600."""
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
+            memory="events", content="hello"
+        )
+        rendered = await LogReadRecentTool(db).execute(memory="events")
+        assert "hello" in rendered
+
+    @pytest.mark.asyncio
     async def test_log_similar_with_client(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await LogCreateTool(db).execute(name="events", description="x", recall="relevant")
