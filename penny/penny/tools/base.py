@@ -183,11 +183,16 @@ class ToolExecutor:
         logger.error("Tool not found: %s", tool_call.tool)
         available_tools = [t.name for t in self.registry.get_all()]
         available_list = ", ".join(available_tools) if available_tools else "none"
+        hint = (
+            " Tool names are flat snake_case — '>' is not a valid separator."
+            if ">" in tool_call.tool
+            else ""
+        )
         return ToolResult(
             tool=tool_call.tool,
             result=None,
             error=(
-                f"Tool '{tool_call.tool}' not found. "
+                f"Tool '{tool_call.tool}' not found.{hint} "
                 f"Available tools: {available_list}. "
                 f"You must ONLY use the tools listed above."
             ),

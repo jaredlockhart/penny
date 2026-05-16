@@ -151,44 +151,44 @@ class CollectionCreateTool(Tool):
         '### Research + notify on new finds (for "find me X, track them, tell '
         "me when there's something new\")\n"
         "\n"
-        "> Collect [topic] — [scope].\n"
-        ">\n"
-        '> 1. log_read_next("user-messages") and log_read_next("browse-results") '
+        "    Collect [topic] — [scope].\n"
+        "\n"
+        '    1. log_read_next("user-messages") and log_read_next("browse-results") '
         "for recent context and any pages fetched since last cycle.\n"
-        "> 2. browse the web for new [topic] items when there's a topical "
+        "    2. browse the web for new [topic] items when there's a topical "
         "opening.  Read actual pages — never cite from search snippets alone.\n"
-        "> 3. Each entry: key is the item's name (3-10 words); content is name "
+        "    3. Each entry: key is the item's name (3-10 words); content is name "
         "+ description + a real source URL pulled from a page browsed THIS "
         "cycle.\n"
-        '> 4. collection_write("[bound collection]", entries=[...]) batching '
+        '    4. collection_write("[bound collection]", entries=[...]) batching '
         "all new items.\n"
-        "> 5. ONLY IF the write succeeded (not duplicate-rejected): "
+        "    5. ONLY IF the write succeeded (not duplicate-rejected): "
         'send_message with a one-or-two-sentence "found something new for '
         '[topic]" note, conversational, finish with an emoji.\n'
-        "> 6. If a recent message indicates an existing entry is wrong "
+        "    6. If a recent message indicates an existing entry is wrong "
         "(closed, link dead, plans changed), update_entry or "
         "collection_delete_entry.\n"
-        "> 7. done().  If nothing new, just done().\n"
-        ">\n"
-        "> Cite only sources you actually browsed this cycle.  Never invent URLs.\n"
+        "    7. done().  If nothing new, just done().\n"
+        "\n"
+        "    Cite only sources you actually browsed this cycle.  Never invent URLs.\n"
         "\n"
         "### Pure extraction (the ``likes`` shape, for tracking topics the "
         "user mentions in chat)\n"
         "\n"
-        "> Extract the user's positive preferences from their recent messages.\n"
-        ">\n"
-        '> 1. log_read_next("user-messages") — fetch new messages.\n'
-        "> 2. Identify every LIKE — a thing the user wants, enjoys, or "
+        "    Extract the user's positive preferences from their recent messages.\n"
+        "\n"
+        '    1. log_read_next("user-messages") — fetch new messages.\n'
+        "    2. Identify every LIKE — a thing the user wants, enjoys, or "
         "expresses positive sentiment about.  Skip questions, troubleshooting, "
         'meta-instructions ("remember this", "track that").\n'
-        "> 3. Each entry: key is the topic fully-qualified (3-10 words: "
+        "    3. Each entry: key is the topic fully-qualified (3-10 words: "
         '"Talk (album) by Yes" not "the album"); content is the user\'s raw '
         "message.\n"
-        '> 4. collection_write("likes", entries=[...]) batching all extracted '
+        '    4. collection_write("likes", entries=[...]) batching all extracted '
         "likes.\n"
-        "> 5. If a recent message indicates an existing like is no longer "
+        "    5. If a recent message indicates an existing like is no longer "
         "accurate, update_entry or collection_delete_entry.\n"
-        "> 6. done().  If nothing matches, just done() without writing.\n"
+        "    6. done().  If nothing matches, just done() without writing.\n"
         "\n"
         "## Authoring rules\n"
         "\n"

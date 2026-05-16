@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -221,3 +222,37 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class TestHallucinatedToolNameWithAngleBracket:
+    """The LLM sometimes hallucinates tool names containing '>' (e.g. 'collect>???')."""
+
+    @pytest.mark.asyncio
+    async def test_error_includes_hint_when_tool_name_contains_angle_bracket(self):
+        """Error message includes a hint that '>' is not a valid separator."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="collect>???", arguments={})
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "not found" in result.error.lower()
+        assert "snake_case" in result.error
+        assert ">" in result.error
+        assert "search" in result.error  # available tools listed
+
+    @pytest.mark.asyncio
+    async def test_normal_missing_tool_has_no_angle_bracket_hint(self):
+        """Error message for a plain missing tool name does not add the '>' hint."""
+        registry = ToolRegistry()
+        registry.register(StubSearchTool())
+        executor = ToolExecutor(registry)
+
+        tool_call = ToolCall(tool="nonexistent_tool", arguments={})
+        result = await executor.execute(tool_call)
+
+        assert result.error is not None
+        assert "not found" in result.error.lower()
+        assert "snake_case" not in result.error
