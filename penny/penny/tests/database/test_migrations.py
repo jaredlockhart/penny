@@ -79,7 +79,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37
+        assert count == 38
 
         conn = sqlite3.connect(db_path)
         tables = {
@@ -119,7 +119,7 @@ class TestMigrate:
 
         count1 = migrate(db_path)
         count2 = migrate(db_path)
-        assert count1 == 37
+        assert count1 == 38
         assert count2 == 0
 
     def test_tracks_in_migrations_table(self, tmp_path):
@@ -157,8 +157,8 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        # 0001 is skipped; 0002 through 0037 run = 36 migrations
-        assert count == 36
+        # 0001 is skipped; 0002 through 0038 run = 37 migrations
+        assert count == 37
 
     def test_bootstrap_with_tables_already_present(self, tmp_path):
         """If tables already exist (from SQLModel.create_tables), migration should succeed."""
@@ -184,7 +184,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37  # all migrations applied
+        assert count == 38  # all migrations applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
@@ -237,3 +237,151 @@ class TestMigrate:
         assert "collection_update" not in prompt
         assert 'update_entry("knowledge", key=<title>,' in prompt
         conn.close()
+
+    def test_0038_fixes_browse_in_thinking_prompt(self, tmp_path):
+        """Migration 0038 replaces ambiguous 'browse —' with explicit browse(queries=[...])
+        in the unnotified-thoughts extraction_prompt seeded by migration 0033."""
+        import importlib.util
+        from pathlib import Path
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        old_prompt = (
+            "Sequence:\n"
+            '1. collection_read_random("likes", 1) — pick one seed topic.\n'
+            '2. read_latest("dislikes") — see dislikes.\n'
+            "3. browse — search the web and read one or two pages to find something.\n"
+            "4. Draft a thought.\n"
+            "8. done().\n"
+        )
+        conn.execute(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            ("unnotified-thoughts", old_prompt),
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0038_fix_thinking_prompt_browse_tool_name.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0038", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT extraction_prompt FROM memory WHERE name = 'unnotified-thoughts'"
+        ).fetchone()
+        assert row is not None
+        prompt = row[0]
+        # Old ambiguous form replaced
+        assert "3. browse — search the web" not in prompt
+        # New explicit function-call form present
+        assert 'browse(queries=["<seed topic>"]) — search the web' in prompt
+        # Other steps unchanged
+        assert 'collection_read_random("likes", 1)' in prompt
+        assert "done()" in prompt
+        conn.close()
+
+    def test_0038_is_idempotent_on_already_fixed_prompt(self, tmp_path):
+        """Migration 0038 is a no-op when the prompt has already been corrected."""
+        import importlib.util
+        from pathlib import Path
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        already_fixed = (
+            '3. browse(queries=["<seed topic>"]) — search the web and read one or two pages.\n'
+        )
+        conn.execute(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            ("unnotified-thoughts", already_fixed),
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0038_fix_thinking_prompt_browse_tool_name.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0038b", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT extraction_prompt FROM memory WHERE name = 'unnotified-thoughts'"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == already_fixed
+        conn.close()
+
+    def test_0038_does_not_touch_other_collections(self, tmp_path):
+        """Migration 0038 only updates unnotified-thoughts, not other collections."""
+        import importlib.util
+        from pathlib import Path
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        other_prompt = "3. browse — search the web for other stuff.\n"
+        conn.executemany(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            [
+                ("unnotified-thoughts", "3. browse — search the web and read pages.\n"),
+                ("other-collection", other_prompt),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0038_fix_thinking_prompt_browse_tool_name.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0038c", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        rows = {
+            row[0]: row[1]
+            for row in conn.execute("SELECT name, extraction_prompt FROM memory").fetchall()
+        }
+        conn.close()
+
+        # unnotified-thoughts should be updated
+        assert "3. browse — search the web" not in rows["unnotified-thoughts"]
+        assert 'browse(queries=["<seed topic>"])' in rows["unnotified-thoughts"]
+        # other-collection should be unchanged
+        assert rows["other-collection"] == other_prompt
