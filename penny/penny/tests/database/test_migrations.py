@@ -323,3 +323,68 @@ class TestMigrate:
         assert "log_read_log(" not in prompt
         assert 'log_read_next("user-messages")' in prompt
         conn.close()
+
+    def test_0038_fixes_collection_update_in_all_extraction_prompts(self, tmp_path):
+        """Migration 0038 replaces collection_update with update_entry in all
+        extraction_prompts, including user-created collections."""
+        import importlib.util
+        from pathlib import Path
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        conn.executemany(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            [
+                (
+                    "supplement-routine",
+                    "On correction, update the entry via collection_update."
+                    " On deletion, remove it.",
+                ),
+                (
+                    "my-collection",
+                    'call collection_update("my-collection", key=<k>, content=<c>)',
+                ),
+                (
+                    "no-issue",
+                    "Call update_entry to store the result.",
+                ),
+                (
+                    "no-prompt",
+                    None,
+                ),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0038_fix_collection_update_in_extraction_prompts.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0038cu", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        rows = {
+            row[0]: row[1]
+            for row in conn.execute("SELECT name, extraction_prompt FROM memory").fetchall()
+        }
+        conn.close()
+
+        assert "collection_update" not in rows["supplement-routine"]
+        assert "update_entry" in rows["supplement-routine"]
+        assert "collection_update" not in rows["my-collection"]
+        assert "update_entry" in rows["my-collection"]
+        assert rows["no-issue"] == "Call update_entry to store the result."
+        assert rows["no-prompt"] is None
