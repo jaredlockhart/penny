@@ -8,9 +8,10 @@ layer's signature.
 
 from __future__ import annotations
 
-from typing import Annotated
+import json
+from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
 
 # Models occasionally substitute Unicode dashes (U+2010–U+2015) for ASCII
 # hyphen-minus (U+002D) when emitting memory names — gpt-oss has been
@@ -147,6 +148,13 @@ class CollectionEntrySpec(BaseModel):
     key: str
     content: str
 
+    @field_validator("content", mode="before")
+    @classmethod
+    def _coerce_content(cls, v: Any) -> str:
+        if isinstance(v, str):
+            return v
+        return json.dumps(v)
+
 
 class CollectionWriteArgs(BaseModel):
     """Batched write to a collection with dedup applied per entry."""
@@ -161,6 +169,13 @@ class UpdateEntryArgs(BaseModel):
     memory: MemoryName
     key: str
     content: str
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _coerce_content(cls, v: Any) -> str:
+        if isinstance(v, str):
+            return v
+        return json.dumps(v)
 
 
 class CollectionMoveArgs(BaseModel):
@@ -193,6 +208,13 @@ class LogAppendArgs(BaseModel):
 
     memory: MemoryName
     content: str
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _coerce_content(cls, v: Any) -> str:
+        if isinstance(v, str):
+            return v
+        return json.dumps(v)
 
 
 # ── Introspection ───────────────────────────────────────────────────────────

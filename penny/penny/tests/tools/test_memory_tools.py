@@ -192,6 +192,27 @@ class TestCollectionWritesAndReads:
         assert "cold brew" in latest
 
     @pytest.mark.asyncio
+    async def test_write_list_content_serialized_to_json_string(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="news", description="x", recall="off")
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        result = await write.execute(
+            memory="news",
+            entries=[
+                {
+                    "key": "2026-05-17",
+                    "content": [
+                        {"headline": "ArXiv bans AI-only papers", "url": "https://example.com/1"}
+                    ],
+                }
+            ],
+        )
+        assert "Wrote 1" in result
+        latest = await ReadLatestTool(db).execute(memory="news")
+        assert "ArXiv bans AI-only papers" in latest
+        assert "https://example.com/1" in latest
+
+    @pytest.mark.asyncio
     async def test_write_reports_duplicate_via_tcr(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
         await CollectionCreateTool(db).execute(name="likes", description="x", recall="off")
@@ -331,6 +352,19 @@ class TestLogTools:
         await append.execute(memory="events", content="second")
         rendered = await ReadLatestTool(db).execute(memory="events")
         assert rendered.splitlines() == ["- second", "- first"]
+
+    @pytest.mark.asyncio
+    async def test_append_list_content_serialized_to_json_string(self, tmp_path, mock_llm):
+        db = _make_db(tmp_path)
+        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        await append.execute(
+            memory="events",
+            content=[{"headline": "ArXiv bans AI-only papers", "url": "https://example.com/1"}],
+        )
+        rendered = await ReadLatestTool(db).execute(memory="events")
+        assert "ArXiv bans AI-only papers" in rendered
+        assert "https://example.com/1" in rendered
 
     @pytest.mark.asyncio
     async def test_read_recent_window(self, tmp_path, mock_llm):

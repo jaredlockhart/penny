@@ -504,7 +504,13 @@ class CollectionWriteTool(Tool):
                     "type": "object",
                     "properties": {
                         "key": {"type": "string"},
-                        "content": {"type": "string"},
+                        "content": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "array"},
+                                {"type": "object"},
+                            ],
+                        },
                     },
                     "required": ["key", "content"],
                 },
@@ -962,7 +968,13 @@ class LogAppendTool(Tool):
         "type": "object",
         "properties": {
             "memory": {"type": "string"},
-            "content": {"type": "string"},
+            "content": {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "array"},
+                    {"type": "object"},
+                ],
+            },
         },
         "required": ["memory", "content"],
     }
