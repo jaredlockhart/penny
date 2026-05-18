@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -22,6 +23,61 @@ class StubSearchTool(Tool):
 
     async def execute(self, **kwargs):
         return "Mock search results for testing"
+
+
+class StubUpdateEntryTool(Tool):
+    """Stub for update_entry — used to test 'Did you mean?' hints."""
+
+    name = "update_entry"
+    description = "Replace the content of an existing entry in a collection."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string"},
+            "key": {"type": "string"},
+            "content": {"type": "string"},
+        },
+        "required": ["memory", "key", "content"],
+    }
+
+    async def execute(self, **kwargs):
+        return "updated"
+
+
+class TestFindSimilarTool:
+    """Tests for the fuzzy 'Did you mean?' hint in tool-not-found errors."""
+
+    def _make_executor(self, *tools: Tool) -> ToolExecutor:
+        registry = ToolRegistry()
+        for tool in tools:
+            registry.register(tool)
+        return ToolExecutor(registry)
+
+    def test_collection_update_entry_suggests_update_entry(self):
+        """collection_update_entry portmanteau should suggest update_entry."""
+        executor = self._make_executor(StubUpdateEntryTool(), StubSearchTool())
+        assert executor._find_similar_tool("collection_update_entry") == "update_entry"
+
+    def test_call_prefix_resolved_exactly(self):
+        """call_search should resolve to search via exact prefix strip."""
+        executor = self._make_executor(StubSearchTool())
+        assert executor._find_similar_tool("call_search") == "search"
+
+    def test_no_match_returns_none(self):
+        """Completely unrelated name returns None."""
+        executor = self._make_executor(StubSearchTool())
+        assert executor._find_similar_tool("totally_unrelated_xyzzy") is None
+
+    @pytest.mark.asyncio
+    async def test_did_you_mean_hint_in_error_message(self):
+        """Tool-not-found error includes 'Did you mean: update_entry?' for portmanteau."""
+        registry = ToolRegistry()
+        registry.register(StubUpdateEntryTool())
+        executor = ToolExecutor(registry)
+        tool_call = ToolCall(tool="collection_update_entry", arguments={}, id="test-id")
+        result = await executor.execute(tool_call)
+        assert result.error is not None
+        assert "Did you mean: update_entry?" in result.error
 
 
 class TestToolNotFound:
