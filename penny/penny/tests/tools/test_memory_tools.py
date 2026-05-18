@@ -262,6 +262,38 @@ class TestCollectionWritesAndReads:
         result = await ReadSimilarTool(db, None).execute(memory="likes", anchor="whatever")
         assert "similarity search unavailable" in result
 
+    @pytest.mark.asyncio
+    async def test_write_accepts_headline_alias_for_key(self, tmp_path, mock_llm):
+        """Regression: LLM passed {'headline': '...'} instead of {'key': '...', 'content': '...'}.
+
+        CollectionEntrySpec now maps common alternative field names to the canonical
+        key/content schema so the tool survives LLM field-naming variation.
+        """
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="news", description="x", recall="off")
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        result = await write.execute(
+            memory="news",
+            entries=[{"headline": "TechCrunch article on automotive"}],
+        )
+        assert "Wrote 1 entry to 'news'" in result
+        keys = db.memories.keys("news")
+        assert keys == ["TechCrunch article on automotive"]
+
+    @pytest.mark.asyncio
+    async def test_write_accepts_title_and_body_aliases(self, tmp_path, mock_llm):
+        """title → key, body → content remapping."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db).execute(name="notes", description="x", recall="off")
+        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
+        result = await write.execute(
+            memory="notes",
+            entries=[{"title": "my-note", "body": "note content here"}],
+        )
+        assert "Wrote 1 entry to 'notes'" in result
+        rows = db.memories.get_entry("notes", "my-note")
+        assert rows[0].content == "note content here"
+
 
 class TestCollectionMutations:
     @pytest.mark.asyncio

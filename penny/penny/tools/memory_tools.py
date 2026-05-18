@@ -503,8 +503,14 @@ class CollectionWriteTool(Tool):
                 "items": {
                     "type": "object",
                     "properties": {
-                        "key": {"type": "string"},
-                        "content": {"type": "string"},
+                        "key": {
+                            "type": "string",
+                            "description": "Short ID for the entry (e.g. topic, title).",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Full text body (e.g. summary, URL).",
+                        },
                     },
                     "required": ["key", "content"],
                 },

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
 # Models occasionally substitute Unicode dashes (U+2010–U+2015) for ASCII
 # hyphen-minus (U+002D) when emitting memory names — gpt-oss has been
@@ -141,11 +141,44 @@ class ReadNextArgs(BaseModel):
 # ── Collection writes ───────────────────────────────────────────────────────
 
 
+_KEY_ALIASES = ("headline", "title", "name", "identifier", "label", "topic", "subject")
+_CONTENT_ALIASES = ("body", "text", "value", "description", "summary", "url", "link")
+
+
 class CollectionEntrySpec(BaseModel):
     """One entry in a ``collection_write`` batch."""
 
     key: str
     content: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remap_field_aliases(cls, data: object) -> object:
+        """Map common LLM-invented field names to the canonical key/content schema.
+
+        LLMs frequently use semantically-appropriate names (e.g. ``headline``
+        for a news article entry) rather than the tool's canonical fields.
+        Remapping on the way in prevents hard ValidationErrors for entries
+        that carry the right data under the wrong name.
+        """
+        if not isinstance(data, dict):
+            return data
+        d = dict(data)
+        if "key" not in d:
+            for alt in _KEY_ALIASES:
+                if alt in d:
+                    d["key"] = d.pop(alt)
+                    break
+        if "content" not in d:
+            for alt in _CONTENT_ALIASES:
+                if alt in d:
+                    d["content"] = d.pop(alt)
+                    break
+        # Last resort: use key as content so the entry can reach the store's
+        # degenerate-content rejection rather than crashing as a ValidationError.
+        if "content" not in d and "key" in d:
+            d["content"] = d["key"]
+        return d
 
 
 class CollectionWriteArgs(BaseModel):
