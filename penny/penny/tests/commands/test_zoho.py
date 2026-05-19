@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from penny.commands.models import CommandContext
-from penny.commands.zoho import ZohoCommand
 from penny.config import Config
-from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary
+from penny.email.models import EmailAddress, EmailDetail, EmailSummary
+from penny.plugins.zoho.commands import ZohoEmailCommand
 from penny.responses import PennyResponse
 from penny.tests.conftest import TEST_SENDER
 
@@ -83,20 +83,20 @@ def zoho_context():
 
 @pytest.mark.asyncio
 async def test_zoho_empty_prompt(zoho_context):
-    """Test /zoho with no args returns usage text."""
-    cmd = ZohoCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
+    """Test /email zoho with no args returns usage text."""
+    cmd = ZohoEmailCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
     result = await cmd.execute("", zoho_context)
 
-    assert result.text == PennyResponse.ZOHO_NO_QUERY_TEXT
+    assert result.text == PennyResponse.EMAIL_NO_QUERY_TEXT
 
 
 @pytest.mark.asyncio
 async def test_zoho_whitespace_only_prompt(zoho_context):
-    """Test /zoho with whitespace-only args returns usage text."""
-    cmd = ZohoCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
+    """Test /email zoho with whitespace-only args returns usage text."""
+    cmd = ZohoEmailCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
     result = await cmd.execute("   ", zoho_context)
 
-    assert result.text == PennyResponse.ZOHO_NO_QUERY_TEXT
+    assert result.text == PennyResponse.EMAIL_NO_QUERY_TEXT
 
 
 @pytest.mark.asyncio
@@ -106,14 +106,14 @@ async def test_zoho_search_and_answer(mock_zoho_client, zoho_context):
     mock_response.answer = "You have 2 packages coming! One from Amazon arriving Feb 12."
 
     with (
-        patch("penny.commands.zoho.ZohoClient", return_value=mock_zoho_client),
-        patch("penny.commands.zoho.Agent") as mock_agent_cls,
+        patch("penny.plugins.zoho.commands.ZohoClient", return_value=mock_zoho_client),
+        patch("penny.plugins.zoho.commands.Agent") as mock_agent_cls,
     ):
         mock_agent_instance = AsyncMock()
         mock_agent_instance.run.return_value = mock_response
         mock_agent_cls.return_value = mock_agent_instance
 
-        cmd = ZohoCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
+        cmd = ZohoEmailCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
         result = await cmd.execute("what packages am I expecting", zoho_context)
 
     assert "packages" in result.text.lower()
@@ -128,14 +128,14 @@ async def test_zoho_search_and_answer(mock_zoho_client, zoho_context):
 async def test_zoho_agent_created_with_repeat_tools(mock_zoho_client, zoho_context):
     """Test that the zoho agent is created with allow_repeat_tools=True."""
     with (
-        patch("penny.commands.zoho.ZohoClient", return_value=mock_zoho_client),
-        patch("penny.commands.zoho.Agent") as mock_agent_cls,
+        patch("penny.plugins.zoho.commands.ZohoClient", return_value=mock_zoho_client),
+        patch("penny.plugins.zoho.commands.Agent") as mock_agent_cls,
     ):
         mock_agent_instance = AsyncMock()
         mock_agent_instance.run.return_value = MagicMock(answer="test")
         mock_agent_cls.return_value = mock_agent_instance
 
-        cmd = ZohoCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
+        cmd = ZohoEmailCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
         await cmd.execute("check my email", zoho_context)
 
     # Verify allow_repeat_tools was passed
@@ -147,17 +147,17 @@ async def test_zoho_agent_created_with_repeat_tools(mock_zoho_client, zoho_conte
 async def test_zoho_agent_cleanup_on_error(mock_zoho_client, zoho_context):
     """Test that agent and Zoho client are cleaned up even on error."""
     with (
-        patch("penny.commands.zoho.ZohoClient", return_value=mock_zoho_client),
-        patch("penny.commands.zoho.Agent") as mock_agent_cls,
+        patch("penny.plugins.zoho.commands.ZohoClient", return_value=mock_zoho_client),
+        patch("penny.plugins.zoho.commands.Agent") as mock_agent_cls,
     ):
         mock_agent_instance = AsyncMock()
         mock_agent_instance.run.side_effect = RuntimeError("Ollama down")
         mock_agent_cls.return_value = mock_agent_instance
 
-        cmd = ZohoCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
+        cmd = ZohoEmailCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
         result = await cmd.execute("check my email", zoho_context)
 
-    assert "Failed to search Zoho email" in result.text
+    assert "Failed to search email" in result.text
     mock_agent_instance.close.assert_called_once()
     mock_zoho_client.close.assert_called_once()
 
@@ -166,8 +166,8 @@ async def test_zoho_agent_cleanup_on_error(mock_zoho_client, zoho_context):
 async def test_zoho_client_created_with_credentials(zoho_context):
     """Test that ZohoClient is created with the configured credentials."""
     with (
-        patch("penny.commands.zoho.ZohoClient") as mock_zoho_cls,
-        patch("penny.commands.zoho.Agent") as mock_agent_cls,
+        patch("penny.plugins.zoho.commands.ZohoClient") as mock_zoho_cls,
+        patch("penny.plugins.zoho.commands.Agent") as mock_agent_cls,
     ):
         mock_client = AsyncMock()
         mock_zoho_cls.return_value = mock_client
@@ -176,7 +176,7 @@ async def test_zoho_client_created_with_credentials(zoho_context):
         mock_agent_instance.run.return_value = MagicMock(answer="test")
         mock_agent_cls.return_value = mock_agent_instance
 
-        cmd = ZohoCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
+        cmd = ZohoEmailCommand(FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, FAKE_REFRESH_TOKEN)
         await cmd.execute("anything", zoho_context)
 
     mock_zoho_cls.assert_called_once_with(

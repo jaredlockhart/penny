@@ -8,8 +8,9 @@ from typing import Any
 import httpx
 
 from penny.constants import PennyConstants
+from penny.email.models import EmailAddress, EmailDetail, EmailSummary
 from penny.html_utils import strip_html
-from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary, JmapSession
+from penny.plugins.fastmail.models import JmapSession
 
 logger = logging.getLogger(__name__)
 
@@ -169,24 +170,19 @@ class JmapClient:
         for e in emails_data:
             body_values = e.get("bodyValues", {})
 
-            # Try plain text body first
             text_body = ""
-            text_parts = e.get("textBody", [])
-            for part in text_parts:
+            for part in e.get("textBody", []):
                 part_id = part.get("partId")
                 if part_id and part_id in body_values:
                     text_body += body_values[part_id].get("value", "")
 
-            # Fall back to HTML body with tag stripping
             if not text_body:
-                html_parts = e.get("htmlBody", [])
-                for part in html_parts:
+                for part in e.get("htmlBody", []):
                     part_id = part.get("partId")
                     if part_id and part_id in body_values:
                         html_content = body_values[part_id].get("value", "")
                         text_body += strip_html(html_content)
 
-            # Truncate long bodies
             if len(text_body) > self._max_body_length:
                 text_body = text_body[: self._max_body_length] + "\n\n[truncated]"
 
