@@ -15,6 +15,7 @@ class Tool(ABC):
     """Abstract base class for tools."""
 
     name: str
+    aliases: list[str] = []  # Alternative names the LLM may hallucinate for this tool
     description: str
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
     timeout: float | None = None  # None = use ToolExecutor's global timeout
@@ -25,6 +26,9 @@ class Tool(ABC):
         super().__init_subclass__(**kwargs)
         if "name" in cls.__dict__:
             Tool._registry[cls.name] = cls
+        if "aliases" in cls.__dict__:
+            for alias in cls.aliases:
+                Tool._registry[alias] = cls
 
     @abstractmethod
     async def execute(self, **kwargs) -> Any:
@@ -107,21 +111,36 @@ class ToolRegistry:
     def __init__(self):
         """Initialize empty registry."""
         self._tools: dict[str, Tool] = {}
+        self._aliases: dict[str, str] = {}  # alias → canonical tool name
 
     def register(self, tool: Tool) -> None:
-        """Register a tool."""
+        """Register a tool and any aliases declared on its class."""
         self._tools[tool.name] = tool
+        for alias in type(tool).aliases:
+            self._aliases[alias] = tool.name
 
     def unregister(self, name: str) -> None:
         """Unregister a tool by name."""
-        self._tools.pop(name, None)
+        tool = self._tools.pop(name, None)
+        if tool is None:
+            return
+        for alias, canonical in list(self._aliases.items()):
+            if canonical == name:
+                del self._aliases[alias]
 
     def get(self, name: str) -> Tool | None:
-        """Get a tool by name."""
-        return self._tools.get(name)
+        """Get a tool by name, resolving aliases transparently."""
+        tool = self._tools.get(name)
+        if tool is not None:
+            return tool
+        canonical = self._aliases.get(name)
+        if canonical is not None:
+            logger.info("Tool alias %r → %r", name, canonical)
+            return self._tools.get(canonical)
+        return None
 
     def get_all(self) -> list[Tool]:
-        """Get all registered tools."""
+        """Get all registered tools (canonical names only)."""
         return list(self._tools.values())
 
     def get_definitions(self) -> list[ToolDefinition]:

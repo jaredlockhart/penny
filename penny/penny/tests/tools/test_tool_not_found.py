@@ -98,6 +98,114 @@ class TestToolNotFound:
         await agent.close()
 
 
+class StubAliasedTool(Tool):
+    """Stub tool with aliases for testing alias routing.
+
+    Uses a unique name that won't conflict with real tools in the class-level
+    Tool._registry (which is a global singleton shared across tests).
+    """
+
+    name = "stub_lookup"
+    aliases = ["stub_webpage", "stub_fetch"]
+    description = "Stub lookup tool"
+    parameters = {
+        "type": "object",
+        "properties": {"queries": {"type": "array", "items": {"type": "string"}}},
+        "required": ["queries"],
+    }
+
+    async def execute(self, **kwargs):
+        return "Lookup results for testing"
+
+
+class TestToolAliases:
+    """Alias names are routed to the canonical tool without error."""
+
+    def test_registry_resolves_alias_to_canonical_tool(self):
+        """ToolRegistry.get() returns the canonical tool instance for an alias name."""
+        registry = ToolRegistry()
+        tool = StubAliasedTool()
+        registry.register(tool)
+        assert registry.get("stub_webpage") is tool
+        assert registry.get("stub_fetch") is tool
+        assert registry.get("stub_lookup") is tool
+
+    def test_registry_get_all_returns_only_canonical_tools(self):
+        """get_all() does not return duplicate entries for aliased tools."""
+        registry = ToolRegistry()
+        registry.register(StubAliasedTool())
+        assert len(registry.get_all()) == 1
+
+    def test_registry_unregister_removes_aliases(self):
+        """Unregistering a tool also removes its aliases."""
+        registry = ToolRegistry()
+        registry.register(StubAliasedTool())
+        registry.unregister("stub_lookup")
+        assert registry.get("stub_lookup") is None
+        assert registry.get("stub_webpage") is None
+        assert registry.get("stub_fetch") is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("alias", ["stub_webpage", "stub_fetch"])
+    async def test_agent_routes_alias_call_to_canonical_tool(self, test_db, mock_llm, alias):
+        """When model calls an alias name, the canonical tool executes without error."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        tool = StubAliasedTool()
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[tool],
+            db=db,
+            config=config,
+        )
+
+        messages_sent = []
+
+        def handler(request: dict, count: int) -> dict:
+            messages_sent.append(request["messages"])
+            if count == 1:
+                return mock_llm._make_tool_call_response(
+                    request, alias, {"queries": ["test query"]}
+                )
+            return mock_llm._make_text_response(request, "Found the page.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test prompt", max_steps=3)
+
+        assert response.answer is not None
+        assert len(messages_sent) == 2
+
+        second_call_messages = messages_sent[1]
+        tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
+        assert len(tool_messages) > 0
+        # Tool should have executed successfully — no "not found" error
+        assert "not found" not in tool_messages[0]["content"].lower()
+        assert "Lookup results" in tool_messages[0]["content"]
+
+        await agent.close()
+
+
 class StubDoneTool(Tool):
     """Stub tool with two required typed+described parameters."""
 

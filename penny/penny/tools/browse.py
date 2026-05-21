@@ -74,6 +74,7 @@ class BrowseTool(Tool):
     """
 
     name = "browse"
+    aliases = ["webpage", "fetch"]  # Common hallucinated names the LLM may use
 
     def __init__(
         self,
