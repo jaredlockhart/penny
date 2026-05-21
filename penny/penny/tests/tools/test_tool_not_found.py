@@ -102,7 +102,14 @@ class TestMalformedToolName:
     """Malformed tool names from the LLM are rejected before reaching the executor."""
 
     @pytest.mark.asyncio
-    async def test_agent_rejects_malformed_tool_name(self, test_db, mock_llm):
+    @pytest.mark.parametrize(
+        "malformed_name",
+        [
+            "0>We",  # partial/garbled tool name
+            "....Wait",  # CoT thinking artifact leaking into tool name (issue #1193)
+        ],
+    )
+    async def test_agent_rejects_malformed_tool_name(self, test_db, mock_llm, malformed_name):
         """Agent sends error message back to model when LLM emits a malformed tool name."""
         db = Database(test_db)
         db.create_tables()
@@ -139,7 +146,7 @@ class TestMalformedToolName:
         def handler(request: dict, count: int) -> dict:
             messages_sent.append(request["messages"])
             if count == 1:
-                return mock_llm._make_tool_call_response(request, "0>We", {"query": "test"})
+                return mock_llm._make_tool_call_response(request, malformed_name, {"query": "test"})
             return mock_llm._make_text_response(request, "Here is the answer.")
 
         mock_llm.set_response_handler(handler)
