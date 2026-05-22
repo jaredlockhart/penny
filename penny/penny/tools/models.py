@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SearchResult(BaseModel):
@@ -61,12 +61,23 @@ class DraftEmailArgs(BaseModel):
     cc: list[str] | None = None
 
 
+_OPENAI_FUNCTIONS_PREFIX = "openai_functions."
+
+
 class ToolCall(BaseModel):
     """A tool call from the model."""
 
     tool: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     id: str | None = None
+
+    @field_validator("tool", mode="before")
+    @classmethod
+    def strip_namespace_prefix(cls, v: str) -> str:
+        """Strip 'openai_functions.' prefix emitted by some OpenAI-compatible endpoints."""
+        if isinstance(v, str) and v.startswith(_OPENAI_FUNCTIONS_PREFIX):
+            return v[len(_OPENAI_FUNCTIONS_PREFIX) :]
+        return v
 
 
 class ToolResult(BaseModel):

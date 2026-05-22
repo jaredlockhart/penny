@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -219,5 +220,98 @@ class TestMissingRequiredParameters:
         error_content = tool_messages[0]["content"]
         assert "boolean" in error_content
         assert "string" in error_content
+
+        await agent.close()
+
+
+class StubPrefixedTool(Tool):
+    """Stub tool for testing openai_functions. prefix stripping."""
+
+    name = "stub_prefixed_search"
+    description = "Stub search tool"
+    parameters = {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "Search query"}},
+        "required": ["query"],
+    }
+
+    async def execute(self, **kwargs):
+        return "Prefixed tool executed successfully"
+
+
+class TestOpenAiFunctionsPrefixStripping:
+    """ToolCall strips openai_functions. namespace prefix at the model boundary."""
+
+    def test_tool_call_strips_openai_functions_prefix(self):
+        """ToolCall normalises openai_functions.foo → foo at construction."""
+        tc = ToolCall(tool="openai_functions.read_next", arguments={})
+        assert tc.tool == "read_next"
+
+    def test_tool_call_strips_prefix_with_arbitrary_name(self):
+        """Prefix stripping works for any tool name, not just known ones."""
+        tc = ToolCall(tool="openai_functions.log_read_next", arguments={})
+        assert tc.tool == "log_read_next"
+
+    def test_tool_call_bare_name_unchanged(self):
+        """Bare tool names (no prefix) pass through unchanged."""
+        tc = ToolCall(tool="search", arguments={})
+        assert tc.tool == "search"
+
+    @pytest.mark.asyncio
+    async def test_agent_executes_prefixed_tool_call_successfully(self, test_db, mock_llm):
+        """Agent executes a tool when LLM returns an openai_functions.-prefixed name."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        tool = StubPrefixedTool()
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[tool],
+            db=db,
+            config=config,
+        )
+
+        messages_sent = []
+
+        def handler(request: dict, count: int) -> dict:
+            messages_sent.append(request["messages"])
+            if count == 1:
+                return mock_llm._make_tool_call_response(
+                    request, "openai_functions.stub_prefixed_search", {"query": "test query"}
+                )
+            return mock_llm._make_text_response(request, "Found the answer.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test prompt", max_steps=3)
+
+        assert response.answer is not None
+        assert len(messages_sent) == 2
+
+        second_call_messages = messages_sent[1]
+        tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
+        assert len(tool_messages) > 0
+        # Tool should execute successfully — no "not found" error
+        assert "not found" not in tool_messages[0]["content"].lower()
+        assert "Prefixed tool executed successfully" in tool_messages[0]["content"]
 
         await agent.close()
