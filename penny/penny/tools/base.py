@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
@@ -136,9 +137,17 @@ class ToolRegistry:
 class ToolExecutor:
     """Executes tools with timeout and error handling."""
 
+    # LLMs occasionally emit tool names with trailing garbage (e.g. `log_read_next?…?`).
+    _TOOL_NAME_JUNK = re.compile(r"[^a-zA-Z0-9_]")
+
     def __init__(self, registry: ToolRegistry, timeout: float = 30.0):
         self.registry = registry
         self.timeout = timeout
+
+    @staticmethod
+    def _sanitize_tool_name(name: str) -> str:
+        """Strip non-identifier characters from a tool name."""
+        return ToolExecutor._TOOL_NAME_JUNK.sub("", name)
 
     def _validate_arguments(self, tool: Tool, arguments: dict[str, Any]) -> str | None:
         """Validate that all required parameters are present in arguments."""
@@ -170,6 +179,10 @@ class ToolExecutor:
 
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call."""
+        sanitized = self._sanitize_tool_name(tool_call.tool)
+        if sanitized != tool_call.tool:
+            logger.warning("Tool name sanitized: %r → %r", tool_call.tool, sanitized)
+            tool_call = tool_call.model_copy(update={"tool": sanitized})
         tool = self.registry.get(tool_call.tool)
         if tool is None:
             return self._tool_not_found_result(tool_call)

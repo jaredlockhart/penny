@@ -7,6 +7,7 @@ from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
 from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.models import ToolCall
 
 
 class StubSearchTool(Tool):
@@ -26,6 +27,22 @@ class StubSearchTool(Tool):
 
 class TestToolNotFound:
     """Test handling of tool calls for tools that don't exist."""
+
+    @pytest.mark.asyncio
+    async def test_malformed_tool_name_sanitized_and_dispatched(self):
+        """Tool names with non-identifier characters are stripped before lookup."""
+        registry = ToolRegistry()
+        tool = StubSearchTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        # Simulate the `log_read_next?…?` pattern from the bug report
+        malformed = ToolCall(tool="search?…?", arguments={"query": "hello"})
+        result = await executor.execute(malformed)
+
+        assert result.error is None
+        assert result.result == "Mock search results for testing"
+        assert result.tool == "search"
 
     @pytest.mark.asyncio
     async def test_agent_returns_helpful_error_for_nonexistent_tool(self, test_db, mock_llm):
