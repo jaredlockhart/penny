@@ -18,7 +18,7 @@ from penny.config import Config
 from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
 from penny.llm import LlmClient
-from penny.llm.models import LlmError
+from penny.llm.models import LlmError, LlmTimeoutError
 from penny.llm.refusal import is_refusal
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -578,7 +578,13 @@ class Agent:
         run_id: str | None,
         prompt_type: str | None,
     ):
-        """Call the LLM, returning ``None`` on connection/response errors."""
+        """Call the LLM, returning ``None`` on connection/response errors.
+
+        Timeouts are logged at WARNING — they're transient (the model may be slow
+        or temporarily busy) and are already retried by the LLM client before
+        this method is called.  Other LlmErrors (connection refused, server error,
+        model not found) are logged at ERROR.
+        """
         try:
             return await self._model_client.chat(
                 messages=messages,
@@ -587,6 +593,9 @@ class Agent:
                 prompt_type=prompt_type,
                 run_id=run_id,
             )
+        except LlmTimeoutError as exception:
+            logger.warning("LLM request timed out (model slow or temporarily busy): %s", exception)
+            return None
         except LlmError as exception:
             logger.error("LLM chat failed: %s", exception)
             return None
