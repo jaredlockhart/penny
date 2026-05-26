@@ -279,9 +279,20 @@ class LlmClient:
             model=raw.model,
         )
 
+    # Tool names emitted by models as placeholders rather than actual tool names.
+    _KNOWN_BAD_TOOL_NAMES: frozenset[str] = frozenset({"???", ""})
+
     @staticmethod
     def _parse_tool_call(tool_call: openai.types.chat.ChatCompletionMessageToolCall) -> LlmToolCall:
         """Parse a single OpenAI tool call, deserializing JSON arguments."""
+        name = tool_call.function.name or ""
+        if name in LlmClient._KNOWN_BAD_TOOL_NAMES:
+            logger.warning(
+                "Malformed tool call name %r — model emitted a placeholder; raw arguments: %s",
+                name,
+                (tool_call.function.arguments or "")[:200],
+            )
+
         arguments = {}
         if tool_call.function.arguments:
             try:
@@ -296,7 +307,7 @@ class LlmClient:
         return LlmToolCall(
             id=tool_call.id,
             function=LlmToolCallFunction(
-                name=tool_call.function.name,
+                name=name,
                 arguments=arguments,
             ),
         )

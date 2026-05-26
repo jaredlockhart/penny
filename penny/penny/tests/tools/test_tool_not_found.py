@@ -28,6 +28,63 @@ class TestToolNotFound:
     """Test handling of tool calls for tools that don't exist."""
 
     @pytest.mark.asyncio
+    async def test_agent_handles_placeholder_tool_name(self, test_db, mock_llm):
+        """Agent handles '???' placeholder tool name gracefully, feeding error back to model."""
+        db = Database(test_db)
+        db.create_tables()
+
+        config = Config(
+            channel_type="signal",
+            signal_number="+15551234567",
+            signal_api_url="http://localhost:8080",
+            discord_bot_token=None,
+            discord_channel_id=None,
+            llm_api_url="http://localhost:11434",
+            llm_model="test-model",
+            log_level="DEBUG",
+            db_path=test_db,
+        )
+        search_tool = StubSearchTool()
+        client = LlmClient(
+            api_url="http://localhost:11434",
+            model="test-model",
+            db=db,
+            max_retries=1,
+            retry_delay=0.1,
+        )
+        agent = Agent(
+            system_prompt="test",
+            model_client=client,
+            tools=[search_tool],
+            db=db,
+            config=config,
+        )
+
+        messages_sent = []
+
+        def handler(request: dict, count: int) -> dict:
+            messages_sent.append(request["messages"])
+            if count == 1:
+                return mock_llm._make_tool_call_response(request, "???", {})
+            return mock_llm._make_text_response(request, "Let me use the correct tool.")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test prompt", max_steps=3)
+
+        assert response.answer is not None
+        assert len(messages_sent) == 2
+        second_call_messages = messages_sent[1]
+        tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
+        assert len(tool_messages) > 0
+        error_content = tool_messages[0]["content"]
+        assert "not found" in error_content.lower()
+        assert "available" in error_content.lower()
+        assert "search" in error_content.lower()
+
+        await agent.close()
+
+    @pytest.mark.asyncio
     async def test_agent_returns_helpful_error_for_nonexistent_tool(self, test_db, mock_llm):
         """Agent returns helpful error listing available tools for non-existent tool."""
         db = Database(test_db)
