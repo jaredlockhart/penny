@@ -296,10 +296,27 @@ class LlmClient:
         return LlmToolCall(
             id=tool_call.id,
             function=LlmToolCallFunction(
-                name=tool_call.function.name,
+                name=LlmClient._sanitize_tool_name(tool_call.function.name),
                 arguments=arguments,
             ),
         )
+
+    @staticmethod
+    def _sanitize_tool_name(name: str) -> str:
+        """Strip artifacts from an LLM-generated tool name.
+
+        Handles two known classes of model misbehaviour:
+        - Chat-template special tokens (e.g. <|channel|>) bled into the name
+        - Trailing '?' appended by models to signal uncertainty about the tool name
+        """
+        original = name
+        idx = name.find("<|")
+        if idx != -1:
+            name = name[:idx]
+        name = name.rstrip("?")
+        if name != original:
+            logger.warning("Stripped artifact from tool name: %r → %r", original, name)
+        return name
 
     # Regex to extract quoted strings from a queries array
     _QUERY_PATTERN = re.compile(r'"queries"\s*:\s*\[([^\]]*)', re.DOTALL)

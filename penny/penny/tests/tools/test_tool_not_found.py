@@ -221,3 +221,31 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class TestToolNameSanitization:
+    """LlmClient strips artifacts from LLM-generated tool names."""
+
+    def test_sanitize_strips_trailing_question_mark(self):
+        """search? → search."""
+        assert LlmClient._sanitize_tool_name("search?") == "search"
+
+    def test_sanitize_strips_multiple_trailing_question_marks(self):
+        """search??? → search."""
+        assert LlmClient._sanitize_tool_name("search???") == "search"
+
+    def test_sanitize_strips_special_token_and_trailing_text(self):
+        """collection_write<|channel|>json → collection_write."""
+        assert (
+            LlmClient._sanitize_tool_name("collection_write<|channel|>json") == "collection_write"
+        )
+
+    def test_sanitize_strips_special_token_then_question_mark(self):
+        """browse<|im_end|>? → browse (token stripped first, then trailing ?)."""
+        assert LlmClient._sanitize_tool_name("browse<|im_end|>?") == "browse"
+
+    def test_sanitize_is_noop_for_clean_name(self):
+        """Clean tool names pass through unchanged."""
+        assert LlmClient._sanitize_tool_name("search") == "search"
+        assert LlmClient._sanitize_tool_name("browse") == "browse"
+        assert LlmClient._sanitize_tool_name("collection_write") == "collection_write"
