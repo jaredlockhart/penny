@@ -6,7 +6,7 @@ from penny.agents.base import Agent
 from penny.config import Config
 from penny.database import Database
 from penny.llm import LlmClient
-from penny.tools.base import Tool, ToolExecutor, ToolRegistry
+from penny.tools.base import Tool, ToolCall, ToolExecutor, ToolRegistry
 
 
 class StubSearchTool(Tool):
@@ -221,3 +221,63 @@ class TestMissingRequiredParameters:
         assert "string" in error_content
 
         await agent.close()
+
+
+class StubReadSimilarTool(Tool):
+    """Stub that stands in for the real read_similar memory tool."""
+
+    name = "read_similar"
+    description = "Return entries by similarity"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "memory": {"type": "string"},
+            "anchor": {"type": "string"},
+            "k": {"type": "integer"},
+        },
+        "required": ["memory", "anchor"],
+    }
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    async def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        return "stub similar entries"
+
+
+class TestSearchMemoryAlias:
+    """search_memory is silently resolved to read_similar via the alias table."""
+
+    def test_registry_resolves_search_memory_to_read_similar(self):
+        """ToolRegistry.get('search_memory') returns the read_similar tool instance."""
+        registry = ToolRegistry()
+        tool = StubReadSimilarTool()
+        registry.register(tool)
+
+        assert registry.get("search_memory") is tool
+
+    def test_registry_returns_none_for_search_memory_when_read_similar_absent(self):
+        """If read_similar is not registered, search_memory still returns not-found."""
+        registry = ToolRegistry()
+        assert registry.get("search_memory") is None
+
+    @pytest.mark.asyncio
+    async def test_executor_runs_read_similar_for_search_memory_call(self):
+        """ToolExecutor executes read_similar when the model calls search_memory."""
+        registry = ToolRegistry()
+        tool = StubReadSimilarTool()
+        registry.register(tool)
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(
+            ToolCall(
+                tool="search_memory",
+                arguments={"memory": "user-messages", "anchor": "coffee preferences"},
+                id="tc-1",
+            )
+        )
+
+        assert result.error is None
+        assert result.result == "stub similar entries"
+        assert tool.calls == [{"memory": "user-messages", "anchor": "coffee preferences"}]
