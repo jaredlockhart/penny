@@ -79,7 +79,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 38
+        assert count == 42
 
         conn = sqlite3.connect(db_path)
         tables = {
@@ -119,7 +119,7 @@ class TestMigrate:
 
         count1 = migrate(db_path)
         count2 = migrate(db_path)
-        assert count1 == 38
+        assert count1 == 42
         assert count2 == 0
 
     def test_tracks_in_migrations_table(self, tmp_path):
@@ -157,8 +157,8 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        # 0001 is skipped; 0002 through 0038 run = 37 migrations
-        assert count == 37
+        # 0001 is skipped; 0002 through 0042 run = 41 migrations
+        assert count == 41
 
     def test_bootstrap_with_tables_already_present(self, tmp_path):
         """If tables already exist (from SQLModel.create_tables), migration should succeed."""
@@ -184,7 +184,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 38  # all migrations applied
+        assert count == 42  # all migrations applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
@@ -192,8 +192,8 @@ class TestMigrate:
         assert "0001_initial_schema" in applied
         conn.close()
 
-    def test_0038_fixes_read_last_in_extraction_prompts(self, tmp_path):
-        """Migration 0038 replaces read_last( with read_latest( in extraction prompts."""
+    def test_0039_fixes_read_last_in_extraction_prompts(self, tmp_path):
+        """Migration 0039 replaces read_last( with read_latest( in extraction prompts."""
         import importlib.util
         from pathlib import Path
 
@@ -213,9 +213,9 @@ class TestMigrate:
             / "penny"
             / "database"
             / "migrations"
-            / "0038_fix_read_last_in_extraction_prompts.py"
+            / "0039_fix_read_last_in_extraction_prompts.py"
         )
-        spec = importlib.util.spec_from_file_location("m0038", migration_path)
+        spec = importlib.util.spec_from_file_location("m0039", migration_path)
         assert spec is not None
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -281,8 +281,8 @@ class TestMigrate:
         assert 'update_entry("knowledge", key=<title>,' in prompt
         conn.close()
 
-    def test_0038_fixes_log_read_log_in_extraction_prompts(self, tmp_path):
-        """Migration 0038 replaces log_read_log( with log_read_next( in any extraction_prompt."""
+    def test_0040_fixes_log_read_log_in_extraction_prompts(self, tmp_path):
+        """Migration 0040 replaces log_read_log( with log_read_next( in any extraction_prompt."""
         import importlib.util
         from pathlib import Path
 
@@ -302,9 +302,9 @@ class TestMigrate:
             / "penny"
             / "database"
             / "migrations"
-            / "0038_fix_log_read_log_in_extraction_prompts.py"
+            / "0040_fix_log_read_log_in_extraction_prompts.py"
         )
-        spec = importlib.util.spec_from_file_location("m0038", migration_path)
+        spec = importlib.util.spec_from_file_location("m0040", migration_path)
         assert spec is not None
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -324,8 +324,8 @@ class TestMigrate:
         assert 'log_read_next("user-messages")' in prompt
         conn.close()
 
-    def test_0038_fixes_collection_update_in_all_extraction_prompts(self, tmp_path):
-        """Migration 0038 replaces collection_update with update_entry in all
+    def test_0041_fixes_collection_update_in_all_extraction_prompts(self, tmp_path):
+        """Migration 0041 replaces collection_update with update_entry in all
         extraction_prompts, including user-created collections."""
         import importlib.util
         from pathlib import Path
@@ -363,9 +363,9 @@ class TestMigrate:
             / "penny"
             / "database"
             / "migrations"
-            / "0038_fix_collection_update_in_extraction_prompts.py"
+            / "0041_fix_collection_update_in_extraction_prompts.py"
         )
-        spec = importlib.util.spec_from_file_location("m0038cu", migration_path)
+        spec = importlib.util.spec_from_file_location("m0041cu", migration_path)
         assert spec is not None
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -389,8 +389,8 @@ class TestMigrate:
         assert rows["no-issue"] == "Call update_entry to store the result."
         assert rows["no-prompt"] is None
 
-    def test_0038_fixes_thinking_prompt_browse_call_syntax(self, tmp_path):
-        """Migration 0038 replaces bare 'browse' label with explicit call syntax in
+    def test_0042_fixes_thinking_prompt_browse_call_syntax(self, tmp_path):
+        """Migration 0042 replaces bare 'browse' label with explicit call syntax in
         the unnotified-thoughts extraction_prompt for databases seeded by migration 0033."""
         import importlib.util
         from pathlib import Path
@@ -411,9 +411,9 @@ class TestMigrate:
             / "penny"
             / "database"
             / "migrations"
-            / "0038_fix_thinking_prompt_browse_call_syntax.py"
+            / "0042_fix_thinking_prompt_browse_call_syntax.py"
         )
-        spec = importlib.util.spec_from_file_location("m0038br", migration_path)
+        spec = importlib.util.spec_from_file_location("m0042br", migration_path)
         assert spec is not None
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
