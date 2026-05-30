@@ -1,5 +1,6 @@
 """Tests for agentic loop changes: reasoning, last step, and after_step hook."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from penny.constants import PennyConstants
 from penny.database import Database
 from penny.database.models import PromptLog
 from penny.llm import LlmClient
+from penny.llm.models import LlmConnectionError, LlmTimeoutError, LlmToolParseError
 from penny.responses import PennyResponse
 from penny.tools.base import Tool
 from penny.tools.browse import BrowseTool, _trim_search_result
@@ -281,7 +283,6 @@ class TestModelErrorHandling:
     @pytest.mark.asyncio
     async def test_llm_error_returns_agent_model_error(self, test_db, mock_llm):
         """Connection/response errors from the LLM result in AGENT_MODEL_ERROR, not a crash."""
-        from penny.llm.models import LlmConnectionError
 
         agent, _db, max_steps = _make_agent(test_db, mock_llm)
 
@@ -292,6 +293,95 @@ class TestModelErrorHandling:
 
         response = await agent.run("test prompt", max_steps=max_steps)
         assert response.answer == PennyResponse.AGENT_MODEL_ERROR
+
+        await agent.close()
+
+
+class TestToolParseErrorRetry:
+    """500 'error parsing tool call' recovers via a format nudge, not a fatal abort."""
+
+    @pytest.mark.asyncio
+    async def test_tool_parse_error_retries_with_format_nudge(self, test_db, mock_llm):
+        """When the server returns a tool-parse 500, agent injects format nudge and retries."""
+
+        agent, _db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                raise LlmToolParseError("error parsing tool call: raw='We need to produce...'")
+            return mock_llm._make_tool_call_response(request, "search", {"query": "test"})
+
+        mock_llm.set_response_handler(handler)
+
+        await agent.run("test prompt", max_steps=max_steps)
+
+        # Second call (after nudge) should include the format reminder
+        assert len(mock_llm.requests) >= 2
+        nudge_messages = mock_llm.requests[1]["messages"]
+        last_user = next(m for m in reversed(nudge_messages) if m["role"] == "user")
+        assert "tool call" in last_user["content"].lower()
+        assert "plain text" in last_user["content"].lower()
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_tool_parse_error_recovers_and_completes(self, test_db, mock_llm):
+        """Cycle completes normally after a tool-parse error and retry."""
+
+        agent, _db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
+
+        def handler(request, count):
+            if count == 1:
+                raise LlmToolParseError("error parsing tool call: raw='Let me reason first...'")
+            if count == 2:
+                return mock_llm._make_tool_call_response(request, "search", {"query": "vitamins"})
+            return mock_llm._make_text_response(request, "Here is the info about vitamins!")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("tell me about vitamins", max_steps=max_steps)
+        assert response.answer == "Here is the info about vitamins!"
+        assert len(mock_llm.requests) == 3
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_tool_parse_error_only_retried_once(self, test_db, mock_llm):
+        """Tool-parse error retry only fires once — second parse error aborts the loop."""
+
+        agent, _db, max_steps = _make_agent(test_db, mock_llm, max_steps=3)
+
+        def handler(request, count):
+            raise LlmToolParseError("error parsing tool call: raw='plain text again...'")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test prompt", max_steps=max_steps)
+        assert response.answer == PennyResponse.AGENT_MODEL_ERROR
+        # First call + one retry = 2 total calls
+        assert len(mock_llm.requests) == 2
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_returns_agent_model_error(self, test_db, mock_llm, caplog):
+        """LLM timeouts also return AGENT_MODEL_ERROR and are logged at WARNING not ERROR."""
+
+        agent, _db, max_steps = _make_agent(test_db, mock_llm)
+
+        def handler(request, count):
+            raise LlmTimeoutError("Request timed out.")
+
+        mock_llm.set_response_handler(handler)
+
+        with caplog.at_level(logging.WARNING, logger="penny.agents.base"):
+            response = await agent.run("test prompt", max_steps=max_steps)
+
+        assert response.answer == PennyResponse.AGENT_MODEL_ERROR
+        warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        error_msgs = [r.message for r in caplog.records if r.levelno == logging.ERROR]
+        assert any("timed out" in m.lower() for m in warning_msgs)
+        assert not any("timed out" in m.lower() for m in error_msgs)
 
         await agent.close()
 
@@ -540,6 +630,83 @@ class TestEmptyContentRetry:
 
         await agent.close()
 
+    @pytest.mark.asyncio
+    async def test_empty_content_after_tool_calls_returns_fallback_response(
+        self, test_db, mock_llm
+    ):
+        """After tool calls, double empty returns FALLBACK_RESPONSE not AGENT_EMPTY_RESPONSE.
+
+        Reproduces the production scenario where the model makes several searches then
+        fails to synthesize on the final step (preceding_tool_calls > 0).  The distinction
+        matters: FALLBACK_RESPONSE signals "searched but couldn't synthesise" while
+        AGENT_EMPTY_RESPONSE signals "never tried to answer".
+        """
+        # 4 steps: 3 tool calls + 1 final step where model must synthesise but fails
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=4)
+
+        def handler(request, count):
+            if count <= 3:
+                return mock_llm._make_tool_call_response(
+                    request, "search", {"query": f"query {count}"}
+                )
+            # Final step and its retry both return empty — model can't synthesise
+            return mock_llm._make_text_response(request, "")
+
+        mock_llm.set_response_handler(handler)
+
+        response = await agent.run("test question", max_steps=max_steps)
+        assert response.answer == PennyResponse.FALLBACK_RESPONSE
+        # 3 tool calls + empty final step + empty retry = 5 model calls
+        assert len(mock_llm.requests) == 5
+
+        await agent.close()
+
+
+class TestToolCallCap:
+    """Test that the tool-call cap forces an early final step before context saturation."""
+
+    @pytest.mark.asyncio
+    async def test_batched_tool_calls_cap_forces_early_final_step(self, test_db, mock_llm):
+        """When batched tool calls accumulate to steps-1, the final step is forced early.
+
+        Regression guard for the observed bug: preceding_tool_calls=11 with MAX_STEPS=8.
+        Each agentic loop step can produce multiple tool call records (parallel calls),
+        so the step count alone does not bound the total tool call context. The cap
+        ensures the model gets a final step before accumulating more than steps-1 records.
+        """
+        agent, db, max_steps = _make_agent(test_db, mock_llm, max_steps=4)
+        agent._tool_executor.execute = AsyncMock(
+            return_value=ToolResult(tool="search", result="result")
+        )
+
+        def handler(request, count):
+            # Steps 1 and 2: 2 parallel tool calls each → 4 total records.
+            # Cap = max_steps - 1 = 3, so after 4 records the next step is final.
+            if count in (1, 2):
+                return mock_llm._make_parallel_tool_calls_response(
+                    request,
+                    [
+                        ("search", {"query": f"query {count}a"}),
+                        ("search", {"query": f"query {count}b"}),
+                    ],
+                )
+            # Step 3 is forced final (tools stripped) — model produces answer.
+            return mock_llm._make_text_response(request, "here is the answer")
+
+        mock_llm.set_response_handler(handler)
+        agent.allow_repeat_tools = True
+
+        response = await agent.run("test question", max_steps=max_steps)
+        assert response.answer == "here is the answer"
+        assert len(response.tool_calls) == 4
+
+        # Third model call must have no tools (early forced final step from cap).
+        assert mock_llm.requests[2]["tools"] is None
+        # Only 3 model calls — cap fired one step before max_steps would have.
+        assert len(mock_llm.requests) == 3
+
+        await agent.close()
+
 
 class TestParallelToolCalls:
     """Test that multiple tool calls in a single turn are dispatched in parallel."""
@@ -673,6 +840,44 @@ class TestParallelToolCalls:
         assert len(browsed_urls) == 2
         assert "https://example.com/page" in browsed_urls
         assert "https://other.com" in browsed_urls
+
+    @pytest.mark.asyncio
+    async def test_url_timeout_returns_error_section(self, monkeypatch):
+        """When request_fn raises TimeoutError, execute() returns an error section.
+
+        This is the regression test for the 'Tool execution timeout: browse' bug:
+        BrowseTool.timeout must exceed TOOL_REQUEST_TIMEOUT so the inner per-URL
+        timeout fires first and is captured by asyncio.gather(return_exceptions=True),
+        allowing execute() to return a graceful error rather than the whole tool
+        timing out at the executor level.
+        """
+        monkeypatch.setattr(PennyConstants, "BROWSE_RETRIES", 0)
+
+        async def timed_out_request(command, params):
+            raise TimeoutError("Browser tool 'browse_url' timed out after 60.0s")
+
+        request_fn = AsyncMock(side_effect=timed_out_request)
+        mock_perm = MagicMock(check_domain=AsyncMock())
+
+        tool = BrowseTool(max_calls=5)
+        tool.set_browse_provider(lambda: (request_fn, mock_perm))
+
+        result = await tool.execute(queries=["https://slow.example.com"])
+
+        assert isinstance(result, SearchResult)
+        assert PennyConstants.BROWSE_ERROR_HEADER in result.text
+        assert "slow.example.com" in result.text
+
+    def test_browse_tool_timeout_exceeds_request_timeout(self):
+        """BrowseTool.timeout must exceed TOOL_REQUEST_TIMEOUT.
+
+        Ensures the inner per-URL timeout (TOOL_REQUEST_TIMEOUT=60s) fires before
+        the outer executor timeout, so hung URLs produce graceful error sections
+        instead of cancelling the entire tool call.
+        """
+        tool = BrowseTool(max_calls=3)
+        assert tool.timeout is not None
+        assert tool.timeout > PennyConstants.TOOL_REQUEST_TIMEOUT
 
 
 class TestSearchResultTrimming:

@@ -13,8 +13,10 @@ import re
 import time
 from typing import Any
 
+import httpx
 import openai
 
+from penny.constants import PennyConstants
 from penny.llm.models import (
     LlmConnectionError,
     LlmError,
@@ -22,8 +24,10 @@ from penny.llm.models import (
     LlmNotFoundError,
     LlmResponse,
     LlmResponseError,
+    LlmTimeoutError,
     LlmToolCall,
     LlmToolCallFunction,
+    LlmToolParseError,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +51,7 @@ class LlmClient:
         max_retries: int,
         retry_delay: float,
         api_key: str = _DEFAULT_API_KEY,
+        timeout: float | None = None,
     ):
         self.api_url = api_url.rstrip("/")
         self.model = model
@@ -54,11 +59,18 @@ class LlmClient:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
 
-        self.client = openai.AsyncOpenAI(
-            base_url=f"{self.api_url}/v1",
-            api_key=api_key,
-            max_retries=0,  # We handle retries ourselves
-        )
+        client_kwargs: dict[str, Any] = {
+            "base_url": f"{self.api_url}/v1",
+            "api_key": api_key,
+            "max_retries": 0,  # We handle retries ourselves
+        }
+        if timeout is not None:
+            # Keep connect timeout short; only extend read/write for slow models.
+            client_kwargs["timeout"] = httpx.Timeout(
+                timeout=timeout, connect=PennyConstants.LLM_CONNECT_TIMEOUT_SECONDS
+            )
+
+        self.client = openai.AsyncOpenAI(**client_kwargs)
 
         logger.info("Initialized LLM client: url=%s, model=%s", api_url, model)
 
@@ -109,6 +121,16 @@ class LlmClient:
             except openai.NotFoundError as error:
                 logger.error("LLM chat failed (model not found, no retry): %s", error)
                 raise LlmNotFoundError(str(error)) from error
+            except openai.APITimeoutError as error:
+                last_error = LlmTimeoutError(str(error))
+                logger.warning(
+                    "LLM request timed out (attempt %d/%d): %s",
+                    attempt + 1,
+                    self.max_retries,
+                    error,
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
             except openai.APIConnectionError as error:
                 last_error = LlmConnectionError(str(error))
                 logger.warning(
@@ -117,7 +139,19 @@ class LlmClient:
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
             except openai.OpenAIError as error:
-                last_error = LlmResponseError(str(error))
+                error_str = str(error)
+                # 500 "error parsing tool call" means the model produced plain text
+                # instead of a JSON tool call. Retrying with the same messages won't
+                # help — raise immediately so the agent can inject a format nudge.
+                if (
+                    getattr(error, "status_code", None) == 500
+                    and "error parsing tool call" in error_str
+                ):
+                    logger.warning(
+                        "Tool parse error — model returned plain text instead of JSON tool call"
+                    )
+                    raise LlmToolParseError(error_str) from error
+                last_error = LlmResponseError(error_str)
                 logger.warning(
                     "LLM chat error (attempt %d/%d): %s", attempt + 1, self.max_retries, error
                 )
@@ -284,6 +318,7 @@ class LlmClient:
         """Parse a single OpenAI tool call, deserializing JSON arguments."""
         arguments = {}
         if tool_call.function.arguments:
+            logger.debug("Tool call raw arguments: %.500s", tool_call.function.arguments)
             try:
                 arguments = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
@@ -301,21 +336,51 @@ class LlmClient:
             ),
         )
 
-    # Regex to extract quoted strings from a queries array
+    # Regex to extract quoted strings from a queries array (browse tool)
     _QUERY_PATTERN = re.compile(r'"queries"\s*:\s*\[([^\]]*)', re.DOTALL)
     _QUOTED_STRING = re.compile(r'"([^"]+)"')
 
+    # Regex to extract key/content pairs from an entries array (collection_write tool).
+    # Handles both proper objects and unescaped-quote stringified objects where the
+    # outer JSON itself is malformed (json.loads raises JSONDecodeError).
+    _ENTRIES_SECTION_PATTERN = re.compile(r'"entries"\s*:\s*\[', re.DOTALL)
+    _ENTRY_KV_PATTERN = re.compile(
+        r'"key"\s*:\s*"([^"]*)".*?"content"\s*:\s*"([^"]*)"',
+        re.DOTALL,
+    )
+    _MEMORY_FIELD_PATTERN = re.compile(r'"memory"\s*:\s*"([^"]+)"')
+
     @staticmethod
     def _extract_malformed_arguments(raw: str) -> dict[str, Any]:
-        """Best-effort extraction of queries from malformed JSON arguments.
+        """Best-effort extraction of tool arguments from malformed JSON.
+
+        Handles two known malformation patterns:
+        - ``queries`` array (browse tool): items are plain strings.
+        - ``entries`` array (collection_write): items are objects whose inner
+          quotes are unescaped, making json.loads fail with JSONDecodeError.
+          Key/content pairs are recovered via regex.
 
         Falls back to empty dict if nothing can be extracted.
         """
+        # Browse tool: queries array of plain strings
         match = LlmClient._QUERY_PATTERN.search(raw)
         if match:
             items = LlmClient._QUOTED_STRING.findall(match.group(1))
             if items:
                 return {"queries": items}
+
+        # collection_write tool: entries array of {key, content} objects
+        entries_match = LlmClient._ENTRIES_SECTION_PATTERN.search(raw)
+        if entries_match:
+            pairs = LlmClient._ENTRY_KV_PATTERN.findall(raw[entries_match.end() :])
+            entries = [{"key": k, "content": c} for k, c in pairs]
+            if entries:
+                result: dict[str, Any] = {"entries": entries}
+                memory_match = LlmClient._MEMORY_FIELD_PATTERN.search(raw)
+                if memory_match:
+                    result["memory"] = memory_match.group(1)
+                return result
+
         return {}
 
     # ── Internal: logging ────────────────────────────────────────────────

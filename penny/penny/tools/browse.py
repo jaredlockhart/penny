@@ -74,6 +74,11 @@ class BrowseTool(Tool):
     """
 
     name = "browse"
+    # Must exceed TOOL_REQUEST_TIMEOUT (60s) so the inner per-URL timeout fires
+    # before the outer executor cancels the whole tool call.  Without this, both
+    # timers fire at ~60s and the outer cancellation wins, surfacing as a tool
+    # execution timeout rather than a graceful per-URL error section.
+    timeout = 300.0
 
     def __init__(
         self,
@@ -237,7 +242,22 @@ class BrowseTool(Tool):
             await permission_manager.check_domain(url)
 
             try:
-                text, image_url = await request_fn("browse_url", {"url": url})
+                text, image_url = await asyncio.wait_for(
+                    request_fn("browse_url", {"url": url}),
+                    timeout=PennyConstants.BROWSE_REQUEST_TIMEOUT,
+                )
+            except TimeoutError:
+                if attempt < PennyConstants.BROWSE_RETRIES:
+                    logger.info(
+                        "Browser request timed out, retrying in %.0fs (%s)",
+                        delay,
+                        url,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise ConnectionError(
+                    f"browser request timed out after {PennyConstants.BROWSE_REQUEST_TIMEOUT}s"
+                ) from None
             except ConnectionError:
                 if attempt < PennyConstants.BROWSE_RETRIES:
                     logger.info(

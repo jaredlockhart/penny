@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 
 _RECALL_MODES = ", ".join(m.value for m in RecallMode)
-_EXTRACTION_PROMPT_MIN_CHARS = 25
+EXTRACTION_PROMPT_MIN_CHARS = 25
 
 
 # ── Shared formatting ───────────────────────────────────────────────────────
@@ -86,13 +86,13 @@ def _format_entries(entries: list[MemoryEntry]) -> str:
     return "\n".join(lines)
 
 
-def _check_extraction_prompt(prompt: str | None) -> str | None:
+def check_extraction_prompt(prompt: str | None) -> str | None:
     """Return an error string if prompt is set but too short, else None."""
-    if prompt is None or len(prompt) >= _EXTRACTION_PROMPT_MIN_CHARS:
+    if prompt is None or len(prompt) >= EXTRACTION_PROMPT_MIN_CHARS:
         return None
     return (
         f"extraction_prompt is too short ({len(prompt)} chars — minimum "
-        f"{_EXTRACTION_PROMPT_MIN_CHARS}).  Provide a full numbered-step prompt "
+        f"{EXTRACTION_PROMPT_MIN_CHARS}).  Provide a full numbered-step prompt "
         f"(see the collection_create description for the required shape) or omit "
         f"extraction_prompt entirely to create a manually-managed collection."
     )
@@ -236,7 +236,7 @@ class CollectionCreateTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = CreateMemoryArgs(**kwargs)
-        if error := _check_extraction_prompt(args.extraction_prompt):
+        if error := check_extraction_prompt(args.extraction_prompt):
             return error
         try:
             self._db.memories.create_collection(
@@ -588,9 +588,12 @@ class UpdateEntryTool(Tool):
     parameters = {
         "type": "object",
         "properties": {
-            "memory": {"type": "string"},
-            "key": {"type": "string"},
-            "content": {"type": "string"},
+            "memory": {"type": "string", "description": "Collection name"},
+            "key": {"type": "string", "description": "Entry key within the collection"},
+            "content": {
+                "type": "string",
+                "description": "New content to replace the existing entry",
+            },
         },
         "required": ["memory", "key", "content"],
     }
@@ -649,7 +652,7 @@ class CollectionUpdateTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionUpdateArgs(**kwargs)
-        if error := _check_extraction_prompt(args.extraction_prompt):
+        if error := check_extraction_prompt(args.extraction_prompt):
             return error
         recall = RecallMode(args.recall) if args.recall is not None else None
         try:
@@ -703,12 +706,16 @@ class CollectionMetadataTool(Tool):
             if memory.last_collected_at is not None
             else "never"
         )
+        created = memory.created_at.strftime("%Y-%m-%d %H:%M:%S")
+        updated = memory.updated_at.strftime("%Y-%m-%d %H:%M:%S")
         lines = [
             f"name: {memory.name}",
             f"type: {memory.type}",
             f"description: {memory.description}",
             f"recall: {memory.recall}",
             f"archived: {memory.archived}",
+            f"created: {created}",
+            f"updated: {updated}",
             f"interval: {interval}",
             f"last collected: {last_collected}",
             f"extraction prompt: {memory.extraction_prompt or 'none'}",
@@ -738,8 +745,25 @@ class CollectionMoveTool(Tool):
         self._db = db
         self._author = author
         self._scope = scope
+        if scope is not None:
+            # When scoped, to_memory is always the bound collection — make it optional
+            # so the model doesn't fail validation if it omits the predetermined value.
+            self.parameters = {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "from_memory": {"type": "string"},
+                    "to_memory": {
+                        "type": "string",
+                        "description": f"Destination collection; defaults to '{scope}'.",
+                    },
+                },
+                "required": ["key", "from_memory"],
+            }
 
     async def execute(self, **kwargs: Any) -> str:
+        if self._scope is not None and "to_memory" not in kwargs:
+            kwargs["to_memory"] = self._scope
         args = CollectionMoveArgs(**kwargs)
         # Scope constrains the destination side of the move (the write).
         # Source-side ``from_memory`` is unrestricted — moving an entry
@@ -865,10 +889,16 @@ class LogReadRecentTool(Tool):
         "type": "object",
         "properties": {
             "memory": {"type": "string"},
-            "window_seconds": {"type": "integer"},
+            "window_seconds": {
+                "type": "integer",
+                "description": (
+                    "Look-back window in seconds; defaults to "
+                    f"{PennyConstants.LOG_READ_RECENT_DEFAULT_WINDOW_SECONDS} (1 hour) if omitted"
+                ),
+            },
             "cap": {"type": "integer", "description": "Max entries; omit for all"},
         },
-        "required": ["memory", "window_seconds"],
+        "required": ["memory"],
     }
 
     def __init__(self, db: Database) -> None:

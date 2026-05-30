@@ -1,5 +1,6 @@
 """Tests for the database migration system."""
 
+import importlib.util
 import sqlite3
 from pathlib import Path
 
@@ -79,7 +80,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37
+        assert count == 42
 
         conn = sqlite3.connect(db_path)
         tables = {
@@ -119,7 +120,7 @@ class TestMigrate:
 
         count1 = migrate(db_path)
         count2 = migrate(db_path)
-        assert count1 == 37
+        assert count1 == 42
         assert count2 == 0
 
     def test_tracks_in_migrations_table(self, tmp_path):
@@ -157,8 +158,8 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        # 0001 is skipped; 0002 through 0037 run = 36 migrations
-        assert count == 36
+        # 0001 is skipped; 0002 through 0042 run = 41 migrations
+        assert count == 41
 
     def test_bootstrap_with_tables_already_present(self, tmp_path):
         """If tables already exist (from SQLModel.create_tables), migration should succeed."""
@@ -184,7 +185,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 37  # all migrations applied
+        assert count == 42  # all migrations applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
@@ -192,11 +193,50 @@ class TestMigrate:
         assert "0001_initial_schema" in applied
         conn.close()
 
+    def test_0039_fixes_read_last_in_extraction_prompts(self, tmp_path):
+        """Migration 0039 replaces read_last( with read_latest( in extraction prompts."""
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        broken_prompt = 'Call read_last("user-messages") to fetch new entries.'
+        conn.execute(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            ("my-collection", broken_prompt),
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0039_fix_read_last_in_extraction_prompts.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0039", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT extraction_prompt FROM memory WHERE name = 'my-collection'"
+        ).fetchone()
+        assert row is not None
+        prompt = row[0]
+        assert "read_last(" not in prompt
+        assert 'read_latest("user-messages")' in prompt
+        conn.close()
+
     def test_0037_fixes_knowledge_extraction_prompt(self, tmp_path):
         """Migration 0037 replaces collection_update with update_entry in the
         knowledge extraction_prompt for databases seeded by migration 0031."""
-        import importlib.util
-        from pathlib import Path
 
         db_path = str(tmp_path / "test.db")
         conn = sqlite3.connect(db_path)
@@ -236,4 +276,150 @@ class TestMigrate:
         prompt = row[0]
         assert "collection_update" not in prompt
         assert 'update_entry("knowledge", key=<title>,' in prompt
+        conn.close()
+
+    def test_0040_fixes_log_read_log_in_extraction_prompts(self, tmp_path):
+        """Migration 0040 replaces log_read_log( with log_read_next( in any extraction_prompt."""
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        broken_prompt = 'Call log_read_log("user-messages") to fetch new entries.'
+        conn.execute(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            ("my-collection", broken_prompt),
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0040_fix_log_read_log_in_extraction_prompts.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0040", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT extraction_prompt FROM memory WHERE name = 'my-collection'"
+        ).fetchone()
+        assert row is not None
+        prompt = row[0]
+        assert "log_read_log(" not in prompt
+        assert 'log_read_next("user-messages")' in prompt
+        conn.close()
+
+    def test_0041_fixes_collection_update_in_all_extraction_prompts(self, tmp_path):
+        """Migration 0041 replaces collection_update with update_entry in all
+        extraction_prompts, including user-created collections."""
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        conn.executemany(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            [
+                (
+                    "supplement-routine",
+                    "On correction, update the entry via collection_update."
+                    " On deletion, remove it.",
+                ),
+                (
+                    "my-collection",
+                    'call collection_update("my-collection", key=<k>, content=<c>)',
+                ),
+                (
+                    "no-issue",
+                    "Call update_entry to store the result.",
+                ),
+                (
+                    "no-prompt",
+                    None,
+                ),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0041_fix_collection_update_in_extraction_prompts.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0041cu", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        rows = {
+            row[0]: row[1]
+            for row in conn.execute("SELECT name, extraction_prompt FROM memory").fetchall()
+        }
+        conn.close()
+
+        assert "collection_update" not in rows["supplement-routine"]
+        assert "update_entry" in rows["supplement-routine"]
+        assert "collection_update" not in rows["my-collection"]
+        assert "update_entry" in rows["my-collection"]
+        assert rows["no-issue"] == "Call update_entry to store the result."
+        assert rows["no-prompt"] is None
+
+    def test_0042_fixes_thinking_prompt_browse_call_syntax(self, tmp_path):
+        """Migration 0042 replaces bare 'browse' label with explicit call syntax in
+        the unnotified-thoughts extraction_prompt for databases seeded by migration 0033."""
+
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE memory (name TEXT PRIMARY KEY, extraction_prompt TEXT)")
+        old_prompt = "3. browse — search the web and read one or two pages to find something"
+        conn.execute(
+            "INSERT INTO memory (name, extraction_prompt) VALUES (?, ?)",
+            ("unnotified-thoughts", old_prompt),
+        )
+        conn.commit()
+        conn.close()
+
+        migration_path = (
+            Path(__file__).parents[3]
+            / "penny"
+            / "database"
+            / "migrations"
+            / "0042_fix_thinking_prompt_browse_call_syntax.py"
+        )
+        spec = importlib.util.spec_from_file_location("m0042br", migration_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+        conn = sqlite3.connect(db_path)
+        mod.up(conn)
+        conn.close()
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT extraction_prompt FROM memory WHERE name = 'unnotified-thoughts'"
+        ).fetchone()
+        assert row is not None
+        prompt = row[0]
+        assert "3. browse — search the web" not in prompt
+        assert 'browse(queries=["<seed topic>"])' in prompt
         conn.close()

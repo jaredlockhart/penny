@@ -28,7 +28,7 @@ class Prompt:
         "and what you'll do with the result.\n\n"
         "Search memory first. The recall block above shows the most relevant "
         "entries verbatim, and your memory tools (`read_latest`, "
-        "`read_similar`, etc.) cover everything else stored. "
+        "`read_similar`, `log_read_recent`, etc.) cover everything else stored. "
         "Only browse if memory "
         "doesn't have what the user needs, or for current/external info "
         "(news, products, prices, fresh facts).\n\n"
@@ -52,7 +52,7 @@ class Prompt:
         "How to use the browse tool:\n"
         "1. If the user gave you URLs, read them directly — pass the URLs in the "
         "queries array. Do NOT search for a site the user already linked.\n"
-        "2. If the user gave you a topic (no URLs), search first to discover "
+        "2. If the user gave you a topic (no URLs), call browse to discover "
         "relevant pages.\n"
         "3. Read the most promising pages by passing their URLs in the queries "
         'array (e.g., queries: ["https://example.com/page"]). '
@@ -153,6 +153,13 @@ Examples:
 
     VISION_RESPONSE_PROMPT = (
         "The user sent an image. Respond naturally to the image description provided."
+    )
+
+    # Injected after a tool-parse 500 — model returned plain text instead of a JSON tool call
+    TOOL_FORMAT_NUDGE = (
+        "Your previous response could not be parsed as a tool call — you sent plain text "
+        "instead of a structured JSON tool call. You MUST respond with a valid tool call only. "
+        "Do not include any reasoning, preamble, or explanation before the JSON."
     )
 
     # Nudge prompts (injected when model returns empty content)

@@ -26,8 +26,21 @@ class LlmConnectionError(LlmError):
     """Could not connect to the LLM server."""
 
 
+class LlmTimeoutError(LlmConnectionError):
+    """LLM request timed out. Transient — model may be slow or temporarily busy."""
+
+
 class LlmResponseError(LlmError):
     """Server returned an error response."""
+
+
+class LlmToolParseError(LlmError):
+    """Server could not parse the model's tool call output (plain text instead of JSON).
+
+    This is a model formatting failure, not a transient server error.
+    Retrying with the same messages won't help — the agent must re-prompt with a
+    format reminder so the model knows to return only a valid JSON tool call.
+    """
 
 
 # ── Response types ───────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ from penny.config import Config
 from penny.constants import PennyConstants, ValidationReason
 from penny.database import Database
 from penny.llm import LlmClient
-from penny.llm.models import LlmError
+from penny.llm.models import LlmError, LlmTimeoutError, LlmToolParseError
 from penny.llm.refusal import is_refusal
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -412,7 +412,9 @@ class Agent:
 
         for step in range(steps):
             logger.info("Agent step %d/%d", step + 1, steps)
-            is_final_step = step == steps - 1
+            # Force final step early when batched tool calls accumulate to the cap,
+            # preventing context growth beyond what the 1-per-step case allows.
+            is_final_step = step == steps - 1 or len(tool_call_records) >= steps - 1
             step_tools = self._tools_for_step(tools, is_final_step)
 
             response = await self._call_model_validated(messages, step_tools, run_id, prompt_type)
@@ -536,7 +538,8 @@ class Agent:
     ):
         """Call the model, retrying on invalid outputs.
 
-        Checks for (in order): XML markup, empty content, refusal, hallucinated URLs.
+        Checks for (in order): XML markup, empty content, refusal, hallucinated URLs,
+        tool parse errors (500 plain-text-instead-of-JSON).
         Each invalid output type gets one retry. Tool call responses are returned
         immediately without validation. When tools are stripped (None) but the model
         hallucinates tool calls, they are cleared and content falls through to
@@ -548,7 +551,20 @@ class Agent:
         response = None
 
         for attempt in range(max_retries):
-            response = await self._invoke_model(messages, effective_tools, run_id, prompt_type)
+            try:
+                response = await self._invoke_model(messages, effective_tools, run_id, prompt_type)
+            except LlmToolParseError:
+                if ValidationReason.TOOL_PARSE_ERROR not in retried:
+                    retried.add(ValidationReason.TOOL_PARSE_ERROR)
+                    logger.warning(
+                        "Tool parse error on attempt %d/%d — retrying with format nudge",
+                        attempt + 1,
+                        max_retries,
+                    )
+                    messages.append({"role": MessageRole.USER, "content": Prompt.TOOL_FORMAT_NUDGE})
+                    continue
+                logger.error("Tool parse error on repeated attempt — aborting")
+                return None
             if response is None:
                 return None
 
@@ -578,7 +594,16 @@ class Agent:
         run_id: str | None,
         prompt_type: str | None,
     ):
-        """Call the LLM, returning ``None`` on connection/response errors."""
+        """Call the LLM, returning ``None`` on connection/response errors.
+
+        Re-raises ``LlmToolParseError`` so ``_call_model_validated`` can inject a
+        format nudge and retry — the model needs a different message, not the same one.
+
+        Timeouts are logged at WARNING — they're transient (the model may be slow
+        or temporarily busy) and are already retried by the LLM client before
+        this method is called.  Other LlmErrors (connection refused, server error,
+        model not found) are logged at ERROR.
+        """
         try:
             return await self._model_client.chat(
                 messages=messages,
@@ -587,6 +612,11 @@ class Agent:
                 prompt_type=prompt_type,
                 run_id=run_id,
             )
+        except LlmToolParseError:
+            raise
+        except LlmTimeoutError as exception:
+            logger.warning("LLM request timed out (model slow or temporarily busy): %s", exception)
+            return None
         except LlmError as exception:
             logger.error("LLM chat failed: %s", exception)
             return None
@@ -764,6 +794,12 @@ class Agent:
         for tool in tools:
             self._tool_registry.register(tool)
         self._tool_executor = ToolExecutor(self._tool_registry, timeout=self.config.tool_timeout)
+        logger.debug(
+            "Installed %d tool(s) for %s: %s",
+            len(tools),
+            self.name,
+            ", ".join(t.name for t in tools),
+        )
 
     async def _process_tool_calls(
         self,

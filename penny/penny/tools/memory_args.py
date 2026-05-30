@@ -8,9 +8,12 @@ layer's signature.
 
 from __future__ import annotations
 
-from typing import Annotated
+import json
+from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, model_validator
+
+from penny.constants import PennyConstants
 
 # Models occasionally substitute Unicode dashes (U+2010–U+2015) for ASCII
 # hyphen-minus (U+002D) when emitting memory names — gpt-oss has been
@@ -127,7 +130,7 @@ class ReadRecentArgs(BaseModel):
     """Entries created within the past ``window_seconds`` seconds."""
 
     memory: MemoryName
-    window_seconds: int
+    window_seconds: int = PennyConstants.LOG_READ_RECENT_DEFAULT_WINDOW_SECONDS
     cap: int | None = None
 
 
@@ -146,6 +149,25 @@ class CollectionEntrySpec(BaseModel):
 
     key: str
     content: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_stringified_object(cls, value: Any) -> Any:
+        """Parse a JSON-stringified dict back into a plain dict.
+
+        Some models wrap array elements in outer quotes, producing a JSON string
+        that contains an object literal (e.g. '{"key": "foo", "content": "bar"}')
+        instead of a bare object. Detect and unwrap it so field validation proceeds
+        normally.
+        """
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, dict):
+                    return parsed
+            except ValueError:
+                pass
+        return value
 
 
 class CollectionWriteArgs(BaseModel):
