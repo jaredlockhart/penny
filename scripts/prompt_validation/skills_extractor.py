@@ -143,10 +143,17 @@ def _run_cycle(h: Harness, user_msgs, penny_msgs, existing_key, max_steps=10):
     return writes, updates, deletes, done
 
 
+def _targets_skills(args: dict) -> bool:
+    """The collector's entry-mutation tools are scoped to the bound
+    collection, so ``memory`` is redundant — gpt-oss frequently omits it.
+    Accept a missing memory; reject only an explicit OTHER collection."""
+    return args.get("memory") in (None, "skills")
+
+
 def _score(expected, existing_key, writes, updates, deletes, done) -> list[str]:
     f = []
     if expected == "write":
-        if not any(w.get("memory") == "skills" for w in writes):
+        if not any(_targets_skills(w) for w in writes):
             f.append("expected collection_write to skills, none happened")
         else:
             for w in writes:
@@ -154,13 +161,13 @@ def _score(expected, existing_key, writes, updates, deletes, done) -> list[str]:
                     if "TRIGGER" not in (e.get("content") or "").upper():
                         f.append(f"written skill {e.get('key')!r} lacks TRIGGER/STEPS shape")
     elif expected == "update":
-        if not any(u.get("memory") == "skills" and u.get("key") == existing_key for u in updates):
+        if not any(_targets_skills(u) and u.get("key") == existing_key for u in updates):
             if writes:
                 f.append(f"wrote a new skill instead of update_entry on {existing_key!r} (fragments)")
             else:
                 f.append(f"correction lost — no update_entry on {existing_key!r}")
     elif expected == "delete":
-        if not any(d.get("memory") == "skills" and d.get("key") == existing_key for d in deletes):
+        if not any(_targets_skills(d) and d.get("key") == existing_key for d in deletes):
             f.append(f"deprecation lost — no delete of {existing_key!r}")
     elif expected == "no_op":
         if writes:
